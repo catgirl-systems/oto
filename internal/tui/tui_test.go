@@ -347,14 +347,17 @@ func TestBrowseResultFolderAndUserTabs(t *testing.T) {
 	updated, _ := m.Update(browseMsg{user: "nss", request: m.browseTabs[0].request, entries: []entry{
 		{name: "audio", directory: true},
 		{name: `audio\Hardstyle_320`, directory: true},
-		{name: `audio\Hardstyle_320\song.mp3`, private: true},
+		{name: `audio\Hardstyle_320\song.mp3`, private: true, bitrate: 320, duration: 125, vbr: true},
 	}})
 	m = updated.(model)
 	if m.cursor != 1 {
 		t.Fatalf("browse folder cursor = %d", m.cursor)
 	}
-	if view := m.renderBrowse(100, 10); !strings.Contains(view, "private") {
-		t.Fatalf("private browse entry was not marked: %q", view)
+	view := m.renderBrowse(100, 10)
+	for _, want := range []string{"FOLDER  audio\\Hardstyle_320", "FILE", "SIZE", "RATE", "TIME", "STATUS", "song.mp3", "320kv", "2:05", "private"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("browse result UI missing %q in %q", want, view)
+		}
 	}
 	m.selected[1] = true
 	m.openBrowse("LittleDeng", "", false)

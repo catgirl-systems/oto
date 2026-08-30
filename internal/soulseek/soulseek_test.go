@@ -274,7 +274,7 @@ func TestWireFramingAndDistributedFixtures(t *testing.T) {
 
 func TestSharedListRoundTrip(t *testing.T) {
 	message := SharedListResponse{Entries: []ShareEntry{
-		{Name: "Music\\Album\\song.mp3", Size: 42},
+		{Name: "Music\\Album\\song.mp3", Size: 42, Extension: "mp3", Bitrate: 320, Duration: 125, VBR: true},
 		{Name: "Locked\\secret.flac", Size: 84, Private: true},
 	}}
 	wire, err := EncodeMessage(message)
@@ -286,7 +286,7 @@ func TestSharedListRoundTrip(t *testing.T) {
 		t.Fatalf("frame: %d %v", command, err)
 	}
 	decoded, err := DecodeSharedListResponse(payload)
-	if err != nil || len(decoded.Entries) != 4 || decoded.Entries[1].Name != "Music\\Album\\song.mp3" || decoded.Entries[1].Size != 42 || decoded.Entries[2].Name != "Locked" || !decoded.Entries[2].Private || decoded.Entries[3].Name != "Locked\\secret.flac" || !decoded.Entries[3].Private {
+	if err != nil || len(decoded.Entries) != 4 || decoded.Entries[1].Name != "Music\\Album\\song.mp3" || decoded.Entries[1].Size != 42 || decoded.Entries[1].Bitrate != 320 || decoded.Entries[1].Duration != 125 || !decoded.Entries[1].VBR || decoded.Entries[2].Name != "Locked" || !decoded.Entries[2].Private || decoded.Entries[3].Name != "Locked\\secret.flac" || !decoded.Entries[3].Private {
 		t.Fatalf("shared list: %+v %v", decoded, err)
 	}
 }

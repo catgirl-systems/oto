@@ -678,7 +678,8 @@ func (m SharedListResponse) encode(e *Encoder) error {
 		if entry.Private {
 			index = 1
 		}
-		groups[index][dir] = append(groups[index][dir], ShareEntry{Name: file, Size: entry.Size})
+		entry.Name = file
+		groups[index][dir] = append(groups[index][dir], entry)
 	}
 	if len(groups[0])+len(groups[1]) > 50000 {
 		return ErrTooLarge
@@ -697,7 +698,7 @@ func (m SharedListResponse) encode(e *Encoder) error {
 			}
 			raw.U32(uint32(len(group[dir])))
 			for _, file := range group[dir] {
-				result := SearchResult{Path: file.Name, Size: file.Size, Extension: strings.TrimPrefix(strings.ToLower(filepath.Ext(file.Name)), ".")}
+				result := searchResultFromShare(file, file.Name)
 				if err := result.encode(&raw); err != nil {
 					return err
 				}
@@ -752,7 +753,7 @@ func DecodeSharedListResponse(b []byte) (SharedListResponse, error) {
 			if err != nil {
 				return message, err
 			}
-			message.Entries = append(message.Entries, ShareEntry{Name: strings.TrimPrefix(dir+"\\"+file.Path, "\\"), Size: file.Size})
+			message.Entries = append(message.Entries, shareEntryFromSearch(strings.TrimPrefix(dir+"\\"+file.Path, "\\"), file, false))
 		}
 	}
 	if _, err = d.U32(); err != nil {
@@ -783,17 +784,27 @@ func DecodeSharedListResponse(b []byte) (SharedListResponse, error) {
 			if err != nil {
 				return message, err
 			}
-			message.Entries = append(message.Entries, ShareEntry{Name: strings.TrimPrefix(dir+"\\"+file.Path, "\\"), Size: file.Size, Private: true})
+			message.Entries = append(message.Entries, shareEntryFromSearch(strings.TrimPrefix(dir+"\\"+file.Path, "\\"), file, true))
 		}
 	}
 	return message, d.Done()
 }
 
 type ShareEntry struct {
-	Name      string
-	Size      uint64
-	Directory bool
-	Private   bool
+	Name                    string
+	Size                    uint64
+	Directory, Private, VBR bool
+	Extension               string
+	Bitrate, Duration       uint32
+	SampleRate, BitDepth    uint32
+}
+
+func shareEntryFromSearch(path string, file SearchResult, private bool) ShareEntry {
+	return ShareEntry{Name: path, Size: file.Size, Private: private, Extension: file.Extension, Bitrate: file.Bitrate, Duration: file.Duration, VBR: file.VBR, SampleRate: file.SampleRate, BitDepth: file.BitDepth}
+}
+
+func searchResultFromShare(file ShareEntry, path string) SearchResult {
+	return SearchResult{Path: path, Size: file.Size, Extension: file.Extension, Bitrate: file.Bitrate, Duration: file.Duration, VBR: file.VBR, SampleRate: file.SampleRate, BitDepth: file.BitDepth}
 }
 
 type FolderRequest struct {
@@ -832,7 +843,7 @@ func (m FolderResponse) encode(e *Encoder) error {
 	}
 	raw.U32(uint32(len(files)))
 	for _, file := range files {
-		result := SearchResult{Path: filepath.Base(strings.ReplaceAll(file.Name, "\\", "/")), Size: file.Size, Extension: strings.TrimPrefix(strings.ToLower(filepath.Ext(file.Name)), ".")}
+		result := searchResultFromShare(file, filepath.Base(strings.ReplaceAll(file.Name, "\\", "/")))
 		if err := result.encode(&raw); err != nil {
 			return err
 		}
@@ -883,7 +894,7 @@ func DecodeFolderResponse(b []byte) (FolderResponse, error) {
 			if err != nil {
 				return message, err
 			}
-			message.Entries = append(message.Entries, ShareEntry{Name: strings.TrimPrefix(dir+"\\"+file.Path, "\\"), Size: file.Size})
+			message.Entries = append(message.Entries, shareEntryFromSearch(strings.TrimPrefix(dir+"\\"+file.Path, "\\"), file, false))
 		}
 	}
 	return message, d.Done()

@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -34,9 +33,12 @@ type result struct {
 	public                bool
 }
 type entry struct {
-	name               string
-	size               uint64
-	directory, private bool
+	name, extension      string
+	size                 uint64
+	directory, private   bool
+	bitrate, duration    uint32
+	vbr                  bool
+	sampleRate, bitDepth uint32
 }
 
 type browseTab struct {
@@ -271,12 +273,16 @@ func searchTextColumn(value string, width int) string {
 	return value + strings.Repeat(" ", max(0, width-lipgloss.Width(value)))
 }
 
-func searchMetadata(x result, width int) (string, string) {
+func searchMetadata(x result, width int, peer bool) (string, string) {
 	type column struct {
 		label, value string
 		width        int
 	}
-	columns := []column{{"SIZE", formatBytes(x.size), 9}}
+	size := ""
+	if !x.directory {
+		size = formatBytes(x.size)
+	}
+	columns := []column{{"SIZE", size, 9}}
 	if width >= 70 {
 		quality := ""
 		if x.bitrate > 0 {
@@ -303,14 +309,14 @@ func searchMetadata(x result, width int) (string, string) {
 		}
 		columns = append(columns, column{"STATUS", status, 12})
 	}
-	if width >= 110 {
+	if peer && width >= 110 {
 		speed := ""
 		if x.speed > 0 {
 			speed = formatBytes(uint64(x.speed)) + "/s"
 		}
 		columns = append(columns, column{"SPEED", speed, 11})
 	}
-	if width >= 130 {
+	if peer && width >= 130 {
 		columns = append(columns, column{"USER", x.user, 18})
 	}
 
@@ -363,7 +369,7 @@ func (m model) renderSearch(width, height int) string {
 		source += "  •  " + folder
 	}
 	lines = append(lines, trunc(muted(source), width))
-	headings, _ := searchMetadata(result{}, width)
+	headings, _ := searchMetadata(result{}, width, true)
 	nameWidth := max(4, width-lipgloss.Width(headings)-8)
 	lines = append(lines, muted("      "+searchTextColumn("FILE", nameWidth)+"  "+headings))
 
@@ -380,7 +386,7 @@ func (m model) renderSearch(width, height int) string {
 			kind = "▸"
 		}
 		_, name := resultPath(x.path)
-		_, metadata := searchMetadata(x, width)
+		_, metadata := searchMetadata(x, width, true)
 		row := fmt.Sprintf("%s %s %s  %s", mark, kind, searchTextColumn(name, nameWidth), metadata)
 		lines = append(lines, searchResultRow(row, i == m.cursor, m.selected[i]))
 	}
@@ -419,13 +425,24 @@ func (m model) renderBrowse(width, height int) string {
 		lines = append(lines, tabs)
 	}
 	lines = append(lines, trunc(prompt, width))
-	limit := max(0, height-len(lines))
-	if m.loading && limit > 0 {
-		return strings.Join(append(lines, muted("◌  Loading public shares…")), "\n")
+	if m.loading && height > len(lines) {
+		return strings.Join(append(lines, muted("◌  Loading shared files…")), "\n")
 	}
-	if len(m.entries) == 0 && limit > 0 {
+	if len(m.entries) == 0 && height > len(lines) {
 		return strings.Join(append(lines, "\n"+muted("Enter a Soulseek username to browse their shared files.")), "\n")
 	}
+
+	selected := m.entries[max(0, min(m.cursor, len(m.entries)-1))]
+	folder, _ := resultPath(selected.name)
+	if selected.directory {
+		folder = selected.name
+	}
+	lines = append(lines, trunc(muted("FOLDER  "+folder), width))
+	headings, _ := searchMetadata(result{}, width, false)
+	nameWidth := max(4, width-lipgloss.Width(headings)-8)
+	lines = append(lines, muted("      "+searchTextColumn("FILE", nameWidth)+"  "+headings))
+
+	limit := max(0, height-len(lines))
 	start, end := visibleRange(len(m.entries), m.cursor, limit)
 	for i := start; i < end; i++ {
 		x := m.entries[i]
@@ -435,19 +452,11 @@ func (m model) renderBrowse(width, height int) string {
 		}
 		kind := "·"
 		if x.directory {
-			kind = "▾"
+			kind = "▸"
 		}
-		path := strings.ReplaceAll(x.name, "\\", "/")
-		indent := strings.Repeat("  ", min(6, strings.Count(path, "/")))
-		details := ""
-		if !x.directory {
-			details = formatBytes(x.size)
-		}
-		if x.private {
-			details = strings.TrimSpace("private  " + details)
-		}
-		nameWidth := max(4, width-lipgloss.Width(indent)-lipgloss.Width(details)-8)
-		row := fmt.Sprintf("%s %s %s%s  %s", mark, kind, indent, trunc(filepath.Base(path), nameWidth), details)
+		_, name := resultPath(x.name)
+		_, metadata := searchMetadata(result{size: x.size, extension: x.extension, directory: x.directory, bitrate: x.bitrate, duration: x.duration, vbr: x.vbr, sampleRate: x.sampleRate, bitDepth: x.bitDepth, public: !x.private}, width, false)
+		row := fmt.Sprintf("%s %s %s  %s", mark, kind, searchTextColumn(name, nameWidth), metadata)
 		lines = append(lines, searchResultRow(row, i == m.cursor, m.selected[i]))
 	}
 	return strings.Join(lines, "\n")
@@ -950,7 +959,7 @@ func toResults(x []daemon.SearchResult) []result {
 func toEntries(x []soulseek.ShareEntry) []entry {
 	r := make([]entry, len(x))
 	for i, v := range x {
-		r[i] = entry{v.Name, v.Size, v.Directory, v.Private}
+		r[i] = entry{name: v.Name, extension: v.Extension, size: v.Size, directory: v.Directory, private: v.Private, bitrate: v.Bitrate, duration: v.Duration, vbr: v.VBR, sampleRate: v.SampleRate, bitDepth: v.BitDepth}
 	}
 	return r
 }
