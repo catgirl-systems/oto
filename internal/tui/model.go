@@ -292,7 +292,6 @@ func (m model) helpView() string {
 	for _, row := range rows {
 		fmt.Fprintf(&b, "%-20s %s\n", strong(row[0]), row[1])
 	}
-	b.WriteString("\n" + muted("github.com/catgirl-systems/oto  •  AGPL-3.0-only  •  no warranty"))
 	cardWidth := max(34, min(72, m.width-4))
 	card := panelStyle().Width(cardWidth).Padding(1, 2).Render(b.String())
 	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, card)

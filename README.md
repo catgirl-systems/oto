@@ -59,7 +59,7 @@ Soulseek permits one login per username. Keeping the session in the daemon preve
 | `d` | download the selected/cursor subtree, cancel a transfer subtree, or remove a share root |
 | `r` | refresh a user browse, retry a transfer subtree, or rescan shares |
 | `s` | save settings and reconnect |
-| `?` | help, source, and license notice |
+| `?` | keyboard guide |
 | `q` | quit |
 
 Set `NO_COLOR=1` to suppress terminal styling.
