@@ -239,6 +239,69 @@ func (m model) helpView() string {
 	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, card)
 }
 
+func resultPath(path string) (string, string) {
+	if i := strings.LastIndexAny(path, `/\\`); i >= 0 {
+		return path[:i], path[i+1:]
+	}
+	return "", path
+}
+
+func searchColumn(value string, width int) string {
+	value = trunc(value, width)
+	return strings.Repeat(" ", max(0, width-lipgloss.Width(value))) + value
+}
+
+func searchMetadata(x result, width int) (string, string) {
+	type column struct {
+		label, value string
+		width        int
+	}
+	columns := []column{{"SIZE", formatBytes(x.size), 9}}
+	if width >= 70 {
+		quality := ""
+		if x.bitrate > 0 {
+			quality = fmt.Sprintf("%dk", x.bitrate)
+			if x.vbr {
+				quality += "v"
+			}
+		}
+		duration := ""
+		if x.duration > 0 {
+			duration = formatDuration(x.duration)
+		}
+		columns = append(columns, column{"RATE", quality, 6}, column{"TIME", duration, 6})
+	}
+	if width >= 90 {
+		status := ""
+		if !x.public {
+			status = "private"
+		}
+		if x.free {
+			status = strings.TrimSpace(status + " free")
+		} else if x.queue > 0 {
+			status = strings.TrimSpace(status + fmt.Sprintf(" q%d", x.queue))
+		}
+		columns = append(columns, column{"STATUS", status, 12})
+	}
+	if width >= 110 {
+		speed := ""
+		if x.speed > 0 {
+			speed = formatBytes(uint64(x.speed)) + "/s"
+		}
+		columns = append(columns, column{"SPEED", speed, 11})
+	}
+	if width >= 130 {
+		columns = append(columns, column{"USER", x.user, 18})
+	}
+
+	headings, values := make([]string, len(columns)), make([]string, len(columns))
+	for i, column := range columns {
+		headings[i] = searchColumn(column.label, column.width)
+		values[i] = searchColumn(column.value, column.width)
+	}
+	return strings.Join(headings, " "), strings.Join(values, " ")
+}
+
 func (m model) renderSearch(width, height int) string {
 	inputStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#F5E0DC"))
 	prompt := muted("/  Press / to search the network")
@@ -261,13 +324,25 @@ func (m model) renderSearch(width, height int) string {
 	if m.editing && m.filterEditing {
 		lines = append(lines, trunc(muted(filterCompletionHint(inputBeforeCursor(m.input, m.inputCursor))), width))
 	}
-	limit := max(0, height-len(lines))
-	if m.loading && limit > 0 {
+	if m.loading && height > len(lines) {
 		return strings.Join(append(lines, muted("◌  Loading results…")), "\n")
 	}
-	if len(m.results) == 0 && limit > 0 {
+	if len(m.results) == 0 && height > len(lines) {
 		return strings.Join(append(lines, muted("No matching results. Press / to search or f to change filters.")), "\n")
 	}
+
+	selected := m.results[max(0, min(m.cursor, len(m.results)-1))]
+	folder, _ := resultPath(selected.path)
+	source := "SOURCE  " + selected.user
+	if folder != "" {
+		source += "  •  " + folder
+	}
+	lines = append(lines, trunc(muted(source), width))
+	headings, _ := searchMetadata(result{}, width)
+	nameWidth := max(4, width-lipgloss.Width(headings)-8)
+	lines = append(lines, muted("      "+searchColumn("FILE", nameWidth)+"  "+headings))
+
+	limit := max(0, height-len(lines))
 	start, end := visibleRange(len(m.results), m.cursor, limit)
 	for i := start; i < end; i++ {
 		x := m.results[i]
@@ -275,33 +350,13 @@ func (m model) renderSearch(width, height int) string {
 		if m.selected[i] {
 			mark = "●"
 		}
-		availability := formatBytes(x.size)
-		if x.bitrate > 0 {
-			availability += fmt.Sprintf("  %dk", x.bitrate)
-			if x.vbr {
-				availability += "v"
-			}
-		}
-		if x.duration > 0 {
-			availability += "  " + formatDuration(x.duration)
-		}
-		if !x.public {
-			availability += "  private"
-		}
-		if x.free {
-			availability += "  free"
-		} else if x.queue > 0 {
-			availability += fmt.Sprintf("  queue %d", x.queue)
-		}
-		if x.speed > 0 {
-			availability += "  " + formatBytes(uint64(x.speed)) + "/s"
-		}
 		kind := "·"
 		if x.directory {
 			kind = "▸"
 		}
-		pathWidth := max(4, width-lipgloss.Width(availability)-7)
-		row := fmt.Sprintf("%s %s %s  %s", mark, kind, trunc(x.user+"/"+x.path, pathWidth), availability)
+		_, name := resultPath(x.path)
+		_, metadata := searchMetadata(x, width)
+		row := fmt.Sprintf("%s %s %s  %s", mark, kind, searchColumn(name, nameWidth), metadata)
 		lines = append(lines, selectedRow(row, i == m.cursor))
 	}
 	return strings.Join(lines, "\n")

@@ -303,12 +303,23 @@ func TestSearchFilterEditingAndMetadata(t *testing.T) {
 
 	m.loading = false
 	m.searchTotal, m.searchFound = 1, 4
-	m.results = []result{{user: "peer", path: "song.flac", size: 1024, bitrate: 320, duration: 125, vbr: true}}
+	m.results = []result{{user: "peer", path: `music\album\song.flac`, size: 1024, bitrate: 320, duration: 125, vbr: true}}
 	view := m.renderSearch(100, 10)
-	for _, want := range []string{"1 loaded / 1 filtered / 4 found", "320kv", "2:05", "private"} {
+	for _, want := range []string{"1 loaded / 1 filtered / 4 found", "FILE", "SIZE", `SOURCE  peer  •  music\album`, "song.flac", "320kv", "2:05", "private"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("search metadata missing %q in %q", want, view)
 		}
+	}
+	for _, line := range strings.Split(view, "\n") {
+		if lipgloss.Width(line) > 100 {
+			t.Fatalf("search row exceeds width: %d %q", lipgloss.Width(line), line)
+		}
+	}
+	if narrow := m.renderSearch(60, 10); strings.Contains(narrow, "RATE") || !strings.Contains(narrow, "song.flac") {
+		t.Fatalf("narrow search columns did not collapse: %q", narrow)
+	}
+	if wide := m.renderSearch(140, 10); !strings.Contains(wide, "USER") {
+		t.Fatalf("wide search columns missing user: %q", wide)
 	}
 	updated, _ := m.Update(searchMsg{append: true, page: daemon.SearchPage{ID: "s", Results: []daemon.SearchResult{{Path: "next.flac", Public: true}}, Total: 2, FoundTotal: 4}})
 	m = updated.(model)
