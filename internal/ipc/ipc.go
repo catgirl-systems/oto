@@ -110,7 +110,9 @@ func (s *Server) handler() http.Handler {
 	mux.HandleFunc("/v1/browse", s.browse)
 	mux.HandleFunc("/v1/downloads", s.downloads)
 	mux.HandleFunc("/v1/transfers", s.transfers)
+	mux.HandleFunc("/v1/transfers/", s.transfers)
 	mux.HandleFunc("/v1/shares", s.shares)
+	mux.HandleFunc("/v1/shares/", s.shares)
 	mux.HandleFunc("/v1/config", s.updateConfig)
 	mux.HandleFunc("/v1/events", s.events)
 	return mux

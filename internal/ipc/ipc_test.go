@@ -18,7 +18,11 @@ func TestStatusMethodsBodyAndSocketMode(t *testing.T) {
 	c := config.Default()
 	c.Soulseek.Username, c.Soulseek.Password = "u", "p"
 	c.DownloadDir = t.TempDir()
-	svc, err := daemon.NewWithJournal(c, filepath.Join(t.TempDir(), "journal.json"))
+	journalPath := filepath.Join(t.TempDir(), "journal.json")
+	if err := config.SaveJSON(journalPath, daemon.Journal{Downloads: []daemon.Download{{ID: "d-1", State: "running"}}}); err != nil {
+		t.Fatal(err)
+	}
+	svc, err := daemon.NewWithJournal(c, journalPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -42,6 +46,12 @@ func TestStatusMethodsBodyAndSocketMode(t *testing.T) {
 	}
 	if st, err := os.Stat(path); err != nil || st.Mode().Perm() != 0600 {
 		t.Fatalf("socket mode: %v %v", st, err)
+	}
+	if err := cl.TransferAction(context.Background(), "d-1", "cancel"); err != nil || svc.Downloads()[0].State != "cancelled" {
+		t.Fatalf("cancel transfer route: %v %+v", err, svc.Downloads())
+	}
+	if _, err := cl.Rescan(context.Background()); err != nil {
+		t.Fatalf("rescan shares route: %v", err)
 	}
 	resp, err := cl.http.Do(mustRequest("POST", "http://slsk-tui.local/v1/state", nil))
 	if err != nil {

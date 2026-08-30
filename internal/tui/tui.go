@@ -73,6 +73,7 @@ type sharesMsg struct {
 	err    error
 }
 type settingsMsg struct{ err error }
+type transferActionMsg struct{ err error }
 
 func tick() tea.Cmd { return tea.Tick(time.Second, func(t time.Time) tea.Msg { return tickMsg(t) }) }
 func (m model) loadStatus() tea.Cmd {
@@ -162,6 +163,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.err = errText(x.err)
 		if x.err == nil {
 			return m, m.loadStatus()
+		}
+	case transferActionMsg:
+		m.err = errText(x.err)
+		if x.err == nil {
+			return m, m.loadTransfers()
 		}
 	case tea.PasteMsg:
 		text := strings.Map(func(r rune) rune {
@@ -464,15 +470,12 @@ func (m *model) queue(files []download, user string) tea.Cmd {
 		return statusMsg{err: e}
 	}
 }
-func (m model) action(a string) tea.Cmd {
+func (m model) action(action string) tea.Cmd {
 	if m.cursor >= len(m.transfers) {
 		return nil
 	}
 	id := m.transfers[m.cursor].id
-	if a == "clear" {
-		a = "cancel"
-	}
-	return func() tea.Msg { return statusMsg{err: m.client.TransferAction(m.ctx, id, a)} }
+	return func() tea.Msg { return transferActionMsg{m.client.TransferAction(m.ctx, id, action)} }
 }
 func (m model) active() bool {
 	for _, x := range m.transfers {
