@@ -356,12 +356,12 @@ func TestSearchResultTabs(t *testing.T) {
 	if m.query != "first query" || m.searchFilter != "type:audio" {
 		t.Fatalf("first search tab state = %q %q", m.query, m.searchFilter)
 	}
-	updated, _ := m.Update(searchMsg{request: secondRequest, operation: secondOperation, page: daemon.SearchPage{ID: "second", Query: "second query", Results: []daemon.SearchResult{{Path: "second.flac", Public: true}}, Total: 1, FoundTotal: 2}})
+	updated, _ := m.Update(searchMsg{request: secondRequest, operation: secondOperation, filter: "free:true", page: daemon.SearchPage{ID: "second", Query: "second query", Results: []daemon.SearchResult{{Path: "second.flac", Public: true}}, Total: 1, FoundTotal: 2}})
 	m = updated.(model)
 	if m.query != "first query" || len(m.results) != 0 {
 		t.Fatalf("background search switched active tab: query=%q results=%d", m.query, len(m.results))
 	}
-	updated, _ = m.Update(searchMsg{request: firstRequest, operation: firstOperation, page: daemon.SearchPage{ID: "first", Query: "first query", Results: []daemon.SearchResult{{Path: "first.flac", Public: true}}, Total: 1, FoundTotal: 3}})
+	updated, _ = m.Update(searchMsg{request: firstRequest, operation: firstOperation, filter: "type:audio", page: daemon.SearchPage{ID: "first", Query: "first query", Results: []daemon.SearchResult{{Path: "first.flac", Public: true}}, Total: 1, FoundTotal: 3}})
 	m = updated.(model)
 	m.selected[0] = true
 	firstRoot := m.searchTree.nodes[m.searchTree.roots[0]].id
@@ -388,6 +388,32 @@ func TestSearchResultTabs(t *testing.T) {
 	m.key(tea.KeyPressMsg(tea.Key{Code: 'w', Mod: tea.ModCtrl}))
 	if len(m.searchTabs) != 1 || m.query != "second query" {
 		t.Fatalf("ctrl+w did not close search tab: query=%q tabs=%d", m.query, len(m.searchTabs))
+	}
+}
+
+func TestFilterEnteredDuringSearchAppliesAfterCompletion(t *testing.T) {
+	m := model{
+		workspace: 0, searchTabIndex: 0, searchOperation: 1,
+		query: "avi8", searchFilter: "in:outta", loading: true, selected: map[int]bool{},
+		searchTabs: []searchTab{{query: "avi8", loading: true, selected: map[int]bool{}, request: 1, operation: 1}},
+	}
+	updated, cmd := m.Update(searchMsg{
+		request: 1, operation: 1,
+		page: daemon.SearchPage{ID: "cached", FoundTotal: 12, Results: []daemon.SearchResult{{Path: "unfiltered.flac"}}},
+	})
+	m = updated.(model)
+	if cmd == nil || m.searchID != "cached" || m.searchFilter != "in:outta" || !m.loading || len(m.results) != 0 {
+		t.Fatalf("pending filter was not scheduled: id=%q filter=%q loading=%v results=%v", m.searchID, m.searchFilter, m.loading, m.results)
+	}
+
+	operation := m.searchTabs[0].operation
+	updated, _ = m.Update(searchMsg{
+		request: 1, operation: operation, filter: "in:outta", filterChange: true,
+		page: daemon.SearchPage{ID: "cached", Total: 1, FoundTotal: 12, Results: []daemon.SearchResult{{Path: "outta.flac"}}},
+	})
+	m = updated.(model)
+	if m.loading || len(m.results) != 1 || m.results[0].path != "outta.flac" || m.searchFilter != "in:outta" {
+		t.Fatalf("pending filter result was not applied: loading=%v filter=%q results=%v", m.loading, m.searchFilter, m.results)
 	}
 }
 

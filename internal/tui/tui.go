@@ -125,7 +125,7 @@ func (m model) browseShare(nodeID, path string, generation, request uint64) tea.
 func (m model) search(query, filter string, request, operation uint64) tea.Cmd {
 	return func() tea.Msg {
 		page, err := m.client.Search(m.ctx, query, filter)
-		return searchMsg{page: page, request: request, operation: operation, err: err}
+		return searchMsg{page: page, request: request, operation: operation, filter: filter, err: err}
 	}
 }
 func (m model) loadSearchPage() tea.Cmd {
@@ -152,6 +152,19 @@ func (m *model) filterSearch(filter string) tea.Cmd {
 	return func() tea.Msg {
 		page, err := m.client.SearchPage(m.ctx, id, 0, filter)
 		return searchMsg{page: page, request: request, operation: operation, filter: filter, filterChange: true, err: err}
+	}
+}
+
+func (m *model) refilterPendingSearch(tab *searchTab, page daemon.SearchPage) tea.Cmd {
+	m.searchOperation++
+	tab.id, tab.operation = page.ID, m.searchOperation
+	tab.results, tab.total, tab.found, tab.next = nil, 0, page.FoundTotal, 0
+	tab.cursor, tab.selected, tab.tree = 0, map[int]bool{}, treeState{}
+	tab.loading, tab.loadingMore, tab.err = true, false, ""
+	id, filter, request, operation := tab.id, tab.filter, tab.request, tab.operation
+	return func() tea.Msg {
+		filtered, err := m.client.SearchPage(m.ctx, id, 0, filter)
+		return searchMsg{page: filtered, request: request, operation: operation, filter: filter, filterChange: true, err: err}
 	}
 }
 
@@ -465,10 +478,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.saveSearchTab()
 			}
 			for i := range m.searchTabs {
-				if m.searchTabs[i].request != x.request || m.searchTabs[i].operation != x.operation {
+				tab := &m.searchTabs[i]
+				if tab.request != x.request || tab.operation != x.operation {
 					continue
 				}
-				applySearchMsg(&m.searchTabs[i], x)
+				if !x.append && !x.filterChange && x.err == nil && tab.filter != x.filter {
+					cmd := m.refilterPendingSearch(tab, x.page)
+					if m.workspace == 0 && i == m.searchTabIndex {
+						m.loadSearchTab(i)
+					}
+					return m, cmd
+				}
+				applySearchMsg(tab, x)
 				if m.workspace == 0 && i == m.searchTabIndex {
 					m.loadSearchTab(i)
 				}
