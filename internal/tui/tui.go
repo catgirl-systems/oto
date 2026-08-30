@@ -71,6 +71,7 @@ type sharesMsg struct {
 	shares []share
 	err    error
 }
+type settingsMsg struct{ err error }
 
 func tick() tea.Cmd { return tea.Tick(time.Second, func(t time.Time) tea.Msg { return tickMsg(t) }) }
 func (m model) loadStatus() tea.Cmd {
@@ -94,6 +95,14 @@ func (m model) browse() tea.Cmd {
 	return func() tea.Msg { x, e := m.client.Browse(m.ctx, u); return browseMsg{toEntries(x), e} }
 }
 
+func (m model) saveSettings() tea.Cmd {
+	cfg := m.cfg
+	return func() tea.Msg {
+		_, err := m.client.UpdateConfig(m.ctx, cfg)
+		return settingsMsg{err}
+	}
+}
+
 func (m model) Init() tea.Cmd {
 	if m.setup {
 		return nil
@@ -108,12 +117,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(m.loadStatus(), m.loadTransfers(), m.loadShares(), tick())
 	case statusMsg:
 		if x.err != nil {
-			m.err = x.err.Error()
+			m.status.err = x.err.Error()
 		} else {
 			m.status = snapshot{status: x.snapshot.Status, user: x.snapshot.Config.Soulseek.Username, err: x.snapshot.Error}
-			if x.snapshot.Error != "" {
-				m.err = x.snapshot.Error
-			}
 		}
 	case searchMsg:
 		m.results, m.err = x.results, errText(x.err)
@@ -127,6 +133,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.transfers, m.err = x.transfers, errText(x.err)
 	case sharesMsg:
 		m.shares, m.err = x.shares, errText(x.err)
+	case settingsMsg:
+		m.err = errText(x.err)
+		if x.err == nil {
+			return m, m.loadStatus()
+		}
 	case tea.PasteMsg:
 		text := strings.Map(func(r rune) rune {
 			if unicode.IsControl(r) {
@@ -138,12 +149,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.setupVals[m.setupField] += text
 		} else if m.editing {
 			m.input += text
-			if m.workspace == 0 {
-				m.query = m.input
-			}
-			if m.workspace == 1 {
-				m.browseUser = m.input
-			}
 		}
 		return m, nil
 	case tea.KeyPressMsg:
@@ -178,6 +183,9 @@ func (m *model) key(k tea.KeyPressMsg) tea.Cmd {
 		}
 		return nil
 	}
+	if m.editing {
+		return m.editKey(k)
+	}
 	switch s {
 	case "q", "ctrl+c":
 		if m.transient && m.active() {
@@ -187,11 +195,25 @@ func (m *model) key(k tea.KeyPressMsg) tea.Cmd {
 		return tea.Quit
 	case "?":
 		m.help = true
-	case "tab", "right":
-		m.workspace = (m.workspace + 1) % 4
+	case "tab":
+		m.workspace = (m.workspace + 1) % 5
 		m.cursor, m.selected = 0, map[int]bool{}
-	case "shift+tab", "left":
-		m.workspace = (m.workspace + 3) % 4
+	case "shift+tab":
+		m.workspace = (m.workspace + 4) % 5
+		m.cursor, m.selected = 0, map[int]bool{}
+	case "right":
+		if m.workspace == 4 {
+			m.settingsSection = (m.settingsSection + 1) % 3
+		} else {
+			m.workspace = (m.workspace + 1) % 5
+		}
+		m.cursor, m.selected = 0, map[int]bool{}
+	case "left":
+		if m.workspace == 4 {
+			m.settingsSection = (m.settingsSection + 2) % 3
+		} else {
+			m.workspace = (m.workspace + 4) % 5
+		}
 		m.cursor, m.selected = 0, map[int]bool{}
 	case "up", "k":
 		if m.cursor > 0 {
@@ -204,6 +226,10 @@ func (m *model) key(k tea.KeyPressMsg) tea.Cmd {
 	case "space":
 		m.toggle()
 	case "enter":
+		if m.workspace == 4 {
+			m.beginEdit()
+			return nil
+		}
 		return m.enter()
 	case "d":
 		if m.workspace == 0 {
@@ -229,53 +255,77 @@ func (m *model) key(k tea.KeyPressMsg) tea.Cmd {
 		if m.workspace == 2 {
 			return m.action("clear")
 		}
-	case "/":
-		m.editing = true
-		switch m.workspace {
-		case 0:
-			m.input = m.query
-		case 1:
-			m.input = m.browseUser
-		default:
-			m.input = ""
+	case "s":
+		if m.workspace == 4 {
+			return m.saveSettings()
 		}
+	case "/":
+		m.beginEdit()
 		return nil
-	}
-	if m.editing {
-		return m.editKey(k)
 	}
 	return nil
 }
+
+func (m *model) beginEdit() {
+	m.editing = true
+	switch m.workspace {
+	case 0:
+		m.input = m.query
+	case 1:
+		m.input = m.browseUser
+	case 4:
+		fields := m.settingFields()
+		if m.cursor < len(fields) {
+			m.input = fields[m.cursor].value
+		}
+	default:
+		m.input = ""
+	}
+}
 func (m *model) editKey(k tea.KeyPressMsg) tea.Cmd {
 	s := k.String()
+	if s == "esc" {
+		m.editing = false
+		m.input = ""
+		return nil
+	}
 	if s == "enter" {
 		m.editing = false
 		if m.workspace == 0 {
+			m.query = strings.TrimSpace(m.input)
+			if m.query == "" {
+				return nil
+			}
 			m.loading = true
 			return m.search()
 		}
 		if m.workspace == 1 {
+			m.browseUser = strings.TrimSpace(m.input)
+			if m.browseUser == "" {
+				return nil
+			}
 			m.loading = true
 			return m.browse()
 		}
 		if m.workspace == 3 {
 			return m.addShare()
 		}
+		if m.workspace == 4 {
+			value := m.input
+			if m.settingsSection != 0 || m.cursor != 1 {
+				value = strings.TrimSpace(value)
+			}
+			m.setSettingValue(value)
+			return nil
+		}
 		return nil
 	}
 	if s == "backspace" {
-		if len(m.input) > 0 {
-			m.input = m.input[:len(m.input)-1]
-		}
+		m.input = popRune(m.input)
 		return nil
 	}
 	if t := k.Key().Text; t != "" {
 		m.input += t
-	}
-	if m.workspace == 0 {
-		m.query = m.input
-	} else {
-		m.browseUser = m.input
 	}
 	return nil
 }

@@ -45,14 +45,20 @@ type download struct {
 	size     uint64
 }
 
+type settingField struct {
+	label, value string
+	secret       bool
+}
+
 type model struct {
 	ctx                                    context.Context
 	client                                 *ipc.Client
 	configPath                             string
+	cfg                                    config.Config
 	transient                              bool
 	setup, help, confirm, editing, loading bool
 	width, height                          int
-	workspace, cursor                      int
+	workspace, cursor, settingsSection     int
 	input, query, browseUser               string
 	setupField                             int
 	setupVals                              [5]string
@@ -74,161 +80,519 @@ func (m model) rows() int {
 		return len(m.entries)
 	case 2:
 		return len(m.transfers)
-	default:
+	case 3:
 		return len(m.shares)
+	default:
+		return len(m.settingFields())
 	}
 }
 
 func newModel(ctx context.Context, c *ipc.Client, path string, transient bool, cfg config.Config) model {
-	return model{ctx: ctx, client: c, configPath: path, transient: transient, width: 80, height: 24, selected: map[int]bool{}, setupVals: [5]string{cfg.Soulseek.Username, cfg.Soulseek.Password, cfg.Soulseek.ListenAddr, cfg.DownloadDir, ""}}
+	return model{ctx: ctx, client: c, configPath: path, cfg: cfg, transient: transient, width: 80, height: 24, selected: map[int]bool{}, setupVals: [5]string{cfg.Soulseek.Username, cfg.Soulseek.Password, cfg.Soulseek.ListenAddr, cfg.DownloadDir, ""}}
 }
 func (m model) View() tea.View {
-	var b strings.Builder
+	content := m.mainView()
 	if m.setup {
-		b.WriteString(m.setupView())
-	} else {
-		b.WriteString(m.mainView())
+		content = m.setupView()
+	} else if m.help {
+		content = m.helpView()
 	}
-	if m.help {
-		b.WriteString("\n\nHELP  tab/shift-tab workspace • arrows/j/k move • enter/space select • d download • / edit • ? help • q quit\nSource: https://github.com/catgirl-systems/slsk-tui • AGPL-3.0-only • no warranty")
-	}
-	if m.confirm {
-		b.WriteString("\n\nActive transfers will be interrupted. Quit? [y/N]")
-	}
-	return tea.NewView(b.String())
+	v := tea.NewView(content)
+	v.AltScreen = true
+	return v
 }
+
 func (m model) setupView() string {
 	labels := []string{"Username", "Password", "Listen address", "Download path", "Share (name:path, optional)"}
+	placeholders := []string{"Soulseek username", "Required", "0.0.0.0:50300", "~/Downloads/slsk-tui", "music:/home/me/Music"}
 	var b strings.Builder
-	b.WriteString("slsk-tui setup\n\n")
-	for i, l := range labels {
-		v := m.setupVals[i]
-		if i == 1 {
-			v = strings.Repeat("•", utf8.RuneCountInString(v))
-		}
-		mark := " "
-		if i == m.setupField {
-			mark = ">"
-		}
-		fmt.Fprintf(&b, "%s %-27s %s\n", mark, l, v)
-	}
-	b.WriteString("\nenter: next/save • esc: quit\n")
-	if m.setupErr != "" {
-		b.WriteString("Error: " + m.setupErr + "\n")
-	}
-	return b.String()
-}
-func (m model) mainView() string {
-	names := []string{"Search", "Browse", "Transfers", "Shares"}
-	var b strings.Builder
-	fmt.Fprintf(&b, "%s  [%s]  %s  user:%s shares:%d transfers:%d\n", accent("slsk-tui"), names[m.workspace], m.status.status, m.status.user, len(m.shares), len(m.transfers))
-	for i, n := range names {
-		if i == m.workspace {
-			fmt.Fprintf(&b, "%s ", accent("["+n+"]"))
-		} else {
-			fmt.Fprintf(&b, " %s  ", n)
-		}
-	}
+	b.WriteString(styled("SLSK", lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#CBA6F7"))))
+	b.WriteString("  First-time setup\n")
+	b.WriteString(muted("Connect directly to Soulseek. Your password stays in your local config."))
 	b.WriteString("\n\n")
+	fieldWidth := max(24, min(52, m.width-12))
+	for i, label := range labels {
+		value := m.setupVals[i]
+		if i == 1 {
+			value = strings.Repeat("•", utf8.RuneCountInString(value))
+		}
+		if value == "" {
+			value = muted(placeholders[i])
+		}
+		marker := "  "
+		if i == m.setupField {
+			marker = styled("› ", lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#CBA6F7")))
+			value += styled("█", lipgloss.NewStyle().Foreground(lipgloss.Color("#CBA6F7")))
+		}
+		fmt.Fprintf(&b, "%s%s\n  %s\n", marker, strong(label), trunc(value, fieldWidth))
+	}
+	if m.setupErr != "" {
+		b.WriteString("\n" + danger("! "+m.setupErr))
+	}
+	b.WriteString("\n\n" + muted("enter next / save   •   esc quit"))
+
+	cardWidth := max(34, min(64, m.width-4))
+	card := panelStyle().Width(cardWidth).Padding(1, 2).Render(b.String())
+	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, card)
+}
+
+func (m model) mainView() string {
+	if m.width < 36 || m.height < 8 {
+		return m.compactView()
+	}
+
+	names := []string{"Search", "Browse", "Transfers", "Shares", "Settings"}
+	left := styled("SLSK", lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#CBA6F7"))) + muted("  Soulseek for your terminal")
+	header := spread(left, m.statusView(), m.width-2)
+	hs := lipgloss.NewStyle().Width(m.width).Padding(0, 1)
+	if colorsEnabled() {
+		hs = hs.Background(lipgloss.Color("#181825"))
+	}
+	header = hs.Render(header)
+
+	var tabs strings.Builder
+	for i, name := range names {
+		if i > 0 {
+			tabs.WriteString("  ")
+		}
+		if i == m.workspace {
+			tabs.WriteString(styled(" "+name+" ", lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#11111B")).Background(lipgloss.Color("#CBA6F7"))))
+		} else {
+			tabs.WriteString(muted(" " + name + " "))
+		}
+	}
+	tabLine := lipgloss.NewStyle().Width(m.width).Padding(0, 1).Render(tabs.String())
+
+	panelHeight := max(4, m.height-4)
+	innerWidth := max(10, m.width-4)
+	innerHeight := max(2, panelHeight-2)
+	var body string
 	switch m.workspace {
 	case 0:
-		m.renderSearch(&b)
+		body = m.renderSearch(innerWidth, innerHeight)
 	case 1:
-		m.renderBrowse(&b)
+		body = m.renderBrowse(innerWidth, innerHeight)
 	case 2:
-		m.renderTransfers(&b)
+		body = m.renderTransfers(innerWidth, innerHeight)
 	case 3:
-		m.renderShares(&b)
+		body = m.renderShares(innerWidth, innerHeight)
+	case 4:
+		body = m.renderSettings(innerWidth, innerHeight)
 	}
-	if m.err != "" {
-		b.WriteString("\nError: " + m.err)
-	}
-	b.WriteString("\n\n")
-	if m.workspace == 0 {
-		b.WriteString("/ search  space select  d download")
-	}
-	if m.workspace == 1 {
-		b.WriteString("/ username  space select  d download")
-	}
-	if m.workspace == 2 {
-		b.WriteString("d cancel  r retry  c clear")
-	}
-	if m.workspace == 3 {
-		b.WriteString("/ add (name:path)  d remove  r rescan")
-	}
-	b.WriteString("  • ? help  • q quit")
-	return b.String()
+	panel := panelStyle().Width(m.width).Height(panelHeight).Padding(0, 1).Render(body)
+
+	parts := []string{header, tabLine, panel, m.errorView(), m.footerView()}
+	return strings.Join(parts, "\n")
 }
-func (m model) renderSearch(b *strings.Builder) {
-	fmt.Fprintf(b, "Query: %s\n", m.query)
-	if m.loading {
-		b.WriteString("Searching…\n")
+
+func (m model) compactView() string {
+	names := []string{"Search", "Browse", "Transfers", "Shares", "Settings"}
+	lines := []string{
+		trunc("SLSK  "+string(m.status.status), m.width),
+		trunc("["+names[m.workspace]+"]", m.width),
+		trunc(m.errorText(), m.width),
+		trunc("tab switch  ? help  q quit", m.width),
 	}
-	if len(m.results) == 0 && !m.loading {
-		b.WriteString("No results. Type / then a query and press enter.\n")
-		return
+	return strings.Join(lines, "\n")
+}
+
+func (m model) helpView() string {
+	var b strings.Builder
+	b.WriteString(styled("Keyboard guide", lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#CBA6F7"))))
+	b.WriteString("\n" + muted("Everything is reachable without a mouse.") + "\n\n")
+	rows := [][2]string{
+		{"tab / shift+tab", "switch workspace"},
+		{"↑ ↓  or  j k", "move through items or fields"},
+		{"← →", "change settings section"},
+		{"/ / enter", "edit a query, username, share, or setting"},
+		{"space", "select more than one file"},
+		{"d", "download, cancel, or remove"},
+		{"s", "save settings"},
+		{"? / esc", "close this guide"},
+		{"q", "quit"},
 	}
-	for i, x := range m.results {
-		cursor, mark := " ", "[ ]"
-		if i == m.cursor {
-			cursor = ">"
-		}
+	for _, row := range rows {
+		fmt.Fprintf(&b, "%-20s %s\n", strong(row[0]), row[1])
+	}
+	b.WriteString("\n" + muted("github.com/catgirl-systems/slsk-tui  •  AGPL-3.0-only  •  no warranty"))
+	cardWidth := max(34, min(72, m.width-4))
+	card := panelStyle().Width(cardWidth).Padding(1, 2).Render(b.String())
+	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, card)
+}
+
+func (m model) renderSearch(width, height int) string {
+	query := m.query
+	if m.editing {
+		query = m.input
+	}
+	prompt := muted("/  Press / to search the network")
+	if query != "" || m.editing {
+		prompt = styled("/  "+query, lipgloss.NewStyle().Foreground(lipgloss.Color("#F5E0DC")))
+	}
+	if m.editing {
+		prompt += styled("█", lipgloss.NewStyle().Foreground(lipgloss.Color("#CBA6F7"))) + muted("   enter search  •  esc cancel")
+	}
+	lines := []string{sectionHeader("SEARCH", countLabel(len(m.results), "result"), width), trunc(prompt, width)}
+	limit := max(0, height-len(lines))
+	if m.loading && limit > 0 {
+		return strings.Join(append(lines, muted("◌  Searching Soulseek…")), "\n")
+	}
+	if len(m.results) == 0 && limit > 0 {
+		return strings.Join(append(lines, "\n"+muted("No results yet. Press / and type an artist, album, or filename.")), "\n")
+	}
+	start, end := visibleRange(len(m.results), m.cursor, limit)
+	for i := start; i < end; i++ {
+		x := m.results[i]
+		mark := "○"
 		if m.selected[i] {
-			mark = "[x]"
+			mark = "●"
 		}
-		availability := fmt.Sprintf("q:%d %dKiB/s", x.queue, x.speed/1024)
+		availability := formatBytes(x.size)
 		if x.free {
-			availability = "free " + availability
+			availability += "  free"
+		} else if x.queue > 0 {
+			availability += fmt.Sprintf("  queue %d", x.queue)
 		}
-		fmt.Fprintf(b, "%s%s %s  %s  %s  %d bytes\n", cursor, mark, trunc(x.user+"/"+x.path, m.width-38), map[bool]string{true: "dir", false: "file"}[x.directory], availability, x.size)
+		if x.speed > 0 {
+			availability += "  " + formatBytes(uint64(x.speed)) + "/s"
+		}
+		kind := "·"
+		if x.directory {
+			kind = "▸"
+		}
+		pathWidth := max(4, width-lipgloss.Width(availability)-7)
+		row := fmt.Sprintf("%s %s %s  %s", mark, kind, trunc(x.user+"/"+x.path, pathWidth), availability)
+		lines = append(lines, selectedRow(row, i == m.cursor))
 	}
+	return strings.Join(lines, "\n")
 }
-func (m model) renderBrowse(b *strings.Builder) {
-	fmt.Fprintf(b, "User: %s\n", m.browseUser)
-	if m.loading {
-		b.WriteString("Loading shares…\n")
+
+func (m model) renderBrowse(width, height int) string {
+	user := m.browseUser
+	if m.editing {
+		user = m.input
 	}
-	if len(m.entries) == 0 && !m.loading {
-		b.WriteString("No files. Type / for a username and press enter.\n")
-		return
+	prompt := muted("/  Press / to enter a username")
+	if user != "" || m.editing {
+		prompt = styled("/  "+user, lipgloss.NewStyle().Foreground(lipgloss.Color("#F5E0DC")))
 	}
-	for i, x := range m.entries {
-		cursor, mark := " ", "[ ]"
-		if i == m.cursor {
-			cursor = ">"
-		}
+	if m.editing {
+		prompt += styled("█", lipgloss.NewStyle().Foreground(lipgloss.Color("#CBA6F7"))) + muted("   enter browse  •  esc cancel")
+	}
+	lines := []string{sectionHeader("BROWSE", countLabel(len(m.entries), "item"), width), trunc(prompt, width)}
+	limit := max(0, height-len(lines))
+	if m.loading && limit > 0 {
+		return strings.Join(append(lines, muted("◌  Loading public shares…")), "\n")
+	}
+	if len(m.entries) == 0 && limit > 0 {
+		return strings.Join(append(lines, "\n"+muted("Enter a Soulseek username to browse their public files.")), "\n")
+	}
+	start, end := visibleRange(len(m.entries), m.cursor, limit)
+	for i := start; i < end; i++ {
+		x := m.entries[i]
+		mark := "○"
 		if m.selected[i] {
-			mark = "[x]"
+			mark = "●"
 		}
-		depth := strings.Count(strings.ReplaceAll(x.name, "\\", "/"), "/")
-		fmt.Fprintf(b, "%s%s %*s%s  %d bytes\n", cursor, mark, depth*2, "", trunc(filepath.Base(strings.ReplaceAll(x.name, "\\", "/")), m.width-16), x.size)
+		kind := "·"
+		if x.directory {
+			kind = "▾"
+		}
+		path := strings.ReplaceAll(x.name, "\\", "/")
+		depth := min(6, strings.Count(path, "/"))
+		nameWidth := max(4, width-14-depth*2)
+		row := fmt.Sprintf("%s %s %s%s  %s", mark, kind, strings.Repeat("  ", depth), trunc(filepath.Base(path), nameWidth), formatBytes(x.size))
+		lines = append(lines, selectedRow(row, i == m.cursor))
 	}
+	return strings.Join(lines, "\n")
 }
-func (m model) renderTransfers(b *strings.Builder) {
-	if len(m.transfers) == 0 {
-		b.WriteString("No transfers. Queue a file from Search or Browse.\n")
-		return
+
+func (m model) renderTransfers(width, height int) string {
+	lines := []string{sectionHeader("TRANSFERS", countLabel(len(m.transfers), "transfer"), width)}
+	limit := max(0, height-1)
+	if len(m.transfers) == 0 && limit > 0 {
+		return strings.Join(append(lines, "\n"+muted("Nothing queued. Download a file from Search or Browse.")), "\n")
 	}
-	for i, x := range m.transfers {
-		p := ""
+	start, end := visibleRange(len(m.transfers), m.cursor, limit)
+	for i := start; i < end; i++ {
+		x := m.transfers[i]
+		progress := x.state
 		if x.total > 0 {
-			p = fmt.Sprintf(" %d%%", x.done*100/x.total)
+			progress += fmt.Sprintf("  %d%%", min(uint64(100), x.done*100/x.total))
 		}
 		if x.queue > 0 {
-			p += fmt.Sprintf(" queue:%d", x.queue)
+			progress += fmt.Sprintf("  queue %d", x.queue)
 		}
-		fmt.Fprintf(b, "%s %s %s %s%s\n", map[bool]string{true: ">", false: " "}[i == m.cursor], trunc(x.filename, m.width-35), x.state, x.direction, p)
+		direction := "↓"
+		if x.direction == "upload" {
+			direction = "↑"
+		}
+		nameWidth := max(4, width-lipgloss.Width(progress)-5)
+		row := fmt.Sprintf("%s  %s  %s", direction, trunc(x.filename, nameWidth), progress)
+		lines = append(lines, selectedRow(row, i == m.cursor))
+	}
+	return strings.Join(lines, "\n")
+}
+
+func (m model) renderShares(width, height int) string {
+	lines := []string{sectionHeader("SHARES", countLabel(len(m.shares), "folder"), width)}
+	limit := max(0, height-1)
+	if m.editing && limit > 0 {
+		lines = append(lines, trunc(styled("/  "+m.input+"█", lipgloss.NewStyle().Foreground(lipgloss.Color("#F5E0DC")))+muted("   name:path  •  enter add  •  esc cancel"), width))
+		limit--
+	}
+	if len(m.shares) == 0 && limit > 0 {
+		return strings.Join(append(lines, "\n"+muted("No public folders. Press / to add one as name:path.")), "\n")
+	}
+	start, end := visibleRange(len(m.shares), m.cursor, limit)
+	for i := start; i < end; i++ {
+		x := m.shares[i]
+		nameWidth := max(4, min(20, width/3))
+		row := fmt.Sprintf("◆  %-*s  %s", nameWidth, trunc(x.name, nameWidth), trunc(x.path, max(4, width-nameWidth-5)))
+		lines = append(lines, selectedRow(row, i == m.cursor))
+	}
+	return strings.Join(lines, "\n")
+}
+
+func (m model) renderSettings(width, height int) string {
+	sections := []string{"Account", "Connection", "Downloads"}
+	lines := []string{sectionHeader("SETTINGS", "Changes reconnect the session", width)}
+	sidebarWidth := max(14, min(20, width/4))
+	var sidebar strings.Builder
+	for i, section := range sections {
+		if i == m.settingsSection {
+			sidebar.WriteString(styled("› "+section, lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#F5E0DC"))))
+		} else {
+			sidebar.WriteString("  " + muted(section))
+		}
+		if i < len(sections)-1 {
+			sidebar.WriteByte('\n')
+		}
+	}
+	contentHeight := max(1, height-1)
+	sideStyle := lipgloss.NewStyle().Width(sidebarWidth).Height(contentHeight).Border(lipgloss.NormalBorder(), false, true, false, false).PaddingRight(1)
+	if colorsEnabled() {
+		sideStyle = sideStyle.BorderForeground(lipgloss.Color("#45475A"))
+	}
+
+	fields := m.settingFields()
+	formLines := []string{strong(sections[m.settingsSection])}
+	for i, field := range fields {
+		value := field.value
+		if m.editing && i == m.cursor {
+			value = m.input
+		}
+		if field.secret && value != "" {
+			value = strings.Repeat("•", utf8.RuneCountInString(value))
+		}
+		if value == "" {
+			value = muted("Not set")
+		}
+		if m.editing && i == m.cursor {
+			value += styled("█", lipgloss.NewStyle().Foreground(lipgloss.Color("#CBA6F7")))
+		}
+		row := fmt.Sprintf("%-16s %s", field.label, value)
+		formLines = append(formLines, selectedRow(trunc(row, max(4, width-sidebarWidth-4)), i == m.cursor))
+	}
+	if len(formLines) < contentHeight {
+		formLines = append(formLines, "", muted("enter edit  •  s save  •  ← → section"))
+	}
+	if len(formLines) > contentHeight {
+		formLines = formLines[:contentHeight]
+	}
+	formWidth := max(12, width-sidebarWidth-2)
+	content := lipgloss.JoinHorizontal(lipgloss.Top, sideStyle.Render(sidebar.String()), lipgloss.NewStyle().Width(formWidth).PaddingLeft(2).Render(strings.Join(formLines, "\n")))
+	return strings.Join(append(lines, content), "\n")
+}
+
+func (m model) settingFields() []settingField {
+	switch m.settingsSection {
+	case 0:
+		return []settingField{{"Username", m.cfg.Soulseek.Username, false}, {"Password", m.cfg.Soulseek.Password, true}}
+	case 1:
+		return []settingField{{"Server", m.cfg.Soulseek.Server, false}, {"Listen address", m.cfg.Soulseek.ListenAddr, false}}
+	default:
+		return []settingField{{"Download path", m.cfg.DownloadDir, false}}
 	}
 }
-func (m model) renderShares(b *strings.Builder) {
-	if len(m.shares) == 0 {
-		b.WriteString("No shares configured.\n")
-		return
-	}
-	for i, x := range m.shares {
-		fmt.Fprintf(b, "%s %s  %s\n", map[bool]string{true: ">", false: " "}[i == m.cursor], x.name, trunc(x.path, m.width-8))
+
+func (m *model) setSettingValue(value string) {
+	switch m.settingsSection {
+	case 0:
+		if m.cursor == 0 {
+			m.cfg.Soulseek.Username = value
+		} else {
+			m.cfg.Soulseek.Password = value
+		}
+	case 1:
+		if m.cursor == 0 {
+			m.cfg.Soulseek.Server = value
+		} else {
+			m.cfg.Soulseek.ListenAddr = value
+		}
+	default:
+		m.cfg.DownloadDir = value
 	}
 }
+
+func (m model) statusView() string {
+	status := string(m.status.status)
+	if status == "" {
+		status = "starting"
+	}
+	color := lipgloss.Color("#F9E2AF")
+	if m.status.status == daemon.StatusConnected {
+		color = lipgloss.Color("#A6E3A1")
+	} else if m.status.status == daemon.StatusError || m.status.status == daemon.StatusStopped {
+		color = lipgloss.Color("#F38BA8")
+	}
+	label := styled("●", lipgloss.NewStyle().Foreground(color)) + " " + status
+	if m.status.user != "" {
+		label += muted("  @" + m.status.user)
+	}
+	return label
+}
+
+func (m model) footerView() string {
+	if m.confirm {
+		return lipgloss.NewStyle().Width(m.width).Padding(0, 1).Render(danger("Quit and interrupt active transfers?  y confirm  •  esc cancel"))
+	}
+	hints := []string{"tab switch", "↑↓ move"}
+	switch m.workspace {
+	case 0:
+		hints = append(hints, "/ search", "space select", "d download")
+	case 1:
+		hints = append(hints, "/ user", "space select", "d download")
+	case 2:
+		hints = append(hints, "d cancel", "r retry", "c clear")
+	case 3:
+		hints = append(hints, "/ add", "d remove", "r rescan")
+	case 4:
+		hints = append(hints, "←→ section", "enter edit", "s save")
+	}
+	hints = append(hints, "? help", "q quit")
+	return lipgloss.NewStyle().Width(m.width).Padding(0, 1).Render(muted(trunc(strings.Join(hints, "  •  "), m.width-2)))
+}
+
+func panelStyle() lipgloss.Style {
+	s := lipgloss.NewStyle().Border(lipgloss.RoundedBorder(), true)
+	if colorsEnabled() {
+		s = s.BorderForeground(lipgloss.Color("#45475A"))
+	}
+	return s
+}
+
+func colorsEnabled() bool { return os.Getenv("NO_COLOR") == "" }
+
+func styled(s string, style lipgloss.Style) string {
+	if !colorsEnabled() {
+		return s
+	}
+	return style.Render(s)
+}
+
+func accent(s string) string {
+	return styled(s, lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#CBA6F7")))
+}
+
+func strong(s string) string {
+	return styled(s, lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#CDD6F4")))
+}
+
+func muted(s string) string {
+	return styled(s, lipgloss.NewStyle().Foreground(lipgloss.Color("#7F849C")))
+}
+
+func danger(s string) string {
+	return styled(s, lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#F38BA8")))
+}
+
+func selectedRow(s string, selected bool) string {
+	if !selected {
+		return "  " + s
+	}
+	return styled("› "+s, lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#F5E0DC")))
+}
+
+func sectionHeader(title, detail string, width int) string {
+	return spread(accent(title), muted(detail), width)
+}
+
+func spread(left, right string, width int) string {
+	if width <= 0 {
+		return ""
+	}
+	lw, rw := lipgloss.Width(left), lipgloss.Width(right)
+	if lw+rw+1 <= width {
+		return left + strings.Repeat(" ", width-lw-rw) + right
+	}
+	if rw+1 < width {
+		return trunc(left, width-rw-1) + " " + right
+	}
+	return trunc(left, width)
+}
+
+func (m model) errorText() string {
+	if m.status.err != "" {
+		return "Error: " + m.status.err
+	}
+	if m.err != "" {
+		return "Error: " + m.err
+	}
+	return ""
+}
+
+func (m model) errorView() string {
+	message := m.errorText()
+	if message != "" {
+		message = danger(message)
+	}
+	return lipgloss.NewStyle().Width(m.width).Padding(0, 1).Render(trunc(message, m.width-2))
+}
+
+func countLabel(n int, singular string) string {
+	word := singular
+	if n != 1 {
+		word += "s"
+	}
+	return fmt.Sprintf("%d %s", n, word)
+}
+
+func visibleRange(total, cursor, limit int) (int, int) {
+	if limit <= 0 || total == 0 {
+		return 0, 0
+	}
+	if total <= limit {
+		return 0, total
+	}
+	start := cursor - limit/2
+	if start < 0 {
+		start = 0
+	}
+	if start+limit > total {
+		start = total - limit
+	}
+	return start, start + limit
+}
+
+func formatBytes(n uint64) string {
+	if n < 1024 {
+		return fmt.Sprintf("%d B", n)
+	}
+	units := []string{"KiB", "MiB", "GiB", "TiB"}
+	value := float64(n)
+	for _, unit := range units {
+		value /= 1024
+		if value < 1024 || unit == "TiB" {
+			if value >= 10 {
+				return fmt.Sprintf("%.0f %s", value, unit)
+			}
+			return fmt.Sprintf("%.1f %s", value, unit)
+		}
+	}
+	return fmt.Sprintf("%d B", n)
+}
+
 func trunc(s string, n int) string {
 	if n < 4 {
 		return ""
@@ -236,11 +600,12 @@ func trunc(s string, n int) string {
 	return ansi.Truncate(s, n, "…")
 }
 
-func accent(s string) string {
-	if os.Getenv("NO_COLOR") != "" {
+func popRune(s string) string {
+	_, size := utf8.DecodeLastRuneInString(s)
+	if size == 0 {
 		return s
 	}
-	return lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("63")).Render(s)
+	return s[:len(s)-size]
 }
 
 func (m *model) setupKey(k tea.KeyPressMsg) tea.Cmd {
@@ -281,10 +646,7 @@ func (m *model) setupKey(k tea.KeyPressMsg) tea.Cmd {
 		return nil
 	}
 	if s == "backspace" {
-		v := m.setupVals[m.setupField]
-		if len(v) > 0 {
-			m.setupVals[m.setupField] = v[:len(v)-1]
-		}
+		m.setupVals[m.setupField] = popRune(m.setupVals[m.setupField])
 		return nil
 	}
 	if t := k.Key().Text; t != "" {
