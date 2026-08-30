@@ -424,6 +424,9 @@ func TestTransferDirectionTabsProgressAndSpinner(t *testing.T) {
 		{id: "d2", filename: `folder\queued.mp3`, direction: "download", state: "queued", total: 100, queue: 2, user: "alice"},
 		{id: "u1", filename: "shared.wav", direction: "upload", state: "completed", done: 100, total: 100, user: "bob"},
 	}}
+	if got := m.workspaceNames()[2]; got != "Transfers 1↓ 0↑" {
+		t.Fatalf("transfer activity tab = %q", got)
+	}
 	m.transferTrees[0], m.transferCursors[0] = buildTransferTree(m.transfers, "download", treeState{}, 0)
 	m.transferTrees[1], m.transferCursors[1] = buildTransferTree(m.transfers, "upload", treeState{}, 0)
 	m.cursor = 0

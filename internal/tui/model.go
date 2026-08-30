@@ -187,12 +187,28 @@ func (m model) setupView() string {
 	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, card)
 }
 
+func (m model) workspaceNames() []string {
+	names := []string{"Search", "Browse", "Transfers", "Shares", "Settings"}
+	downloads, uploads := 0, 0
+	for _, transfer := range m.transfers {
+		if transfer.state != "running" {
+			continue
+		}
+		if transfer.direction == "upload" {
+			uploads++
+		} else {
+			downloads++
+		}
+	}
+	names[2] = fmt.Sprintf("Transfers %d↓ %d↑", downloads, uploads)
+	return names
+}
 func (m model) mainView() string {
 	if m.width < 36 || m.height < 8 {
 		return m.compactView()
 	}
 
-	names := []string{"Search", "Browse", "Transfers", "Shares", "Settings"}
+	names := m.workspaceNames()
 	left := styled("oto", lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#CBA6F7"))) + muted("  Soulseek for your terminal")
 	header := spread(left, m.statusView(), m.width-2)
 	hs := lipgloss.NewStyle().Width(m.width).Padding(0, 1)
@@ -237,7 +253,7 @@ func (m model) mainView() string {
 }
 
 func (m model) compactView() string {
-	names := []string{"Search", "Browse", "Transfers", "Shares", "Settings"}
+	names := m.workspaceNames()
 	lines := []string{
 		trunc("oto  "+string(m.status.status), m.width),
 		trunc("["+names[m.workspace]+"]", m.width),
