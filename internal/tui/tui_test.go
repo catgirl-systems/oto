@@ -444,6 +444,11 @@ func TestTransferDirectionTabsProgressAndSpinner(t *testing.T) {
 			}
 		}
 	}
+	m.transfers[1].state, m.transfers[1].err = "failed", "File not shared."
+	if failed := m.renderTransfers(140, 10); !strings.Contains(failed, "failed: File not shared.") {
+		t.Fatalf("transfer error was not rendered: %q", failed)
+	}
+	m.transfers[1].state, m.transfers[1].err = "queued", ""
 	downloadCursor := m.transferTrees[0].cursorForSource(1)
 	m.cursor = downloadCursor
 	m.key(tea.KeyPressMsg(tea.Key{Code: tea.KeyPgDown, Mod: tea.ModCtrl}))

@@ -61,9 +61,9 @@ type browseTab struct {
 	tree              treeState
 }
 type transfer struct {
-	id, user, filename, direction, state string
-	done, total                          uint64
-	queue                                uint32
+	id, user, filename, direction, state, err string
+	done, total                               uint64
+	queue                                     uint32
 }
 type share struct{ name, path string }
 type download struct {
@@ -634,6 +634,9 @@ func (m model) renderTransfers(width, height int) string {
 		if node.kind == treeFile && node.source >= 0 {
 			x := m.transfers[node.source]
 			state = x.state
+			if x.err != "" {
+				state += ": " + x.err
+			}
 			if x.queue > 0 {
 				state += fmt.Sprintf(" q%d", x.queue)
 			}
@@ -1147,7 +1150,7 @@ func toEntries(x []soulseek.ShareEntry) []entry {
 func toTransfers(x []daemon.Transfer) []transfer {
 	r := make([]transfer, len(x))
 	for i, v := range x {
-		r[i] = transfer{id: v.ID, user: v.Username, filename: v.Filename, direction: v.Direction, state: v.State, done: v.Done, total: v.Total, queue: v.Queue}
+		r[i] = transfer{id: v.ID, user: v.Username, filename: v.Filename, direction: v.Direction, state: v.State, err: v.Error, done: v.Done, total: v.Total, queue: v.Queue}
 	}
 	return r
 }
