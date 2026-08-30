@@ -38,6 +38,15 @@ type entry struct {
 	size      uint64
 	directory bool
 }
+
+type browseTab struct {
+	user, target, err string
+	entries           []entry
+	cursor            int
+	selected          map[int]bool
+	loading           bool
+	request           uint64
+}
 type transfer struct {
 	id, user, filename, direction, state string
 	done, total                          uint64
@@ -74,6 +83,9 @@ type model struct {
 	status                                 snapshot
 	results                                []result
 	entries                                []entry
+	browseTabs                             []browseTab
+	browseTabIndex                         int
+	browseRequest                          uint64
 	transfers                              []transfer
 	shares                                 []share
 	selected                               map[int]bool
@@ -225,7 +237,10 @@ func (m model) helpView() string {
 		{"tab (filter)", "complete fields and special values"},
 		{"space", "select more than one file"},
 		{"d", "download, cancel, or remove"},
-		{"r", "retry a transfer or rescan shares"},
+		{"r", "refresh browse, retry transfer, or rescan shares"},
+		{"b (search)", "browse the selected result's user and folder"},
+		{"ctrl+page up/down", "switch user browse tabs"},
+		{"ctrl+w (browse)", "close the active user tab"},
 		{"s", "save settings and reconnect"},
 		{"? / esc", "open or close this guide"},
 		{"q", "quit"},
@@ -249,6 +264,11 @@ func resultPath(path string) (string, string) {
 func searchColumn(value string, width int) string {
 	value = trunc(value, width)
 	return strings.Repeat(" ", max(0, width-lipgloss.Width(value))) + value
+}
+
+func searchTextColumn(value string, width int) string {
+	value = trunc(value, width)
+	return value + strings.Repeat(" ", max(0, width-lipgloss.Width(value)))
 }
 
 func searchMetadata(x result, width int) (string, string) {
@@ -296,8 +316,13 @@ func searchMetadata(x result, width int) (string, string) {
 
 	headings, values := make([]string, len(columns)), make([]string, len(columns))
 	for i, column := range columns {
-		headings[i] = searchColumn(column.label, column.width)
-		values[i] = searchColumn(column.value, column.width)
+		if column.label == "USER" {
+			headings[i] = searchTextColumn(column.label, column.width)
+			values[i] = searchTextColumn(column.value, column.width)
+		} else {
+			headings[i] = searchColumn(column.label, column.width)
+			values[i] = searchColumn(column.value, column.width)
+		}
 	}
 	return strings.Join(headings, " "), strings.Join(values, " ")
 }
@@ -340,7 +365,7 @@ func (m model) renderSearch(width, height int) string {
 	lines = append(lines, trunc(muted(source), width))
 	headings, _ := searchMetadata(result{}, width)
 	nameWidth := max(4, width-lipgloss.Width(headings)-8)
-	lines = append(lines, muted("      "+searchColumn("FILE", nameWidth)+"  "+headings))
+	lines = append(lines, muted("      "+searchTextColumn("FILE", nameWidth)+"  "+headings))
 
 	limit := max(0, height-len(lines))
 	start, end := visibleRange(len(m.results), m.cursor, limit)
@@ -356,10 +381,29 @@ func (m model) renderSearch(width, height int) string {
 		}
 		_, name := resultPath(x.path)
 		_, metadata := searchMetadata(x, width)
-		row := fmt.Sprintf("%s %s %s  %s", mark, kind, searchColumn(name, nameWidth), metadata)
-		lines = append(lines, selectedRow(row, i == m.cursor))
+		row := fmt.Sprintf("%s %s %s  %s", mark, kind, searchTextColumn(name, nameWidth), metadata)
+		lines = append(lines, searchResultRow(row, i == m.cursor, m.selected[i]))
 	}
 	return strings.Join(lines, "\n")
+}
+
+func (m model) browseTabsLine(width int) string {
+	if len(m.browseTabs) == 0 {
+		return ""
+	}
+	labels := make([]string, len(m.browseTabs))
+	for i, tab := range m.browseTabs {
+		label := tab.user
+		if tab.loading {
+			label += "…"
+		}
+		if i == m.browseTabIndex {
+			labels[i] = accent("[" + label + "]")
+		} else {
+			labels[i] = muted(label)
+		}
+	}
+	return trunc(muted("USERS  ")+strings.Join(labels, muted("  ")), width)
 }
 
 func (m model) renderBrowse(width, height int) string {
@@ -370,7 +414,11 @@ func (m model) renderBrowse(width, height int) string {
 	} else if m.browseUser != "" {
 		prompt = styled("/  "+m.browseUser, inputStyle)
 	}
-	lines := []string{sectionHeader("BROWSE", countLabel(len(m.entries), "item"), width), trunc(prompt, width)}
+	lines := []string{sectionHeader("BROWSE", countLabel(len(m.entries), "item"), width)}
+	if tabs := m.browseTabsLine(width); tabs != "" {
+		lines = append(lines, tabs)
+	}
+	lines = append(lines, trunc(prompt, width))
 	limit := max(0, height-len(lines))
 	if m.loading && limit > 0 {
 		return strings.Join(append(lines, muted("◌  Loading public shares…")), "\n")
@@ -393,7 +441,7 @@ func (m model) renderBrowse(width, height int) string {
 		depth := min(6, strings.Count(path, "/"))
 		nameWidth := max(4, width-14-depth*2)
 		row := fmt.Sprintf("%s %s %s%s  %s", mark, kind, strings.Repeat("  ", depth), trunc(filepath.Base(path), nameWidth), formatBytes(x.size))
-		lines = append(lines, selectedRow(row, i == m.cursor))
+		lines = append(lines, searchResultRow(row, i == m.cursor, m.selected[i]))
 	}
 	return strings.Join(lines, "\n")
 }
@@ -550,9 +598,9 @@ func (m model) footerView() string {
 	hints := []string{"tab switch", "↑↓ move"}
 	switch m.workspace {
 	case 0:
-		hints = append(hints, "/ search", "f filter", "c clear/restore", "space select", "d download")
+		hints = append(hints, "/ search", "f filter", "b browse folder", "space select", "d download")
 	case 1:
-		hints = append(hints, "/ user", "space select", "d download")
+		hints = append(hints, "/ user", "ctrl+pgup/down tabs", "ctrl+w close", "r refresh", "space select", "d download")
 	case 2:
 		hints = append(hints, "d cancel", "r retry", "c clear")
 	case 3:
@@ -602,6 +650,22 @@ func selectedRow(s string, selected bool) string {
 		return "  " + s
 	}
 	return styled("› "+s, lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#F5E0DC")))
+}
+
+func searchResultRow(s string, current, selected bool) string {
+	prefix := "  "
+	style := lipgloss.NewStyle()
+	if selected {
+		style = style.Bold(true).Foreground(lipgloss.Color("#CBA6F7"))
+	}
+	if current {
+		prefix = "› "
+		style = style.Bold(true).Foreground(lipgloss.Color("#F5E0DC")).Background(lipgloss.Color("#313244"))
+		if selected {
+			style = style.Foreground(lipgloss.Color("#1E1E2E")).Background(lipgloss.Color("#CBA6F7"))
+		}
+	}
+	return styled(prefix+s, style)
 }
 
 func sectionHeader(title, detail string, width int) string {

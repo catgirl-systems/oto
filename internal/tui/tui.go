@@ -63,6 +63,8 @@ type searchMsg struct {
 	err          error
 }
 type browseMsg struct {
+	user    string
+	request uint64
 	entries []entry
 	err     error
 }
@@ -108,9 +110,128 @@ func (m model) filterSearch(filter string) tea.Cmd {
 		return searchMsg{page: page, filter: filter, filterChange: true, err: err}
 	}
 }
-func (m model) browse() tea.Cmd {
-	u := m.browseUser
-	return func() tea.Msg { x, e := m.client.Browse(m.ctx, u); return browseMsg{toEntries(x), e} }
+func (m model) browse(user string, request uint64) tea.Cmd {
+	return func() tea.Msg {
+		x, err := m.client.Browse(m.ctx, user)
+		return browseMsg{user: user, request: request, entries: toEntries(x), err: err}
+	}
+}
+
+func normalizeBrowsePath(path string) string {
+	return strings.Trim(strings.ReplaceAll(path, "/", "\\"), "\\")
+}
+
+func browseTargetCursor(entries []entry, target string) int {
+	target = normalizeBrowsePath(target)
+	if target == "" {
+		return 0
+	}
+	for i, item := range entries {
+		if item.directory && strings.EqualFold(normalizeBrowsePath(item.name), target) {
+			return i
+		}
+	}
+	prefix := strings.ToLower(target + "\\")
+	for i, item := range entries {
+		if strings.HasPrefix(strings.ToLower(normalizeBrowsePath(item.name)), prefix) {
+			return i
+		}
+	}
+	return 0
+}
+
+func (m *model) saveBrowseTab() {
+	if m.browseTabIndex < 0 || m.browseTabIndex >= len(m.browseTabs) {
+		return
+	}
+	tab := &m.browseTabs[m.browseTabIndex]
+	tab.entries, tab.cursor, tab.selected, tab.loading = m.entries, m.cursor, m.selected, m.loading
+}
+
+func (m *model) loadBrowseTab(index int) {
+	if index < 0 || index >= len(m.browseTabs) {
+		m.browseUser, m.entries, m.cursor, m.loading = "", nil, 0, false
+		m.selected, m.err = map[int]bool{}, ""
+		return
+	}
+	m.browseTabIndex = index
+	tab := &m.browseTabs[index]
+	if tab.selected == nil {
+		tab.selected = map[int]bool{}
+	}
+	m.browseUser, m.entries, m.cursor, m.selected, m.loading = tab.user, tab.entries, tab.cursor, tab.selected, tab.loading
+	m.err = tab.err
+}
+
+func (m *model) switchWorkspace(workspace int) {
+	if m.workspace == 1 {
+		m.saveBrowseTab()
+	}
+	m.workspace = (workspace + 5) % 5
+	if m.workspace == 1 {
+		m.loadBrowseTab(m.browseTabIndex)
+		return
+	}
+	m.cursor, m.selected = 0, map[int]bool{}
+	m.loading = false
+}
+
+func (m *model) switchBrowseTab(delta int) {
+	if len(m.browseTabs) < 2 {
+		return
+	}
+	m.saveBrowseTab()
+	m.loadBrowseTab((m.browseTabIndex + delta + len(m.browseTabs)) % len(m.browseTabs))
+}
+
+func (m *model) closeBrowseTab() {
+	if len(m.browseTabs) == 0 {
+		return
+	}
+	m.saveBrowseTab()
+	m.browseTabs = append(m.browseTabs[:m.browseTabIndex], m.browseTabs[m.browseTabIndex+1:]...)
+	if len(m.browseTabs) == 0 {
+		m.loadBrowseTab(-1)
+		return
+	}
+	m.loadBrowseTab(min(m.browseTabIndex, len(m.browseTabs)-1))
+}
+
+func (m *model) openBrowse(user, target string, refresh bool) tea.Cmd {
+	user = strings.TrimSpace(user)
+	if user == "" {
+		return nil
+	}
+	if m.workspace == 1 {
+		m.saveBrowseTab()
+	}
+	index := -1
+	for i := range m.browseTabs {
+		if strings.EqualFold(m.browseTabs[i].user, user) {
+			index = i
+			break
+		}
+	}
+	if index < 0 {
+		m.browseTabs = append(m.browseTabs, browseTab{user: user, selected: map[int]bool{}})
+		index = len(m.browseTabs) - 1
+	}
+	tab := &m.browseTabs[index]
+	tab.target = normalizeBrowsePath(target)
+	request := refresh || (len(tab.entries) == 0 && !tab.loading)
+	if request {
+		m.browseRequest++
+		tab.request, tab.loading = m.browseRequest, true
+	} else if tab.target != "" {
+		tab.cursor = browseTargetCursor(tab.entries, tab.target)
+		tab.target = ""
+	}
+	m.workspace = 1
+	m.loadBrowseTab(index)
+	if request {
+		return m.browse(tab.user, tab.request)
+	}
+	return nil
 }
 
 func (m model) saveSettings() tea.Cmd {
@@ -169,9 +290,26 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.searchID, m.searchTotal, m.searchFound, m.searchNext = x.page.ID, x.page.Total, x.page.FoundTotal, x.page.NextCursor
 	case browseMsg:
-		m.entries, m.err = x.entries, errText(x.err)
-		m.cursor, m.selected = 0, map[int]bool{}
-		m.loading = false
+		user := x.user
+		if user == "" {
+			user = m.browseUser
+		}
+		for i := range m.browseTabs {
+			tab := &m.browseTabs[i]
+			if !strings.EqualFold(tab.user, user) || tab.request != x.request {
+				continue
+			}
+			tab.loading, tab.err = false, errText(x.err)
+			if x.err == nil {
+				tab.entries, tab.selected = x.entries, map[int]bool{}
+				tab.cursor = browseTargetCursor(tab.entries, tab.target)
+			}
+			tab.target = ""
+			if m.workspace == 1 && i == m.browseTabIndex {
+				m.loadBrowseTab(i)
+			}
+			break
+		}
 	case transferMsg:
 		m.transfers, m.err = x.transfers, errText(x.err)
 	case sharesMsg:
@@ -243,26 +381,36 @@ func (m *model) key(k tea.KeyPressMsg) tea.Cmd {
 		return tea.Quit
 	case "?":
 		m.help = true
+	case "ctrl+pgup":
+		if m.workspace == 1 {
+			m.switchBrowseTab(-1)
+		}
+	case "ctrl+pgdown":
+		if m.workspace == 1 {
+			m.switchBrowseTab(1)
+		}
+	case "ctrl+w":
+		if m.workspace == 1 {
+			m.closeBrowseTab()
+		}
 	case "tab":
-		m.workspace = (m.workspace + 1) % 5
-		m.cursor, m.selected = 0, map[int]bool{}
+		m.switchWorkspace(m.workspace + 1)
 	case "shift+tab":
-		m.workspace = (m.workspace + 4) % 5
-		m.cursor, m.selected = 0, map[int]bool{}
+		m.switchWorkspace(m.workspace - 1)
 	case "right":
 		if m.workspace == 4 {
 			m.settingsSection = (m.settingsSection + 1) % 3
+			m.cursor, m.selected = 0, map[int]bool{}
 		} else {
-			m.workspace = (m.workspace + 1) % 5
+			m.switchWorkspace(m.workspace + 1)
 		}
-		m.cursor, m.selected = 0, map[int]bool{}
 	case "left":
 		if m.workspace == 4 {
 			m.settingsSection = (m.settingsSection + 2) % 3
+			m.cursor, m.selected = 0, map[int]bool{}
 		} else {
-			m.workspace = (m.workspace + 4) % 5
+			m.switchWorkspace(m.workspace - 1)
 		}
-		m.cursor, m.selected = 0, map[int]bool{}
 	case "up", "k":
 		if m.cursor > 0 {
 			m.cursor--
@@ -282,6 +430,15 @@ func (m *model) key(k tea.KeyPressMsg) tea.Cmd {
 			return nil
 		}
 		return m.enter()
+	case "b":
+		if m.workspace == 0 && m.cursor < len(m.results) {
+			result := m.results[m.cursor]
+			folder, _ := resultPath(result.path)
+			if result.directory {
+				folder = result.path
+			}
+			return m.openBrowse(result.user, folder, false)
+		}
 	case "d":
 		if m.workspace == 0 {
 			return m.queueResult()
@@ -296,6 +453,9 @@ func (m *model) key(k tea.KeyPressMsg) tea.Cmd {
 			return m.removeShare()
 		}
 	case "r":
+		if m.workspace == 1 && m.browseUser != "" {
+			return m.openBrowse(m.browseUser, "", true)
+		}
 		if m.workspace == 2 {
 			return m.action("retry")
 		}
@@ -393,12 +553,7 @@ func (m *model) editKey(k tea.KeyPressMsg) tea.Cmd {
 			return m.search()
 		}
 		if m.workspace == 1 {
-			m.browseUser = strings.TrimSpace(m.input)
-			if m.browseUser == "" {
-				return nil
-			}
-			m.loading = true
-			return m.browse()
+			return m.openBrowse(m.input, "", false)
 		}
 		if m.workspace == 3 {
 			return m.addShare()

@@ -315,6 +315,13 @@ func TestSearchFilterEditingAndMetadata(t *testing.T) {
 			t.Fatalf("search row exceeds width: %d %q", lipgloss.Width(line), line)
 		}
 	}
+	if !strings.Contains(view, "› ○ · song.flac") {
+		t.Fatalf("filename was not left-aligned: %q", view)
+	}
+	t.Setenv("NO_COLOR", "")
+	if selected := searchResultRow("row", false, true); !strings.Contains(selected, "\x1b[") {
+		t.Fatalf("selected result was not highlighted: %q", selected)
+	}
 	if narrow := m.renderSearch(60, 10); strings.Contains(narrow, "RATE") || !strings.Contains(narrow, "song.flac") {
 		t.Fatalf("narrow search columns did not collapse: %q", narrow)
 	}
@@ -325,6 +332,56 @@ func TestSearchFilterEditingAndMetadata(t *testing.T) {
 	m = updated.(model)
 	if len(m.results) != 2 || m.searchTotal != 2 || m.searchFound != 4 {
 		t.Fatal("filtered page was not appended with its totals")
+	}
+}
+
+func TestBrowseResultFolderAndUserTabs(t *testing.T) {
+	m := model{
+		workspace: 0,
+		results:   []result{{user: "nss", path: `audio\Hardstyle_320\song.mp3`}},
+		selected:  map[int]bool{},
+	}
+	if cmd := m.key(key("b")); cmd == nil || m.workspace != 1 || m.browseUser != "nss" || len(m.browseTabs) != 1 {
+		t.Fatalf("browse result did not open user tab: workspace=%d user=%q tabs=%d", m.workspace, m.browseUser, len(m.browseTabs))
+	}
+	updated, _ := m.Update(browseMsg{user: "nss", request: m.browseTabs[0].request, entries: []entry{
+		{name: "audio", directory: true},
+		{name: `audio\Hardstyle_320`, directory: true},
+		{name: `audio\Hardstyle_320\song.mp3`},
+	}})
+	m = updated.(model)
+	if m.cursor != 1 {
+		t.Fatalf("browse folder cursor = %d", m.cursor)
+	}
+	m.selected[1] = true
+	m.openBrowse("LittleDeng", "", false)
+	if len(m.browseTabs) != 2 || m.browseUser != "LittleDeng" || !strings.Contains(m.renderBrowse(100, 10), "nss") {
+		t.Fatalf("second user tab not retained: user=%q tabs=%d", m.browseUser, len(m.browseTabs))
+	}
+	staleRequest := m.browseTabs[1].request
+	m.openBrowse("LittleDeng", "", true)
+	updated, _ = m.Update(browseMsg{user: "LittleDeng", request: staleRequest, entries: []entry{{name: "stale"}}})
+	m = updated.(model)
+	if len(m.entries) != 0 || !m.loading {
+		t.Fatalf("stale browse response replaced newer request: entries=%d loading=%v", len(m.entries), m.loading)
+	}
+	m.key(tea.KeyPressMsg(tea.Key{Code: tea.KeyPgUp, Mod: tea.ModCtrl}))
+	if m.browseUser != "nss" || m.cursor != 1 || !m.selected[1] {
+		t.Fatalf("user tab state was not restored: user=%q cursor=%d", m.browseUser, m.cursor)
+	}
+	updated, _ = m.Update(browseMsg{user: "LittleDeng", request: m.browseTabs[1].request, entries: []entry{{name: "EDM", directory: true}}})
+	m = updated.(model)
+	if m.browseUser != "nss" {
+		t.Fatalf("background browse response switched tabs to %q", m.browseUser)
+	}
+	m.key(tea.KeyPressMsg(tea.Key{Code: tea.KeyPgDown, Mod: tea.ModCtrl}))
+	if m.browseUser != "LittleDeng" || len(m.entries) != 1 {
+		t.Fatalf("background user tab was not populated: user=%q entries=%d", m.browseUser, len(m.entries))
+	}
+	m.key(tea.KeyPressMsg(tea.Key{Code: tea.KeyPgUp, Mod: tea.ModCtrl}))
+	m.key(tea.KeyPressMsg(tea.Key{Code: 'w', Mod: tea.ModCtrl}))
+	if len(m.browseTabs) != 1 || m.browseUser != "LittleDeng" {
+		t.Fatalf("ctrl+w did not close active user tab: user=%q tabs=%d", m.browseUser, len(m.browseTabs))
 	}
 }
 
