@@ -1,0 +1,40 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: 1.25.x
+          cache: true
+      - run: go test -race ./...
+      - run: go vet ./...
+
+  soulfind:
+    needs: unit
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      soulfind:
+        image: ghcr.io/soulfind-dev/soulfind@sha256:714f9eb97793bdd3b88ebebe2bc6a63d7dbf343f93da7f09d3de95a456efb910
+        ports:
+          - 2242:2242
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: 1.25.x
+          cache: true
+      - name: Test Soulfind handshake
+        env:
+          SLSK_TUI_SOULFIND_ADDR: 127.0.0.1:2242
+        run: go test -count=1 -run TestSoulfindHandshakeCriticalValues -v ./internal/soulseek

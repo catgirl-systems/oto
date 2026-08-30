@@ -5,6 +5,7 @@ import (
 	"compress/zlib"
 	"context"
 	"encoding/binary"
+	"fmt"
 	"io"
 	"net"
 	"os"
@@ -72,6 +73,9 @@ func TestShareScanSearchAndContainment(t *testing.T) {
 	}
 	if err := s.Scan(); err != nil {
 		t.Fatal(err)
+	}
+	if counts := sharedCounts(s); counts != (SharedCounts{Folders: 1, Files: 2}) {
+		t.Fatalf("shared counts: %+v", counts)
 	}
 	got := s.Search("Beyoncé -secret")
 	if len(got) != 1 || got[0].Path != "Beyoncé.mp3" {
@@ -167,21 +171,37 @@ func TestPipeLogin(t *testing.T) {
 	server := make(chan error, 1)
 	go func() {
 		cmd, p, e := ReadFrame(b)
-		if e == nil && cmd == ServerLogin {
-			m, e := DecodeLoginRequest(p)
-			if e == nil && m.Version == 170 {
-				var x Encoder
-				x.Bool(true)
-				_ = x.String("ok")
-				x.U32(0)
-				_ = x.String("hash")
-				x.Bool(false)
-				e = WriteFrame(b, ServerLogin, x.Payload())
-				for i := 0; e == nil && i < 4; i++ {
-					_, _, e = ReadFrame(b)
-				}
-			} else {
-				e = io.ErrUnexpectedEOF
+		if e == nil && cmd != ServerLogin {
+			e = fmt.Errorf("login command: %d", cmd)
+		}
+		if e == nil {
+			var m LoginRequest
+			m, e = DecodeLoginRequest(p)
+			if e == nil && (m.Version != 170 || m.MinorVersion != 2718 || m.Hash != "15da1f78ad7d474862865bab1aab4d51") {
+				e = fmt.Errorf("login values: %+v", m)
+			}
+		}
+		if e == nil {
+			var x Encoder
+			x.Bool(true)
+			_ = x.String("ok")
+			x.U32(0)
+			_ = x.String("hash")
+			x.Bool(false)
+			e = WriteFrame(b, ServerLogin, x.Payload())
+		}
+		for _, want := range []Message{Status{Status: 2}, SharedCounts{}, AcceptChildren{Value: true}, HaveNoParent{Value: true}} {
+			if e != nil {
+				break
+			}
+			cmd, payload, err := ReadFrame(b)
+			var encoded Encoder
+			if encodeErr := want.encode(&encoded); encodeErr != nil {
+				e = encodeErr
+			} else if err != nil {
+				e = err
+			} else if cmd != want.command() || !bytes.Equal(payload, encoded.Payload()) {
+				e = fmt.Errorf("post-login frame: command=%d payload=%x", cmd, payload)
 			}
 		}
 		server <- e

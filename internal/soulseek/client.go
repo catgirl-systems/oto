@@ -80,6 +80,16 @@ func NewClientOnConn(cfg ClientConfig, c net.Conn) *Client { x := NewClient(cfg)
 func (c *Client) Events() <-chan Event                     { return c.events }
 func (c *Client) Conn() net.Conn                           { c.mu.Lock(); defer c.mu.Unlock(); return c.conn }
 func (c *Client) shareIndex() *ShareIndex                  { c.mu.Lock(); defer c.mu.Unlock(); return c.cfg.Share }
+func sharedCounts(index *ShareIndex) (counts SharedCounts) {
+	for _, file := range index.Files() {
+		if file.Directory {
+			counts.Folders++
+		} else {
+			counts.Files++
+		}
+	}
+	return counts
+}
 func (c *Client) baseContext() context.Context {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -95,7 +105,7 @@ func (c *Client) SetShareIndex(index *ShareIndex) {
 	c.mu.Lock()
 	c.cfg.Share = index
 	c.mu.Unlock()
-	_ = c.send(SharedCounts{Folders: uint32(len(index.Roots())), Files: uint32(len(index.Files()))})
+	_ = c.send(sharedCounts(index))
 }
 
 // ListenerAddr reports the passive peer address, if the listener is active.
@@ -198,7 +208,7 @@ func (c *Client) Login(ctx context.Context) error {
 		}
 		_ = c.send(Status{Status: 2})
 		index := c.shareIndex()
-		_ = c.send(SharedCounts{Folders: uint32(len(index.Roots())), Files: uint32(len(index.Files()))})
+		_ = c.send(sharedCounts(index))
 		_ = c.send(AcceptChildren{Value: true})
 		_ = c.send(HaveNoParent{Value: true})
 		return nil
