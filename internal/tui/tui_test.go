@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/catgirl-systems/oto/internal/config"
 	"github.com/catgirl-systems/oto/internal/daemon"
 )
@@ -110,6 +111,41 @@ func TestFullScreenLayoutAndEditing(t *testing.T) {
 	}
 	if start, end := visibleRange(100, 50, 10); start != 45 || end != 55 {
 		t.Fatalf("visibleRange = %d:%d", start, end)
+	}
+}
+
+func TestTextFieldsEditAtCursor(t *testing.T) {
+	t.Setenv("NO_COLOR", "1")
+	m := model{editing: true, input: "aébc", inputCursor: 4, selected: map[int]bool{}}
+	m.editKey(tea.KeyPressMsg(tea.Key{Code: tea.KeyLeft}))
+	m.editKey(tea.KeyPressMsg(tea.Key{Code: tea.KeyLeft}))
+	m.editKey(key("X"))
+	if m.input != "aéXbc" || m.inputCursor != 3 {
+		t.Fatalf("insert at cursor = %q @ %d", m.input, m.inputCursor)
+	}
+	m.editKey(tea.KeyPressMsg(tea.Key{Code: tea.KeyBackspace}))
+	m.editKey(tea.KeyPressMsg(tea.Key{Code: tea.KeyDelete}))
+	if m.input != "aéc" || m.inputCursor != 2 {
+		t.Fatalf("delete at cursor = %q @ %d", m.input, m.inputCursor)
+	}
+	m.editKey(tea.KeyPressMsg(tea.Key{Code: tea.KeyHome}))
+	m.editKey(tea.KeyPressMsg(tea.Key{Code: tea.KeyRight}))
+	updated, _ := m.Update(tea.PasteMsg{Content: "Ω"})
+	m = updated.(model)
+	if m.input != "aΩéc" || m.inputCursor != 2 || !strings.Contains(renderInput("", m.input, m.inputCursor, false, lipgloss.NewStyle()), "aΩ█éc") {
+		t.Fatalf("paste/caret at cursor = %q @ %d", m.input, m.inputCursor)
+	}
+
+	setup := model{setup: true, setupVals: [5]string{"abcd"}, inputCursor: 4}
+	setup.setupKey(tea.KeyPressMsg(tea.Key{Code: tea.KeyLeft}))
+	setup.setupKey(tea.KeyPressMsg(tea.Key{Code: tea.KeyLeft}))
+	setup.setupKey(key("X"))
+	if setup.setupVals[0] != "abXcd" || setup.inputCursor != 3 {
+		t.Fatalf("setup cursor edit = %q @ %d", setup.setupVals[0], setup.inputCursor)
+	}
+	masked := renderInput("", "secret", 2, true, lipgloss.NewStyle())
+	if strings.Contains(masked, "secret") || !strings.Contains(masked, "••█••••") {
+		t.Fatalf("masked cursor rendering = %q", masked)
 	}
 }
 

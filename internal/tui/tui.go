@@ -194,9 +194,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return r
 		}, x.Content)
 		if m.setup {
-			m.setupVals[m.setupField] += text
+			m.setupVals[m.setupField], m.inputCursor = insertText(m.setupVals[m.setupField], text, m.inputCursor)
 		} else if m.editing {
-			m.input += text
+			m.input, m.inputCursor = insertText(m.input, text, m.inputCursor)
 		}
 		return m, nil
 	case tea.KeyPressMsg:
@@ -325,6 +325,7 @@ func (m *model) key(k tea.KeyPressMsg) tea.Cmd {
 	case "f":
 		if m.workspace == 0 {
 			m.editing, m.filterEditing, m.input = true, true, m.searchFilter
+			m.inputCursor = len([]rune(m.input))
 			return nil
 		}
 	case "/":
@@ -349,11 +350,16 @@ func (m *model) beginEdit() {
 	default:
 		m.input = ""
 	}
+	m.inputCursor = len([]rune(m.input))
 }
 func (m *model) editKey(k tea.KeyPressMsg) tea.Cmd {
 	s := k.String()
 	if m.filterEditing && (s == "tab" || s == "shift+tab") {
-		m.input = completeFilter(m.input, s == "shift+tab")
+		before := inputBeforeCursor(m.input, m.inputCursor)
+		after := []rune(m.input)[len([]rune(before)):]
+		completed := completeFilter(before, s == "shift+tab")
+		m.input = completed + string(after)
+		m.inputCursor = len([]rune(completed))
 		return nil
 	}
 	if s == "esc" {
@@ -407,12 +413,23 @@ func (m *model) editKey(k tea.KeyPressMsg) tea.Cmd {
 		}
 		return nil
 	}
-	if s == "backspace" {
-		m.input = popRune(m.input)
-		return nil
-	}
-	if t := k.Key().Text; t != "" {
-		m.input += t
+	switch s {
+	case "left":
+		m.inputCursor = max(0, m.inputCursor-1)
+	case "right":
+		m.inputCursor = min(len([]rune(m.input)), m.inputCursor+1)
+	case "home":
+		m.inputCursor = 0
+	case "end":
+		m.inputCursor = len([]rune(m.input))
+	case "backspace":
+		m.input, m.inputCursor = deleteBeforeCursor(m.input, m.inputCursor)
+	case "delete":
+		m.input = deleteAtCursor(m.input, m.inputCursor)
+	default:
+		if text := k.Key().Text; text != "" {
+			m.input, m.inputCursor = insertText(m.input, text, m.inputCursor)
+		}
 	}
 	return nil
 }

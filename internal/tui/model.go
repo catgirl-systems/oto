@@ -66,6 +66,7 @@ type model struct {
 	searchTotal, searchFound, searchNext   int
 	input, query, browseUser, searchID     string
 	searchFilter, searchFilterUndo         string
+	inputCursor                            int
 	setupField                             int
 	setupVals                              [5]string
 	setupErr                               string
@@ -94,7 +95,7 @@ func (m model) rows() int {
 }
 
 func newModel(ctx context.Context, c *ipc.Client, path string, transient bool, cfg config.Config) model {
-	return model{ctx: ctx, client: c, configPath: path, cfg: cfg, transient: transient, width: 80, height: 24, selected: map[int]bool{}, setupVals: [5]string{cfg.Soulseek.Username, cfg.Soulseek.Password, cfg.Soulseek.ListenAddr, cfg.DownloadDir, ""}}
+	return model{ctx: ctx, client: c, configPath: path, cfg: cfg, transient: transient, width: 80, height: 24, selected: map[int]bool{}, setupVals: [5]string{cfg.Soulseek.Username, cfg.Soulseek.Password, cfg.Soulseek.ListenAddr, cfg.DownloadDir, ""}, inputCursor: utf8.RuneCountInString(cfg.Soulseek.Username)}
 }
 func (m model) View() tea.View {
 	content := m.mainView()
@@ -118,9 +119,10 @@ func (m model) setupView() string {
 	b.WriteString("\n\n")
 	fieldWidth := max(24, min(52, m.width-12))
 	for i, label := range labels {
-		value := m.setupVals[i]
+		raw := m.setupVals[i]
+		value := raw
 		if i == 1 {
-			value = strings.Repeat("•", utf8.RuneCountInString(value))
+			value = strings.Repeat("•", utf8.RuneCountInString(raw))
 		}
 		if value == "" {
 			value = muted(placeholders[i])
@@ -128,14 +130,18 @@ func (m model) setupView() string {
 		marker := "  "
 		if i == m.setupField {
 			marker = styled("› ", lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#CBA6F7")))
-			value += styled("█", lipgloss.NewStyle().Foreground(lipgloss.Color("#CBA6F7")))
+			if raw == "" {
+				value = inputCursorStyle().Render("█") + muted(placeholders[i])
+			} else {
+				value = renderInput("", raw, m.inputCursor, i == 1, lipgloss.NewStyle())
+			}
 		}
 		fmt.Fprintf(&b, "%s%s\n  %s\n", marker, strong(label), trunc(value, fieldWidth))
 	}
 	if m.setupErr != "" {
 		b.WriteString("\n" + danger("! "+m.setupErr))
 	}
-	b.WriteString("\n\n" + muted("↑↓ / tab move   •   enter next / save   •   esc quit"))
+	b.WriteString("\n\n" + muted("↑↓ / tab fields   •   ←→ move caret   •   enter next / save   •   esc quit"))
 
 	cardWidth := max(34, min(64, m.width-4))
 	card := panelStyle().Width(cardWidth).Padding(1, 2).Render(b.String())
@@ -209,7 +215,7 @@ func (m model) helpView() string {
 	rows := [][2]string{
 		{"tab / shift+tab", "switch workspace"},
 		{"↑ ↓  or  j k", "move through items or fields"},
-		{"← →", "change settings section"},
+		{"← → / home end", "move the caret while editing; otherwise navigate"},
 		{"/ / enter", "edit a query, username, share, or setting"},
 		{"f", "edit cached search filters"},
 		{"c", "clear or restore search filters"},
@@ -231,27 +237,18 @@ func (m model) helpView() string {
 }
 
 func (m model) renderSearch(width, height int) string {
-	query := m.query
-	if m.editing && !m.filterEditing {
-		query = m.input
-	}
+	inputStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#F5E0DC"))
 	prompt := muted("/  Press / to search the network")
-	if query != "" || (m.editing && !m.filterEditing) {
-		prompt = styled("/  "+query, lipgloss.NewStyle().Foreground(lipgloss.Color("#F5E0DC")))
-	}
 	if m.editing && !m.filterEditing {
-		prompt += styled("█", lipgloss.NewStyle().Foreground(lipgloss.Color("#CBA6F7"))) + muted("   enter search  •  esc cancel")
-	}
-	filter := m.searchFilter
-	if m.editing && m.filterEditing {
-		filter = m.input
+		prompt = renderInput("/  ", m.input, m.inputCursor, false, inputStyle) + muted("   enter search  •  esc cancel")
+	} else if m.query != "" {
+		prompt = styled("/  "+m.query, inputStyle)
 	}
 	filterLine := muted("f  Press f to filter cached results")
-	if filter != "" || (m.editing && m.filterEditing) {
-		filterLine = styled("f  "+filter, lipgloss.NewStyle().Foreground(lipgloss.Color("#F5E0DC")))
-	}
 	if m.editing && m.filterEditing {
-		filterLine += styled("█", lipgloss.NewStyle().Foreground(lipgloss.Color("#CBA6F7"))) + muted("   enter apply  •  esc cancel")
+		filterLine = renderInput("f  ", m.input, m.inputCursor, false, inputStyle) + muted("   enter apply  •  esc cancel")
+	} else if m.searchFilter != "" {
+		filterLine = styled("f  "+m.searchFilter, inputStyle)
 	}
 	count := countLabel(len(m.results), "result")
 	if m.searchFound > 0 || m.searchTotal > len(m.results) {
@@ -259,7 +256,7 @@ func (m model) renderSearch(width, height int) string {
 	}
 	lines := []string{sectionHeader("SEARCH", count, width), trunc(prompt, width), trunc(filterLine, width)}
 	if m.editing && m.filterEditing {
-		lines = append(lines, trunc(muted(filterCompletionHint(m.input)), width))
+		lines = append(lines, trunc(muted(filterCompletionHint(inputBeforeCursor(m.input, m.inputCursor))), width))
 	}
 	limit := max(0, height-len(lines))
 	if m.loading && limit > 0 {
@@ -308,16 +305,12 @@ func (m model) renderSearch(width, height int) string {
 }
 
 func (m model) renderBrowse(width, height int) string {
-	user := m.browseUser
-	if m.editing {
-		user = m.input
-	}
 	prompt := muted("/  Press / to enter a username")
-	if user != "" || m.editing {
-		prompt = styled("/  "+user, lipgloss.NewStyle().Foreground(lipgloss.Color("#F5E0DC")))
-	}
+	inputStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#F5E0DC"))
 	if m.editing {
-		prompt += styled("█", lipgloss.NewStyle().Foreground(lipgloss.Color("#CBA6F7"))) + muted("   enter browse  •  esc cancel")
+		prompt = renderInput("/  ", m.input, m.inputCursor, false, inputStyle) + muted("   enter browse  •  esc cancel")
+	} else if m.browseUser != "" {
+		prompt = styled("/  "+m.browseUser, inputStyle)
 	}
 	lines := []string{sectionHeader("BROWSE", countLabel(len(m.entries), "item"), width), trunc(prompt, width)}
 	limit := max(0, height-len(lines))
@@ -378,7 +371,8 @@ func (m model) renderShares(width, height int) string {
 	lines := []string{sectionHeader("SHARES", countLabel(len(m.shares), "folder"), width)}
 	limit := max(0, height-1)
 	if m.editing && limit > 0 {
-		lines = append(lines, trunc(styled("/  "+m.input+"█", lipgloss.NewStyle().Foreground(lipgloss.Color("#F5E0DC")))+muted("   name:path  •  enter add  •  esc cancel"), width))
+		line := renderInput("/  ", m.input, m.inputCursor, false, lipgloss.NewStyle().Foreground(lipgloss.Color("#F5E0DC"))) + muted("   name:path  •  enter add  •  esc cancel")
+		lines = append(lines, trunc(line, width))
 		limit--
 	}
 	if len(m.shares) == 0 && limit > 0 {
@@ -420,16 +414,14 @@ func (m model) renderSettings(width, height int) string {
 	for i, field := range fields {
 		value := field.value
 		if m.editing && i == m.cursor {
-			value = m.input
-		}
-		if field.secret && value != "" {
-			value = strings.Repeat("•", utf8.RuneCountInString(value))
-		}
-		if value == "" {
-			value = muted("Not set")
-		}
-		if m.editing && i == m.cursor {
-			value += styled("█", lipgloss.NewStyle().Foreground(lipgloss.Color("#CBA6F7")))
+			value = renderInput("", m.input, m.inputCursor, field.secret, lipgloss.NewStyle())
+		} else {
+			if field.secret && value != "" {
+				value = strings.Repeat("•", utf8.RuneCountInString(value))
+			}
+			if value == "" {
+				value = muted("Not set")
+			}
 		}
 		row := fmt.Sprintf("%-16s %s", field.label, value)
 		formLines = append(formLines, selectedRow(trunc(row, max(4, width-sidebarWidth-4)), i == m.cursor))
@@ -647,12 +639,64 @@ func trunc(s string, n int) string {
 	return ansi.Truncate(s, n, "…")
 }
 
-func popRune(s string) string {
-	_, size := utf8.DecodeLastRuneInString(s)
-	if size == 0 {
-		return s
+func inputCursorStyle() lipgloss.Style {
+	style := lipgloss.NewStyle()
+	if colorsEnabled() {
+		style = style.Foreground(lipgloss.Color("#CBA6F7"))
 	}
-	return s[:len(s)-size]
+	return style
+}
+
+func renderInput(prefix, value string, cursor int, secret bool, style lipgloss.Style) string {
+	if !colorsEnabled() {
+		style = lipgloss.NewStyle()
+	}
+	runes := []rune(value)
+	cursor = max(0, min(cursor, len(runes)))
+	if secret {
+		for i := range runes {
+			runes[i] = '•'
+		}
+	}
+	return style.Render(prefix+string(runes[:cursor])) + inputCursorStyle().Render("█") + style.Render(string(runes[cursor:]))
+}
+
+func inputBeforeCursor(value string, cursor int) string {
+	runes := []rune(value)
+	return string(runes[:max(0, min(cursor, len(runes)))])
+}
+
+func insertText(value, text string, cursor int) (string, int) {
+	runes, added := []rune(value), []rune(text)
+	cursor = max(0, min(cursor, len(runes)))
+	out := make([]rune, 0, len(runes)+len(added))
+	out = append(out, runes[:cursor]...)
+	out = append(out, added...)
+	out = append(out, runes[cursor:]...)
+	return string(out), cursor + len(added)
+}
+
+func deleteBeforeCursor(value string, cursor int) (string, int) {
+	runes := []rune(value)
+	cursor = max(0, min(cursor, len(runes)))
+	if cursor == 0 {
+		return value, cursor
+	}
+	return string(append(runes[:cursor-1], runes[cursor:]...)), cursor - 1
+}
+
+func deleteAtCursor(value string, cursor int) string {
+	runes := []rune(value)
+	cursor = max(0, min(cursor, len(runes)))
+	if cursor == len(runes) {
+		return value
+	}
+	return string(append(runes[:cursor], runes[cursor+1:]...))
+}
+
+func (m *model) selectSetupField(field int) {
+	m.setupField = (field + len(m.setupVals)) % len(m.setupVals)
+	m.inputCursor = len([]rune(m.setupVals[m.setupField]))
 }
 
 func (m *model) setupKey(k tea.KeyPressMsg) tea.Cmd {
@@ -660,17 +704,35 @@ func (m *model) setupKey(k tea.KeyPressMsg) tea.Cmd {
 	if s == "esc" {
 		return tea.Quit
 	}
-	if s == "tab" || s == "down" {
-		m.setupField = (m.setupField + 1) % len(m.setupVals)
+	switch s {
+	case "tab", "down":
+		m.selectSetupField(m.setupField + 1)
 		return nil
-	}
-	if s == "shift+tab" || s == "up" {
-		m.setupField = (m.setupField + len(m.setupVals) - 1) % len(m.setupVals)
+	case "shift+tab", "up":
+		m.selectSetupField(m.setupField - 1)
+		return nil
+	case "left":
+		m.inputCursor = max(0, m.inputCursor-1)
+		return nil
+	case "right":
+		m.inputCursor = min(len([]rune(m.setupVals[m.setupField])), m.inputCursor+1)
+		return nil
+	case "home":
+		m.inputCursor = 0
+		return nil
+	case "end":
+		m.inputCursor = len([]rune(m.setupVals[m.setupField]))
+		return nil
+	case "backspace":
+		m.setupVals[m.setupField], m.inputCursor = deleteBeforeCursor(m.setupVals[m.setupField], m.inputCursor)
+		return nil
+	case "delete":
+		m.setupVals[m.setupField] = deleteAtCursor(m.setupVals[m.setupField], m.inputCursor)
 		return nil
 	}
 	if s == "enter" {
 		if m.setupField < 4 {
-			m.setupField++
+			m.selectSetupField(m.setupField + 1)
 			return nil
 		}
 		cfg := config.Default()
@@ -700,12 +762,8 @@ func (m *model) setupKey(k tea.KeyPressMsg) tea.Cmd {
 		m.setup = false
 		return nil
 	}
-	if s == "backspace" {
-		m.setupVals[m.setupField] = popRune(m.setupVals[m.setupField])
-		return nil
-	}
-	if t := k.Key().Text; t != "" {
-		m.setupVals[m.setupField] += t
+	if text := k.Key().Text; text != "" {
+		m.setupVals[m.setupField], m.inputCursor = insertText(m.setupVals[m.setupField], text, m.inputCursor)
 	}
 	return nil
 }

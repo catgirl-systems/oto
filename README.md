@@ -41,7 +41,8 @@ Soulseek permits one login per username. Keeping the session in the daemon preve
 | Key | Action |
 | --- | --- |
 | `tab` / `shift+tab` | Search, Browse, Transfers, Shares, Settings |
-| arrows or `j` / `k` | move; left/right changes the Settings section |
+| arrows or `j` / `k` | move; left/right moves the caret while editing and otherwise navigates |
+| `home` / `end` | jump to the start/end of any text field |
 | `/` | edit search, username, `name:path` share, or setting |
 | `f` | edit cached search filters |
 | `tab` / `shift+tab` while filtering | complete fields, types, booleans, and comparison operators |
