@@ -7,6 +7,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/catgirl-systems/slsk-tui/internal/config"
+	"github.com/catgirl-systems/slsk-tui/internal/daemon"
 )
 
 func key(s string) tea.KeyPressMsg {
@@ -76,5 +77,88 @@ func TestNarrowViewAndQuitConfirmation(t *testing.T) {
 	}
 	if strings.Contains(m.View().Content, "\x1b") {
 		t.Fatal("unexpected color")
+	}
+}
+
+func TestFullScreenLayoutAndEditing(t *testing.T) {
+	t.Setenv("NO_COLOR", "1")
+	m := model{width: 80, height: 14, workspace: 0, selected: map[int]bool{}}
+	view := m.View()
+	if !view.AltScreen || !strings.Contains(view.Content, "SEARCH") || !strings.Contains(view.Content, "╭") {
+		t.Fatal("main view is not a full-screen workspace")
+	}
+
+	m.editing = true
+	if cmd := m.key(key("q")); cmd != nil || m.input != "q" || !m.editing {
+		t.Fatal("text input was handled as a global shortcut")
+	}
+	m.key(tea.KeyPressMsg(tea.Key{Code: tea.KeyEscape}))
+	if m.editing || m.input != "" {
+		t.Fatal("escape did not cancel text input")
+	}
+
+	if got := formatBytes(1536); got != "1.5 KiB" {
+		t.Fatalf("formatBytes(1536) = %q", got)
+	}
+	if start, end := visibleRange(100, 50, 10); start != 45 || end != 55 {
+		t.Fatalf("visibleRange = %d:%d", start, end)
+	}
+}
+
+func TestErrorRowIsStableAndTracksDaemonState(t *testing.T) {
+	t.Setenv("NO_COLOR", "1")
+	m := model{width: 80, height: 14, selected: map[int]bool{}}
+	cleanLines := strings.Count(m.View().Content, "\n")
+
+	updated, _ := m.Update(statusMsg{snapshot: daemon.Snapshot{Status: daemon.StatusReconnecting, Error: "listen tcp 0.0.0.0:50300: bind: address already in use"}})
+	m = updated.(model)
+	updated, _ = m.Update(sharesMsg{})
+	m = updated.(model)
+	if !strings.Contains(m.View().Content, "Error: listen tcp") {
+		t.Fatal("daemon error did not persist across unrelated refreshes")
+	}
+	if got := strings.Count(m.View().Content, "\n"); got != cleanLines {
+		t.Fatalf("error shifted layout: clean=%d error=%d", cleanLines, got)
+	}
+
+	updated, _ = m.Update(statusMsg{snapshot: daemon.Snapshot{Status: daemon.StatusConnected}})
+	m = updated.(model)
+	if m.status.err != "" || strings.Contains(m.View().Content, "No errors") {
+		t.Fatal("resolved daemon error was not cleared to a blank row")
+	}
+}
+
+func TestSettingsSidebarEditsAccountWithoutLeakingPassword(t *testing.T) {
+	t.Setenv("NO_COLOR", "1")
+	cfg := config.Default()
+	cfg.Soulseek.Username, cfg.Soulseek.Password = "alice", "secret"
+	m := newModel(context.Background(), nil, "", false, cfg)
+	m.width, m.height, m.workspace = 80, 10, 4
+
+	view := m.View().Content
+	if !strings.Contains(view, "Settings") || !strings.Contains(view, "Account") || strings.Contains(view, "secret") || !strings.Contains(view, "••••••") {
+		t.Fatal("settings account sidebar is missing or exposed the password")
+	}
+	settingsLines := strings.Count(view, "\n")
+	m.workspace = 0
+	searchLines := strings.Count(m.View().Content, "\n")
+	m.workspace = 4
+	if settingsLines != searchLines {
+		t.Fatalf("settings shifted layout: search=%d settings=%d", searchLines, settingsLines)
+	}
+	m.key(key("enter"))
+	m.input = "bob"
+	m.editKey(key("enter"))
+	if m.cfg.Soulseek.Username != "bob" {
+		t.Fatal("account username was not edited")
+	}
+
+	m.key(tea.KeyPressMsg(tea.Key{Code: tea.KeyRight}))
+	if m.settingsSection != 1 || !strings.Contains(m.View().Content, "Listen address") {
+		t.Fatal("settings sidebar did not navigate to connection settings")
+	}
+	m.key(key("tab"))
+	if m.workspace != 0 {
+		t.Fatal("settings tab did not wrap to search")
 	}
 }
