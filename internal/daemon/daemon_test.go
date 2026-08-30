@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net"
 	"os"
@@ -124,4 +125,25 @@ func TestEmitAfterCloseIsSafe(t *testing.T) {
 		go func() { defer workers.Done(); service.emit("late", "", nil) }()
 	}
 	workers.Wait()
+}
+
+func TestSearchPagesCachedResults(t *testing.T) {
+	results := make([]SearchResult, 205)
+	for i := range results {
+		results[i] = SearchResult{Username: "peer", Path: fmt.Sprintf("song-%d", i)}
+	}
+	search := Search{ID: "search", Query: "song", Results: results, Total: len(results)}
+
+	page := searchPage(search, 0)
+	if len(page.Results) != 100 || page.NextCursor != 100 || page.Total != 205 {
+		t.Fatalf("first page: %+v", page)
+	}
+	page = searchPage(search, page.NextCursor)
+	if len(page.Results) != 100 || page.Results[0].Path != "song-100" || page.NextCursor != 200 {
+		t.Fatalf("second page: %+v", page)
+	}
+	page = searchPage(search, page.NextCursor)
+	if len(page.Results) != 5 || page.Results[0].Path != "song-200" || page.NextCursor != 0 {
+		t.Fatalf("last page: %+v", page)
+	}
 }

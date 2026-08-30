@@ -56,8 +56,9 @@ type statusMsg struct {
 	err      error
 }
 type searchMsg struct {
-	results []result
-	err     error
+	page   daemon.SearchPage
+	append bool
+	err    error
 }
 type browseMsg struct {
 	entries []entry
@@ -88,7 +89,14 @@ func (m model) rescanShares() tea.Cmd {
 }
 func (m model) search() tea.Cmd {
 	q := m.query
-	return func() tea.Msg { x, e := m.client.Search(m.ctx, q); return searchMsg{toResults(x), e} }
+	return func() tea.Msg { page, err := m.client.Search(m.ctx, q); return searchMsg{page: page, err: err} }
+}
+func (m model) loadSearchPage() tea.Cmd {
+	id, cursor := m.searchID, m.searchNext
+	return func() tea.Msg {
+		page, err := m.client.SearchPage(m.ctx, id, cursor)
+		return searchMsg{page: page, append: true, err: err}
+	}
 }
 func (m model) browse() tea.Cmd {
 	u := m.browseUser
@@ -122,9 +130,26 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.status = snapshot{status: x.snapshot.Status, user: x.snapshot.Config.Soulseek.Username, err: x.snapshot.Error}
 		}
 	case searchMsg:
-		m.results, m.err = x.results, errText(x.err)
-		m.cursor, m.selected = 0, map[int]bool{}
-		m.loading = false
+		m.err = errText(x.err)
+		if x.append {
+			m.loadingMore = false
+		} else {
+			m.loading = false
+		}
+		if x.err != nil {
+			break
+		}
+		results := toResults(x.page.Results)
+		if x.append {
+			oldLen := len(m.results)
+			m.results = append(m.results, results...)
+			if m.cursor == oldLen-1 && len(m.results) > oldLen {
+				m.cursor++
+			}
+		} else {
+			m.results, m.cursor, m.selected = results, 0, map[int]bool{}
+		}
+		m.searchID, m.searchTotal, m.searchNext = x.page.ID, x.page.Total, x.page.NextCursor
 	case browseMsg:
 		m.entries, m.err = x.entries, errText(x.err)
 		m.cursor, m.selected = 0, map[int]bool{}
@@ -222,6 +247,9 @@ func (m *model) key(k tea.KeyPressMsg) tea.Cmd {
 	case "down", "j":
 		if m.cursor+1 < m.rows() {
 			m.cursor++
+		} else if m.workspace == 0 && !m.loadingMore && m.searchNext > 0 {
+			m.loadingMore = true
+			return m.loadSearchPage()
 		}
 	case "space":
 		m.toggle()
@@ -296,7 +324,7 @@ func (m *model) editKey(k tea.KeyPressMsg) tea.Cmd {
 			if m.query == "" {
 				return nil
 			}
-			m.loading = true
+			m.loading, m.loadingMore = true, false
 			return m.search()
 		}
 		if m.workspace == 1 {

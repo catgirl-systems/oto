@@ -18,9 +18,10 @@ import (
 )
 
 var (
-	ErrClosed      = errors.New("daemon: closed")
-	ErrNotStarted  = errors.New("daemon: not connected")
-	ErrUnsupported = errors.New("daemon: operation unavailable in protocol core")
+	ErrClosed         = errors.New("daemon: closed")
+	ErrNotStarted     = errors.New("daemon: not connected")
+	ErrSearchNotFound = errors.New("daemon: search not found")
+	ErrUnsupported    = errors.New("daemon: operation unavailable in protocol core")
 )
 
 type Status string
@@ -32,6 +33,8 @@ const (
 	StatusReconnecting Status = "reconnecting"
 	StatusError        Status = "error"
 )
+
+const searchPageSize = 100
 
 type Event struct {
 	Type    string    `json:"type"`
@@ -61,9 +64,18 @@ type SearchResult struct {
 type Search struct {
 	ID      string         `json:"id"`
 	Query   string         `json:"query"`
-	Results []SearchResult `json:"results"`
+	Results []SearchResult `json:"-"`
+	Total   int            `json:"total"`
 	Error   string         `json:"error,omitempty"`
 	At      time.Time      `json:"at"`
+}
+type SearchPage struct {
+	ID         string         `json:"id"`
+	Query      string         `json:"query"`
+	Results    []SearchResult `json:"results"`
+	Cursor     int            `json:"cursor"`
+	NextCursor int            `json:"next_cursor,omitempty"`
+	Total      int            `json:"total"`
 }
 
 type Transfer struct {
@@ -427,16 +439,16 @@ func (s *Service) Close() error {
 }
 func (s *Service) Stop() error { return s.Close() }
 
-func (s *Service) Search(ctx context.Context, query string) ([]SearchResult, error) {
+func (s *Service) Search(ctx context.Context, query string) (SearchPage, error) {
 	s.mu.RLock()
 	c := s.client
 	s.mu.RUnlock()
 	if c == nil {
-		return nil, ErrNotStarted
+		return SearchPage{}, ErrNotStarted
 	}
 	r, err := c.Search(ctx, query)
 	if err != nil {
-		return nil, err
+		return SearchPage{}, err
 	}
 	out := make([]SearchResult, 0, len(r))
 	for _, x := range r {
@@ -454,27 +466,32 @@ func (s *Service) Search(ctx context.Context, query string) ([]SearchResult, err
 		}
 		return out[i].Size < out[j].Size
 	})
-	id := fmt.Sprintf("%d", time.Now().UnixNano())
+	search := Search{ID: fmt.Sprintf("%d", time.Now().UnixNano()), Query: query, Results: out, Total: len(out), At: time.Now().UTC()}
 	s.mu.Lock()
-	s.searches[id] = Search{ID: id, Query: query, Results: append([]SearchResult(nil), out...), At: time.Now().UTC()}
+	s.searches[search.ID] = search
 	s.mu.Unlock()
-	s.emit("search", query, out)
-	return out, nil
+	s.emit("search", query, search)
+	return searchPage(search, 0), nil
 }
-func (s *Service) SearchResults(queries ...string) []SearchResult {
-	query := ""
-	if len(queries) > 0 {
-		query = queries[0]
+
+func searchPage(search Search, cursor int) SearchPage {
+	cursor = max(0, min(cursor, len(search.Results)))
+	end := min(cursor+searchPageSize, len(search.Results))
+	page := SearchPage{ID: search.ID, Query: search.Query, Results: append([]SearchResult(nil), search.Results[cursor:end]...), Cursor: cursor, Total: len(search.Results)}
+	if end < len(search.Results) {
+		page.NextCursor = end
 	}
+	return page
+}
+
+func (s *Service) SearchPage(id string, cursor int) (SearchPage, error) {
 	s.mu.RLock()
-	defer s.mu.RUnlock()
-	var out []SearchResult
-	for _, x := range s.searches {
-		if query == "" || x.Query == query {
-			out = append(out, x.Results...)
-		}
+	search, ok := s.searches[id]
+	s.mu.RUnlock()
+	if !ok {
+		return SearchPage{}, ErrSearchNotFound
 	}
-	return out
+	return searchPage(search, cursor), nil
 }
 func (s *Service) Searches() []Search {
 	s.mu.RLock()

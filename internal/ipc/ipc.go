@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -153,11 +154,22 @@ func (s *Server) searches(w http.ResponseWriter, r *http.Request) {
 	if !method(w, r, "GET") {
 		return
 	}
-	if q := r.URL.Query().Get("q"); q != "" {
-		writeJSON(w, 200, s.service.SearchResults(q))
+	id := r.URL.Query().Get("id")
+	if id == "" {
+		writeJSON(w, 200, s.service.Searches())
 		return
 	}
-	writeJSON(w, 200, s.service.Searches())
+	cursor, err := strconv.Atoi(r.URL.Query().Get("cursor"))
+	if err != nil && r.URL.Query().Get("cursor") != "" {
+		writeErr(w, 400, errors.New("ipc: invalid search cursor"))
+		return
+	}
+	page, err := s.service.SearchPage(id, cursor)
+	if err != nil {
+		writeErr(w, http.StatusNotFound, err)
+		return
+	}
+	writeJSON(w, 200, page)
 }
 func (s *Server) search(w http.ResponseWriter, r *http.Request) {
 	if !method(w, r, "POST") {
@@ -375,15 +387,16 @@ func (c *Client) Status(ctx context.Context) (daemon.Snapshot, error) {
 	err := c.Do(ctx, "GET", "/v1/state", nil, &x)
 	return x, err
 }
-func (c *Client) Search(ctx context.Context, q string) ([]daemon.SearchResult, error) {
-	var x []daemon.SearchResult
-	err := c.Do(ctx, "POST", "/v1/search", map[string]string{"query": q}, &x)
-	return x, err
+func (c *Client) Search(ctx context.Context, q string) (daemon.SearchPage, error) {
+	var page daemon.SearchPage
+	err := c.Do(ctx, "POST", "/v1/search", map[string]string{"query": q}, &page)
+	return page, err
 }
-func (c *Client) SearchResults(ctx context.Context, q string) ([]daemon.SearchResult, error) {
-	var x []daemon.SearchResult
-	err := c.Do(ctx, "GET", "/v1/searches?q="+urlQuery(q), nil, &x)
-	return x, err
+func (c *Client) SearchPage(ctx context.Context, id string, cursor int) (daemon.SearchPage, error) {
+	var page daemon.SearchPage
+	path := fmt.Sprintf("/v1/searches?id=%s&cursor=%d", urlQuery(id), cursor)
+	err := c.Do(ctx, "GET", path, nil, &page)
+	return page, err
 }
 func (c *Client) Browse(ctx context.Context, username string) ([]soulseek.ShareEntry, error) {
 	var entries []soulseek.ShareEntry

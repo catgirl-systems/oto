@@ -57,9 +57,11 @@ type model struct {
 	cfg                                    config.Config
 	transient                              bool
 	setup, help, confirm, editing, loading bool
+	loadingMore                            bool
 	width, height                          int
 	workspace, cursor, settingsSection     int
-	input, query, browseUser               string
+	searchTotal, searchNext                int
+	input, query, browseUser, searchID     string
 	setupField                             int
 	setupVals                              [5]string
 	setupErr                               string
@@ -232,7 +234,11 @@ func (m model) renderSearch(width, height int) string {
 	if m.editing {
 		prompt += styled("█", lipgloss.NewStyle().Foreground(lipgloss.Color("#CBA6F7"))) + muted("   enter search  •  esc cancel")
 	}
-	lines := []string{sectionHeader("SEARCH", countLabel(len(m.results), "result"), width), trunc(prompt, width)}
+	count := countLabel(len(m.results), "result")
+	if m.searchTotal > len(m.results) {
+		count = fmt.Sprintf("%d / %d results", len(m.results), m.searchTotal)
+	}
+	lines := []string{sectionHeader("SEARCH", count, width), trunc(prompt, width)}
 	limit := max(0, height-len(lines))
 	if m.loading && limit > 0 {
 		return strings.Join(append(lines, muted("◌  Searching Soulseek…")), "\n")
