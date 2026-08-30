@@ -383,6 +383,37 @@ func TestSearchResultTabs(t *testing.T) {
 	}
 }
 
+func TestTransferDirectionTabsProgressAndSpinner(t *testing.T) {
+	t.Setenv("NO_COLOR", "1")
+	m := model{workspace: 2, selected: map[int]bool{}, transfers: []transfer{
+		{id: "d1", filename: "album.flac", direction: "download", state: "running", done: 25, total: 100, user: "alice"},
+		{id: "d2", filename: "queued.mp3", direction: "download", state: "queued", total: 100, queue: 2},
+		{id: "u1", filename: "shared.wav", direction: "upload", state: "completed", done: 100, total: 100, user: "bob"},
+	}}
+
+	downloads := m.renderTransfers(100, 10)
+	if !strings.Contains(downloads, "[↓ DOWNLOADS 2]") || !strings.Contains(downloads, "███░░░░░░░░░░░  25%") || !strings.Contains(downloads, "⠋") || strings.Contains(downloads, "shared.wav") {
+		t.Fatalf("download tab did not render progress and spinner correctly: %q", downloads)
+	}
+	m.cursor = 1
+	m.key(tea.KeyPressMsg(tea.Key{Code: tea.KeyPgDown, Mod: tea.ModCtrl}))
+	uploads := m.renderTransfers(100, 10)
+	if m.rows() != 1 || !strings.Contains(uploads, "[↑ UPLOADS 1]") || !strings.Contains(uploads, "shared.wav") || strings.Contains(uploads, "album.flac") {
+		t.Fatalf("upload tab did not isolate uploads: rows=%d view=%q", m.rows(), uploads)
+	}
+	if indexes := m.transferIndexes(); len(indexes) != 1 || indexes[0] != 2 {
+		t.Fatalf("upload action index mapping = %v", indexes)
+	}
+	m.key(tea.KeyPressMsg(tea.Key{Code: tea.KeyPgUp, Mod: tea.ModCtrl}))
+	if m.cursor != 1 {
+		t.Fatalf("download cursor was not restored: %d", m.cursor)
+	}
+	updated, _ := m.Update(spinnerTickMsg{})
+	if next := updated.(model).renderTransfers(100, 10); !strings.Contains(next, "⠙") {
+		t.Fatalf("spinner did not advance: %q", next)
+	}
+}
+
 func TestBrowseResultFolderAndUserTabs(t *testing.T) {
 	m := model{
 		workspace: 0,

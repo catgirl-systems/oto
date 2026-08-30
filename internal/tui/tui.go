@@ -51,6 +51,7 @@ func RunWithTransient(ctx context.Context, client *ipc.Client, configPath string
 }
 
 type tickMsg time.Time
+type spinnerTickMsg time.Time
 type statusMsg struct {
 	snapshot daemon.Snapshot
 	err      error
@@ -82,6 +83,9 @@ type settingsMsg struct{ err error }
 type transferActionMsg struct{ err error }
 
 func tick() tea.Cmd { return tea.Tick(time.Second, func(t time.Time) tea.Msg { return tickMsg(t) }) }
+func spinnerTick() tea.Cmd {
+	return tea.Tick(120*time.Millisecond, func(t time.Time) tea.Msg { return spinnerTickMsg(t) })
+}
 func (m model) loadStatus() tea.Cmd {
 	return func() tea.Msg { s, e := m.client.Status(m.ctx); return statusMsg{s, e} }
 }
@@ -280,6 +284,8 @@ func (m *model) switchWorkspace(workspace int) {
 		m.saveSearchTab()
 	} else if m.workspace == 1 {
 		m.saveBrowseTab()
+	} else if m.workspace == 2 {
+		m.transferCursors[m.transferTab] = m.cursor
 	}
 	m.workspace = (workspace + 5) % 5
 	if m.workspace == 0 {
@@ -294,6 +300,11 @@ func (m *model) switchWorkspace(workspace int) {
 		m.loadBrowseTab(m.browseTabIndex)
 		return
 	}
+	if m.workspace == 2 {
+		m.cursor = max(0, min(m.transferCursors[m.transferTab], len(m.transferIndexes())-1))
+		m.selected, m.loading = map[int]bool{}, false
+		return
+	}
 	m.cursor, m.selected = 0, map[int]bool{}
 	m.loading = false
 }
@@ -304,6 +315,13 @@ func (m *model) switchBrowseTab(delta int) {
 	}
 	m.saveBrowseTab()
 	m.loadBrowseTab((m.browseTabIndex + delta + len(m.browseTabs)) % len(m.browseTabs))
+}
+
+func (m *model) switchTransferTab(tab int) {
+	m.transferCursors[m.transferTab] = m.cursor
+	m.transferTab = (tab + 2) % 2
+	m.cursor = max(0, min(m.transferCursors[m.transferTab], len(m.transferIndexes())-1))
+	m.selected = map[int]bool{}
 }
 
 func (m *model) closeBrowseTab() {
@@ -368,7 +386,7 @@ func (m model) Init() tea.Cmd {
 	if m.setup {
 		return nil
 	}
-	return tea.Batch(m.loadStatus(), m.loadTransfers(), m.loadShares(), tick())
+	return tea.Batch(m.loadStatus(), m.loadTransfers(), m.loadShares(), tick(), spinnerTick())
 }
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch x := msg.(type) {
@@ -376,6 +394,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width, m.height = x.Width, x.Height
 	case tickMsg:
 		return m, tea.Batch(m.loadStatus(), m.loadTransfers(), m.loadShares(), tick())
+	case spinnerTickMsg:
+		m.spinner++
+		return m, spinnerTick()
 	case statusMsg:
 		if x.err != nil {
 			m.status.err = x.err.Error()
@@ -450,6 +471,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case transferMsg:
 		m.transfers, m.err = x.transfers, errText(x.err)
+		if m.workspace == 2 {
+			m.cursor = max(0, min(m.cursor, len(m.transferIndexes())-1))
+			m.transferCursors[m.transferTab] = m.cursor
+		}
 	case sharesMsg:
 		m.shares, m.err = x.shares, errText(x.err)
 	case settingsMsg:
@@ -524,12 +549,16 @@ func (m *model) key(k tea.KeyPressMsg) tea.Cmd {
 			m.switchSearchTab(-1)
 		} else if m.workspace == 1 {
 			m.switchBrowseTab(-1)
+		} else if m.workspace == 2 {
+			m.switchTransferTab(0)
 		}
 	case "ctrl+pgdown":
 		if m.workspace == 0 {
 			m.switchSearchTab(1)
 		} else if m.workspace == 1 {
 			m.switchBrowseTab(1)
+		} else if m.workspace == 2 {
+			m.switchTransferTab(1)
 		}
 	case "ctrl+w":
 		if m.workspace == 0 {
@@ -901,10 +930,11 @@ func (m *model) queue(files []download, user string) tea.Cmd {
 	}
 }
 func (m model) action(action string) tea.Cmd {
-	if m.cursor >= len(m.transfers) {
+	indexes := m.transferIndexes()
+	if m.cursor >= len(indexes) {
 		return nil
 	}
-	id := m.transfers[m.cursor].id
+	id := m.transfers[indexes[m.cursor]].id
 	return func() tea.Msg { return transferActionMsg{m.client.TransferAction(m.ctx, id, action)} }
 }
 func (m model) active() bool {

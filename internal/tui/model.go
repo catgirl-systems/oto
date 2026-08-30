@@ -102,6 +102,9 @@ type model struct {
 	browseTabIndex                         int
 	browseRequest                          uint64
 	transfers                              []transfer
+	transferTab                            int
+	transferCursors                        [2]int
+	spinner                                int
 	shares                                 []share
 	selected                               map[int]bool
 	err                                    string
@@ -114,7 +117,7 @@ func (m model) rows() int {
 	case 1:
 		return len(m.entries)
 	case 2:
-		return len(m.transfers)
+		return len(m.transferIndexes())
 	case 3:
 		return len(m.shares)
 	default:
@@ -254,7 +257,7 @@ func (m model) helpView() string {
 		{"d", "download, cancel, or remove"},
 		{"r", "refresh browse, retry transfer, or rescan shares"},
 		{"b (search)", "browse the selected result's user and folder"},
-		{"ctrl+page up/down", "switch search or user browse tabs"},
+		{"ctrl+page up/down", "switch search, browse, or transfer tabs"},
 		{"ctrl+w (results)", "close the active search or user tab"},
 		{"s", "save settings and reconnect"},
 		{"? / esc", "open or close this guide"},
@@ -498,29 +501,102 @@ func (m model) renderBrowse(width, height int) string {
 	return strings.Join(lines, "\n")
 }
 
-func (m model) renderTransfers(width, height int) string {
-	lines := []string{sectionHeader("TRANSFERS", countLabel(len(m.transfers), "transfer"), width)}
-	limit := max(0, height-1)
-	if len(m.transfers) == 0 && limit > 0 {
-		return strings.Join(append(lines, "\n"+muted("Nothing queued. Download a file from Search or Browse.")), "\n")
+func (m model) transferIndexes() []int {
+	direction := "download"
+	if m.transferTab == 1 {
+		direction = "upload"
 	}
-	start, end := visibleRange(len(m.transfers), m.cursor, limit)
-	for i := start; i < end; i++ {
-		x := m.transfers[i]
-		progress := x.state
-		if x.total > 0 {
-			progress += fmt.Sprintf("  %d%%", min(uint64(100), x.done*100/x.total))
+	indexes := make([]int, 0, len(m.transfers))
+	for i, transfer := range m.transfers {
+		if transfer.direction == direction {
+			indexes = append(indexes, i)
 		}
+	}
+	return indexes
+}
+
+func progressBar(done, total uint64, width int) (string, int) {
+	percent := 0
+	if total > 0 {
+		percent = min(100, int(float64(done)*100/float64(total)))
+	}
+	filled := percent * width / 100
+	return strings.Repeat("█", filled) + strings.Repeat("░", width-filled), percent
+}
+
+func transferResultRow(row string, current, upload bool) string {
+	color := lipgloss.Color("#89B4FA")
+	if upload {
+		color = lipgloss.Color("#FAB387")
+	}
+	style := lipgloss.NewStyle().Foreground(color)
+	prefix := "  "
+	if current {
+		prefix = "› "
+		style = style.Bold(true).Background(lipgloss.Color("#313244"))
+	}
+	return styled(prefix+row, style)
+}
+
+func (m model) renderTransfers(width, height int) string {
+	downloads, uploads := 0, 0
+	for _, transfer := range m.transfers {
+		if transfer.direction == "upload" {
+			uploads++
+		} else {
+			downloads++
+		}
+	}
+	downloadTab := fmt.Sprintf("↓ DOWNLOADS %d", downloads)
+	uploadTab := fmt.Sprintf("↑ UPLOADS %d", uploads)
+	if m.transferTab == 0 {
+		downloadTab = styled("["+downloadTab+"]", lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#89B4FA")))
+		uploadTab = muted(uploadTab)
+	} else {
+		downloadTab = muted(downloadTab)
+		uploadTab = styled("["+uploadTab+"]", lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FAB387")))
+	}
+	lines := []string{
+		sectionHeader("TRANSFERS", countLabel(len(m.transfers), "transfer"), width),
+		trunc(downloadTab+"  "+uploadTab, width),
+	}
+	indexes := m.transferIndexes()
+	limit := max(0, height-len(lines))
+	if len(indexes) == 0 && limit > 0 {
+		label := "No downloads. Choose a file in Search or Browse."
+		if m.transferTab == 1 {
+			label = "No uploads. Shared files requested by peers appear here."
+		}
+		return strings.Join(append(lines, "\n"+muted(label)), "\n")
+	}
+	start, end := visibleRange(len(indexes), m.cursor, limit)
+	frames := []rune("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏")
+	for rowIndex := start; rowIndex < end; rowIndex++ {
+		x := m.transfers[indexes[rowIndex]]
+		barWidth := 8
+		if width >= 70 {
+			barWidth = 14
+		}
+		bar, percent := progressBar(x.done, x.total, barWidth)
+		state := x.state
 		if x.queue > 0 {
-			progress += fmt.Sprintf("  queue %d", x.queue)
+			state += fmt.Sprintf(" q%d", x.queue)
+		}
+		status := fmt.Sprintf("%s %3d%%  %s", bar, percent, state)
+		if width >= 90 && x.user != "" {
+			status += "  @" + trunc(x.user, 16)
+		}
+		spinner := " "
+		if x.state == "running" {
+			spinner = string(frames[m.spinner%len(frames)])
 		}
 		direction := "↓"
 		if x.direction == "upload" {
 			direction = "↑"
 		}
-		nameWidth := max(4, width-lipgloss.Width(progress)-5)
-		row := fmt.Sprintf("%s  %s  %s", direction, trunc(x.filename, nameWidth), progress)
-		lines = append(lines, selectedRow(row, i == m.cursor))
+		nameWidth := max(4, width-lipgloss.Width(status)-7)
+		row := fmt.Sprintf("%s %s %s  %s", spinner, direction, searchTextColumn(x.filename, nameWidth), status)
+		lines = append(lines, transferResultRow(row, rowIndex == m.cursor, x.direction == "upload"))
 	}
 	return strings.Join(lines, "\n")
 }
@@ -654,7 +730,7 @@ func (m model) footerView() string {
 	case 1:
 		hints = append(hints, "/ user", "ctrl+pgup/down tabs", "ctrl+w close", "r refresh", "space select", "d download")
 	case 2:
-		hints = append(hints, "d cancel", "r retry", "c clear")
+		hints = append(hints, "ctrl+pgup/down downloads/uploads", "d cancel", "r retry", "c clear")
 	case 3:
 		hints = append(hints, "/ add", "d remove", "r rescan")
 	case 4:

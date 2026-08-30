@@ -52,7 +52,7 @@ Soulseek permits one login per username. Keeping the session in the daemon preve
 | `c` | clear/restore search filters or clear completed transfers |
 | `space` | select a file |
 | `b` in Search | browse the selected result's user and jump to its folder |
-| `ctrl+page up` / `ctrl+page down` in Search or Browse | switch between open result tabs |
+| `ctrl+page up` / `ctrl+page down` in Search, Browse, or Transfers | switch result tabs or Downloads/Uploads |
 | `ctrl+w` in Search or Browse | close the active result tab |
 | `d` | download, cancel transfer, or remove share (by workspace) |
 | `r` | refresh a user browse, retry a transfer, or rescan shares |
