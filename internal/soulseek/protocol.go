@@ -595,20 +595,22 @@ func DecodeSearchResponse(b []byte) (SearchResponse, error) {
 	if _, err = d.U32(); err != nil {
 		return message, err
 	}
-	privateCount, err := d.U32()
-	if err != nil {
-		return message, err
-	}
-	if privateCount > 500 {
-		return message, ErrTooLarge
-	}
-	for i := uint32(0); i < privateCount; i++ {
-		result, decodeErr := decodeSearchResult(d)
-		if decodeErr != nil {
-			return message, decodeErr
+	if d.Remaining() > 0 {
+		privateCount, readErr := d.U32()
+		if readErr != nil {
+			return message, readErr
 		}
-		result.Username = message.Username
-		message.Results = append(message.Results, result)
+		if privateCount > 500 {
+			return message, ErrTooLarge
+		}
+		for i := uint32(0); i < privateCount; i++ {
+			result, decodeErr := decodeSearchResult(d)
+			if decodeErr != nil {
+				return message, decodeErr
+			}
+			result.Username = message.Username
+			message.Results = append(message.Results, result)
+		}
 	}
 	for i := range message.Results {
 		message.Results[i].SlotFree, message.Results[i].Speed, message.Results[i].QueueLength = message.SlotFree, message.Speed, message.QueueLength
@@ -759,32 +761,34 @@ func DecodeSharedListResponse(b []byte) (SharedListResponse, error) {
 	if _, err = d.U32(); err != nil {
 		return message, err
 	}
-	private, err := d.U32()
-	if err != nil {
-		return message, err
-	}
-	if private > 50000 {
-		return message, ErrTooLarge
-	}
-	for i := uint32(0); i < private; i++ {
-		dir, err := d.String()
-		if err != nil {
-			return message, err
+	if d.Remaining() > 0 {
+		private, readErr := d.U32()
+		if readErr != nil {
+			return message, readErr
 		}
-		message.Entries = append(message.Entries, ShareEntry{Name: dir, Directory: true, Private: true})
-		count, err := d.U32()
-		if err != nil {
-			return message, err
-		}
-		if count > 50000 || len(message.Entries)+int(count) > 50000 {
+		if private > 50000 {
 			return message, ErrTooLarge
 		}
-		for j := uint32(0); j < count; j++ {
-			file, err := decodeSearchResult(d)
-			if err != nil {
-				return message, err
+		for i := uint32(0); i < private; i++ {
+			dir, decodeErr := d.String()
+			if decodeErr != nil {
+				return message, decodeErr
 			}
-			message.Entries = append(message.Entries, shareEntryFromSearch(strings.TrimPrefix(dir+"\\"+file.Path, "\\"), file, true))
+			message.Entries = append(message.Entries, ShareEntry{Name: dir, Directory: true, Private: true})
+			count, decodeErr := d.U32()
+			if decodeErr != nil {
+				return message, decodeErr
+			}
+			if count > 50000 || len(message.Entries)+int(count) > 50000 {
+				return message, ErrTooLarge
+			}
+			for j := uint32(0); j < count; j++ {
+				file, decodeErr := decodeSearchResult(d)
+				if decodeErr != nil {
+					return message, decodeErr
+				}
+				message.Entries = append(message.Entries, shareEntryFromSearch(strings.TrimPrefix(dir+"\\"+file.Path, "\\"), file, true))
+			}
 		}
 	}
 	return message, d.Done()

@@ -329,6 +329,43 @@ func TestSharedListRoundTrip(t *testing.T) {
 	}
 }
 
+func TestOptionalPrivateLists(t *testing.T) {
+	compress := func(raw *Encoder) []byte {
+		t.Helper()
+		payload, err := CompressZlib(raw.Payload())
+		if err != nil {
+			t.Fatal(err)
+		}
+		return payload
+	}
+	file := SearchResult{Path: "song.flac", Size: 42}
+
+	var search Encoder
+	_ = search.String("peer")
+	search.U32(7)
+	search.U32(1)
+	_ = file.encode(&search)
+	search.Bool(true)
+	search.U32(100)
+	search.U32(0)
+	search.U32(0) // Unknown field; peers may omit the empty private-list count.
+	result, err := DecodeSearchResponse(compress(&search))
+	if err != nil || len(result.Results) != 1 || !result.Results[0].Public {
+		t.Fatalf("public-only search response: %+v %v", result, err)
+	}
+
+	var shares Encoder
+	shares.U32(1)
+	_ = shares.String("Music")
+	shares.U32(1)
+	_ = file.encode(&shares)
+	shares.U32(0) // Unknown field; peers may omit the empty private-list count.
+	list, err := DecodeSharedListResponse(compress(&shares))
+	if err != nil || len(list.Entries) != 2 || list.Entries[1].Private {
+		t.Fatalf("public-only shared list: %+v %v", list, err)
+	}
+}
+
 func TestFileConnectionReceive(t *testing.T) {
 	left, right := net.Pipe()
 	defer right.Close()
