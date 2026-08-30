@@ -2,19 +2,6 @@
 
 A Linux Soulseek client with a keyboard-first terminal UI. It logs in directly to Soulseek—no slskd process or web dashboard required.
 
-> **License and warranty:** Copyright © 2026 catgirl-systems contributors. This program is free software under the [GNU AGPL v3 only](LICENSE), comes with **no warranty**, and may be redistributed under that license. Source: <https://github.com/catgirl-systems/oto>.
-
-## MVP features
-
-- global file search;
-- browse another user's public shares;
-- resumable file and folder downloads;
-- public local shares and passive uploads;
-- foreground daemon operation for Docker and service managers;
-- one Soulseek session: the TUI attaches to a running daemon or starts a transient child.
-
-Chat, rooms, buddies, private shares, manual push uploads, bandwidth limiting, filesystem watching, and non-Linux platforms are intentionally not included.
-
 ## Build and run
 
 Requires Go 1.25 or newer.
