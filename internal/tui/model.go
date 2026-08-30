@@ -34,9 +34,9 @@ type result struct {
 	public                bool
 }
 type entry struct {
-	name      string
-	size      uint64
-	directory bool
+	name               string
+	size               uint64
+	directory, private bool
 }
 
 type browseTab struct {
@@ -424,7 +424,7 @@ func (m model) renderBrowse(width, height int) string {
 		return strings.Join(append(lines, muted("◌  Loading public shares…")), "\n")
 	}
 	if len(m.entries) == 0 && limit > 0 {
-		return strings.Join(append(lines, "\n"+muted("Enter a Soulseek username to browse their public files.")), "\n")
+		return strings.Join(append(lines, "\n"+muted("Enter a Soulseek username to browse their shared files.")), "\n")
 	}
 	start, end := visibleRange(len(m.entries), m.cursor, limit)
 	for i := start; i < end; i++ {
@@ -438,9 +438,16 @@ func (m model) renderBrowse(width, height int) string {
 			kind = "▾"
 		}
 		path := strings.ReplaceAll(x.name, "\\", "/")
-		depth := min(6, strings.Count(path, "/"))
-		nameWidth := max(4, width-14-depth*2)
-		row := fmt.Sprintf("%s %s %s%s  %s", mark, kind, strings.Repeat("  ", depth), trunc(filepath.Base(path), nameWidth), formatBytes(x.size))
+		indent := strings.Repeat("  ", min(6, strings.Count(path, "/")))
+		details := ""
+		if !x.directory {
+			details = formatBytes(x.size)
+		}
+		if x.private {
+			details = strings.TrimSpace("private  " + details)
+		}
+		nameWidth := max(4, width-lipgloss.Width(indent)-lipgloss.Width(details)-8)
+		row := fmt.Sprintf("%s %s %s%s  %s", mark, kind, indent, trunc(filepath.Base(path), nameWidth), details)
 		lines = append(lines, searchResultRow(row, i == m.cursor, m.selected[i]))
 	}
 	return strings.Join(lines, "\n")
@@ -943,7 +950,7 @@ func toResults(x []daemon.SearchResult) []result {
 func toEntries(x []soulseek.ShareEntry) []entry {
 	r := make([]entry, len(x))
 	for i, v := range x {
-		r[i] = entry{v.Name, v.Size, v.Directory}
+		r[i] = entry{v.Name, v.Size, v.Directory, v.Private}
 	}
 	return r
 }

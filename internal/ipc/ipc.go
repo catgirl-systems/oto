@@ -22,8 +22,9 @@ import (
 )
 
 const (
-	Version           = "v1"
-	MaxBodySize int64 = 1 << 20
+	Version                 = "v1"
+	MaxBodySize       int64 = 1 << 20
+	MaxBrowseBodySize int64 = 64 << 20
 )
 
 type Server struct {
@@ -357,6 +358,10 @@ func NewClient(paths ...string) *Client {
 	}}}}
 }
 func (c *Client) Do(ctx context.Context, method, path string, body any, out any) error {
+	return c.do(ctx, method, path, body, out, MaxBodySize)
+}
+
+func (c *Client) do(ctx context.Context, method, path string, body any, out any, responseLimit int64) error {
 	var rd io.Reader
 	if body != nil {
 		b, e := json.Marshal(body)
@@ -391,7 +396,7 @@ func (c *Client) Do(ctx context.Context, method, path string, body any, out any)
 	if out == nil {
 		return nil
 	}
-	return json.NewDecoder(io.LimitReader(resp.Body, MaxBodySize)).Decode(out)
+	return json.NewDecoder(io.LimitReader(resp.Body, responseLimit)).Decode(out)
 }
 func (c *Client) Status(ctx context.Context) (daemon.Snapshot, error) {
 	var x daemon.Snapshot
@@ -411,7 +416,7 @@ func (c *Client) SearchPage(ctx context.Context, id string, cursor int, filter s
 }
 func (c *Client) Browse(ctx context.Context, username string) ([]soulseek.ShareEntry, error) {
 	var entries []soulseek.ShareEntry
-	err := c.Do(ctx, "GET", "/v1/browse?user="+urlQuery(username), nil, &entries)
+	err := c.do(ctx, "GET", "/v1/browse?user="+urlQuery(username), nil, &entries, MaxBrowseBodySize)
 	return entries, err
 }
 func (c *Client) QueueDownloads(ctx context.Context, r []daemon.DownloadRequest) ([]daemon.Download, error) {

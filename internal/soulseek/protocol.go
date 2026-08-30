@@ -664,7 +664,7 @@ type SharedListResponse struct{ Entries []ShareEntry }
 
 func (SharedListResponse) command() uint32 { return PeerSharedList }
 func (m SharedListResponse) encode(e *Encoder) error {
-	groups := make(map[string][]ShareEntry)
+	groups := [2]map[string][]ShareEntry{{}, {}}
 	for _, entry := range m.Entries {
 		if entry.Directory {
 			continue
@@ -674,32 +674,44 @@ func (m SharedListResponse) encode(e *Encoder) error {
 		if cut := strings.LastIndexByte(name, '\\'); cut >= 0 {
 			dir, file = name[:cut], name[cut+1:]
 		}
-		groups[dir] = append(groups[dir], ShareEntry{Name: file, Size: entry.Size})
+		index := 0
+		if entry.Private {
+			index = 1
+		}
+		groups[index][dir] = append(groups[index][dir], ShareEntry{Name: file, Size: entry.Size})
 	}
-	if len(groups) > 50000 {
+	if len(groups[0])+len(groups[1]) > 50000 {
 		return ErrTooLarge
 	}
-	dirs := make([]string, 0, len(groups))
-	for dir := range groups {
-		dirs = append(dirs, dir)
-	}
-	sort.Strings(dirs)
 	var raw Encoder
-	raw.U32(uint32(len(dirs)))
-	for _, dir := range dirs {
-		if err := raw.String(dir); err != nil {
-			return err
+	writeGroups := func(group map[string][]ShareEntry) error {
+		dirs := make([]string, 0, len(group))
+		for dir := range group {
+			dirs = append(dirs, dir)
 		}
-		raw.U32(uint32(len(groups[dir])))
-		for _, file := range groups[dir] {
-			result := SearchResult{Path: file.Name, Size: file.Size, Extension: strings.TrimPrefix(strings.ToLower(filepath.Ext(file.Name)), ".")}
-			if err := result.encode(&raw); err != nil {
+		sort.Strings(dirs)
+		raw.U32(uint32(len(dirs)))
+		for _, dir := range dirs {
+			if err := raw.String(dir); err != nil {
 				return err
 			}
+			raw.U32(uint32(len(group[dir])))
+			for _, file := range group[dir] {
+				result := SearchResult{Path: file.Name, Size: file.Size, Extension: strings.TrimPrefix(strings.ToLower(filepath.Ext(file.Name)), ".")}
+				if err := result.encode(&raw); err != nil {
+					return err
+				}
+			}
 		}
+		return nil
+	}
+	if err := writeGroups(groups[0]); err != nil {
+		return err
 	}
 	raw.U32(0)
-	raw.U32(0)
+	if err := writeGroups(groups[1]); err != nil {
+		return err
+	}
 	compressed, err := CompressZlib(raw.Payload())
 	if err != nil {
 		return err
@@ -754,20 +766,24 @@ func DecodeSharedListResponse(b []byte) (SharedListResponse, error) {
 		return message, ErrTooLarge
 	}
 	for i := uint32(0); i < private; i++ {
-		if _, err = d.String(); err != nil {
+		dir, err := d.String()
+		if err != nil {
 			return message, err
 		}
+		message.Entries = append(message.Entries, ShareEntry{Name: dir, Directory: true, Private: true})
 		count, err := d.U32()
 		if err != nil {
 			return message, err
 		}
-		if count > 50000 {
+		if count > 50000 || len(message.Entries)+int(count) > 50000 {
 			return message, ErrTooLarge
 		}
 		for j := uint32(0); j < count; j++ {
-			if _, err = decodeSearchResult(d); err != nil {
+			file, err := decodeSearchResult(d)
+			if err != nil {
 				return message, err
 			}
+			message.Entries = append(message.Entries, ShareEntry{Name: strings.TrimPrefix(dir+"\\"+file.Path, "\\"), Size: file.Size, Private: true})
 		}
 	}
 	return message, d.Done()
@@ -777,6 +793,7 @@ type ShareEntry struct {
 	Name      string
 	Size      uint64
 	Directory bool
+	Private   bool
 }
 
 type FolderRequest struct {

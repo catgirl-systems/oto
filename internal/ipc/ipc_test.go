@@ -151,3 +151,15 @@ func TestSearchClientSendsFilters(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestBrowseClientAcceptsLargeShareLists(t *testing.T) {
+	name := strings.Repeat("x", int(MaxBodySize)+1024)
+	payload := `[{"Name":"` + name + `"}]`
+	client := &Client{http: &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(payload)), Header: make(http.Header)}, nil
+	})}}
+	entries, err := client.Browse(context.Background(), "peer")
+	if err != nil || len(entries) != 1 || entries[0].Name != name {
+		t.Fatalf("large browse response: entries=%d err=%v", len(entries), err)
+	}
+}
