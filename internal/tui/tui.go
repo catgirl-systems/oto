@@ -12,9 +12,9 @@ import (
 	"unicode"
 
 	"charm.land/bubbletea/v2"
-	"github.com/catgirl-systems/slsk-tui/internal/config"
-	"github.com/catgirl-systems/slsk-tui/internal/daemon"
-	"github.com/catgirl-systems/slsk-tui/internal/ipc"
+	"github.com/catgirl-systems/oto/internal/config"
+	"github.com/catgirl-systems/oto/internal/daemon"
+	"github.com/catgirl-systems/oto/internal/ipc"
 )
 
 // Run loads config, presents setup when needed, then starts the terminal UI.

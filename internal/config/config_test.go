@@ -22,10 +22,10 @@ func TestSaveLoadModesEnvAndRedaction(t *testing.T) {
 	if st, err := os.Stat(filepath.Dir(p)); err != nil || st.Mode().Perm() != 0700 {
 		t.Fatalf("dir mode: %v %v", st, err)
 	}
-	os.Setenv("SLSK_TUI_SERVER", "example:1234")
-	os.Setenv("SLSK_TUI_PASSWORD", "override")
-	defer os.Unsetenv("SLSK_TUI_SERVER")
-	defer os.Unsetenv("SLSK_TUI_PASSWORD")
+	os.Setenv("OTO_SERVER", "example:1234")
+	os.Setenv("OTO_PASSWORD", "override")
+	defer os.Unsetenv("OTO_SERVER")
+	defer os.Unsetenv("OTO_PASSWORD")
 	got, err := Load(p)
 	if err != nil {
 		t.Fatal(err)

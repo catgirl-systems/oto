@@ -3,7 +3,7 @@ package daemon
 import (
 	"context"
 
-	"github.com/catgirl-systems/slsk-tui/internal/soulseek"
+	"github.com/catgirl-systems/oto/internal/soulseek"
 )
 
 func (s *Service) consumeClientEvents(ctx context.Context, client *soulseek.Client) {

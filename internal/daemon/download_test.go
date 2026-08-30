@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/catgirl-systems/slsk-tui/internal/config"
+	"github.com/catgirl-systems/oto/internal/config"
 )
 
 func TestFinalizePartRenamesCollision(t *testing.T) {

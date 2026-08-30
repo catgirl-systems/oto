@@ -15,19 +15,19 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/catgirl-systems/slsk-tui/internal/config"
-	"github.com/catgirl-systems/slsk-tui/internal/daemon"
-	"github.com/catgirl-systems/slsk-tui/internal/ipc"
-	"github.com/catgirl-systems/slsk-tui/internal/tui"
+	"github.com/catgirl-systems/oto/internal/config"
+	"github.com/catgirl-systems/oto/internal/daemon"
+	"github.com/catgirl-systems/oto/internal/ipc"
+	"github.com/catgirl-systems/oto/internal/tui"
 )
 
-const sourceURL = "https://github.com/catgirl-systems/slsk-tui"
+const sourceURL = "https://github.com/catgirl-systems/oto"
 
 var executable = os.Executable
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
-		fmt.Fprintln(os.Stderr, "slsk-tui:", err)
+		fmt.Fprintln(os.Stderr, "oto:", err)
 		os.Exit(1)
 	}
 }
@@ -43,7 +43,7 @@ func run(args []string) error {
 			usage()
 			return nil
 		case "version", "--version":
-			fmt.Println("slsk-tui dev", sourceURL, "AGPL-3.0-only; no warranty")
+			fmt.Println("oto dev", sourceURL, "AGPL-3.0-only; no warranty")
 			return nil
 		}
 	}
@@ -51,7 +51,7 @@ func run(args []string) error {
 }
 
 func usage() {
-	fmt.Printf("slsk-tui — Soulseek search, browse, shares, and transfers\n\nUsage:\n  slsk-tui [--config PATH]\n  slsk-tui daemon [--config PATH]\n  slsk-tui status\n\nSource: %s\nLicense: AGPL-3.0-only; no warranty.\n", sourceURL)
+	fmt.Printf("oto — Soulseek search, browse, shares, and transfers\n\nUsage:\n  oto [--config PATH]\n  oto daemon [--config PATH]\n  oto status\n\nSource: %s\nLicense: AGPL-3.0-only; no warranty.\n", sourceURL)
 }
 
 func configFlag(fs *flag.FlagSet) *string {
@@ -59,7 +59,7 @@ func configFlag(fs *flag.FlagSet) *string {
 }
 
 func tuiCommand(args []string) error {
-	fs := flag.NewFlagSet("slsk-tui", flag.ContinueOnError)
+	fs := flag.NewFlagSet("oto", flag.ContinueOnError)
 	path := configFlag(fs)
 	if err := fs.Parse(args); err != nil {
 		return err

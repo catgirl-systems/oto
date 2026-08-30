@@ -12,8 +12,8 @@ import (
 	"time"
 	"unicode"
 
-	"github.com/catgirl-systems/slsk-tui/internal/config"
-	"github.com/catgirl-systems/slsk-tui/internal/soulseek"
+	"github.com/catgirl-systems/oto/internal/config"
+	"github.com/catgirl-systems/oto/internal/soulseek"
 )
 
 func safeSegment(value string) string {

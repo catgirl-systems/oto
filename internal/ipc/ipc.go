@@ -16,9 +16,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/catgirl-systems/slsk-tui/internal/config"
-	"github.com/catgirl-systems/slsk-tui/internal/daemon"
-	"github.com/catgirl-systems/slsk-tui/internal/soulseek"
+	"github.com/catgirl-systems/oto/internal/config"
+	"github.com/catgirl-systems/oto/internal/daemon"
+	"github.com/catgirl-systems/oto/internal/soulseek"
 )
 
 const (
@@ -359,7 +359,7 @@ func (c *Client) Do(ctx context.Context, method, path string, body any, out any)
 		}
 		rd = strings.NewReader(string(b))
 	}
-	req, e := http.NewRequestWithContext(ctx, method, "http://slsk-tui.local"+path, rd)
+	req, e := http.NewRequestWithContext(ctx, method, "http://oto.local"+path, rd)
 	if e != nil {
 		return e
 	}
@@ -444,7 +444,7 @@ func (c *Client) UpdateConfig(ctx context.Context, cfg config.Config) (config.Sa
 	return x, err
 }
 func (c *Client) Events(ctx context.Context) (io.ReadCloser, error) {
-	req, e := http.NewRequestWithContext(ctx, "GET", "http://slsk-tui.local/v1/events", nil)
+	req, e := http.NewRequestWithContext(ctx, "GET", "http://oto.local/v1/events", nil)
 	if e != nil {
 		return nil, e
 	}

@@ -1,4 +1,4 @@
-module github.com/catgirl-systems/slsk-tui
+module github.com/catgirl-systems/oto
 
 go 1.25.0
 

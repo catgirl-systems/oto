@@ -13,8 +13,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/catgirl-systems/slsk-tui/internal/config"
-	"github.com/catgirl-systems/slsk-tui/internal/soulseek"
+	"github.com/catgirl-systems/oto/internal/config"
+	"github.com/catgirl-systems/oto/internal/soulseek"
 )
 
 var (

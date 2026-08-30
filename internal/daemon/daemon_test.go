@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/catgirl-systems/slsk-tui/internal/config"
+	"github.com/catgirl-systems/oto/internal/config"
 )
 
 func testConfig(t *testing.T) config.Config {

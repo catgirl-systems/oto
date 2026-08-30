@@ -21,9 +21,9 @@ type soulfindWatch struct {
 }
 
 func TestSoulfindHandshakeCriticalValues(t *testing.T) {
-	addr := os.Getenv("SLSK_TUI_SOULFIND_ADDR")
+	addr := os.Getenv("OTO_SOULFIND_ADDR")
 	if addr == "" {
-		t.Skip("SLSK_TUI_SOULFIND_ADDR is unset")
+		t.Skip("OTO_SOULFIND_ADDR is unset")
 	}
 
 	root := t.TempDir()
@@ -86,9 +86,9 @@ func TestSoulfindHandshakeCriticalValues(t *testing.T) {
 }
 
 func TestSoulfindPeerFeatures(t *testing.T) {
-	addr := os.Getenv("SLSK_TUI_SOULFIND_ADDR")
+	addr := os.Getenv("OTO_SOULFIND_ADDR")
 	if addr == "" {
-		t.Skip("SLSK_TUI_SOULFIND_ADDR is unset")
+		t.Skip("OTO_SOULFIND_ADDR is unset")
 	}
 
 	stamp := time.Now().UnixNano()

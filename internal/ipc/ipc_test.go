@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/catgirl-systems/slsk-tui/internal/config"
-	"github.com/catgirl-systems/slsk-tui/internal/daemon"
+	"github.com/catgirl-systems/oto/internal/config"
+	"github.com/catgirl-systems/oto/internal/daemon"
 )
 
 func TestStatusMethodsBodyAndSocketMode(t *testing.T) {
@@ -53,7 +53,7 @@ func TestStatusMethodsBodyAndSocketMode(t *testing.T) {
 	if _, err := cl.Rescan(context.Background()); err != nil {
 		t.Fatalf("rescan shares route: %v", err)
 	}
-	resp, err := cl.http.Do(mustRequest("POST", "http://slsk-tui.local/v1/state", nil))
+	resp, err := cl.http.Do(mustRequest("POST", "http://oto.local/v1/state", nil))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -62,7 +62,7 @@ func TestStatusMethodsBodyAndSocketMode(t *testing.T) {
 	}
 	resp.Body.Close()
 	big := strings.Repeat("x", int(MaxBodySize)+1)
-	resp, err = cl.http.Do(mustRequest("POST", "http://slsk-tui.local/v1/downloads", strings.NewReader(big)))
+	resp, err = cl.http.Do(mustRequest("POST", "http://oto.local/v1/downloads", strings.NewReader(big)))
 	if err != nil {
 		t.Fatal(err)
 	}

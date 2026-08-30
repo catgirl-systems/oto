@@ -17,7 +17,7 @@ import (
 const (
 	DefaultServer      = "server.slsknet.org:2242"
 	DefaultListenAddr  = "0.0.0.0:50300"
-	DefaultDownloadDir = "Downloads/slsk-tui"
+	DefaultDownloadDir = "Downloads/oto"
 )
 
 type Soulseek struct {
@@ -93,7 +93,7 @@ func (c Config) Validate() error {
 }
 
 func applyEnv(c *Config) {
-	for k, dst := range map[string]*string{"SLSK_TUI_USERNAME": &c.Soulseek.Username, "SLSK_TUI_PASSWORD": &c.Soulseek.Password, "SLSK_TUI_SERVER": &c.Soulseek.Server, "SLSK_TUI_LISTEN_ADDR": &c.Soulseek.ListenAddr, "SLSK_TUI_DOWNLOAD_DIR": &c.DownloadDir} {
+	for k, dst := range map[string]*string{"OTO_USERNAME": &c.Soulseek.Username, "OTO_PASSWORD": &c.Soulseek.Password, "OTO_SERVER": &c.Soulseek.Server, "OTO_LISTEN_ADDR": &c.Soulseek.ListenAddr, "OTO_DOWNLOAD_DIR": &c.DownloadDir} {
 		if v, ok := os.LookupEnv(k); ok && v != "" {
 			*dst = v
 		}
@@ -133,7 +133,7 @@ func (c Config) Save(paths ...string) error {
 	if err := c.Validate(); err != nil {
 		return err
 	}
-	if _, fromEnv := os.LookupEnv("SLSK_TUI_PASSWORD"); fromEnv {
+	if _, fromEnv := os.LookupEnv("OTO_PASSWORD"); fromEnv {
 		c.Soulseek.Password = ""
 	}
 	return atomicJSON(path, c, 0600)
@@ -186,7 +186,7 @@ func RuntimeHome() string {
 	if p := os.Getenv("XDG_RUNTIME_DIR"); p != "" {
 		return p
 	}
-	return filepath.Join(os.TempDir(), "slsk-tui-"+strconv.Itoa(os.Getuid()))
+	return filepath.Join(os.TempDir(), "oto-"+strconv.Itoa(os.Getuid()))
 }
 func xdg(env, suffix string) string {
 	if p := os.Getenv(env); p != "" {
@@ -200,9 +200,9 @@ func xdg(env, suffix string) string {
 	}
 	return filepath.Join(h, suffix)
 }
-func ConfigDir() string  { return filepath.Join(ConfigHome(), "slsk-tui") }
-func DataDir() string    { return filepath.Join(DataHome(), "slsk-tui") }
-func RuntimeDir() string { return filepath.Join(RuntimeHome(), "slsk-tui") }
+func ConfigDir() string  { return filepath.Join(ConfigHome(), "oto") }
+func DataDir() string    { return filepath.Join(DataHome(), "oto") }
+func RuntimeDir() string { return filepath.Join(RuntimeHome(), "oto") }
 func ConfigPath() string { return filepath.Join(ConfigDir(), "config.json") }
 func StatePath() string  { return filepath.Join(DataDir(), "downloads.json") }
-func SocketPath() string { return filepath.Join(RuntimeDir(), "slsk-tui.sock") }
+func SocketPath() string { return filepath.Join(RuntimeDir(), "oto.sock") }

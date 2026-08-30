@@ -10,10 +10,10 @@ import (
 
 	"charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
-	"github.com/catgirl-systems/slsk-tui/internal/config"
-	"github.com/catgirl-systems/slsk-tui/internal/daemon"
-	"github.com/catgirl-systems/slsk-tui/internal/ipc"
-	"github.com/catgirl-systems/slsk-tui/internal/soulseek"
+	"github.com/catgirl-systems/oto/internal/config"
+	"github.com/catgirl-systems/oto/internal/daemon"
+	"github.com/catgirl-systems/oto/internal/ipc"
+	"github.com/catgirl-systems/oto/internal/soulseek"
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -106,9 +106,9 @@ func (m model) View() tea.View {
 
 func (m model) setupView() string {
 	labels := []string{"Username", "Password", "Listen address", "Download path", "Share (name:path, optional)"}
-	placeholders := []string{"Soulseek username", "Required", "0.0.0.0:50300", "~/Downloads/slsk-tui", "music:/home/me/Music"}
+	placeholders := []string{"Soulseek username", "Required", "0.0.0.0:50300", "~/Downloads/oto", "music:/home/me/Music"}
 	var b strings.Builder
-	b.WriteString(styled("SLSK", lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#CBA6F7"))))
+	b.WriteString(styled("oto", lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#CBA6F7"))))
 	b.WriteString("  First-time setup\n")
 	b.WriteString(muted("Connect directly to Soulseek. Your password stays in your local config."))
 	b.WriteString("\n\n")
@@ -144,7 +144,7 @@ func (m model) mainView() string {
 	}
 
 	names := []string{"Search", "Browse", "Transfers", "Shares", "Settings"}
-	left := styled("SLSK", lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#CBA6F7"))) + muted("  Soulseek for your terminal")
+	left := styled("oto", lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#CBA6F7"))) + muted("  Soulseek for your terminal")
 	header := spread(left, m.statusView(), m.width-2)
 	hs := lipgloss.NewStyle().Width(m.width).Padding(0, 1)
 	if colorsEnabled() {
@@ -190,7 +190,7 @@ func (m model) mainView() string {
 func (m model) compactView() string {
 	names := []string{"Search", "Browse", "Transfers", "Shares", "Settings"}
 	lines := []string{
-		trunc("SLSK  "+string(m.status.status), m.width),
+		trunc("oto  "+string(m.status.status), m.width),
 		trunc("["+names[m.workspace]+"]", m.width),
 		trunc(m.errorText(), m.width),
 		trunc("tab switch  ? help  q quit", m.width),
@@ -216,7 +216,7 @@ func (m model) helpView() string {
 	for _, row := range rows {
 		fmt.Fprintf(&b, "%-20s %s\n", strong(row[0]), row[1])
 	}
-	b.WriteString("\n" + muted("github.com/catgirl-systems/slsk-tui  •  AGPL-3.0-only  •  no warranty"))
+	b.WriteString("\n" + muted("github.com/catgirl-systems/oto  •  AGPL-3.0-only  •  no warranty"))
 	cardWidth := max(34, min(72, m.width-4))
 	card := panelStyle().Width(cardWidth).Padding(1, 2).Render(b.String())
 	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, card)
