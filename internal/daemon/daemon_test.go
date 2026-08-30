@@ -150,3 +150,15 @@ func TestSearchPagesCachedResults(t *testing.T) {
 		t.Fatalf("last page: %+v", page)
 	}
 }
+
+func TestSearchResultsSortPrivateLast(t *testing.T) {
+	results := []SearchResult{
+		{Username: "private", Public: false, SlotFree: true, Speed: 1000},
+		{Username: "public-slow", Public: true, Queue: 5, Speed: 1},
+		{Username: "public-fast", Public: true, SlotFree: true, Speed: 100},
+	}
+	sortSearchResults(results)
+	if results[0].Username != "public-fast" || results[1].Username != "public-slow" || results[2].Username != "private" {
+		t.Fatalf("search order: %+v", results)
+	}
+}

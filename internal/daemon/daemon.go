@@ -466,24 +466,31 @@ func (s *Service) Search(ctx context.Context, query, expression string) (SearchP
 	for _, x := range r {
 		out = append(out, SearchResult{Username: x.Username, Path: x.Path, Extension: x.Extension, Size: x.Size, Directory: x.IsDirectory, SlotFree: x.SlotFree, Speed: x.Speed, Queue: x.QueueLength, Bitrate: x.Bitrate, Duration: x.Duration, VBR: x.VBR, SampleRate: x.SampleRate, BitDepth: x.BitDepth, Public: x.Public})
 	}
-	sort.SliceStable(out, func(i, j int) bool {
-		if out[i].SlotFree != out[j].SlotFree {
-			return out[i].SlotFree
-		}
-		if out[i].Queue != out[j].Queue {
-			return out[i].Queue < out[j].Queue
-		}
-		if out[i].Speed != out[j].Speed {
-			return out[i].Speed > out[j].Speed
-		}
-		return out[i].Size < out[j].Size
-	})
+	sortSearchResults(out)
 	search := Search{ID: fmt.Sprintf("%d", time.Now().UnixNano()), Query: query, Results: out, Total: len(out), At: time.Now().UTC()}
 	s.mu.Lock()
 	s.searches[search.ID] = search
 	s.mu.Unlock()
 	s.emit("search", query, search)
 	return filteredSearchPage(search, filter, 0), nil
+}
+
+func sortSearchResults(results []SearchResult) {
+	sort.SliceStable(results, func(i, j int) bool {
+		if results[i].Public != results[j].Public {
+			return results[i].Public
+		}
+		if results[i].SlotFree != results[j].SlotFree {
+			return results[i].SlotFree
+		}
+		if results[i].Queue != results[j].Queue {
+			return results[i].Queue < results[j].Queue
+		}
+		if results[i].Speed != results[j].Speed {
+			return results[i].Speed > results[j].Speed
+		}
+		return results[i].Size < results[j].Size
+	})
 }
 
 func filteredSearchPage(search Search, filter searchFilter, cursor int) SearchPage {
