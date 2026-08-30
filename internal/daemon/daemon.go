@@ -137,6 +137,7 @@ type Service struct {
 	transfers       map[string]Transfer
 	downloadSlots   chan struct{}
 	downloadCancels map[string]context.CancelFunc
+	downloadPeers   map[string]chan struct{}
 	events          chan Event
 	ctx             context.Context
 	cancel          context.CancelFunc
@@ -160,7 +161,7 @@ func NewWithJournal(cfg config.Config, path string) (*Service, error) {
 	if path == "" {
 		path = config.StatePath()
 	}
-	s := &Service{cfg: cfg, configPath: config.ConfigPath(), shares: soulseek.NewShareIndex(), searches: make(map[string]Search), transfers: make(map[string]Transfer), downloadSlots: make(chan struct{}, cfg.DownloadSlots), downloadCancels: make(map[string]context.CancelFunc), events: make(chan Event, 128), status: StatusStopped, journalPath: path}
+	s := &Service{cfg: cfg, configPath: config.ConfigPath(), shares: soulseek.NewShareIndex(), searches: make(map[string]Search), transfers: make(map[string]Transfer), downloadSlots: make(chan struct{}, cfg.DownloadSlots), downloadCancels: make(map[string]context.CancelFunc), downloadPeers: make(map[string]chan struct{}), events: make(chan Event, 128), status: StatusStopped, journalPath: path}
 	if b, err := os.ReadFile(path); err == nil {
 		if err := json.Unmarshal(b, &s.journal); err != nil {
 			return nil, fmt.Errorf("daemon: load journal: %w", err)

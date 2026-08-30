@@ -45,3 +45,18 @@ func TestSafeSegment(t *testing.T) {
 		t.Fatalf("unsafe segment %q", got)
 	}
 }
+
+func TestDownloadPeerSlotsSerializeSameUser(t *testing.T) {
+	service := &Service{downloadPeers: make(map[string]chan struct{})}
+	first := service.downloadPeerSlot("peer")
+	if first != service.downloadPeerSlot("peer") || first == service.downloadPeerSlot("other") {
+		t.Fatal("download peer slots were not isolated by username")
+	}
+	first <- struct{}{}
+	select {
+	case first <- struct{}{}:
+		t.Fatal("same-user download slot allowed a concurrent transfer")
+	default:
+	}
+	<-first
+}

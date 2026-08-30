@@ -56,6 +56,18 @@ func (s *Service) resumeDownloads() {
 	}
 }
 
+func (s *Service) downloadPeerSlot(username string) chan struct{} {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	peerSlot := s.downloadPeers[username]
+	if peerSlot == nil {
+		// ponytail: serialize downloads per peer; multiplex P connections if parallel same-peer queues matter.
+		peerSlot = make(chan struct{}, 1)
+		s.downloadPeers[username] = peerSlot
+	}
+	return peerSlot
+}
+
 func (s *Service) runDownload(id string) {
 	s.mu.Lock()
 	if _, running := s.downloadCancels[id]; running || s.ctx == nil {
@@ -73,15 +85,21 @@ func (s *Service) runDownload(id string) {
 		s.mu.Unlock()
 	}()
 
+	download, ok := s.downloadByID(id)
+	if !ok {
+		return
+	}
+	peerSlot := s.downloadPeerSlot(download.Username)
+	select {
+	case peerSlot <- struct{}{}:
+		defer func() { <-peerSlot }()
+	case <-ctx.Done():
+		return
+	}
 	select {
 	case slots <- struct{}{}:
 		defer func() { <-slots }()
 	case <-ctx.Done():
-		return
-	}
-
-	download, ok := s.downloadByID(id)
-	if !ok {
 		return
 	}
 	s.mu.RLock()
