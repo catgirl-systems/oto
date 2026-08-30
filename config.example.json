@@ -2,7 +2,7 @@
   "soulseek": {
     "username": "",
     "password": "",
-    "server": "vps.slsknet.org:2271",
+    "server": "server.slsknet.org:2242",
     "listen_addr": "0.0.0.0:50300"
   },
   "download_dir": "/downloads",

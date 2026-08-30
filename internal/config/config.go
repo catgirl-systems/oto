@@ -15,7 +15,7 @@ import (
 )
 
 const (
-	DefaultServer      = "vps.slsknet.org:2271"
+	DefaultServer      = "server.slsknet.org:2242"
 	DefaultListenAddr  = "0.0.0.0:50300"
 	DefaultDownloadDir = "Downloads/slsk-tui"
 )
