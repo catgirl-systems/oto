@@ -2,6 +2,7 @@ package ipc
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"os"
@@ -53,7 +54,31 @@ func TestStatusMethodsBodyAndSocketMode(t *testing.T) {
 	if _, err := cl.Rescan(context.Background()); err != nil {
 		t.Fatalf("rescan shares route: %v", err)
 	}
-	resp, err := cl.http.Do(mustRequest("POST", "http://oto.local/v1/state", nil))
+	resp, err := cl.http.Do(mustRequest("POST", "http://oto.local/v1/search", strings.NewReader(`{"query":"song","filter":"wat:true"}`)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("invalid initial filter status %d", resp.StatusCode)
+	}
+	resp.Body.Close()
+	resp, err = cl.http.Do(mustRequest("GET", "http://oto.local/v1/searches?id=missing&filter=size:nope", nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("invalid page filter status %d", resp.StatusCode)
+	}
+	resp.Body.Close()
+	resp, err = cl.http.Do(mustRequest("GET", "http://oto.local/v1/searches?id=missing", nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("missing search status %d", resp.StatusCode)
+	}
+	resp.Body.Close()
+	resp, err = cl.http.Do(mustRequest("POST", "http://oto.local/v1/state", nil))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,4 +124,30 @@ func TestStaleSocketIsRemovedAfterFailedDial(t *testing.T) {
 	}
 	ln.Close()
 	os.Remove(p)
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (fn roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) { return fn(request) }
+
+func TestSearchClientSendsFilters(t *testing.T) {
+	calls := 0
+	client := &Client{http: &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		calls++
+		if calls == 1 {
+			var body map[string]string
+			if err := json.NewDecoder(request.Body).Decode(&body); err != nil || body["query"] != "song" || body["filter"] != "type:flac" {
+				t.Fatalf("search request: %+v %v", body, err)
+			}
+		} else if request.URL.Query().Get("filter") != `in:"live session"` || request.URL.Query().Get("cursor") != "100" {
+			t.Fatalf("page query: %s", request.URL.RawQuery)
+		}
+		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(`{"id":"s","results":[],"total":0,"found_total":0}`)), Header: make(http.Header)}, nil
+	})}}
+	if _, err := client.Search(context.Background(), "song", "type:flac"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.SearchPage(context.Background(), "s", 100, `in:"live session"`); err != nil {
+		t.Fatal(err)
+	}
 }

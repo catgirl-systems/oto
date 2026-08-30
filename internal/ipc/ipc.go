@@ -166,9 +166,13 @@ func (s *Server) searches(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, errors.New("ipc: invalid search cursor"))
 		return
 	}
-	page, err := s.service.SearchPage(id, cursor)
+	page, err := s.service.SearchPage(id, cursor, r.URL.Query().Get("filter"))
 	if err != nil {
-		writeErr(w, http.StatusNotFound, err)
+		status := http.StatusNotFound
+		if errors.Is(err, daemon.ErrInvalidFilter) {
+			status = http.StatusBadRequest
+		}
+		writeErr(w, status, err)
 		return
 	}
 	writeJSON(w, 200, page)
@@ -178,15 +182,20 @@ func (s *Server) search(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Query string `json:"query"`
+		Query  string `json:"query"`
+		Filter string `json:"filter"`
 	}
 	if err := decode(w, r, &req); err != nil {
 		writeErr(w, 400, err)
 		return
 	}
-	out, err := s.service.Search(r.Context(), req.Query)
+	out, err := s.service.Search(r.Context(), req.Query, req.Filter)
 	if err != nil {
-		writeErr(w, 503, err)
+		status := http.StatusServiceUnavailable
+		if errors.Is(err, daemon.ErrInvalidFilter) {
+			status = http.StatusBadRequest
+		}
+		writeErr(w, status, err)
 		return
 	}
 	writeJSON(w, 200, out)
@@ -389,14 +398,14 @@ func (c *Client) Status(ctx context.Context) (daemon.Snapshot, error) {
 	err := c.Do(ctx, "GET", "/v1/state", nil, &x)
 	return x, err
 }
-func (c *Client) Search(ctx context.Context, q string) (daemon.SearchPage, error) {
+func (c *Client) Search(ctx context.Context, q, filter string) (daemon.SearchPage, error) {
 	var page daemon.SearchPage
-	err := c.Do(ctx, "POST", "/v1/search", map[string]string{"query": q}, &page)
+	err := c.Do(ctx, "POST", "/v1/search", map[string]string{"query": q, "filter": filter}, &page)
 	return page, err
 }
-func (c *Client) SearchPage(ctx context.Context, id string, cursor int) (daemon.SearchPage, error) {
+func (c *Client) SearchPage(ctx context.Context, id string, cursor int, filter string) (daemon.SearchPage, error) {
 	var page daemon.SearchPage
-	path := fmt.Sprintf("/v1/searches?id=%s&cursor=%d", urlQuery(id), cursor)
+	path := fmt.Sprintf("/v1/searches?id=%s&cursor=%d&filter=%s", urlQuery(id), cursor, urlQuery(filter))
 	err := c.Do(ctx, "GET", path, nil, &page)
 	return page, err
 }

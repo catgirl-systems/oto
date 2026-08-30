@@ -53,13 +53,20 @@ type Snapshot struct {
 }
 
 type SearchResult struct {
-	Username  string `json:"username"`
-	Path      string `json:"path"`
-	Size      uint64 `json:"size"`
-	Directory bool   `json:"directory"`
-	SlotFree  bool   `json:"slot_free"`
-	Speed     uint32 `json:"speed"`
-	Queue     uint32 `json:"queue"`
+	Username   string `json:"username"`
+	Path       string `json:"path"`
+	Extension  string `json:"extension,omitempty"`
+	Size       uint64 `json:"size"`
+	Directory  bool   `json:"directory"`
+	SlotFree   bool   `json:"slot_free"`
+	Speed      uint32 `json:"speed"`
+	Queue      uint32 `json:"queue"`
+	Bitrate    uint32 `json:"bitrate,omitempty"`
+	Duration   uint32 `json:"duration,omitempty"`
+	VBR        bool   `json:"vbr,omitempty"`
+	SampleRate uint32 `json:"sample_rate,omitempty"`
+	BitDepth   uint32 `json:"bit_depth,omitempty"`
+	Public     bool   `json:"public"`
 }
 type Search struct {
 	ID      string         `json:"id"`
@@ -76,6 +83,7 @@ type SearchPage struct {
 	Cursor     int            `json:"cursor"`
 	NextCursor int            `json:"next_cursor,omitempty"`
 	Total      int            `json:"total"`
+	FoundTotal int            `json:"found_total"`
 }
 
 type Transfer struct {
@@ -439,7 +447,11 @@ func (s *Service) Close() error {
 }
 func (s *Service) Stop() error { return s.Close() }
 
-func (s *Service) Search(ctx context.Context, query string) (SearchPage, error) {
+func (s *Service) Search(ctx context.Context, query, expression string) (SearchPage, error) {
+	filter, err := parseSearchFilter(expression)
+	if err != nil {
+		return SearchPage{}, err
+	}
 	s.mu.RLock()
 	c := s.client
 	s.mu.RUnlock()
@@ -452,7 +464,7 @@ func (s *Service) Search(ctx context.Context, query string) (SearchPage, error) 
 	}
 	out := make([]SearchResult, 0, len(r))
 	for _, x := range r {
-		out = append(out, SearchResult{Username: x.Username, Path: x.Path, Size: x.Size, Directory: x.IsDirectory, SlotFree: x.SlotFree, Speed: x.Speed, Queue: x.QueueLength})
+		out = append(out, SearchResult{Username: x.Username, Path: x.Path, Extension: x.Extension, Size: x.Size, Directory: x.IsDirectory, SlotFree: x.SlotFree, Speed: x.Speed, Queue: x.QueueLength, Bitrate: x.Bitrate, Duration: x.Duration, VBR: x.VBR, SampleRate: x.SampleRate, BitDepth: x.BitDepth, Public: x.Public})
 	}
 	sort.SliceStable(out, func(i, j int) bool {
 		if out[i].SlotFree != out[j].SlotFree {
@@ -471,27 +483,45 @@ func (s *Service) Search(ctx context.Context, query string) (SearchPage, error) 
 	s.searches[search.ID] = search
 	s.mu.Unlock()
 	s.emit("search", query, search)
-	return searchPage(search, 0), nil
+	return filteredSearchPage(search, filter, 0), nil
 }
 
-func searchPage(search Search, cursor int) SearchPage {
-	cursor = max(0, min(cursor, len(search.Results)))
-	end := min(cursor+searchPageSize, len(search.Results))
-	page := SearchPage{ID: search.ID, Query: search.Query, Results: append([]SearchResult(nil), search.Results[cursor:end]...), Cursor: cursor, Total: len(search.Results)}
-	if end < len(search.Results) {
+func filteredSearchPage(search Search, filter searchFilter, cursor int) SearchPage {
+	results := make([]SearchResult, 0, len(search.Results))
+	for _, result := range search.Results {
+		if filter.matches(result) {
+			results = append(results, result)
+		}
+	}
+	cursor = max(0, min(cursor, len(results)))
+	end := min(cursor+searchPageSize, len(results))
+	page := SearchPage{ID: search.ID, Query: search.Query, Results: append([]SearchResult(nil), results[cursor:end]...), Cursor: cursor, Total: len(results), FoundTotal: len(search.Results)}
+	if end < len(results) {
 		page.NextCursor = end
 	}
 	return page
 }
 
-func (s *Service) SearchPage(id string, cursor int) (SearchPage, error) {
+func searchPage(search Search, cursor int, expression string) (SearchPage, error) {
+	filter, err := parseSearchFilter(expression)
+	if err != nil {
+		return SearchPage{}, err
+	}
+	return filteredSearchPage(search, filter, cursor), nil
+}
+
+func (s *Service) SearchPage(id string, cursor int, expression string) (SearchPage, error) {
+	filter, err := parseSearchFilter(expression)
+	if err != nil {
+		return SearchPage{}, err
+	}
 	s.mu.RLock()
 	search, ok := s.searches[id]
 	s.mu.RUnlock()
 	if !ok {
 		return SearchPage{}, ErrSearchNotFound
 	}
-	return searchPage(search, cursor), nil
+	return filteredSearchPage(search, filter, cursor), nil
 }
 func (s *Service) Searches() []Search {
 	s.mu.RLock()

@@ -170,3 +170,51 @@ func TestSettingsSidebarEditsAccountWithoutLeakingPassword(t *testing.T) {
 		t.Fatal("settings tab did not wrap to search")
 	}
 }
+
+func TestSearchFilterEditingAndMetadata(t *testing.T) {
+	t.Setenv("NO_COLOR", "1")
+	m := model{width: 100, height: 16, workspace: 0, selected: map[int]bool{}}
+	m.key(key("f"))
+	if !m.editing || !m.filterEditing {
+		t.Fatal("f did not open filter editing")
+	}
+	m.input = `type:audio bitrate:!0`
+	if cmd := m.editKey(key("enter")); cmd != nil || m.searchFilter != `type:audio bitrate:!0` {
+		t.Fatal("filter was not applied without a cached search")
+	}
+	m.key(key("f"))
+	m.input = "size:nope"
+	m.editKey(key("enter"))
+	if m.searchFilter != `type:audio bitrate:!0` || m.err == "" {
+		t.Fatal("invalid filter replaced the active filter")
+	}
+	m.key(key("f"))
+	m.input = "public:true"
+	m.key(tea.KeyPressMsg(tea.Key{Code: tea.KeyEscape}))
+	if m.searchFilter != `type:audio bitrate:!0` {
+		t.Fatal("escape changed the active filter")
+	}
+	m.key(key("c"))
+	if m.searchFilter != "" || m.searchFilterUndo == "" {
+		t.Fatal("c did not clear and remember the filter")
+	}
+	m.key(key("c"))
+	if m.searchFilter != `type:audio bitrate:!0` || m.searchFilterUndo != "" {
+		t.Fatal("c did not restore the filter")
+	}
+
+	m.loading = false
+	m.searchTotal, m.searchFound = 1, 4
+	m.results = []result{{user: "peer", path: "song.flac", size: 1024, bitrate: 320, duration: 125, vbr: true}}
+	view := m.renderSearch(100, 10)
+	for _, want := range []string{"1 loaded / 1 filtered / 4 found", "320kv", "2:05", "private"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("search metadata missing %q in %q", want, view)
+		}
+	}
+	updated, _ := m.Update(searchMsg{append: true, page: daemon.SearchPage{ID: "s", Results: []daemon.SearchResult{{Path: "next.flac", Public: true}}, Total: 2, FoundTotal: 4}})
+	m = updated.(model)
+	if len(m.results) != 2 || m.searchTotal != 2 || m.searchFound != 4 {
+		t.Fatal("filtered page was not appended with its totals")
+	}
+}

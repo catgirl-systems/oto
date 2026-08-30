@@ -56,9 +56,11 @@ type statusMsg struct {
 	err      error
 }
 type searchMsg struct {
-	page   daemon.SearchPage
-	append bool
-	err    error
+	page         daemon.SearchPage
+	append       bool
+	filter       string
+	filterChange bool
+	err          error
 }
 type browseMsg struct {
 	entries []entry
@@ -89,14 +91,21 @@ func (m model) rescanShares() tea.Cmd {
 	return func() tea.Msg { x, e := m.client.Rescan(m.ctx); return sharesMsg{toShares(x), e} }
 }
 func (m model) search() tea.Cmd {
-	q := m.query
-	return func() tea.Msg { page, err := m.client.Search(m.ctx, q); return searchMsg{page: page, err: err} }
+	q, filter := m.query, m.searchFilter
+	return func() tea.Msg { page, err := m.client.Search(m.ctx, q, filter); return searchMsg{page: page, err: err} }
 }
 func (m model) loadSearchPage() tea.Cmd {
-	id, cursor := m.searchID, m.searchNext
+	id, cursor, filter := m.searchID, m.searchNext, m.searchFilter
 	return func() tea.Msg {
-		page, err := m.client.SearchPage(m.ctx, id, cursor)
+		page, err := m.client.SearchPage(m.ctx, id, cursor, filter)
 		return searchMsg{page: page, append: true, err: err}
+	}
+}
+func (m model) filterSearch(filter string) tea.Cmd {
+	id := m.searchID
+	return func() tea.Msg {
+		page, err := m.client.SearchPage(m.ctx, id, 0, filter)
+		return searchMsg{page: page, filter: filter, filterChange: true, err: err}
 	}
 }
 func (m model) browse() tea.Cmd {
@@ -150,7 +159,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.results, m.cursor, m.selected = results, 0, map[int]bool{}
 		}
-		m.searchID, m.searchTotal, m.searchNext = x.page.ID, x.page.Total, x.page.NextCursor
+		if x.filterChange {
+			if x.filter == "" && m.searchFilter != "" {
+				m.searchFilterUndo = m.searchFilter
+			} else if m.searchFilter == "" && x.filter == m.searchFilterUndo {
+				m.searchFilterUndo = ""
+			}
+			m.searchFilter = x.filter
+		}
+		m.searchID, m.searchTotal, m.searchFound, m.searchNext = x.page.ID, x.page.Total, x.page.FoundTotal, x.page.NextCursor
 	case browseMsg:
 		m.entries, m.err = x.entries, errText(x.err)
 		m.cursor, m.selected = 0, map[int]bool{}
@@ -286,12 +303,29 @@ func (m *model) key(k tea.KeyPressMsg) tea.Cmd {
 			return m.rescanShares()
 		}
 	case "c":
+		if m.workspace == 0 {
+			filter := m.searchFilterUndo
+			if m.searchFilter != "" {
+				filter = ""
+			}
+			if m.searchID == "" {
+				m.searchFilter, m.searchFilterUndo = filter, m.searchFilter
+				return nil
+			}
+			m.loading = true
+			return m.filterSearch(filter)
+		}
 		if m.workspace == 2 {
 			return m.action("clear")
 		}
 	case "s":
 		if m.workspace == 4 {
 			return m.saveSettings()
+		}
+	case "f":
+		if m.workspace == 0 {
+			m.editing, m.filterEditing, m.input = true, true, m.searchFilter
+			return nil
 		}
 	case "/":
 		m.beginEdit()
@@ -301,7 +335,7 @@ func (m *model) key(k tea.KeyPressMsg) tea.Cmd {
 }
 
 func (m *model) beginEdit() {
-	m.editing = true
+	m.editing, m.filterEditing = true, false
 	switch m.workspace {
 	case 0:
 		m.input = m.query
@@ -319,12 +353,27 @@ func (m *model) beginEdit() {
 func (m *model) editKey(k tea.KeyPressMsg) tea.Cmd {
 	s := k.String()
 	if s == "esc" {
-		m.editing = false
+		m.editing, m.filterEditing = false, false
 		m.input = ""
 		return nil
 	}
 	if s == "enter" {
-		m.editing = false
+		filterEditing := m.filterEditing
+		m.editing, m.filterEditing = false, false
+		if filterEditing {
+			filter := strings.TrimSpace(m.input)
+			if err := daemon.ValidateSearchFilter(filter); err != nil {
+				m.err = err.Error()
+				return nil
+			}
+			if m.searchID == "" {
+				m.searchFilter = filter
+				m.err = ""
+				return nil
+			}
+			m.loading = true
+			return m.filterSearch(filter)
+		}
 		if m.workspace == 0 {
 			m.query = strings.TrimSpace(m.input)
 			if m.query == "" {

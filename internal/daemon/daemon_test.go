@@ -134,15 +134,18 @@ func TestSearchPagesCachedResults(t *testing.T) {
 	}
 	search := Search{ID: "search", Query: "song", Results: results, Total: len(results)}
 
-	page := searchPage(search, 0)
+	page, err := searchPage(search, 0, "")
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(page.Results) != 100 || page.NextCursor != 100 || page.Total != 205 {
 		t.Fatalf("first page: %+v", page)
 	}
-	page = searchPage(search, page.NextCursor)
+	page, err = searchPage(search, page.NextCursor, "")
 	if len(page.Results) != 100 || page.Results[0].Path != "song-100" || page.NextCursor != 200 {
 		t.Fatalf("second page: %+v", page)
 	}
-	page = searchPage(search, page.NextCursor)
+	page, err = searchPage(search, page.NextCursor, "")
 	if len(page.Results) != 5 || page.Results[0].Path != "song-200" || page.NextCursor != 0 {
 		t.Fatalf("last page: %+v", page)
 	}

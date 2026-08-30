@@ -23,11 +23,14 @@ type snapshot struct {
 	err    string
 }
 type result struct {
-	user, path   string
-	size         uint64
-	directory    bool
-	free         bool
-	speed, queue uint32
+	user, path, extension string
+	size                  uint64
+	directory, free       bool
+	speed, queue          uint32
+	bitrate, duration     uint32
+	vbr                   bool
+	sampleRate, bitDepth  uint32
+	public                bool
 }
 type entry struct {
 	name      string
@@ -57,11 +60,12 @@ type model struct {
 	cfg                                    config.Config
 	transient                              bool
 	setup, help, confirm, editing, loading bool
-	loadingMore                            bool
+	loadingMore, filterEditing             bool
 	width, height                          int
 	workspace, cursor, settingsSection     int
-	searchTotal, searchNext                int
+	searchTotal, searchFound, searchNext   int
 	input, query, browseUser, searchID     string
+	searchFilter, searchFilterUndo         string
 	setupField                             int
 	setupVals                              [5]string
 	setupErr                               string
@@ -207,10 +211,13 @@ func (m model) helpView() string {
 		{"↑ ↓  or  j k", "move through items or fields"},
 		{"← →", "change settings section"},
 		{"/ / enter", "edit a query, username, share, or setting"},
+		{"f", "edit cached search filters"},
+		{"c", "clear or restore search filters"},
 		{"space", "select more than one file"},
 		{"d", "download, cancel, or remove"},
-		{"s", "save settings"},
-		{"? / esc", "close this guide"},
+		{"r", "retry a transfer or rescan shares"},
+		{"s", "save settings and reconnect"},
+		{"? / esc", "open or close this guide"},
 		{"q", "quit"},
 	}
 	for _, row := range rows {
@@ -224,27 +231,38 @@ func (m model) helpView() string {
 
 func (m model) renderSearch(width, height int) string {
 	query := m.query
-	if m.editing {
+	if m.editing && !m.filterEditing {
 		query = m.input
 	}
 	prompt := muted("/  Press / to search the network")
-	if query != "" || m.editing {
+	if query != "" || (m.editing && !m.filterEditing) {
 		prompt = styled("/  "+query, lipgloss.NewStyle().Foreground(lipgloss.Color("#F5E0DC")))
 	}
-	if m.editing {
+	if m.editing && !m.filterEditing {
 		prompt += styled("█", lipgloss.NewStyle().Foreground(lipgloss.Color("#CBA6F7"))) + muted("   enter search  •  esc cancel")
 	}
-	count := countLabel(len(m.results), "result")
-	if m.searchTotal > len(m.results) {
-		count = fmt.Sprintf("%d / %d results", len(m.results), m.searchTotal)
+	filter := m.searchFilter
+	if m.editing && m.filterEditing {
+		filter = m.input
 	}
-	lines := []string{sectionHeader("SEARCH", count, width), trunc(prompt, width)}
+	filterLine := muted("f  Press f to filter cached results")
+	if filter != "" || (m.editing && m.filterEditing) {
+		filterLine = styled("f  "+filter, lipgloss.NewStyle().Foreground(lipgloss.Color("#F5E0DC")))
+	}
+	if m.editing && m.filterEditing {
+		filterLine += styled("█", lipgloss.NewStyle().Foreground(lipgloss.Color("#CBA6F7"))) + muted("   enter apply  •  esc cancel")
+	}
+	count := countLabel(len(m.results), "result")
+	if m.searchFound > 0 || m.searchTotal > len(m.results) {
+		count = fmt.Sprintf("%d loaded / %d filtered / %d found", len(m.results), m.searchTotal, m.searchFound)
+	}
+	lines := []string{sectionHeader("SEARCH", count, width), trunc(prompt, width), trunc(filterLine, width)}
 	limit := max(0, height-len(lines))
 	if m.loading && limit > 0 {
-		return strings.Join(append(lines, muted("◌  Searching Soulseek…")), "\n")
+		return strings.Join(append(lines, muted("◌  Loading results…")), "\n")
 	}
 	if len(m.results) == 0 && limit > 0 {
-		return strings.Join(append(lines, "\n"+muted("No results yet. Press / and type an artist, album, or filename.")), "\n")
+		return strings.Join(append(lines, muted("No matching results. Press / to search or f to change filters.")), "\n")
 	}
 	start, end := visibleRange(len(m.results), m.cursor, limit)
 	for i := start; i < end; i++ {
@@ -254,6 +272,18 @@ func (m model) renderSearch(width, height int) string {
 			mark = "●"
 		}
 		availability := formatBytes(x.size)
+		if x.bitrate > 0 {
+			availability += fmt.Sprintf("  %dk", x.bitrate)
+			if x.vbr {
+				availability += "v"
+			}
+		}
+		if x.duration > 0 {
+			availability += "  " + formatDuration(x.duration)
+		}
+		if !x.public {
+			availability += "  private"
+		}
 		if x.free {
 			availability += "  free"
 		} else if x.queue > 0 {
@@ -466,7 +496,7 @@ func (m model) footerView() string {
 	hints := []string{"tab switch", "↑↓ move"}
 	switch m.workspace {
 	case 0:
-		hints = append(hints, "/ search", "space select", "d download")
+		hints = append(hints, "/ search", "f filter", "c clear/restore", "space select", "d download")
 	case 1:
 		hints = append(hints, "/ user", "space select", "d download")
 	case 2:
@@ -599,6 +629,13 @@ func formatBytes(n uint64) string {
 	return fmt.Sprintf("%d B", n)
 }
 
+func formatDuration(seconds uint32) string {
+	if seconds >= 3600 {
+		return fmt.Sprintf("%d:%02d:%02d", seconds/3600, seconds/60%60, seconds%60)
+	}
+	return fmt.Sprintf("%d:%02d", seconds/60, seconds%60)
+}
+
 func trunc(s string, n int) string {
 	if n < 4 {
 		return ""
@@ -672,7 +709,7 @@ func (m *model) setupKey(k tea.KeyPressMsg) tea.Cmd {
 func toResults(x []daemon.SearchResult) []result {
 	r := make([]result, len(x))
 	for i, v := range x {
-		r[i] = result{user: v.Username, path: v.Path, size: v.Size, directory: v.Directory, free: v.SlotFree, speed: v.Speed, queue: v.Queue}
+		r[i] = result{user: v.Username, path: v.Path, extension: v.Extension, size: v.Size, directory: v.Directory, free: v.SlotFree, speed: v.Speed, queue: v.Queue, bitrate: v.Bitrate, duration: v.Duration, vbr: v.VBR, sampleRate: v.SampleRate, bitDepth: v.BitDepth, public: v.Public}
 	}
 	return r
 }
