@@ -178,6 +178,38 @@ func TestSearchFilterEditingAndMetadata(t *testing.T) {
 	if !m.editing || !m.filterEditing {
 		t.Fatal("f did not open filter editing")
 	}
+	if !strings.Contains(m.renderSearch(100, 10), "tab complete: in:") {
+		t.Fatal("filter keywords were not shown")
+	}
+	m.editKey(key("tab"))
+	if m.input != "in:" || m.workspace != 0 {
+		t.Fatal("tab did not complete the first filter field")
+	}
+	m.editKey(key("tab"))
+	if m.input != "out:" {
+		t.Fatal("repeated tab did not cycle filter fields")
+	}
+	m.input = "ty"
+	m.editKey(key("tab"))
+	m.editKey(key("tab"))
+	if m.input != "type:audio" {
+		t.Fatalf("type completion = %q", m.input)
+	}
+	m.input = "type:!a"
+	m.editKey(key("tab"))
+	if m.input != "type:!audio" {
+		t.Fatalf("excluded type completion = %q", m.input)
+	}
+	m.input = "free:"
+	m.editKey(key("tab"))
+	if m.input != "free:true" {
+		t.Fatalf("boolean completion = %q", m.input)
+	}
+	m.input = "size:"
+	m.editKey(key("tab"))
+	if m.input != "size:>=" {
+		t.Fatalf("comparison completion = %q", m.input)
+	}
 	m.input = `type:audio bitrate:!0`
 	if cmd := m.editKey(key("enter")); cmd != nil || m.searchFilter != `type:audio bitrate:!0` {
 		t.Fatal("filter was not applied without a cached search")
@@ -216,5 +248,19 @@ func TestSearchFilterEditingAndMetadata(t *testing.T) {
 	m = updated.(model)
 	if len(m.results) != 2 || m.searchTotal != 2 || m.searchFound != 4 {
 		t.Fatal("filtered page was not appended with its totals")
+	}
+}
+
+func TestFilterCompletionCyclesBackward(t *testing.T) {
+	if got := completeFilter("", true); got != "public:" {
+		t.Fatalf("backward field completion = %q", got)
+	}
+	if got := completeFilter("type:a", true); got != "type:archive" {
+		t.Fatalf("backward type completion = %q", got)
+	}
+	m := model{workspace: 0, editing: true, filterEditing: true}
+	m.editKey(tea.KeyPressMsg(tea.Key{Code: tea.KeyTab, Mod: tea.ModShift}))
+	if m.input != "public:" || m.workspace != 0 {
+		t.Fatalf("shift+tab completion = %q in workspace %d", m.input, m.workspace)
 	}
 }

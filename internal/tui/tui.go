@@ -352,6 +352,10 @@ func (m *model) beginEdit() {
 }
 func (m *model) editKey(k tea.KeyPressMsg) tea.Cmd {
 	s := k.String()
+	if m.filterEditing && (s == "tab" || s == "shift+tab") {
+		m.input = completeFilter(m.input, s == "shift+tab")
+		return nil
+	}
 	if s == "esc" {
 		m.editing, m.filterEditing = false, false
 		m.input = ""
@@ -411,6 +415,89 @@ func (m *model) editKey(k tea.KeyPressMsg) tea.Cmd {
 		m.input += t
 	}
 	return nil
+}
+
+var filterFields = []string{"in:", "out:", "type:", "size:", "bitrate:", "duration:", "free:", "public:"}
+var filterTypes = []string{"audio", "video", "image", "document", "text", "archive", "executable"}
+var filterComparisons = []string{">=", "<=", "=", "==", "!=", ">", "<"}
+
+func completeFilter(input string, reverse bool) string {
+	start := strings.LastIndexAny(input, " \t\n") + 1
+	token := input[start:]
+	field, value, hasValue := strings.Cut(token, ":")
+	if !hasValue {
+		return input[:start] + cycleCompletion(token, filterFields, reverse)
+	}
+	var options []string
+	switch field {
+	case "type":
+		valueStart := strings.LastIndex(value, ",") + 1
+		prefix := value[valueStart:]
+		negated := strings.HasPrefix(prefix, "!")
+		prefix = strings.TrimPrefix(prefix, "!")
+		completed := cycleCompletion(prefix, filterTypes, reverse)
+		if negated {
+			completed = "!" + completed
+		}
+		return input[:start] + field + ":" + value[:valueStart] + completed
+	case "free", "public":
+		options = []string{"true", "false"}
+	case "size", "bitrate", "duration":
+		options = filterComparisons
+	case "in", "out":
+		if value == "" {
+			return input[:start] + cycleCompletion(token, filterFields, reverse)
+		}
+		return input
+	default:
+		return input
+	}
+	return input[:start] + field + ":" + cycleCompletion(value, options, reverse)
+}
+
+func cycleCompletion(prefix string, options []string, reverse bool) string {
+	for i, option := range options {
+		if option == prefix {
+			if reverse {
+				return options[(i+len(options)-1)%len(options)]
+			}
+			return options[(i+1)%len(options)]
+		}
+	}
+	if reverse {
+		for i := len(options) - 1; i >= 0; i-- {
+			if strings.HasPrefix(options[i], prefix) {
+				return options[i]
+			}
+		}
+	} else {
+		for _, option := range options {
+			if strings.HasPrefix(option, prefix) {
+				return option
+			}
+		}
+	}
+	return prefix
+}
+
+func filterCompletionHint(input string) string {
+	start := strings.LastIndexAny(input, " \t\n") + 1
+	field, _, ok := strings.Cut(input[start:], ":")
+	if !ok {
+		return "tab complete: " + strings.Join(filterFields, "  ")
+	}
+	switch field {
+	case "type":
+		return "tab complete: " + strings.Join(filterTypes, "  ")
+	case "free", "public":
+		return "tab complete: true  false"
+	case "size", "bitrate", "duration":
+		return "tab complete: " + strings.Join(filterComparisons, "  ")
+	case "in", "out":
+		return "value: case-insensitive regular expression"
+	default:
+		return "tab complete: " + strings.Join(filterFields, "  ")
+	}
 }
 func (m *model) enter() tea.Cmd {
 	if m.workspace == 0 && len(m.results) > 0 {

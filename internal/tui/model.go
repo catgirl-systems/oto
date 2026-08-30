@@ -213,6 +213,7 @@ func (m model) helpView() string {
 		{"/ / enter", "edit a query, username, share, or setting"},
 		{"f", "edit cached search filters"},
 		{"c", "clear or restore search filters"},
+		{"tab (filter)", "complete fields and special values"},
 		{"space", "select more than one file"},
 		{"d", "download, cancel, or remove"},
 		{"r", "retry a transfer or rescan shares"},
@@ -257,6 +258,9 @@ func (m model) renderSearch(width, height int) string {
 		count = fmt.Sprintf("%d loaded / %d filtered / %d found", len(m.results), m.searchTotal, m.searchFound)
 	}
 	lines := []string{sectionHeader("SEARCH", count, width), trunc(prompt, width), trunc(filterLine, width)}
+	if m.editing && m.filterEditing {
+		lines = append(lines, trunc(muted(filterCompletionHint(m.input)), width))
+	}
 	limit := max(0, height-len(lines))
 	if m.loading && limit > 0 {
 		return strings.Join(append(lines, muted("◌  Loading results…")), "\n")

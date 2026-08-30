@@ -44,6 +44,7 @@ Soulseek permits one login per username. Keeping the session in the daemon preve
 | arrows or `j` / `k` | move; left/right changes the Settings section |
 | `/` | edit search, username, `name:path` share, or setting |
 | `f` | edit cached search filters |
+| `tab` / `shift+tab` while filtering | complete fields, types, booleans, and comparison operators |
 | `c` | clear/restore search filters or clear completed transfers |
 | `space` | select a file |
 | `d` | download, cancel transfer, or remove share (by workspace) |
@@ -60,7 +61,7 @@ Searches support quoted phrases, excluded words (`-remix`), and partial terms (`
 in:"live|radio session" out:remix type:audio,!mp3 size:>=20MiB bitrate:>=320 duration:>2:00 free:true public:true
 ```
 
-`in` and `out` are case-insensitive regular expressions. `type` accepts extensions or `audio`, `video`, `image`, `document`, `text`, `archive`, and `executable`. Size units may be binary (`MiB`) or decimal (`MB`); duration accepts seconds, `MM:SS`, or `HH:MM:SS`. Repeat numeric fields to form ranges. Comparisons support `<`, `<=`, `=`, `==`, `!=`, `>=`, and `>`.
+`in` and `out` are case-insensitive regular expressions. `type` accepts extensions or `audio`, `video`, `image`, `document`, `text`, `archive`, and `executable`. Size units may be binary (`MiB`) or decimal (`MB`); duration accepts seconds, `MM:SS`, or `HH:MM:SS`. Repeat numeric fields to form ranges. Comparisons support `<`, `<=`, `=`, `==`, `!=`, `>=`, and `>`. While editing filters, use `tab` and `shift+tab` to complete or cycle fields and special values.
 
 ## Files and environment
 
