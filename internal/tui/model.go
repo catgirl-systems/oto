@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 
 	"charm.land/bubbletea/v2"
@@ -216,6 +217,8 @@ func (m model) helpView() string {
 		{"tab / shift+tab", "switch workspace"},
 		{"↑ ↓  or  j k", "move through items or fields"},
 		{"← → / home end", "move the caret while editing; otherwise navigate"},
+		{"ctrl+← → / ctrl+⌫", "move or delete by word while editing"},
+		{"ctrl+a e u k", "jump or delete to a line boundary"},
 		{"/ / enter", "edit a query, username, share, or setting"},
 		{"f", "edit cached search filters"},
 		{"c", "clear or restore search filters"},
@@ -694,6 +697,69 @@ func deleteAtCursor(value string, cursor int) string {
 	return string(append(runes[:cursor], runes[cursor+1:]...))
 }
 
+func wordBefore(value string, cursor int) int {
+	runes := []rune(value)
+	cursor = max(0, min(cursor, len(runes)))
+	for cursor > 0 && unicode.IsSpace(runes[cursor-1]) {
+		cursor--
+	}
+	for cursor > 0 && !unicode.IsSpace(runes[cursor-1]) {
+		cursor--
+	}
+	return cursor
+}
+
+func wordAfter(value string, cursor int) int {
+	runes := []rune(value)
+	cursor = max(0, min(cursor, len(runes)))
+	for cursor < len(runes) && unicode.IsSpace(runes[cursor]) {
+		cursor++
+	}
+	for cursor < len(runes) && !unicode.IsSpace(runes[cursor]) {
+		cursor++
+	}
+	return cursor
+}
+
+func editText(value string, cursor int, k tea.KeyPressMsg) (string, int, bool) {
+	runes := []rune(value)
+	cursor = max(0, min(cursor, len(runes)))
+	switch k.String() {
+	case "left", "ctrl+b":
+		cursor = max(0, cursor-1)
+	case "right", "ctrl+f":
+		cursor = min(len(runes), cursor+1)
+	case "ctrl+left", "alt+left", "alt+b":
+		cursor = wordBefore(value, cursor)
+	case "ctrl+right", "alt+right", "alt+f":
+		cursor = wordAfter(value, cursor)
+	case "home", "ctrl+a":
+		cursor = 0
+	case "end", "ctrl+e":
+		cursor = len(runes)
+	case "backspace", "ctrl+h":
+		value, cursor = deleteBeforeCursor(value, cursor)
+	case "delete", "ctrl+d":
+		value = deleteAtCursor(value, cursor)
+	case "ctrl+backspace", "alt+backspace", "ctrl+w":
+		start := wordBefore(value, cursor)
+		value, cursor = string(append(runes[:start], runes[cursor:]...)), start
+	case "ctrl+delete", "alt+delete", "alt+d":
+		value = string(append(runes[:cursor], runes[wordAfter(value, cursor):]...))
+	case "ctrl+u":
+		value, cursor = string(runes[cursor:]), 0
+	case "ctrl+k":
+		value = string(runes[:cursor])
+	default:
+		if text := k.Key().Text; text != "" {
+			value, cursor = insertText(value, text, cursor)
+			return value, cursor, true
+		}
+		return value, cursor, false
+	}
+	return value, cursor, true
+}
+
 func (m *model) selectSetupField(field int) {
 	m.setupField = (field + len(m.setupVals)) % len(m.setupVals)
 	m.inputCursor = len([]rune(m.setupVals[m.setupField]))
@@ -710,24 +776,6 @@ func (m *model) setupKey(k tea.KeyPressMsg) tea.Cmd {
 		return nil
 	case "shift+tab", "up":
 		m.selectSetupField(m.setupField - 1)
-		return nil
-	case "left":
-		m.inputCursor = max(0, m.inputCursor-1)
-		return nil
-	case "right":
-		m.inputCursor = min(len([]rune(m.setupVals[m.setupField])), m.inputCursor+1)
-		return nil
-	case "home":
-		m.inputCursor = 0
-		return nil
-	case "end":
-		m.inputCursor = len([]rune(m.setupVals[m.setupField]))
-		return nil
-	case "backspace":
-		m.setupVals[m.setupField], m.inputCursor = deleteBeforeCursor(m.setupVals[m.setupField], m.inputCursor)
-		return nil
-	case "delete":
-		m.setupVals[m.setupField] = deleteAtCursor(m.setupVals[m.setupField], m.inputCursor)
 		return nil
 	}
 	if s == "enter" {
@@ -762,9 +810,7 @@ func (m *model) setupKey(k tea.KeyPressMsg) tea.Cmd {
 		m.setup = false
 		return nil
 	}
-	if text := k.Key().Text; text != "" {
-		m.setupVals[m.setupField], m.inputCursor = insertText(m.setupVals[m.setupField], text, m.inputCursor)
-	}
+	m.setupVals[m.setupField], m.inputCursor, _ = editText(m.setupVals[m.setupField], m.inputCursor, k)
 	return nil
 }
 

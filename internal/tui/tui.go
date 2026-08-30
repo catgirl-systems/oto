@@ -413,24 +413,7 @@ func (m *model) editKey(k tea.KeyPressMsg) tea.Cmd {
 		}
 		return nil
 	}
-	switch s {
-	case "left":
-		m.inputCursor = max(0, m.inputCursor-1)
-	case "right":
-		m.inputCursor = min(len([]rune(m.input)), m.inputCursor+1)
-	case "home":
-		m.inputCursor = 0
-	case "end":
-		m.inputCursor = len([]rune(m.input))
-	case "backspace":
-		m.input, m.inputCursor = deleteBeforeCursor(m.input, m.inputCursor)
-	case "delete":
-		m.input = deleteAtCursor(m.input, m.inputCursor)
-	default:
-		if text := k.Key().Text; text != "" {
-			m.input, m.inputCursor = insertText(m.input, text, m.inputCursor)
-		}
-	}
+	m.input, m.inputCursor, _ = editText(m.input, m.inputCursor, k)
 	return nil
 }
 

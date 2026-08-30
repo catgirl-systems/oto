@@ -149,6 +149,36 @@ func TestTextFieldsEditAtCursor(t *testing.T) {
 	}
 }
 
+func TestTextFieldWordEditing(t *testing.T) {
+	ctrl := func(code rune) tea.KeyPressMsg {
+		return tea.KeyPressMsg(tea.Key{Code: code, Mod: tea.ModCtrl})
+	}
+	m := model{editing: true, input: "alpha beta gamma", inputCursor: 16}
+	m.editKey(ctrl(tea.KeyLeft))
+	if m.inputCursor != 11 {
+		t.Fatalf("ctrl+left cursor = %d", m.inputCursor)
+	}
+	m.editKey(ctrl(tea.KeyBackspace))
+	if m.input != "alpha gamma" || m.inputCursor != 6 {
+		t.Fatalf("ctrl+backspace = %q @ %d", m.input, m.inputCursor)
+	}
+	m.editKey(ctrl(tea.KeyDelete))
+	if m.input != "alpha " || m.inputCursor != 6 {
+		t.Fatalf("ctrl+delete = %q @ %d", m.input, m.inputCursor)
+	}
+	m.editKey(ctrl('u'))
+	if m.input != "" || m.inputCursor != 0 {
+		t.Fatalf("ctrl+u = %q @ %d", m.input, m.inputCursor)
+	}
+
+	setup := model{setup: true, setupVals: [5]string{"one two"}, inputCursor: 7}
+	setup.setupKey(ctrl(tea.KeyLeft))
+	setup.setupKey(ctrl(tea.KeyBackspace))
+	if setup.setupVals[0] != "two" || setup.inputCursor != 0 {
+		t.Fatalf("setup word edit = %q @ %d", setup.setupVals[0], setup.inputCursor)
+	}
+}
+
 func TestErrorRowIsStableAndTracksDaemonState(t *testing.T) {
 	t.Setenv("NO_COLOR", "1")
 	m := model{width: 80, height: 14, selected: map[int]bool{}}
