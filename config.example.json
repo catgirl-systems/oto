@@ -1,0 +1,17 @@
+{
+  "soulseek": {
+    "username": "",
+    "password": "",
+    "server": "vps.slsknet.org:2271",
+    "listen_addr": "0.0.0.0:50300"
+  },
+  "download_dir": "/downloads",
+  "shares": [
+    {
+      "name": "Music",
+      "path": "/shares/music"
+    }
+  ],
+  "download_slots": 4,
+  "upload_slots": 2
+}
