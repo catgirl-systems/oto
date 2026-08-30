@@ -93,6 +93,44 @@ func TestShareScanSearchAndContainment(t *testing.T) {
 	}
 }
 
+func TestBrowseIndexedUsesBoundedSnapshotChildren(t *testing.T) {
+	root := t.TempDir()
+	album := filepath.Join(root, "Album")
+	if err := os.Mkdir(album, 0700); err != nil {
+		t.Fatal(err)
+	}
+	song := filepath.Join(album, "song.flac")
+	if err := os.WriteFile(song, []byte("audio"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "cover.jpg"), []byte("jpg"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	index := NewShareIndex()
+	if err := index.AddRoot("Music", root); err != nil {
+		t.Fatal(err)
+	}
+	if err := index.Scan(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(song); err != nil {
+		t.Fatal(err)
+	}
+	children, err := index.BrowseIndexed("Music")
+	if err != nil || len(children) != 2 || !children[0].Directory || children[0].Name != "Album" {
+		t.Fatalf("root snapshot children: %+v %v", children, err)
+	}
+	nested, err := index.BrowseIndexed(`Music\Album`)
+	if err != nil || len(nested) != 1 || nested[0].Name != "song.flac" || nested[0].Size != 5 {
+		t.Fatalf("nested snapshot children: %+v %v", nested, err)
+	}
+	for _, path := range []string{"../Music", "/Music", "Missing", "Music/cover.jpg"} {
+		if _, err := index.BrowseIndexed(path); err == nil {
+			t.Fatalf("invalid indexed browse path accepted: %q", path)
+		}
+	}
+}
+
 func TestProtocolFixture(t *testing.T) {
 	m := LoginRequest{Username: "u", Password: "p", Version: ProtocolVersion, MinorVersion: ProtocolMinor, Hash: "up"}
 	b, err := EncodeMessage(m)

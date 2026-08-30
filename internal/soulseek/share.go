@@ -207,6 +207,57 @@ func (s *ShareIndex) Browse(virtual string) ([]ShareEntry, error) {
 	sort.Slice(out, func(i, j int) bool { return strings.ToLower(out[i].Name) < strings.ToLower(out[j].Name) })
 	return out, nil
 }
+
+// BrowseIndexed returns immediate children from the last completed share scan.
+func (s *ShareIndex) BrowseIndexed(virtual string) ([]ShareEntry, error) {
+	parts, err := cleanVirtual(virtual)
+	if err != nil {
+		return nil, err
+	}
+	if len(parts) == 0 {
+		out := make([]ShareEntry, 0, len(s.roots))
+		for _, root := range s.Roots() {
+			out = append(out, ShareEntry{Name: root.Name, Directory: true})
+		}
+		return out, nil
+	}
+	root, relative := parts[0], strings.Join(parts[1:], "/")
+	if _, ok := s.roots[root]; !ok {
+		return nil, os.ErrNotExist
+	}
+	if relative != "" {
+		found := false
+		for _, file := range s.files {
+			if file.Root == root && file.Path == relative && file.Directory {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return nil, os.ErrNotExist
+		}
+	}
+	var out []ShareEntry
+	for _, file := range s.files {
+		if file.Root != root || file.Path == "" {
+			continue
+		}
+		parent, name := "", file.Path
+		if split := strings.LastIndex(file.Path, "/"); split >= 0 {
+			parent, name = file.Path[:split], file.Path[split+1:]
+		}
+		if parent == relative {
+			out = append(out, ShareEntry{Name: name, Size: file.Size, Directory: file.Directory})
+		}
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].Directory != out[j].Directory {
+			return out[i].Directory
+		}
+		return strings.ToLower(out[i].Name) < strings.ToLower(out[j].Name)
+	})
+	return out, nil
+}
 func maxInt64(n int64) int64 {
 	if n < 0 {
 		return 0

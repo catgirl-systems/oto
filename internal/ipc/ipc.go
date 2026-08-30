@@ -259,6 +259,18 @@ func (s *Server) transfers(w http.ResponseWriter, r *http.Request) {
 }
 func (s *Server) shares(w http.ResponseWriter, r *http.Request) {
 	path := strings.TrimPrefix(r.URL.Path, "/v1/shares")
+	if path == "/browse" && r.Method == "GET" {
+		if !method(w, r, "GET") {
+			return
+		}
+		out, err := s.service.BrowseLocal(r.URL.Query().Get("path"))
+		if err != nil {
+			writeErr(w, 400, err)
+			return
+		}
+		writeJSON(w, 200, out)
+		return
+	}
 	if path == "/rescan" {
 		if !method(w, r, "POST") {
 			return
@@ -441,6 +453,12 @@ func (c *Client) Shares(ctx context.Context) ([]config.Share, error) {
 	var x []config.Share
 	err := c.Do(ctx, "GET", "/v1/shares", nil, &x)
 	return x, err
+}
+
+func (c *Client) BrowseShares(ctx context.Context, path string) ([]soulseek.ShareEntry, error) {
+	var entries []soulseek.ShareEntry
+	err := c.Do(ctx, "GET", "/v1/shares/browse?path="+urlQuery(path), nil, &entries)
+	return entries, err
 }
 func (c *Client) AddShare(ctx context.Context, sh config.Share) ([]config.Share, error) {
 	var x []config.Share

@@ -19,6 +19,14 @@ func TestStatusMethodsBodyAndSocketMode(t *testing.T) {
 	c := config.Default()
 	c.Soulseek.Username, c.Soulseek.Password = "u", "p"
 	c.DownloadDir = t.TempDir()
+	shareRoot := t.TempDir()
+	if err := os.Mkdir(filepath.Join(shareRoot, "Album"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(shareRoot, "Album", "song.flac"), []byte("audio"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	c.Shares = []config.Share{{Name: "Music", Path: shareRoot}}
 	journalPath := filepath.Join(t.TempDir(), "journal.json")
 	if err := config.SaveJSON(journalPath, daemon.Journal{Downloads: []daemon.Download{{ID: "d-1", State: "running"}}}); err != nil {
 		t.Fatal(err)
@@ -53,6 +61,17 @@ func TestStatusMethodsBodyAndSocketMode(t *testing.T) {
 	}
 	if _, err := cl.Rescan(context.Background()); err != nil {
 		t.Fatalf("rescan shares route: %v", err)
+	}
+	shareEntries, err := cl.BrowseShares(context.Background(), "Music")
+	if err != nil || len(shareEntries) != 1 || shareEntries[0].Name != "Album" || !shareEntries[0].Directory {
+		t.Fatalf("browse share root: %+v %v", shareEntries, err)
+	}
+	shareEntries, err = cl.BrowseShares(context.Background(), "Music/Album")
+	if err != nil || len(shareEntries) != 1 || shareEntries[0].Name != "song.flac" {
+		t.Fatalf("browse nested share: %+v %v", shareEntries, err)
+	}
+	if _, err := cl.BrowseShares(context.Background(), "Music/../outside"); err == nil {
+		t.Fatal("share traversal route accepted")
 	}
 	resp, err := cl.http.Do(mustRequest("POST", "http://oto.local/v1/search", strings.NewReader(`{"query":"song","filter":"wat:true"}`)))
 	if err != nil {

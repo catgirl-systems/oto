@@ -546,7 +546,7 @@ func (s *Service) BrowseLocal(path string) ([]soulseek.ShareEntry, error) {
 	s.mu.RLock()
 	idx := s.shares
 	s.mu.RUnlock()
-	return idx.Browse(path)
+	return idx.BrowseIndexed(path)
 }
 
 func (s *Service) QueueDownloads(reqs []DownloadRequest) ([]Download, error) {
