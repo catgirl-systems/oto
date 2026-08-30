@@ -23,6 +23,8 @@ import (
 
 const sourceURL = "https://github.com/catgirl-systems/slsk-tui"
 
+var executable = os.Executable
+
 func main() {
 	if err := run(os.Args[1:]); err != nil {
 		fmt.Fprintln(os.Stderr, "slsk-tui:", err)
@@ -103,7 +105,7 @@ func tuiCommand(args []string) error {
 }
 
 func startChild(ctx context.Context, path string) (*exec.Cmd, io.Closer, error) {
-	exe, err := os.Executable()
+	exe, err := executable()
 	if err != nil {
 		return nil, nil, err
 	}
@@ -112,6 +114,7 @@ func startChild(ctx context.Context, path string) (*exec.Cmd, io.Closer, error) 
 		return nil, nil, err
 	}
 	cmd := exec.CommandContext(ctx, exe, "daemon", "--child", "--config", path)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Stdin = reader
 	cmd.Stdout = io.Discard
 	if err := os.MkdirAll(config.DataDir(), 0700); err != nil {
@@ -134,10 +137,19 @@ func startChild(ctx context.Context, path string) (*exec.Cmd, io.Closer, error) 
 	}
 	_ = reader.Close()
 	_ = logFile.Close()
+	abort := func(err error) (*exec.Cmd, io.Closer, error) {
+		_ = writer.Close()
+		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		_ = cmd.Wait()
+		return nil, nil, err
+	}
 
 	client := ipc.NewClient(config.SocketPath())
 	deadline := time.Now().Add(8 * time.Second)
 	for time.Now().Before(deadline) {
+		if err := ctx.Err(); err != nil {
+			return abort(err)
+		}
 		probe, cancel := context.WithTimeout(ctx, 200*time.Millisecond)
 		_, probeErr := client.Status(probe)
 		cancel()
@@ -145,14 +157,15 @@ func startChild(ctx context.Context, path string) (*exec.Cmd, io.Closer, error) 
 			return cmd, writer, nil
 		}
 		if cmd.ProcessState != nil {
-			_ = writer.Close()
-			return nil, nil, errors.New("daemon exited before opening its socket")
+			return abort(errors.New("daemon exited before opening its socket"))
 		}
-		time.Sleep(50 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			return abort(ctx.Err())
+		case <-time.After(50 * time.Millisecond):
+		}
 	}
-	_ = writer.Close()
-	_ = cmd.Process.Kill()
-	return nil, nil, errors.New("timed out waiting for daemon")
+	return abort(errors.New("timed out waiting for daemon"))
 }
 
 func daemonCommand(args []string) error {
