@@ -117,7 +117,7 @@ func (s *Service) runDownload(id string) {
 			lastErr = err
 			break
 		}
-		lastErr = client.Download(ctx, download.Username, download.Filename, download.Size, offset, file, func(progress soulseek.Progress) {
+		lastErr = client.Download(ctx, download.Username, strings.ReplaceAll(download.Filename, "/", "\\"), download.Size, offset, file, func(progress soulseek.Progress) {
 			s.updateTransferProgress(id, progress)
 		})
 		if lastErr == nil {

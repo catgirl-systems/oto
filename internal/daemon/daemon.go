@@ -570,18 +570,19 @@ func (s *Service) QueueDownloads(reqs []DownloadRequest) ([]Download, error) {
 			return nil, errors.New("daemon: download username is required")
 		}
 		for _, item := range req.Files {
-			name, err := soulseek.NormalizePath(item.Filename)
+			safeName, err := soulseek.NormalizePath(item.Filename)
 			if err != nil {
 				s.mu.Unlock()
 				return nil, err
 			}
+			name := strings.ReplaceAll(safeName, "/", "\\")
 			if item.Offset > item.Size {
 				s.mu.Unlock()
 				return nil, soulseek.ErrMalformed
 			}
 			dest := item.Destination
 			if dest == "" {
-				dest = safeSegment(req.Username) + "/" + name
+				dest = safeSegment(req.Username) + "/" + safeName
 			}
 			if _, err = soulseek.SafeJoin(s.cfg.DownloadDir, dest); err != nil {
 				s.mu.Unlock()

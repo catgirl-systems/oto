@@ -39,7 +39,7 @@ func TestJournalRoundTripAndSafeResume(t *testing.T) {
 		t.Fatal(err)
 	}
 	got, err := s.QueueDownloads([]DownloadRequest{{Username: "peer", Files: []DownloadItem{{Filename: "Music/song.mp3", Size: 10}}}})
-	if err != nil || len(got) != 1 || got[0].Offset != 0 || got[0].State != "queued" || got[0].Destination != "peer/Music/song.mp3" {
+	if err != nil || len(got) != 1 || got[0].Filename != `Music\song.mp3` || got[0].Offset != 0 || got[0].State != "queued" || got[0].Destination != "peer/Music/song.mp3" {
 		t.Fatalf("queue: %+v %v", got, err)
 	}
 	if err := s.Close(); err != nil {
