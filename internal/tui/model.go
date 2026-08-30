@@ -129,7 +129,7 @@ func (m model) setupView() string {
 	if m.setupErr != "" {
 		b.WriteString("\n" + danger("! "+m.setupErr))
 	}
-	b.WriteString("\n\n" + muted("enter next / save   •   esc quit"))
+	b.WriteString("\n\n" + muted("↑↓ / tab move   •   enter next / save   •   esc quit"))
 
 	cardWidth := max(34, min(64, m.width-4))
 	card := panelStyle().Width(cardWidth).Padding(1, 2).Render(b.String())
@@ -612,6 +612,14 @@ func (m *model) setupKey(k tea.KeyPressMsg) tea.Cmd {
 	s := k.String()
 	if s == "esc" {
 		return tea.Quit
+	}
+	if s == "tab" || s == "down" {
+		m.setupField = (m.setupField + 1) % len(m.setupVals)
+		return nil
+	}
+	if s == "shift+tab" || s == "up" {
+		m.setupField = (m.setupField + len(m.setupVals) - 1) % len(m.setupVals)
+		return nil
 	}
 	if s == "enter" {
 		if m.setupField < 4 {

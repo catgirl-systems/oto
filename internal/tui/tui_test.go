@@ -60,6 +60,14 @@ func TestSetupMasksAndValidates(t *testing.T) {
 	if !strings.Contains(m.setupView(), "••••••") {
 		t.Fatal("password not masked")
 	}
+	m.setupField = 0
+	m.setupKey(tea.KeyPressMsg(tea.Key{Code: tea.KeyDown}))
+	m.setupKey(key("tab"))
+	m.setupKey(tea.KeyPressMsg(tea.Key{Code: tea.KeyUp}))
+	m.setupKey(tea.KeyPressMsg(tea.Key{Code: tea.KeyTab, Mod: tea.ModShift}))
+	if m.setupField != 0 {
+		t.Fatal("setup field navigation did not handle arrows and tab")
+	}
 	m.setupField = 4
 	m.setupVals[0] = ""
 	m.setupKey(key("enter"))
