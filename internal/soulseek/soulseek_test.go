@@ -398,3 +398,42 @@ func TestFileConnectionReceive(t *testing.T) {
 		t.Fatalf("file %q %v", got, err)
 	}
 }
+
+func TestConcurrentPeerAddressLookupsShareRequest(t *testing.T) {
+	clientConn, serverConn := net.Pipe()
+	defer clientConn.Close()
+	defer serverConn.Close()
+	client := NewClientOnConn(ClientConfig{}, clientConn)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	const callers = 10
+	start := make(chan struct{})
+	results := make(chan error, callers)
+	for range callers {
+		go func() {
+			<-start
+			address, err := client.lookupPeerAddress(ctx, "peer")
+			if err == nil && (address.IP != "0.0.0.0" || address.Username != "peer") {
+				err = fmt.Errorf("unexpected address: %+v", address)
+			}
+			results <- err
+		}()
+	}
+	close(start)
+	command, _, err := ReadFrame(serverConn)
+	if err != nil || command != ServerGetPeerAddress {
+		t.Fatalf("peer lookup request: command=%d err=%v", command, err)
+	}
+	time.Sleep(20 * time.Millisecond)
+	client.route(ServerGetPeerAddress, PeerAddress{Username: "peer", IP: "0.0.0.0"})
+	for range callers {
+		if err := <-results; err != nil {
+			t.Fatal(err)
+		}
+	}
+	_ = serverConn.SetReadDeadline(time.Now().Add(20 * time.Millisecond))
+	if _, _, err := ReadFrame(serverConn); err == nil {
+		t.Fatal("concurrent lookups sent more than one server request")
+	}
+}

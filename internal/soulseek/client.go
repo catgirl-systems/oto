@@ -42,6 +42,12 @@ type pendingDownload struct {
 	ctx                context.Context
 }
 
+type peerAddressLookup struct {
+	done    chan struct{}
+	address PeerAddress
+	err     error
+}
+
 // Client owns one server connection; reconnecting creates a fresh lifecycle.
 type Client struct {
 	cfg         ClientConfig
@@ -54,7 +60,7 @@ type Client struct {
 	done        chan struct{}
 	events      chan Event
 	pending     map[uint32]chan SearchResponse
-	addresses   map[string]chan PeerAddress
+	addresses   map[string]*peerAddressLookup
 	pierce      map[uint32]chan net.Conn
 	requested   map[string]*pendingDownload
 	downloads   map[uint32]*pendingDownload
@@ -72,7 +78,7 @@ func NewClient(cfg ClientConfig) *Client {
 	if cfg.Uploads == nil {
 		cfg.Uploads = NewUploadManager(1, 1)
 	}
-	return &Client{cfg: cfg, events: make(chan Event, 32), pending: make(map[uint32]chan SearchResponse), addresses: make(map[string]chan PeerAddress), pierce: make(map[uint32]chan net.Conn), requested: make(map[string]*pendingDownload), downloads: make(map[uint32]*pendingDownload), distributed: NewDistributedNode()}
+	return &Client{cfg: cfg, events: make(chan Event, 32), pending: make(map[uint32]chan SearchResponse), addresses: make(map[string]*peerAddressLookup), pierce: make(map[uint32]chan net.Conn), requested: make(map[string]*pendingDownload), downloads: make(map[uint32]*pendingDownload), distributed: NewDistributedNode()}
 }
 
 // NewClientOnConn is useful for embedders and deterministic net.Pipe tests.
@@ -273,13 +279,13 @@ func (c *Client) route(cmd uint32, m any) {
 		}
 	case PeerAddress:
 		c.mu.Lock()
-		ch := c.addresses[message.Username]
-		delete(c.addresses, message.Username)
-		c.mu.Unlock()
-		if ch != nil {
-			ch <- message
-			close(ch)
+		lookup := c.addresses[message.Username]
+		if lookup != nil {
+			delete(c.addresses, message.Username)
+			lookup.address = message
+			close(lookup.done)
 		}
+		c.mu.Unlock()
 	case ConnectPeerInstruction:
 		go c.answerConnectPeer(message)
 	case IncomingSearch:
@@ -443,29 +449,16 @@ func (c *Client) connectUserType(ctx context.Context, username, kind string) (ne
 	if username == "" {
 		return nil, errors.New("soulseek: empty username")
 	}
-	response := make(chan PeerAddress, 1)
-	c.mu.Lock()
-	if _, exists := c.addresses[username]; exists {
-		c.mu.Unlock()
-		return nil, errors.New("soulseek: peer lookup already pending")
-	}
-	c.addresses[username] = response
-	c.mu.Unlock()
-	defer func() { c.mu.Lock(); delete(c.addresses, username); c.mu.Unlock() }()
-	if err := c.send(PeerAddressRequest{Username: username}); err != nil {
+	address, err := c.lookupPeerAddress(ctx, username)
+	if err != nil {
 		return nil, err
 	}
 	var directErr error
-	select {
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	case address := <-response:
-		if address.IP != "0.0.0.0" && address.Port != 0 {
-			if peer, err := c.connectAddress(ctx, net.JoinHostPort(address.IP, fmt.Sprint(address.Port)), kind); err == nil {
-				return peer, nil
-			} else {
-				directErr = err
-			}
+	if address.IP != "0.0.0.0" && address.Port != 0 {
+		if peer, err := c.connectAddress(ctx, net.JoinHostPort(address.IP, fmt.Sprint(address.Port)), kind); err == nil {
+			return peer, nil
+		} else {
+			directErr = err
 		}
 	}
 	peer, err := c.connectIndirect(ctx, username, kind)
@@ -473,6 +466,35 @@ func (c *Client) connectUserType(ctx context.Context, username, kind string) (ne
 		return nil, fmt.Errorf("direct: %v; indirect: %w", directErr, err)
 	}
 	return peer, err
+}
+
+func (c *Client) lookupPeerAddress(ctx context.Context, username string) (PeerAddress, error) {
+	c.mu.Lock()
+	lookup := c.addresses[username]
+	owner := lookup == nil
+	if owner {
+		lookup = &peerAddressLookup{done: make(chan struct{})}
+		c.addresses[username] = lookup
+	}
+	c.mu.Unlock()
+
+	if owner {
+		if err := c.send(PeerAddressRequest{Username: username}); err != nil {
+			c.mu.Lock()
+			if c.addresses[username] == lookup {
+				delete(c.addresses, username)
+				lookup.err = err
+				close(lookup.done)
+			}
+			c.mu.Unlock()
+		}
+	}
+	select {
+	case <-ctx.Done():
+		return PeerAddress{}, ctx.Err()
+	case <-lookup.done:
+		return lookup.address, lookup.err
+	}
 }
 
 func (c *Client) connectIndirect(ctx context.Context, username, kind string) (net.Conn, error) {
