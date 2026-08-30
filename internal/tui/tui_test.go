@@ -335,6 +335,54 @@ func TestSearchFilterEditingAndMetadata(t *testing.T) {
 	}
 }
 
+func TestSearchResultTabs(t *testing.T) {
+	m := model{workspace: 0, searchFilter: "type:audio", selected: map[int]bool{}}
+	if cmd := m.openSearch("first query"); cmd == nil {
+		t.Fatal("first search tab did not start")
+	}
+	firstRequest, firstOperation := m.searchTabs[0].request, m.searchTabs[0].operation
+	m.openSearch("second query")
+	secondRequest, secondOperation := m.searchTabs[1].request, m.searchTabs[1].operation
+	m.searchFilter = "free:true"
+	if len(m.searchTabs) != 2 || !strings.Contains(m.renderSearch(100, 10), "first query") {
+		t.Fatalf("search tabs not rendered: tabs=%d", len(m.searchTabs))
+	}
+
+	m.key(tea.KeyPressMsg(tea.Key{Code: tea.KeyPgUp, Mod: tea.ModCtrl}))
+	if m.query != "first query" || m.searchFilter != "type:audio" {
+		t.Fatalf("first search tab state = %q %q", m.query, m.searchFilter)
+	}
+	updated, _ := m.Update(searchMsg{request: secondRequest, operation: secondOperation, page: daemon.SearchPage{ID: "second", Query: "second query", Results: []daemon.SearchResult{{Path: "second.flac", Public: true}}, Total: 1, FoundTotal: 2}})
+	m = updated.(model)
+	if m.query != "first query" || len(m.results) != 0 {
+		t.Fatalf("background search switched active tab: query=%q results=%d", m.query, len(m.results))
+	}
+	updated, _ = m.Update(searchMsg{request: firstRequest, operation: firstOperation, page: daemon.SearchPage{ID: "first", Query: "first query", Results: []daemon.SearchResult{{Path: "first.flac", Public: true}}, Total: 1, FoundTotal: 3}})
+	m = updated.(model)
+	m.selected[0] = true
+
+	m.key(tea.KeyPressMsg(tea.Key{Code: tea.KeyPgDown, Mod: tea.ModCtrl}))
+	if m.query != "second query" || m.searchFilter != "free:true" || len(m.results) != 1 || m.results[0].path != "second.flac" {
+		t.Fatalf("second search tab state = %q %q %+v", m.query, m.searchFilter, m.results)
+	}
+	oldOperation := m.searchTabs[m.searchTabIndex].operation
+	m.loadingMore = true
+	m.filterSearch("public:true")
+	updated, _ = m.Update(searchMsg{request: secondRequest, operation: oldOperation, append: true, page: daemon.SearchPage{ID: "second", Results: []daemon.SearchResult{{Path: "stale.flac", Public: true}}}})
+	m = updated.(model)
+	if len(m.results) != 1 || m.results[0].path != "second.flac" || m.loadingMore {
+		t.Fatalf("stale pagination changed filtered tab: results=%+v loadingMore=%v", m.results, m.loadingMore)
+	}
+	m.key(tea.KeyPressMsg(tea.Key{Code: tea.KeyPgUp, Mod: tea.ModCtrl}))
+	if m.query != "first query" || !m.selected[0] {
+		t.Fatalf("first search selection was not restored: query=%q selected=%v", m.query, m.selected)
+	}
+	m.key(tea.KeyPressMsg(tea.Key{Code: 'w', Mod: tea.ModCtrl}))
+	if len(m.searchTabs) != 1 || m.query != "second query" {
+		t.Fatalf("ctrl+w did not close search tab: query=%q tabs=%d", m.query, len(m.searchTabs))
+	}
+}
+
 func TestBrowseResultFolderAndUserTabs(t *testing.T) {
 	m := model{
 		workspace: 0,

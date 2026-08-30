@@ -57,6 +57,8 @@ type statusMsg struct {
 }
 type searchMsg struct {
 	page         daemon.SearchPage
+	request      uint64
+	operation    uint64
 	append       bool
 	filter       string
 	filterChange bool
@@ -92,23 +94,133 @@ func (m model) loadShares() tea.Cmd {
 func (m model) rescanShares() tea.Cmd {
 	return func() tea.Msg { x, e := m.client.Rescan(m.ctx); return sharesMsg{toShares(x), e} }
 }
-func (m model) search() tea.Cmd {
-	q, filter := m.query, m.searchFilter
-	return func() tea.Msg { page, err := m.client.Search(m.ctx, q, filter); return searchMsg{page: page, err: err} }
+func (m model) search(query, filter string, request, operation uint64) tea.Cmd {
+	return func() tea.Msg {
+		page, err := m.client.Search(m.ctx, query, filter)
+		return searchMsg{page: page, request: request, operation: operation, err: err}
+	}
 }
 func (m model) loadSearchPage() tea.Cmd {
 	id, cursor, filter := m.searchID, m.searchNext, m.searchFilter
+	request, operation := uint64(0), uint64(0)
+	if m.searchTabIndex >= 0 && m.searchTabIndex < len(m.searchTabs) {
+		request, operation = m.searchTabs[m.searchTabIndex].request, m.searchTabs[m.searchTabIndex].operation
+	}
 	return func() tea.Msg {
 		page, err := m.client.SearchPage(m.ctx, id, cursor, filter)
-		return searchMsg{page: page, append: true, err: err}
+		return searchMsg{page: page, request: request, operation: operation, append: true, err: err}
 	}
 }
-func (m model) filterSearch(filter string) tea.Cmd {
+func (m *model) filterSearch(filter string) tea.Cmd {
 	id := m.searchID
+	request, operation := uint64(0), uint64(0)
+	m.loading, m.loadingMore = true, false
+	if m.searchTabIndex >= 0 && m.searchTabIndex < len(m.searchTabs) {
+		m.searchOperation++
+		tab := &m.searchTabs[m.searchTabIndex]
+		tab.operation, tab.loading, tab.loadingMore = m.searchOperation, true, false
+		request, operation = tab.request, tab.operation
+	}
 	return func() tea.Msg {
 		page, err := m.client.SearchPage(m.ctx, id, 0, filter)
-		return searchMsg{page: page, filter: filter, filterChange: true, err: err}
+		return searchMsg{page: page, request: request, operation: operation, filter: filter, filterChange: true, err: err}
 	}
+}
+
+func (m *model) saveSearchTab() {
+	if m.searchTabIndex < 0 || m.searchTabIndex >= len(m.searchTabs) {
+		return
+	}
+	tab := &m.searchTabs[m.searchTabIndex]
+	tab.query, tab.id, tab.filter, tab.filterUndo, tab.err = m.query, m.searchID, m.searchFilter, m.searchFilterUndo, m.err
+	tab.results, tab.total, tab.found, tab.next = m.results, m.searchTotal, m.searchFound, m.searchNext
+	tab.cursor, tab.selected, tab.loading, tab.loadingMore = m.cursor, m.selected, m.loading, m.loadingMore
+}
+
+func (m *model) loadSearchTab(index int) {
+	if index < 0 || index >= len(m.searchTabs) {
+		m.query, m.searchID, m.searchFilter, m.searchFilterUndo, m.err = "", "", "", "", ""
+		m.results, m.searchTotal, m.searchFound, m.searchNext = nil, 0, 0, 0
+		m.cursor, m.selected, m.loading, m.loadingMore = 0, map[int]bool{}, false, false
+		return
+	}
+	m.searchTabIndex = index
+	tab := &m.searchTabs[index]
+	if tab.selected == nil {
+		tab.selected = map[int]bool{}
+	}
+	m.query, m.searchID, m.searchFilter, m.searchFilterUndo, m.err = tab.query, tab.id, tab.filter, tab.filterUndo, tab.err
+	m.results, m.searchTotal, m.searchFound, m.searchNext = tab.results, tab.total, tab.found, tab.next
+	m.cursor, m.selected, m.loading, m.loadingMore = tab.cursor, tab.selected, tab.loading, tab.loadingMore
+}
+
+func (m *model) switchSearchTab(delta int) {
+	if len(m.searchTabs) < 2 {
+		return
+	}
+	m.saveSearchTab()
+	m.loadSearchTab((m.searchTabIndex + delta + len(m.searchTabs)) % len(m.searchTabs))
+}
+
+func (m *model) closeSearchTab() {
+	if len(m.searchTabs) == 0 {
+		return
+	}
+	m.saveSearchTab()
+	m.searchTabs = append(m.searchTabs[:m.searchTabIndex], m.searchTabs[m.searchTabIndex+1:]...)
+	if len(m.searchTabs) == 0 {
+		m.loadSearchTab(-1)
+		return
+	}
+	m.loadSearchTab(min(m.searchTabIndex, len(m.searchTabs)-1))
+}
+
+func (m *model) openSearch(query string) tea.Cmd {
+	query = strings.TrimSpace(query)
+	if query == "" {
+		return nil
+	}
+	if m.workspace == 0 {
+		m.saveSearchTab()
+	}
+	m.searchRequest++
+	m.searchOperation++
+	tab := searchTab{query: query, filter: m.searchFilter, selected: map[int]bool{}, loading: true, request: m.searchRequest, operation: m.searchOperation}
+	m.searchTabs = append(m.searchTabs, tab)
+	m.workspace = 0
+	m.loadSearchTab(len(m.searchTabs) - 1)
+	return m.search(tab.query, tab.filter, tab.request, tab.operation)
+}
+
+func applySearchMsg(tab *searchTab, message searchMsg) {
+	tab.err = errText(message.err)
+	if message.append {
+		tab.loadingMore = false
+	} else {
+		tab.loading = false
+	}
+	if message.err != nil {
+		return
+	}
+	results := toResults(message.page.Results)
+	if message.append {
+		oldLen := len(tab.results)
+		tab.results = append(tab.results, results...)
+		if tab.cursor == oldLen-1 && len(tab.results) > oldLen {
+			tab.cursor++
+		}
+	} else {
+		tab.results, tab.cursor, tab.selected = results, 0, map[int]bool{}
+	}
+	if message.filterChange {
+		if message.filter == "" && tab.filter != "" {
+			tab.filterUndo = tab.filter
+		} else if tab.filter == "" && message.filter == tab.filterUndo {
+			tab.filterUndo = ""
+		}
+		tab.filter = message.filter
+	}
+	tab.id, tab.total, tab.found, tab.next = message.page.ID, message.page.Total, message.page.FoundTotal, message.page.NextCursor
 }
 func (m model) browse(user string, request uint64) tea.Cmd {
 	return func() tea.Msg {
@@ -164,10 +276,20 @@ func (m *model) loadBrowseTab(index int) {
 }
 
 func (m *model) switchWorkspace(workspace int) {
-	if m.workspace == 1 {
+	if m.workspace == 0 {
+		m.saveSearchTab()
+	} else if m.workspace == 1 {
 		m.saveBrowseTab()
 	}
 	m.workspace = (workspace + 5) % 5
+	if m.workspace == 0 {
+		if len(m.searchTabs) > 0 {
+			m.loadSearchTab(m.searchTabIndex)
+		} else {
+			m.cursor, m.selected, m.loading = 0, map[int]bool{}, false
+		}
+		return
+	}
 	if m.workspace == 1 {
 		m.loadBrowseTab(m.browseTabIndex)
 		return
@@ -261,6 +383,22 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.status = snapshot{status: x.snapshot.Status, user: x.snapshot.Config.Soulseek.Username, err: x.snapshot.Error}
 		}
 	case searchMsg:
+		if x.request != 0 {
+			if m.workspace == 0 {
+				m.saveSearchTab()
+			}
+			for i := range m.searchTabs {
+				if m.searchTabs[i].request != x.request || m.searchTabs[i].operation != x.operation {
+					continue
+				}
+				applySearchMsg(&m.searchTabs[i], x)
+				if m.workspace == 0 && i == m.searchTabIndex {
+					m.loadSearchTab(i)
+				}
+				break
+			}
+			break
+		}
 		m.err = errText(x.err)
 		if x.append {
 			m.loadingMore = false
@@ -382,15 +520,21 @@ func (m *model) key(k tea.KeyPressMsg) tea.Cmd {
 	case "?":
 		m.help = true
 	case "ctrl+pgup":
-		if m.workspace == 1 {
+		if m.workspace == 0 {
+			m.switchSearchTab(-1)
+		} else if m.workspace == 1 {
 			m.switchBrowseTab(-1)
 		}
 	case "ctrl+pgdown":
-		if m.workspace == 1 {
+		if m.workspace == 0 {
+			m.switchSearchTab(1)
+		} else if m.workspace == 1 {
 			m.switchBrowseTab(1)
 		}
 	case "ctrl+w":
-		if m.workspace == 1 {
+		if m.workspace == 0 {
+			m.closeSearchTab()
+		} else if m.workspace == 1 {
 			m.closeBrowseTab()
 		}
 	case "tab":
@@ -545,12 +689,7 @@ func (m *model) editKey(k tea.KeyPressMsg) tea.Cmd {
 			return m.filterSearch(filter)
 		}
 		if m.workspace == 0 {
-			m.query = strings.TrimSpace(m.input)
-			if m.query == "" {
-				return nil
-			}
-			m.loading, m.loadingMore = true, false
-			return m.search()
+			return m.openSearch(m.input)
 		}
 		if m.workspace == 1 {
 			return m.openBrowse(m.input, "", false)

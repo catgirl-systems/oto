@@ -41,6 +41,15 @@ type entry struct {
 	sampleRate, bitDepth uint32
 }
 
+type searchTab struct {
+	query, id, filter, filterUndo, err string
+	results                            []result
+	total, found, next, cursor         int
+	selected                           map[int]bool
+	loading, loadingMore               bool
+	request, operation                 uint64
+}
+
 type browseTab struct {
 	user, target, err string
 	entries           []entry
@@ -84,6 +93,10 @@ type model struct {
 	setupErr                               string
 	status                                 snapshot
 	results                                []result
+	searchTabs                             []searchTab
+	searchTabIndex                         int
+	searchRequest                          uint64
+	searchOperation                        uint64
 	entries                                []entry
 	browseTabs                             []browseTab
 	browseTabIndex                         int
@@ -241,8 +254,8 @@ func (m model) helpView() string {
 		{"d", "download, cancel, or remove"},
 		{"r", "refresh browse, retry transfer, or rescan shares"},
 		{"b (search)", "browse the selected result's user and folder"},
-		{"ctrl+page up/down", "switch user browse tabs"},
-		{"ctrl+w (browse)", "close the active user tab"},
+		{"ctrl+page up/down", "switch search or user browse tabs"},
+		{"ctrl+w (results)", "close the active search or user tab"},
 		{"s", "save settings and reconnect"},
 		{"? / esc", "open or close this guide"},
 		{"q", "quit"},
@@ -333,6 +346,25 @@ func searchMetadata(x result, width int, peer bool) (string, string) {
 	return strings.Join(headings, " "), strings.Join(values, " ")
 }
 
+func (m model) searchTabsLine(width int) string {
+	if len(m.searchTabs) == 0 {
+		return ""
+	}
+	labels := make([]string, len(m.searchTabs))
+	for i, tab := range m.searchTabs {
+		label := tab.query
+		if tab.loading {
+			label += "…"
+		}
+		if i == m.searchTabIndex {
+			labels[i] = accent("[" + label + "]")
+		} else {
+			labels[i] = muted(label)
+		}
+	}
+	return trunc(muted("SEARCHES  ")+strings.Join(labels, muted("  ")), width)
+}
+
 func (m model) renderSearch(width, height int) string {
 	inputStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#F5E0DC"))
 	prompt := muted("/  Press / to search the network")
@@ -351,7 +383,11 @@ func (m model) renderSearch(width, height int) string {
 	if m.searchFound > 0 || m.searchTotal > len(m.results) {
 		count = fmt.Sprintf("%d loaded / %d filtered / %d found", len(m.results), m.searchTotal, m.searchFound)
 	}
-	lines := []string{sectionHeader("SEARCH", count, width), trunc(prompt, width), trunc(filterLine, width)}
+	lines := []string{sectionHeader("SEARCH", count, width)}
+	if tabs := m.searchTabsLine(width); tabs != "" {
+		lines = append(lines, tabs)
+	}
+	lines = append(lines, trunc(prompt, width), trunc(filterLine, width))
 	if m.editing && m.filterEditing {
 		lines = append(lines, trunc(muted(filterCompletionHint(inputBeforeCursor(m.input, m.inputCursor))), width))
 	}
@@ -614,7 +650,7 @@ func (m model) footerView() string {
 	hints := []string{"tab switch", "↑↓ move"}
 	switch m.workspace {
 	case 0:
-		hints = append(hints, "/ search", "f filter", "b browse folder", "space select", "d download")
+		hints = append(hints, "/ search", "ctrl+pgup/down tabs", "ctrl+w close", "f filter", "b browse folder", "space select", "d download")
 	case 1:
 		hints = append(hints, "/ user", "ctrl+pgup/down tabs", "ctrl+w close", "r refresh", "space select", "d download")
 	case 2:
