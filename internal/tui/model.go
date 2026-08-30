@@ -48,6 +48,7 @@ type searchTab struct {
 	selected                           map[int]bool
 	loading, loadingMore               bool
 	request, operation                 uint64
+	tree                               treeState
 }
 
 type browseTab struct {
@@ -57,6 +58,7 @@ type browseTab struct {
 	selected          map[int]bool
 	loading           bool
 	request           uint64
+	tree              treeState
 }
 type transfer struct {
 	id, user, filename, direction, state string
@@ -97,15 +99,21 @@ type model struct {
 	searchTabIndex                         int
 	searchRequest                          uint64
 	searchOperation                        uint64
+	searchTree                             treeState
 	entries                                []entry
 	browseTabs                             []browseTab
 	browseTabIndex                         int
 	browseRequest                          uint64
+	browseTree                             treeState
 	transfers                              []transfer
 	transferTab                            int
 	transferCursors                        [2]int
 	spinner                                int
+	transferTrees                          [2]treeState
 	shares                                 []share
+	shareTree                              treeState
+	shareCursor                            int
+	shareGeneration, shareRequest          uint64
 	selected                               map[int]bool
 	err                                    string
 }
@@ -113,13 +121,13 @@ type model struct {
 func (m model) rows() int {
 	switch m.workspace {
 	case 0:
-		return len(m.results)
+		return len(m.searchTree.visible)
 	case 1:
-		return len(m.entries)
+		return len(m.browseTree.visible)
 	case 2:
-		return len(m.transferIndexes())
+		return len(m.transferTrees[m.transferTab].visible)
 	case 3:
-		return len(m.shares)
+		return len(m.shareTree.visible)
 	default:
 		return len(m.settingFields())
 	}
@@ -246,15 +254,17 @@ func (m model) helpView() string {
 	rows := [][2]string{
 		{"tab / shift+tab", "switch workspace"},
 		{"↑ ↓  or  j k", "move through items or fields"},
-		{"← → / home end", "move the caret while editing; otherwise navigate"},
+		{"← →", "collapse or expand trees; change Settings section"},
+		{"home end (editing)", "move the caret to a line boundary"},
 		{"ctrl+← → / ctrl+⌫", "move or delete by word while editing"},
 		{"ctrl+a e u k", "jump or delete to a line boundary"},
-		{"/ / enter", "edit a query, username, share, or setting"},
+		{"/", "edit a query, username, share, or setting"},
+		{"enter", "toggle a folder or download a Search/Browse file"},
 		{"f", "edit cached search filters"},
 		{"c", "clear or restore search filters"},
 		{"tab (filter)", "complete fields and special values"},
-		{"space", "select more than one file"},
-		{"d", "download, cancel, or remove"},
+		{"space", "select a file or all loaded descendants"},
+		{"d", "act on selected files or the cursor subtree"},
 		{"r", "refresh browse, retry transfer, or rescan shares"},
 		{"b (search)", "browse the selected result's user and folder"},
 		{"ctrl+page up/down", "switch search, browse, or transfer tabs"},
@@ -349,6 +359,31 @@ func searchMetadata(x result, width int, peer bool) (string, string) {
 	return strings.Join(headings, " "), strings.Join(values, " ")
 }
 
+func treeGlyph(tree *treeState, node treeNode) string {
+	if node.kind == treeFile {
+		return "·"
+	}
+	if tree.expandedNode(node) {
+		return "▾"
+	}
+	return "▸"
+}
+
+func treeSelection(tree *treeState, index int, selected map[int]bool) string {
+	chosen, total := tree.selection(index, selected)
+	if chosen == 0 {
+		return "○"
+	}
+	if chosen == total {
+		return "●"
+	}
+	return "◐"
+}
+
+func treeLabel(tree *treeState, index int) string {
+	return strings.Repeat("  ", tree.depth(index)) + tree.nodes[index].label
+}
+
 func (m model) searchTabsLine(width int) string {
 	if len(m.searchTabs) == 0 {
 		return ""
@@ -401,11 +436,21 @@ func (m model) renderSearch(width, height int) string {
 		return strings.Join(append(lines, muted("No matching results. Press / to search or f to change filters.")), "\n")
 	}
 
-	selected := m.results[max(0, min(m.cursor, len(m.results)-1))]
-	folder, _ := resultPath(selected.path)
-	source := "SOURCE  " + selected.user
-	if folder != "" {
-		source += "  •  " + folder
+	_, selectedNode := m.searchTree.node(m.cursor)
+	source := "SOURCE"
+	if selectedNode != nil {
+		if selectedNode.user != "" {
+			source += "  " + selectedNode.user
+		}
+		if selectedNode.path != "" {
+			folder, _ := resultPath(selectedNode.path)
+			if selectedNode.kind != treeFile {
+				folder = selectedNode.path
+			}
+			if folder != "" {
+				source += "  •  " + folder
+			}
+		}
 	}
 	lines = append(lines, trunc(muted(source), width))
 	headings, _ := searchMetadata(result{}, width, true)
@@ -413,21 +458,18 @@ func (m model) renderSearch(width, height int) string {
 	lines = append(lines, muted("      "+searchTextColumn("FILE", nameWidth)+"  "+headings))
 
 	limit := max(0, height-len(lines))
-	start, end := visibleRange(len(m.results), m.cursor, limit)
-	for i := start; i < end; i++ {
-		x := m.results[i]
-		mark := "○"
-		if m.selected[i] {
-			mark = "●"
+	start, end := visibleRange(len(m.searchTree.visible), m.cursor, limit)
+	for rowIndex := start; rowIndex < end; rowIndex++ {
+		nodeIndex := m.searchTree.visible[rowIndex]
+		node := m.searchTree.nodes[nodeIndex]
+		mark := treeSelection(&m.searchTree, nodeIndex, m.selected)
+		metadata := fmt.Sprintf("%d files", len(node.leaves))
+		if node.kind == treeFile && node.source >= 0 {
+			_, metadata = searchMetadata(m.results[node.source], width, true)
 		}
-		kind := "·"
-		if x.directory {
-			kind = "▸"
-		}
-		_, name := resultPath(x.path)
-		_, metadata := searchMetadata(x, width, true)
-		row := fmt.Sprintf("%s %s %s  %s", mark, kind, searchTextColumn(name, nameWidth), metadata)
-		lines = append(lines, searchResultRow(row, i == m.cursor, m.selected[i]))
+		row := fmt.Sprintf("%s %s %s  %s", mark, treeGlyph(&m.searchTree, node), searchTextColumn(treeLabel(&m.searchTree, nodeIndex), nameWidth), metadata)
+		selected := node.kind == treeFile && node.source >= 0 && m.selected[node.source]
+		lines = append(lines, searchResultRow(row, rowIndex == m.cursor, selected))
 	}
 	return strings.Join(lines, "\n")
 }
@@ -471,10 +513,13 @@ func (m model) renderBrowse(width, height int) string {
 		return strings.Join(append(lines, "\n"+muted("Enter a Soulseek username to browse their shared files.")), "\n")
 	}
 
-	selected := m.entries[max(0, min(m.cursor, len(m.entries)-1))]
-	folder, _ := resultPath(selected.name)
-	if selected.directory {
-		folder = selected.name
+	_, selectedNode := m.browseTree.node(m.cursor)
+	folder := ""
+	if selectedNode != nil {
+		folder = selectedNode.path
+		if selectedNode.kind == treeFile {
+			folder, _ = resultPath(folder)
+		}
 	}
 	lines = append(lines, trunc(muted("FOLDER  "+folder), width))
 	headings, _ := searchMetadata(result{}, width, false)
@@ -482,21 +527,19 @@ func (m model) renderBrowse(width, height int) string {
 	lines = append(lines, muted("      "+searchTextColumn("FILE", nameWidth)+"  "+headings))
 
 	limit := max(0, height-len(lines))
-	start, end := visibleRange(len(m.entries), m.cursor, limit)
-	for i := start; i < end; i++ {
-		x := m.entries[i]
-		mark := "○"
-		if m.selected[i] {
-			mark = "●"
+	start, end := visibleRange(len(m.browseTree.visible), m.cursor, limit)
+	for rowIndex := start; rowIndex < end; rowIndex++ {
+		nodeIndex := m.browseTree.visible[rowIndex]
+		node := m.browseTree.nodes[nodeIndex]
+		mark := treeSelection(&m.browseTree, nodeIndex, m.selected)
+		metadata := fmt.Sprintf("%d files", len(node.leaves))
+		if node.kind == treeFile && node.source >= 0 {
+			x := m.entries[node.source]
+			_, metadata = searchMetadata(result{size: x.size, extension: x.extension, bitrate: x.bitrate, duration: x.duration, vbr: x.vbr, sampleRate: x.sampleRate, bitDepth: x.bitDepth, public: !x.private}, width, false)
 		}
-		kind := "·"
-		if x.directory {
-			kind = "▸"
-		}
-		_, name := resultPath(x.name)
-		_, metadata := searchMetadata(result{size: x.size, extension: x.extension, directory: x.directory, bitrate: x.bitrate, duration: x.duration, vbr: x.vbr, sampleRate: x.sampleRate, bitDepth: x.bitDepth, public: !x.private}, width, false)
-		row := fmt.Sprintf("%s %s %s  %s", mark, kind, searchTextColumn(name, nameWidth), metadata)
-		lines = append(lines, searchResultRow(row, i == m.cursor, m.selected[i]))
+		row := fmt.Sprintf("%s %s %s  %s", mark, treeGlyph(&m.browseTree, node), searchTextColumn(treeLabel(&m.browseTree, nodeIndex), nameWidth), metadata)
+		selected := node.kind == treeFile && node.source >= 0 && m.selected[node.source]
+		lines = append(lines, searchResultRow(row, rowIndex == m.cursor, selected))
 	}
 	return strings.Join(lines, "\n")
 }
@@ -569,34 +612,48 @@ func (m model) renderTransfers(width, height int) string {
 		}
 		return strings.Join(append(lines, "\n"+muted(label)), "\n")
 	}
-	start, end := visibleRange(len(indexes), m.cursor, limit)
+	tree := &m.transferTrees[m.transferTab]
+	start, end := visibleRange(len(tree.visible), m.cursor, limit)
 	frames := []rune("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏")
 	for rowIndex := start; rowIndex < end; rowIndex++ {
-		x := m.transfers[indexes[rowIndex]]
+		nodeIndex := tree.visible[rowIndex]
+		node := tree.nodes[nodeIndex]
+		var done, total uint64
+		running := false
+		for _, source := range node.leaves {
+			x := m.transfers[source]
+			done, total = done+x.done, total+x.total
+			running = running || x.state == "running"
+		}
 		barWidth := 8
 		if width >= 70 {
 			barWidth = 14
 		}
-		bar, percent := progressBar(x.done, x.total, barWidth)
-		state := x.state
-		if x.queue > 0 {
-			state += fmt.Sprintf(" q%d", x.queue)
+		bar, percent := progressBar(done, total, barWidth)
+		state := fmt.Sprintf("%d transfers", len(node.leaves))
+		if node.kind == treeFile && node.source >= 0 {
+			x := m.transfers[node.source]
+			state = x.state
+			if x.queue > 0 {
+				state += fmt.Sprintf(" q%d", x.queue)
+			}
+			if width >= 90 && x.user != "" {
+				state += "  @" + trunc(x.user, 16)
+			}
 		}
 		status := fmt.Sprintf("%s %3d%%  %s", bar, percent, state)
-		if width >= 90 && x.user != "" {
-			status += "  @" + trunc(x.user, 16)
-		}
 		spinner := " "
-		if x.state == "running" {
+		if running {
 			spinner = string(frames[m.spinner%len(frames)])
 		}
 		direction := "↓"
-		if x.direction == "upload" {
+		if m.transferTab == 1 {
 			direction = "↑"
 		}
-		nameWidth := max(4, width-lipgloss.Width(status)-7)
-		row := fmt.Sprintf("%s %s %s  %s", spinner, direction, searchTextColumn(x.filename, nameWidth), status)
-		lines = append(lines, transferResultRow(row, rowIndex == m.cursor, x.direction == "upload"))
+		nameWidth := max(4, width-lipgloss.Width(status)-10)
+		label := treeLabel(tree, nodeIndex)
+		row := fmt.Sprintf("%s %s %s %s  %s", spinner, direction, treeGlyph(tree, node), searchTextColumn(label, nameWidth), status)
+		lines = append(lines, transferResultRow(trunc(row, max(4, width-2)), rowIndex == m.cursor, m.transferTab == 1))
 	}
 	return strings.Join(lines, "\n")
 }
@@ -612,12 +669,24 @@ func (m model) renderShares(width, height int) string {
 	if len(m.shares) == 0 && limit > 0 {
 		return strings.Join(append(lines, "\n"+muted("No public folders. Press / to add one as name:path.")), "\n")
 	}
-	start, end := visibleRange(len(m.shares), m.cursor, limit)
-	for i := start; i < end; i++ {
-		x := m.shares[i]
-		nameWidth := max(4, min(20, width/3))
-		row := fmt.Sprintf("◆  %-*s  %s", nameWidth, trunc(x.name, nameWidth), trunc(x.path, max(4, width-nameWidth-5)))
-		lines = append(lines, selectedRow(row, i == m.cursor))
+	start, end := visibleRange(len(m.shareTree.visible), m.cursor, limit)
+	frames := []rune("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏")
+	for rowIndex := start; rowIndex < end; rowIndex++ {
+		nodeIndex := m.shareTree.visible[rowIndex]
+		node := m.shareTree.nodes[nodeIndex]
+		status := ""
+		if node.kind == treeShareRoot {
+			status = trunc(node.detail, max(4, width/2))
+		} else if node.kind == treeFile {
+			status = formatBytes(node.size)
+		}
+		spinner := " "
+		if node.loading {
+			spinner = string(frames[m.spinner%len(frames)])
+		}
+		nameWidth := max(4, width-lipgloss.Width(status)-8)
+		row := fmt.Sprintf("%s %s %s  %s", spinner, treeGlyph(&m.shareTree, node), searchTextColumn(treeLabel(&m.shareTree, nodeIndex), nameWidth), status)
+		lines = append(lines, selectedRow(trunc(row, max(4, width-2)), rowIndex == m.cursor))
 	}
 	return strings.Join(lines, "\n")
 }
@@ -726,13 +795,13 @@ func (m model) footerView() string {
 	hints := []string{"tab switch", "↑↓ move"}
 	switch m.workspace {
 	case 0:
-		hints = append(hints, "/ search", "ctrl+pgup/down tabs", "ctrl+w close", "f filter", "b browse folder", "space select", "d download")
+		hints = append(hints, "←→ tree", "/ search", "ctrl+pgup/down tabs", "ctrl+w close", "f filter", "b browse folder", "space select", "d download")
 	case 1:
-		hints = append(hints, "/ user", "ctrl+pgup/down tabs", "ctrl+w close", "r refresh", "space select", "d download")
+		hints = append(hints, "←→ tree", "/ user", "ctrl+pgup/down tabs", "ctrl+w close", "r refresh", "space select", "d download")
 	case 2:
-		hints = append(hints, "ctrl+pgup/down downloads/uploads", "d cancel", "r retry", "c clear")
+		hints = append(hints, "←→ tree", "ctrl+pgup/down downloads/uploads", "d cancel", "r retry", "c clear")
 	case 3:
-		hints = append(hints, "/ add", "d remove", "r rescan")
+		hints = append(hints, "←→ tree", "/ add", "d remove root", "r rescan")
 	case 4:
 		hints = append(hints, "←→ section", "enter edit", "s save")
 	}

@@ -28,6 +28,8 @@ func TestNavigationSelectionAndHelp(t *testing.T) {
 		t.Fatal("tab")
 	}
 	m.results = []result{{path: "a", size: 1}}
+	m.searchTree, m.cursor = buildSearchTree(m.results, treeState{}, 0)
+	m.cursor = m.searchTree.cursorForSource(0)
 	m.workspace = 0
 	x, _ = m.Update(key(" "))
 	m = x.(model)
@@ -304,6 +306,8 @@ func TestSearchFilterEditingAndMetadata(t *testing.T) {
 	m.loading = false
 	m.searchTotal, m.searchFound = 1, 4
 	m.results = []result{{user: "peer", path: `music\album\song.flac`, size: 1024, bitrate: 320, duration: 125, vbr: true}}
+	m.searchTree, m.cursor = buildSearchTree(m.results, treeState{}, 0)
+	m.cursor = m.searchTree.cursorForSource(0)
 	view := m.renderSearch(100, 10)
 	for _, want := range []string{"1 loaded / 1 filtered / 4 found", "FILE", "SIZE", `SOURCE  peer  •  music\album`, "song.flac", "320kv", "2:05", "private"} {
 		if !strings.Contains(view, want) {
@@ -315,7 +319,7 @@ func TestSearchFilterEditingAndMetadata(t *testing.T) {
 			t.Fatalf("search row exceeds width: %d %q", lipgloss.Width(line), line)
 		}
 	}
-	if !strings.Contains(view, "› ○ · song.flac") {
+	if !strings.Contains(view, "› ○ ·       song.flac") {
 		t.Fatalf("filename was not left-aligned: %q", view)
 	}
 	t.Setenv("NO_COLOR", "")
@@ -360,6 +364,10 @@ func TestSearchResultTabs(t *testing.T) {
 	updated, _ = m.Update(searchMsg{request: firstRequest, operation: firstOperation, page: daemon.SearchPage{ID: "first", Query: "first query", Results: []daemon.SearchResult{{Path: "first.flac", Public: true}}, Total: 1, FoundTotal: 3}})
 	m = updated.(model)
 	m.selected[0] = true
+	firstRoot := m.searchTree.nodes[m.searchTree.roots[0]].id
+	m.searchTree.expanded[firstRoot] = false
+	m.searchTree.rebuildVisible()
+	m.cursor = 0
 
 	m.key(tea.KeyPressMsg(tea.Key{Code: tea.KeyPgDown, Mod: tea.ModCtrl}))
 	if m.query != "second query" || m.searchFilter != "free:true" || len(m.results) != 1 || m.results[0].path != "second.flac" {
@@ -374,7 +382,7 @@ func TestSearchResultTabs(t *testing.T) {
 		t.Fatalf("stale pagination changed filtered tab: results=%+v loadingMore=%v", m.results, m.loadingMore)
 	}
 	m.key(tea.KeyPressMsg(tea.Key{Code: tea.KeyPgUp, Mod: tea.ModCtrl}))
-	if m.query != "first query" || !m.selected[0] {
+	if m.query != "first query" || !m.selected[0] || m.searchTree.expandedNode(m.searchTree.nodes[m.searchTree.roots[0]]) {
 		t.Fatalf("first search selection was not restored: query=%q selected=%v", m.query, m.selected)
 	}
 	m.key(tea.KeyPressMsg(tea.Key{Code: 'w', Mod: tea.ModCtrl}))
@@ -387,25 +395,41 @@ func TestTransferDirectionTabsProgressAndSpinner(t *testing.T) {
 	t.Setenv("NO_COLOR", "1")
 	m := model{workspace: 2, selected: map[int]bool{}, transfers: []transfer{
 		{id: "d1", filename: "album.flac", direction: "download", state: "running", done: 25, total: 100, user: "alice"},
-		{id: "d2", filename: "queued.mp3", direction: "download", state: "queued", total: 100, queue: 2},
+		{id: "d2", filename: `folder\queued.mp3`, direction: "download", state: "queued", total: 100, queue: 2, user: "alice"},
 		{id: "u1", filename: "shared.wav", direction: "upload", state: "completed", done: 100, total: 100, user: "bob"},
 	}}
+	m.transferTrees[0], m.transferCursors[0] = buildTransferTree(m.transfers, "download", treeState{}, 0)
+	m.transferTrees[1], m.transferCursors[1] = buildTransferTree(m.transfers, "upload", treeState{}, 0)
+	m.cursor = 0
+	ids := m.transferActionIDs()
+	if len(ids) != 2 || (ids[0] != "d1" && ids[1] != "d1") || (ids[0] != "d2" && ids[1] != "d2") {
+		t.Fatalf("recursive transfer action IDs = %v", ids)
+	}
+	m.cursor = m.transferTrees[0].cursorForSource(0)
 
 	downloads := m.renderTransfers(100, 10)
 	if !strings.Contains(downloads, "[↓ DOWNLOADS 2]") || !strings.Contains(downloads, "███░░░░░░░░░░░  25%") || !strings.Contains(downloads, "⠋") || strings.Contains(downloads, "shared.wav") {
 		t.Fatalf("download tab did not render progress and spinner correctly: %q", downloads)
 	}
-	m.cursor = 1
+	for _, width := range []int{40, 100} {
+		for _, line := range strings.Split(m.renderTransfers(width, 10), "\n") {
+			if lipgloss.Width(line) > width {
+				t.Fatalf("transfer tree exceeds width %d: %q", width, line)
+			}
+		}
+	}
+	downloadCursor := m.transferTrees[0].cursorForSource(1)
+	m.cursor = downloadCursor
 	m.key(tea.KeyPressMsg(tea.Key{Code: tea.KeyPgDown, Mod: tea.ModCtrl}))
 	uploads := m.renderTransfers(100, 10)
-	if m.rows() != 1 || !strings.Contains(uploads, "[↑ UPLOADS 1]") || !strings.Contains(uploads, "shared.wav") || strings.Contains(uploads, "album.flac") {
+	if m.rows() != 2 || !strings.Contains(uploads, "[↑ UPLOADS 1]") || !strings.Contains(uploads, "shared.wav") || strings.Contains(uploads, "album.flac") {
 		t.Fatalf("upload tab did not isolate uploads: rows=%d view=%q", m.rows(), uploads)
 	}
-	if indexes := m.transferIndexes(); len(indexes) != 1 || indexes[0] != 2 {
-		t.Fatalf("upload action index mapping = %v", indexes)
+	if _, node := m.transferTrees[1].node(m.transferTrees[1].cursorForSource(2)); node == nil || node.source != 2 {
+		t.Fatal("upload tree did not map to source transfer")
 	}
 	m.key(tea.KeyPressMsg(tea.Key{Code: tea.KeyPgUp, Mod: tea.ModCtrl}))
-	if m.cursor != 1 {
+	if m.cursor != downloadCursor {
 		t.Fatalf("download cursor was not restored: %d", m.cursor)
 	}
 	updated, _ := m.Update(spinnerTickMsg{})
@@ -420,6 +444,8 @@ func TestBrowseResultFolderAndUserTabs(t *testing.T) {
 		results:   []result{{user: "nss", path: `audio\Hardstyle_320\song.mp3`}},
 		selected:  map[int]bool{},
 	}
+	m.searchTree, m.cursor = buildSearchTree(m.results, treeState{}, 0)
+	m.cursor = m.searchTree.cursorForSource(0)
 	if cmd := m.key(key("b")); cmd == nil || m.workspace != 1 || m.browseUser != "nss" || len(m.browseTabs) != 1 {
 		t.Fatalf("browse result did not open user tab: workspace=%d user=%q tabs=%d", m.workspace, m.browseUser, len(m.browseTabs))
 	}
@@ -438,7 +464,10 @@ func TestBrowseResultFolderAndUserTabs(t *testing.T) {
 			t.Fatalf("browse result UI missing %q in %q", want, view)
 		}
 	}
-	m.selected[1] = true
+	m.selected[2] = true
+	folderID := treeID("browse-dir", `audio\Hardstyle_320`)
+	m.browseTree.expanded[folderID] = false
+	m.browseTree.rebuildVisible()
 	m.openBrowse("LittleDeng", "", false)
 	if len(m.browseTabs) != 2 || m.browseUser != "LittleDeng" || !strings.Contains(m.renderBrowse(100, 10), "nss") {
 		t.Fatalf("second user tab not retained: user=%q tabs=%d", m.browseUser, len(m.browseTabs))
@@ -451,7 +480,7 @@ func TestBrowseResultFolderAndUserTabs(t *testing.T) {
 		t.Fatalf("stale browse response replaced newer request: entries=%d loading=%v", len(m.entries), m.loading)
 	}
 	m.key(tea.KeyPressMsg(tea.Key{Code: tea.KeyPgUp, Mod: tea.ModCtrl}))
-	if m.browseUser != "nss" || m.cursor != 1 || !m.selected[1] {
+	if m.browseUser != "nss" || m.cursor != 1 || !m.selected[2] || m.browseTree.expandedNode(m.browseTree.nodes[m.browseTree.byID[folderID]]) {
 		t.Fatalf("user tab state was not restored: user=%q cursor=%d", m.browseUser, m.cursor)
 	}
 	updated, _ = m.Update(browseMsg{user: "LittleDeng", request: m.browseTabs[1].request, entries: []entry{{name: "EDM", directory: true}}})
@@ -481,5 +510,103 @@ func TestFilterCompletionCyclesBackward(t *testing.T) {
 	m.editKey(tea.KeyPressMsg(tea.Key{Code: tea.KeyTab, Mod: tea.ModShift}))
 	if m.input != "public:" || m.workspace != 0 {
 		t.Fatalf("shift+tab completion = %q in workspace %d", m.input, m.workspace)
+	}
+}
+
+func TestTreeNavigationGroupingAndRecursiveSelection(t *testing.T) {
+	results := []result{
+		{user: "peer", path: `music/album/a.flac`},
+		{user: "peer", path: `music\album\b.flac`},
+		{user: "other", path: `music\album\a.flac`},
+		{user: "peer", path: `music\album\a.flac`},
+	}
+	tree, _ := buildSearchTree(results, treeState{}, 0)
+	if tree.nodes[tree.roots[0]].label != "peer" || len(tree.visible) != 10 {
+		t.Fatalf("search tree grouping/order: roots=%v visible=%d", tree.roots, len(tree.visible))
+	}
+	albumID := treeID("search-dir", "peer", `music\album`)
+	albumIndex := tree.byID[albumID]
+	albumCursor := 0
+	for i, index := range tree.visible {
+		if index == albumIndex {
+			albumCursor = i
+		}
+	}
+	m := model{workspace: 0, results: results, searchTree: tree, cursor: albumCursor, selected: map[int]bool{}}
+	m.toggle()
+	if !m.selected[0] || !m.selected[1] || !m.selected[3] || m.selected[2] || treeSelection(&m.searchTree, albumIndex, m.selected) != "●" {
+		t.Fatalf("recursive folder selection = %v", m.selected)
+	}
+	m.selected[1] = false
+	if treeSelection(&m.searchTree, albumIndex, m.selected) != "◐" {
+		t.Fatal("partial folder selection was not shown")
+	}
+	m.cursor = 0
+	m.key(tea.KeyPressMsg(tea.Key{Code: tea.KeyLeft}))
+	if m.workspace != 0 || len(m.searchTree.visible) >= len(tree.visible) {
+		t.Fatal("left did not collapse the tree in place")
+	}
+	m.key(tea.KeyPressMsg(tea.Key{Code: tea.KeyRight}))
+	m.key(tea.KeyPressMsg(tea.Key{Code: tea.KeyRight}))
+	if m.cursor != 1 {
+		t.Fatalf("right did not enter first child: %d", m.cursor)
+	}
+
+	m.cursor = m.searchTree.cursorForSource(0)
+	oldID := m.searchTree.cursorID(m.cursor)
+	updated, updatedCursor := buildSearchTree(append(results, result{user: "peer", path: `music\new\c.flac`}), m.searchTree, m.cursor)
+	if updated.cursorID(updatedCursor) != oldID {
+		t.Fatal("pagination did not preserve the cursor by node identity")
+	}
+	updated.expanded[albumID] = false
+	updated, _ = buildSearchTree(append(results, result{user: "peer", path: `music\other\d.flac`}), updated, updatedCursor)
+	if updated.expanded[albumID] {
+		t.Fatal("pagination discarded an explicit collapsed state")
+	}
+	if _, ok := updated.byID[oldID]; !ok {
+		t.Fatal("pagination lost the stable result identity")
+	}
+}
+
+func TestSharesTreeIgnoresStaleBrowseResponses(t *testing.T) {
+	m := model{workspace: 3, selected: map[int]bool{}, shares: []share{{name: "Music", path: "/music"}}, shareGeneration: 2}
+	m.shareTree, m.cursor = buildShareRoots(m.shares, treeState{}, 0, true)
+	root := &m.shareTree.nodes[m.shareTree.roots[0]]
+	root.loading, root.request = true, 7
+	m.shareTree.expanded[root.id] = true
+	stale, _ := m.Update(shareBrowseMsg{nodeID: root.id, generation: 1, request: 7, entries: []entry{{name: "stale.mp3"}}})
+	m = stale.(model)
+	if len(m.shareTree.nodes) != 1 {
+		t.Fatal("stale share response populated the tree")
+	}
+	current, _ := m.Update(shareBrowseMsg{nodeID: root.id, generation: 2, request: 7, entries: []entry{{name: "Album", directory: true}, {name: "song.flac", size: 42}}})
+	m = current.(model)
+	if len(m.shareTree.nodes) != 3 || !strings.Contains(m.renderShares(80, 10), "song.flac") {
+		t.Fatalf("current share response was not rendered: %q", m.renderShares(80, 10))
+	}
+	for _, line := range strings.Split(m.renderShares(40, 10), "\n") {
+		if lipgloss.Width(line) > 40 {
+			t.Fatalf("share tree exceeds width: %q", line)
+		}
+	}
+	polled, _ := m.Update(sharesMsg{shares: m.shares})
+	m = polled.(model)
+	if len(m.shareTree.nodes) != 3 {
+		t.Fatal("ordinary share polling discarded loaded children")
+	}
+	changed, _ := m.Update(sharesMsg{shares: append(m.shares, share{name: "Other", path: "/other"})})
+	m = changed.(model)
+	if len(m.shareTree.nodes) != 4 {
+		t.Fatal("adding a root discarded an unchanged loaded subtree")
+	}
+	removed, _ := m.Update(sharesMsg{shares: []share{{name: "Other", path: "/other"}}})
+	m = removed.(model)
+	if len(m.shareTree.nodes) != 1 || m.shareTree.nodes[m.shareTree.roots[0]].label != "Other" {
+		t.Fatal("removed share root remained in the tree")
+	}
+	reset, _ := m.Update(sharesMsg{shares: m.shares, reset: true})
+	m = reset.(model)
+	if len(m.shareTree.nodes) != 1 || m.shareTree.expandedNode(m.shareTree.nodes[m.shareTree.roots[0]]) {
+		t.Fatal("rescan did not invalidate and collapse share children")
 	}
 }

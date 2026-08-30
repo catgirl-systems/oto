@@ -41,26 +41,30 @@ Soulseek permits one login per username. Keeping the session in the daemon preve
 | Key | Action |
 | --- | --- |
 | `tab` / `shift+tab` | Search, Browse, Transfers, Shares, Settings |
-| arrows or `j` / `k` | move; left/right moves the caret while editing and otherwise navigates |
+| up/down or `j` / `k` | move through visible rows |
+| left/right | collapse/expand a tree node; switch Settings sections |
 | `home` / `end` | jump to the start/end of any text field |
 | `ctrl+left` / `ctrl+right` | move by word in any text field (`alt` also works) |
 | `ctrl+backspace` / `ctrl+delete` | delete by word (`ctrl+w`, `alt+backspace`, and `alt+delete` also work) |
 | `ctrl+a` / `ctrl+e`, `ctrl+u` / `ctrl+k` | jump to start/end; delete before/after the caret |
 | `/` | edit search, username, `name:path` share, or setting |
+| `enter` | toggle a folder; download a Search/Browse file |
 | `f` | edit cached search filters |
 | `tab` / `shift+tab` while filtering | complete fields, types, booleans, and comparison operators |
-| `c` | clear/restore search filters or clear completed transfers |
-| `space` | select a file |
+| `c` | clear/restore search filters or clear the selected transfer subtree |
+| `space` | select a file or every loaded file below a user/folder node |
 | `b` in Search | browse the selected result's user and jump to its folder |
 | `ctrl+page up` / `ctrl+page down` in Search, Browse, or Transfers | switch result tabs or Downloads/Uploads |
 | `ctrl+w` in Search or Browse | close the active result tab |
-| `d` | download, cancel transfer, or remove share (by workspace) |
-| `r` | refresh a user browse, retry a transfer, or rescan shares |
+| `d` | download the selected/cursor subtree, cancel a transfer subtree, or remove a share root |
+| `r` | refresh a user browse, retry a transfer subtree, or rescan shares |
 | `s` | save settings and reconnect |
 | `?` | help, source, and license notice |
 | `q` | quit |
 
 Set `NO_COLOR=1` to suppress terminal styling.
+
+Search groups results as user → folders → files; Browse shows remote folders; Transfers groups each direction as user → folders → files; Shares lazily shows the daemon's scanned public-share index. Expansion and selection are session-local, and recursive Search/Browse actions include only currently loaded files.
 
 Searches support quoted phrases, excluded words (`-remix`), and partial terms (`*radio`). Filter cached results without another network search using fields such as:
 

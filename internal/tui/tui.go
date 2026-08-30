@@ -78,9 +78,19 @@ type transferMsg struct {
 type sharesMsg struct {
 	shares []share
 	err    error
+	reset  bool
+}
+type shareBrowseMsg struct {
+	nodeID              string
+	generation, request uint64
+	entries             []entry
+	err                 error
 }
 type settingsMsg struct{ err error }
-type transferActionMsg struct{ err error }
+type transferActionMsg struct {
+	transfers []transfer
+	err       error
+}
 
 func tick() tea.Cmd { return tea.Tick(time.Second, func(t time.Time) tea.Msg { return tickMsg(t) }) }
 func spinnerTick() tea.Cmd {
@@ -93,10 +103,24 @@ func (m model) loadTransfers() tea.Cmd {
 	return func() tea.Msg { x, e := m.client.Transfers(m.ctx); return transferMsg{toTransfers(x), e} }
 }
 func (m model) loadShares() tea.Cmd {
-	return func() tea.Msg { x, e := m.client.Shares(m.ctx); return sharesMsg{toShares(x), e} }
+	return func() tea.Msg { x, e := m.client.Shares(m.ctx); return sharesMsg{shares: toShares(x), err: e} }
 }
-func (m model) rescanShares() tea.Cmd {
-	return func() tea.Msg { x, e := m.client.Rescan(m.ctx); return sharesMsg{toShares(x), e} }
+func (m *model) rescanShares() tea.Cmd {
+	m.shareGeneration++
+	for i := range m.shareTree.nodes {
+		m.shareTree.nodes[i].loading = false
+	}
+	return func() tea.Msg {
+		x, e := m.client.Rescan(m.ctx)
+		return sharesMsg{shares: toShares(x), reset: e == nil, err: e}
+	}
+}
+
+func (m model) browseShare(nodeID, path string, generation, request uint64) tea.Cmd {
+	return func() tea.Msg {
+		entries, err := m.client.BrowseShares(m.ctx, path)
+		return shareBrowseMsg{nodeID: nodeID, generation: generation, request: request, entries: toEntries(entries), err: err}
+	}
 }
 func (m model) search(query, filter string, request, operation uint64) tea.Cmd {
 	return func() tea.Msg {
@@ -139,6 +163,7 @@ func (m *model) saveSearchTab() {
 	tab.query, tab.id, tab.filter, tab.filterUndo, tab.err = m.query, m.searchID, m.searchFilter, m.searchFilterUndo, m.err
 	tab.results, tab.total, tab.found, tab.next = m.results, m.searchTotal, m.searchFound, m.searchNext
 	tab.cursor, tab.selected, tab.loading, tab.loadingMore = m.cursor, m.selected, m.loading, m.loadingMore
+	tab.tree = m.searchTree
 }
 
 func (m *model) loadSearchTab(index int) {
@@ -146,6 +171,7 @@ func (m *model) loadSearchTab(index int) {
 		m.query, m.searchID, m.searchFilter, m.searchFilterUndo, m.err = "", "", "", "", ""
 		m.results, m.searchTotal, m.searchFound, m.searchNext = nil, 0, 0, 0
 		m.cursor, m.selected, m.loading, m.loadingMore = 0, map[int]bool{}, false, false
+		m.searchTree = treeState{}
 		return
 	}
 	m.searchTabIndex = index
@@ -156,6 +182,7 @@ func (m *model) loadSearchTab(index int) {
 	m.query, m.searchID, m.searchFilter, m.searchFilterUndo, m.err = tab.query, tab.id, tab.filter, tab.filterUndo, tab.err
 	m.results, m.searchTotal, m.searchFound, m.searchNext = tab.results, tab.total, tab.found, tab.next
 	m.cursor, m.selected, m.loading, m.loadingMore = tab.cursor, tab.selected, tab.loading, tab.loadingMore
+	m.searchTree = tab.tree
 }
 
 func (m *model) switchSearchTab(delta int) {
@@ -208,14 +235,11 @@ func applySearchMsg(tab *searchTab, message searchMsg) {
 	}
 	results := toResults(message.page.Results)
 	if message.append {
-		oldLen := len(tab.results)
 		tab.results = append(tab.results, results...)
-		if tab.cursor == oldLen-1 && len(tab.results) > oldLen {
-			tab.cursor++
-		}
 	} else {
-		tab.results, tab.cursor, tab.selected = results, 0, map[int]bool{}
+		tab.results, tab.selected = results, map[int]bool{}
 	}
+	tab.tree, tab.cursor = buildSearchTree(tab.results, tab.tree, tab.cursor)
 	if message.filterChange {
 		if message.filter == "" && tab.filter != "" {
 			tab.filterUndo = tab.filter
@@ -261,13 +285,14 @@ func (m *model) saveBrowseTab() {
 		return
 	}
 	tab := &m.browseTabs[m.browseTabIndex]
-	tab.entries, tab.cursor, tab.selected, tab.loading = m.entries, m.cursor, m.selected, m.loading
+	tab.entries, tab.cursor, tab.selected, tab.loading, tab.tree = m.entries, m.cursor, m.selected, m.loading, m.browseTree
 }
 
 func (m *model) loadBrowseTab(index int) {
 	if index < 0 || index >= len(m.browseTabs) {
 		m.browseUser, m.entries, m.cursor, m.loading = "", nil, 0, false
 		m.selected, m.err = map[int]bool{}, ""
+		m.browseTree = treeState{}
 		return
 	}
 	m.browseTabIndex = index
@@ -275,7 +300,7 @@ func (m *model) loadBrowseTab(index int) {
 	if tab.selected == nil {
 		tab.selected = map[int]bool{}
 	}
-	m.browseUser, m.entries, m.cursor, m.selected, m.loading = tab.user, tab.entries, tab.cursor, tab.selected, tab.loading
+	m.browseUser, m.entries, m.cursor, m.selected, m.loading, m.browseTree = tab.user, tab.entries, tab.cursor, tab.selected, tab.loading, tab.tree
 	m.err = tab.err
 }
 
@@ -286,6 +311,8 @@ func (m *model) switchWorkspace(workspace int) {
 		m.saveBrowseTab()
 	} else if m.workspace == 2 {
 		m.transferCursors[m.transferTab] = m.cursor
+	} else if m.workspace == 3 {
+		m.shareCursor = m.cursor
 	}
 	m.workspace = (workspace + 5) % 5
 	if m.workspace == 0 {
@@ -301,7 +328,12 @@ func (m *model) switchWorkspace(workspace int) {
 		return
 	}
 	if m.workspace == 2 {
-		m.cursor = max(0, min(m.transferCursors[m.transferTab], len(m.transferIndexes())-1))
+		m.cursor = max(0, min(m.transferCursors[m.transferTab], len(m.transferTrees[m.transferTab].visible)-1))
+		m.selected, m.loading = map[int]bool{}, false
+		return
+	}
+	if m.workspace == 3 {
+		m.cursor = max(0, min(m.shareCursor, len(m.shareTree.visible)-1))
 		m.selected, m.loading = map[int]bool{}, false
 		return
 	}
@@ -320,8 +352,32 @@ func (m *model) switchBrowseTab(delta int) {
 func (m *model) switchTransferTab(tab int) {
 	m.transferCursors[m.transferTab] = m.cursor
 	m.transferTab = (tab + 2) % 2
-	m.cursor = max(0, min(m.transferCursors[m.transferTab], len(m.transferIndexes())-1))
+	m.cursor = max(0, min(m.transferCursors[m.transferTab], len(m.transferTrees[m.transferTab].visible)-1))
 	m.selected = map[int]bool{}
+}
+
+func (m *model) openTreeNode(toggle bool) tea.Cmd {
+	tree := m.currentTree()
+	if tree == nil {
+		return nil
+	}
+	_, node := tree.node(m.cursor)
+	if node == nil || node.kind == treeFile {
+		return nil
+	}
+	if m.workspace == 3 && !node.loaded && !node.loading {
+		m.shareRequest++
+		node.loading, node.request = true, m.shareRequest
+		tree.expanded[node.id] = true
+		tree.rebuildVisible()
+		return m.browseShare(node.id, node.path, m.shareGeneration, node.request)
+	}
+	if toggle {
+		m.cursor = tree.toggle(m.cursor)
+	} else {
+		m.cursor = tree.right(m.cursor)
+	}
+	return nil
 }
 
 func (m *model) closeBrowseTab() {
@@ -448,6 +504,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.searchFilter = x.filter
 		}
 		m.searchID, m.searchTotal, m.searchFound, m.searchNext = x.page.ID, x.page.Total, x.page.FoundTotal, x.page.NextCursor
+		m.searchTree, m.cursor = buildSearchTree(m.results, m.searchTree, m.cursor)
 	case browseMsg:
 		user := x.user
 		if user == "" {
@@ -460,8 +517,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			tab.loading, tab.err = false, errText(x.err)
 			if x.err == nil {
+				target := browseTargetCursor(x.entries, tab.target)
 				tab.entries, tab.selected = x.entries, map[int]bool{}
-				tab.cursor = browseTargetCursor(tab.entries, tab.target)
+				tab.tree, tab.cursor = buildBrowseTree(tab.entries, tab.tree, tab.cursor)
+				if tab.target != "" {
+					tab.cursor = tab.tree.cursorForSource(target)
+				}
 			}
 			tab.target = ""
 			if m.workspace == 1 && i == m.browseTabIndex {
@@ -470,13 +531,58 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			break
 		}
 	case transferMsg:
-		m.transfers, m.err = x.transfers, errText(x.err)
 		if m.workspace == 2 {
-			m.cursor = max(0, min(m.cursor, len(m.transferIndexes())-1))
 			m.transferCursors[m.transferTab] = m.cursor
 		}
+		m.transfers, m.err = x.transfers, errText(x.err)
+		for tab, direction := range []string{"download", "upload"} {
+			m.transferTrees[tab], m.transferCursors[tab] = buildTransferTree(m.transfers, direction, m.transferTrees[tab], m.transferCursors[tab])
+		}
+		if m.workspace == 2 {
+			m.cursor = m.transferCursors[m.transferTab]
+		}
 	case sharesMsg:
-		m.shares, m.err = x.shares, errText(x.err)
+		m.err = errText(x.err)
+		if x.err != nil {
+			break
+		}
+		m.shares = x.shares
+		changed := len(m.shareTree.nodes) == 0 || !sameShareRoots(m.shares, m.shareTree)
+		if x.reset || changed {
+			m.shareGeneration++
+			cursor := m.shareCursor
+			if m.workspace == 3 {
+				cursor = m.cursor
+			}
+			m.shareTree, m.shareCursor = buildShareRoots(m.shares, m.shareTree, cursor, x.reset)
+			if m.workspace == 3 {
+				m.cursor = m.shareCursor
+			}
+		}
+	case shareBrowseMsg:
+		if x.generation != m.shareGeneration {
+			break
+		}
+		index, ok := m.shareTree.byID[x.nodeID]
+		if !ok || m.shareTree.nodes[index].request != x.request {
+			break
+		}
+		m.shareTree.nodes[index].loading = false
+		m.err = errText(x.err)
+		cursor := m.shareCursor
+		if m.workspace == 3 {
+			cursor = m.cursor
+		}
+		if x.err != nil {
+			m.shareTree.expanded[x.nodeID] = false
+			m.shareTree.rebuildVisible()
+			m.shareCursor = max(0, min(cursor, len(m.shareTree.visible)-1))
+		} else {
+			m.shareCursor = m.shareTree.addShareChildren(x.nodeID, x.entries, cursor)
+		}
+		if m.workspace == 3 {
+			m.cursor = m.shareCursor
+		}
 	case settingsMsg:
 		m.err = errText(x.err)
 		if x.err == nil {
@@ -484,8 +590,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case transferActionMsg:
 		m.err = errText(x.err)
-		if x.err == nil {
-			return m, m.loadTransfers()
+		if m.workspace == 2 {
+			m.transferCursors[m.transferTab] = m.cursor
+		}
+		m.transfers = x.transfers
+		for tab, direction := range []string{"download", "upload"} {
+			m.transferTrees[tab], m.transferCursors[tab] = buildTransferTree(m.transfers, direction, m.transferTrees[tab], m.transferCursors[tab])
+		}
+		if m.workspace == 2 {
+			m.cursor = m.transferCursors[m.transferTab]
 		}
 	case tea.PasteMsg:
 		text := strings.Map(func(r rune) rune {
@@ -575,14 +688,14 @@ func (m *model) key(k tea.KeyPressMsg) tea.Cmd {
 			m.settingsSection = (m.settingsSection + 1) % 3
 			m.cursor, m.selected = 0, map[int]bool{}
 		} else {
-			m.switchWorkspace(m.workspace + 1)
+			return m.openTreeNode(false)
 		}
 	case "left":
 		if m.workspace == 4 {
 			m.settingsSection = (m.settingsSection + 2) % 3
 			m.cursor, m.selected = 0, map[int]bool{}
-		} else {
-			m.switchWorkspace(m.workspace - 1)
+		} else if tree := m.currentTree(); tree != nil {
+			m.cursor = tree.left(m.cursor)
 		}
 	case "up", "k":
 		if m.cursor > 0 {
@@ -604,13 +717,15 @@ func (m *model) key(k tea.KeyPressMsg) tea.Cmd {
 		}
 		return m.enter()
 	case "b":
-		if m.workspace == 0 && m.cursor < len(m.results) {
-			result := m.results[m.cursor]
-			folder, _ := resultPath(result.path)
-			if result.directory {
-				folder = result.path
+		if m.workspace == 0 {
+			_, node := m.searchTree.node(m.cursor)
+			if node != nil {
+				folder := node.path
+				if node.kind == treeFile {
+					folder, _ = resultPath(folder)
+				}
+				return m.openBrowse(node.user, folder, false)
 			}
-			return m.openBrowse(result.user, folder, false)
 		}
 	case "d":
 		if m.workspace == 0 {
@@ -823,22 +938,40 @@ func filterCompletionHint(input string) string {
 	}
 }
 func (m *model) enter() tea.Cmd {
-	if m.workspace == 0 && len(m.results) > 0 {
-		m.selected[m.cursor] = true
-		return m.queueResult()
+	tree := m.currentTree()
+	if tree == nil {
+		return nil
 	}
-	if m.workspace == 1 && len(m.entries) > 0 {
-		m.selected[m.cursor] = true
+	_, node := tree.node(m.cursor)
+	if node == nil {
+		return nil
+	}
+	if node.kind != treeFile {
+		return m.openTreeNode(true)
+	}
+	if node.source >= 0 && (m.workspace == 0 || m.workspace == 1) {
+		m.selected[node.source] = true
+		if m.workspace == 0 {
+			return m.queueResult()
+		}
 		return m.queueBrowse()
 	}
 	return nil
 }
+
 func (m *model) toggle() {
-	if m.workspace == 0 && m.cursor < len(m.results) {
-		m.selected[m.cursor] = !m.selected[m.cursor]
+	if m.workspace != 0 && m.workspace != 1 {
+		return
 	}
-	if m.workspace == 1 && m.cursor < len(m.entries) {
-		m.selected[m.cursor] = !m.selected[m.cursor]
+	tree := m.currentTree()
+	index, node := tree.node(m.cursor)
+	if node == nil {
+		return
+	}
+	chosen, total := tree.selection(index, m.selected)
+	selectAll := chosen != total
+	for _, source := range node.leaves {
+		m.selected[source] = selectAll
 	}
 }
 func (m *model) queueResult() tea.Cmd {
@@ -848,9 +981,14 @@ func (m *model) queueResult() tea.Cmd {
 			byUser[x.user] = append(byUser[x.user], daemon.DownloadItem{Filename: x.path, Size: x.size})
 		}
 	}
-	if len(byUser) == 0 && m.cursor < len(m.results) && !m.results[m.cursor].directory {
-		x := m.results[m.cursor]
-		byUser[x.user] = []daemon.DownloadItem{{Filename: x.path, Size: x.size}}
+	if len(byUser) == 0 {
+		_, node := m.searchTree.node(m.cursor)
+		if node != nil {
+			for _, source := range node.leaves {
+				x := m.results[source]
+				byUser[x.user] = append(byUser[x.user], daemon.DownloadItem{Filename: x.path, Size: x.size})
+			}
+		}
 	}
 	if len(byUser) == 0 {
 		return nil
@@ -866,25 +1004,19 @@ func (m *model) queueResult() tea.Cmd {
 }
 func (m *model) queueBrowse() tea.Cmd {
 	chosen := make(map[string]download)
-	add := func(entry entry) {
-		if !entry.directory {
-			chosen[entry.name] = download{entry.name, entry.size}
-			return
+	for source, item := range m.entries {
+		if m.selected[source] && !item.directory {
+			chosen[item.name] = download{item.name, item.size}
 		}
-		prefix := strings.TrimRight(entry.name, "/\\") + "\\"
-		for _, child := range m.entries {
-			if !child.directory && strings.HasPrefix(strings.ReplaceAll(child.name, "/", "\\"), prefix) {
-				chosen[child.name] = download{child.name, child.size}
+	}
+	if len(chosen) == 0 {
+		_, node := m.browseTree.node(m.cursor)
+		if node != nil {
+			for _, source := range node.leaves {
+				item := m.entries[source]
+				chosen[item.name] = download{item.name, item.size}
 			}
 		}
-	}
-	for i, item := range m.entries {
-		if m.selected[i] {
-			add(item)
-		}
-	}
-	if len(chosen) == 0 && m.cursor < len(m.entries) {
-		add(m.entries[m.cursor])
 	}
 	if len(chosen) == 0 {
 		return nil
@@ -908,10 +1040,11 @@ func (m *model) addShare() tea.Cmd {
 	}
 }
 func (m *model) removeShare() tea.Cmd {
-	if m.cursor >= len(m.shares) {
+	_, node := m.shareTree.node(m.cursor)
+	if node == nil || node.kind != treeShareRoot || node.source < 0 || node.source >= len(m.shares) {
 		return nil
 	}
-	name := m.shares[m.cursor].name
+	name := m.shares[node.source].name
 	return func() tea.Msg {
 		var out []config.Share
 		e := m.client.Do(m.ctx, "DELETE", "/v1/shares/"+url.PathEscape(name), nil, &out)
@@ -929,13 +1062,41 @@ func (m *model) queue(files []download, user string) tea.Cmd {
 		return statusMsg{err: e}
 	}
 }
-func (m model) action(action string) tea.Cmd {
-	indexes := m.transferIndexes()
-	if m.cursor >= len(indexes) {
+
+func (m model) transferActionIDs() []string {
+	tree := &m.transferTrees[m.transferTab]
+	_, node := tree.node(m.cursor)
+	if node == nil {
 		return nil
 	}
-	id := m.transfers[indexes[m.cursor]].id
-	return func() tea.Msg { return transferActionMsg{m.client.TransferAction(m.ctx, id, action)} }
+	ids := make([]string, 0, len(node.leaves))
+	for _, source := range node.leaves {
+		ids = append(ids, m.transfers[source].id)
+	}
+	return ids
+}
+func (m model) action(action string) tea.Cmd {
+	ids := m.transferActionIDs()
+	if len(ids) == 0 {
+		return nil
+	}
+	return func() tea.Msg {
+		var first error
+		for _, id := range ids {
+			if err := m.client.TransferAction(m.ctx, id, action); err != nil && first == nil {
+				first = err
+			}
+		}
+		transfers, err := m.client.Transfers(m.ctx)
+		view := toTransfers(transfers)
+		if err != nil {
+			view = m.transfers
+		}
+		if first == nil {
+			first = err
+		}
+		return transferActionMsg{transfers: view, err: first}
+	}
 }
 func (m model) active() bool {
 	for _, x := range m.transfers {
