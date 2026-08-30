@@ -107,7 +107,7 @@ func TestProtocolFixture(t *testing.T) {
 	if err != nil || got != m {
 		t.Fatalf("login %+v %v", got, err)
 	}
-	r := SearchResponse{Token: 7, Username: "peer", Results: []SearchResult{{Path: "Songs/a.mp3", Size: 3}}}
+	r := SearchResponse{Token: 7, Username: "peer", SlotFree: true, Speed: 42, QueueLength: 3, Results: []SearchResult{{Path: "Songs/a.mp3", Extension: "mp3", Size: 3, Bitrate: 320, Duration: 125, VBR: true, SampleRate: 44100, BitDepth: 24, Public: true}, {Path: "Secret/b.flac", Extension: "flac", Size: 4}}}
 	b, err = EncodeMessage(r)
 	if err != nil {
 		t.Fatal(err)
@@ -117,8 +117,15 @@ func TestProtocolFixture(t *testing.T) {
 		t.Fatal(err)
 	}
 	rr, err := DecodeSearchResponse(p)
-	if err != nil || rr.Token != 7 || len(rr.Results) != 1 {
+	if err != nil || rr.Token != 7 || len(rr.Results) != 2 {
 		t.Fatalf("search %+v %v", rr, err)
+	}
+	public, private := rr.Results[0], rr.Results[1]
+	if !public.Public || public.Bitrate != 320 || public.Duration != 125 || !public.VBR || public.SampleRate != 44100 || public.BitDepth != 24 || !public.SlotFree || public.Speed != 42 || public.QueueLength != 3 {
+		t.Fatalf("public search metadata: %+v", public)
+	}
+	if private.Public || private.Path != "Secret/b.flac" || !private.SlotFree || private.QueueLength != 3 {
+		t.Fatalf("private search result: %+v", private)
 	}
 }
 

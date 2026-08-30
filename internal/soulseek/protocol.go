@@ -406,7 +406,15 @@ type SearchResponse struct {
 
 func (SearchResponse) command() uint32 { return PeerSearch }
 func (m SearchResponse) encode(e *Encoder) error {
-	if len(m.Results) > 500 {
+	public, private := make([]SearchResult, 0, len(m.Results)), make([]SearchResult, 0)
+	for _, result := range m.Results {
+		if result.Public {
+			public = append(public, result)
+		} else {
+			private = append(private, result)
+		}
+	}
+	if len(public) > 500 || len(private) > 500 {
 		return ErrTooLarge
 	}
 	var raw Encoder
@@ -414,8 +422,8 @@ func (m SearchResponse) encode(e *Encoder) error {
 		return err
 	}
 	raw.U32(m.Token)
-	raw.U32(uint32(len(m.Results)))
-	for _, result := range m.Results {
+	raw.U32(uint32(len(public)))
+	for _, result := range public {
 		if err := result.encode(&raw); err != nil {
 			return err
 		}
@@ -424,7 +432,12 @@ func (m SearchResponse) encode(e *Encoder) error {
 	raw.U32(m.Speed)
 	raw.U32(m.QueueLength)
 	raw.U32(0)
-	raw.U32(0) // no private results in the MVP
+	raw.U32(uint32(len(private)))
+	for _, result := range private {
+		if err := result.encode(&raw); err != nil {
+			return err
+		}
+	}
 	compressed, err := CompressZlib(raw.Payload())
 	if err != nil {
 		return err
@@ -432,6 +445,14 @@ func (m SearchResponse) encode(e *Encoder) error {
 	e.Raw(compressed)
 	return nil
 }
+
+const (
+	FileAttributeBitrate    uint32 = 0
+	FileAttributeDuration   uint32 = 1
+	FileAttributeVBR        uint32 = 2
+	FileAttributeSampleRate uint32 = 4
+	FileAttributeBitDepth   uint32 = 5
+)
 
 type SearchResult struct {
 	Username    string `json:"username,omitempty"`
@@ -442,6 +463,12 @@ type SearchResult struct {
 	SlotFree    bool   `json:"slot_free,omitempty"`
 	Speed       uint32 `json:"speed,omitempty"`
 	QueueLength uint32 `json:"queue_length,omitempty"`
+	Bitrate     uint32 `json:"bitrate,omitempty"`
+	Duration    uint32 `json:"duration,omitempty"`
+	VBR         bool   `json:"vbr,omitempty"`
+	SampleRate  uint32 `json:"sample_rate,omitempty"`
+	BitDepth    uint32 `json:"bit_depth,omitempty"`
+	Public      bool   `json:"public"`
 }
 
 func (r SearchResult) encode(e *Encoder) error {
@@ -453,7 +480,27 @@ func (r SearchResult) encode(e *Encoder) error {
 	if err := e.String(r.Extension); err != nil {
 		return err
 	}
-	e.U32(0) // media attributes are intentionally deferred
+	attributes := [][2]uint32{}
+	if r.Bitrate != 0 {
+		attributes = append(attributes, [2]uint32{FileAttributeBitrate, r.Bitrate})
+	}
+	if r.Duration != 0 {
+		attributes = append(attributes, [2]uint32{FileAttributeDuration, r.Duration})
+	}
+	if r.VBR {
+		attributes = append(attributes, [2]uint32{FileAttributeVBR, 1})
+	}
+	if r.SampleRate != 0 {
+		attributes = append(attributes, [2]uint32{FileAttributeSampleRate, r.SampleRate})
+	}
+	if r.BitDepth != 0 {
+		attributes = append(attributes, [2]uint32{FileAttributeBitDepth, r.BitDepth})
+	}
+	e.U32(uint32(len(attributes)))
+	for _, attribute := range attributes {
+		e.U32(attribute[0])
+		e.U32(attribute[1])
+	}
 	return nil
 }
 
@@ -483,11 +530,25 @@ func decodeSearchResult(d *Decoder) (SearchResult, error) {
 		return result, ErrTooLarge
 	}
 	for i := uint32(0); i < count; i++ {
-		if _, err = d.U32(); err != nil {
-			return result, err
+		attribute, attributeErr := d.U32()
+		if attributeErr != nil {
+			return result, attributeErr
 		}
-		if _, err = d.U32(); err != nil {
-			return result, err
+		value, valueErr := d.U32()
+		if valueErr != nil {
+			return result, valueErr
+		}
+		switch attribute {
+		case FileAttributeBitrate:
+			result.Bitrate = value
+		case FileAttributeDuration:
+			result.Duration = value
+		case FileAttributeVBR:
+			result.VBR = value != 0
+		case FileAttributeSampleRate:
+			result.SampleRate = value
+		case FileAttributeBitDepth:
+			result.BitDepth = value
 		}
 	}
 	return result, nil
@@ -519,7 +580,7 @@ func DecodeSearchResponse(b []byte) (SearchResponse, error) {
 		if err != nil {
 			return message, err
 		}
-		result.Username = message.Username
+		result.Username, result.Public = message.Username, true
 		message.Results = append(message.Results, result)
 	}
 	if message.SlotFree, err = d.Bool(); err != nil {
@@ -530,9 +591,6 @@ func DecodeSearchResponse(b []byte) (SearchResponse, error) {
 	}
 	if message.QueueLength, err = d.U32(); err != nil {
 		return message, err
-	}
-	for i := range message.Results {
-		message.Results[i].SlotFree, message.Results[i].Speed, message.Results[i].QueueLength = message.SlotFree, message.Speed, message.QueueLength
 	}
 	if _, err = d.U32(); err != nil {
 		return message, err
@@ -545,9 +603,15 @@ func DecodeSearchResponse(b []byte) (SearchResponse, error) {
 		return message, ErrTooLarge
 	}
 	for i := uint32(0); i < privateCount; i++ {
-		if _, err = decodeSearchResult(d); err != nil {
-			return message, err
+		result, decodeErr := decodeSearchResult(d)
+		if decodeErr != nil {
+			return message, decodeErr
 		}
+		result.Username = message.Username
+		message.Results = append(message.Results, result)
+	}
+	for i := range message.Results {
+		message.Results[i].SlotFree, message.Results[i].Speed, message.Results[i].QueueLength = message.SlotFree, message.Speed, message.QueueLength
 	}
 	return message, d.Done()
 }

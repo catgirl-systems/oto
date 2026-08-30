@@ -330,14 +330,18 @@ func (c *Client) send(m Message) error {
 }
 
 // Search collects token-matched responses for five seconds.
-func (c *Client) Search(ctx context.Context, query string) ([]SearchResult, error) {
+func (c *Client) Search(ctx context.Context, rawQuery string) ([]SearchResult, error) {
+	query, err := parseSearchQuery(rawQuery)
+	if err != nil {
+		return nil, err
+	}
 	token := c.nextToken()
 	responses := make(chan SearchResponse, 64)
 	c.mu.Lock()
 	c.pending[token] = responses
 	c.mu.Unlock()
 	defer func() { c.mu.Lock(); delete(c.pending, token); c.mu.Unlock() }()
-	if err := c.send(SearchRequest{Token: token, Query: query}); err != nil {
+	if err := c.send(SearchRequest{Token: token, Query: query.wire}); err != nil {
 		return nil, err
 	}
 	timer := time.NewTimer(5 * time.Second)
@@ -348,7 +352,11 @@ func (c *Client) Search(ctx context.Context, query string) ([]SearchResult, erro
 		case <-ctx.Done():
 			return nil, ctx.Err()
 		case response := <-responses:
-			results = append(results, response.Results...)
+			for _, result := range response.Results {
+				if query.matches(result) {
+					results = append(results, result)
+				}
+			}
 		case <-timer.C:
 			return results, nil
 		}
@@ -946,7 +954,7 @@ func (c *Client) shareEntries() []ShareEntry {
 func searchToResults(files []ShareFile) []SearchResult {
 	out := make([]SearchResult, 0, len(files))
 	for _, file := range files {
-		out = append(out, SearchResult{Path: file.Root + "\\" + strings.ReplaceAll(file.Path, "/", "\\"), Size: file.Size, IsDirectory: file.Directory, Extension: strings.TrimPrefix(strings.ToLower(filepath.Ext(file.Path)), ".")})
+		out = append(out, SearchResult{Path: file.Root + "\\" + strings.ReplaceAll(file.Path, "/", "\\"), Size: file.Size, IsDirectory: file.Directory, Extension: strings.TrimPrefix(strings.ToLower(filepath.Ext(file.Path)), "."), Public: true})
 	}
 	return out
 }
