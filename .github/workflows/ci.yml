@@ -34,7 +34,7 @@ jobs:
         with:
           go-version: 1.25.x
           cache: true
-      - name: Test Soulfind handshake
+      - name: Test Soulfind integration
         env:
           SLSK_TUI_SOULFIND_ADDR: 127.0.0.1:2242
-        run: go test -count=1 -run TestSoulfindHandshakeCriticalValues -v ./internal/soulseek
+        run: go test -count=1 -run '^TestSoulfind' -v ./internal/soulseek
