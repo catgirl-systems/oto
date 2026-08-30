@@ -632,18 +632,6 @@ type FileSearchRequest struct {
 
 func (FileSearchRequest) command() uint32           { return PeerSearch }
 func (m FileSearchRequest) encode(e *Encoder) error { e.U32(m.Token); return e.String(m.Query) }
-func DecodeFileSearchRequest(b []byte) (FileSearchRequest, error) {
-	d := NewDecoder(b)
-	var m FileSearchRequest
-	var err error
-	if m.Token, err = d.U32(); err != nil {
-		return m, err
-	}
-	if m.Query, err = d.String(); err != nil {
-		return m, err
-	}
-	return m, d.Done()
-}
 
 func (PeerInitMessage) command() uint32 { return PeerInit }
 func (m PeerInitMessage) encode(e *Encoder) error {
@@ -1115,4 +1103,3 @@ func parseStringPayload(b []byte) (string, error) {
 	}
 	return s, e
 }
-func protocolError(format string, args ...any) error { return fmt.Errorf("soulseek: "+format, args...) }

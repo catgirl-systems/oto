@@ -100,15 +100,9 @@ func applyEnv(c *Config) {
 	}
 }
 
-// Load reads JSON, merges it over defaults, then applies environment overrides.
-// With no argument it reads the platform config path.
-
-func Load(paths ...string) (Config, error) {
+// Load reads JSON over defaults, then applies environment overrides.
+func Load(path string) (Config, error) {
 	c := Default()
-	path := ConfigPath()
-	if len(paths) > 0 && paths[0] != "" {
-		path = paths[0]
-	}
 	b, err := os.ReadFile(path)
 	missing := errors.Is(err, os.ErrNotExist)
 	if err == nil {
@@ -125,11 +119,7 @@ func Load(paths ...string) (Config, error) {
 	return c, c.Validate()
 }
 
-func (c Config) Save(paths ...string) error {
-	path := ConfigPath()
-	if len(paths) > 0 && paths[0] != "" {
-		path = paths[0]
-	}
+func (c Config) Save(path string) error {
 	if err := c.Validate(); err != nil {
 		return err
 	}

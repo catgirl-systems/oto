@@ -93,7 +93,7 @@ func TestShareScanSearchAndContainment(t *testing.T) {
 	}
 }
 
-func TestBrowseIndexedUsesBoundedSnapshotChildren(t *testing.T) {
+func TestBrowseUsesBoundedSnapshotChildren(t *testing.T) {
 	root := t.TempDir()
 	album := filepath.Join(root, "Album")
 	if err := os.Mkdir(album, 0700); err != nil {
@@ -116,17 +116,17 @@ func TestBrowseIndexedUsesBoundedSnapshotChildren(t *testing.T) {
 	if err := os.Remove(song); err != nil {
 		t.Fatal(err)
 	}
-	children, err := index.BrowseIndexed("Music")
+	children, err := index.Browse("Music")
 	if err != nil || len(children) != 2 || !children[0].Directory || children[0].Name != "Album" {
 		t.Fatalf("root snapshot children: %+v %v", children, err)
 	}
-	nested, err := index.BrowseIndexed(`Music\Album`)
+	nested, err := index.Browse(`Music\Album`)
 	if err != nil || len(nested) != 1 || nested[0].Name != "song.flac" || nested[0].Size != 5 {
 		t.Fatalf("nested snapshot children: %+v %v", nested, err)
 	}
 	for _, path := range []string{"../Music", "/Music", "Missing", "Music/cover.jpg"} {
-		if _, err := index.BrowseIndexed(path); err == nil {
-			t.Fatalf("invalid indexed browse path accepted: %q", path)
+		if _, err := index.Browse(path); err == nil {
+			t.Fatalf("invalid browse path accepted: %q", path)
 		}
 	}
 }
@@ -187,14 +187,21 @@ func TestTransferPathAndPipe(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(srcRoot, name), data, 0600); err != nil {
 		t.Fatal(err)
 	}
+	offset := uint64(5)
+	if err := os.MkdirAll(filepath.Join(dstRoot, "nested"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dstRoot, name), data[:offset], 0600); err != nil {
+		t.Fatal(err)
+	}
 	a, b := net.Pipe()
 	defer a.Close()
 	defer b.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 	done := make(chan error, 1)
-	go func() { done <- SendFile(ctx, srcRoot, name, a, uint64(len(data)), 0, nil) }()
-	if _, err := ReceiveFile(ctx, dstRoot, name, b, uint64(len(data)), 0, nil); err != nil {
+	go func() { done <- SendFile(ctx, srcRoot, name, a, uint64(len(data)), offset, nil) }()
+	if _, err := ReceiveFile(ctx, dstRoot, name, b, uint64(len(data)), offset, nil); err != nil {
 		t.Fatal(err)
 	}
 	if err := <-done; err != nil {
@@ -260,14 +267,14 @@ func TestPipeLogin(t *testing.T) {
 }
 
 func TestUploadFIFO(t *testing.T) {
-	m := NewUploadManager(1, 1)
+	m := NewUploadManager(1)
 	a := m.Enqueue("a", TransferRequest{})
 	b := m.Enqueue("b", TransferRequest{})
 	if err := m.Wait(context.Background(), a); err != nil {
 		t.Fatal(err)
 	}
-	if m.QueueLen() != 1 || m.Place("b") != 1 {
-		t.Fatalf("queue %d place %d", m.QueueLen(), m.Place("b"))
+	if len(m.q) != 1 || m.q[0] != b {
+		t.Fatalf("queue: %+v", m.q)
 	}
 	m.Done("a")
 	if err := m.Wait(context.Background(), b); err != nil {
@@ -277,13 +284,14 @@ func TestUploadFIFO(t *testing.T) {
 }
 
 func TestWireFramingAndDistributedFixtures(t *testing.T) {
-	frame, err := EncodeFrame(0x01020304, nil)
+	var frame bytes.Buffer
+	err := WriteFrame(&frame, 0x01020304, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	want := []byte{4, 0, 0, 0, 4, 3, 2, 1}
-	if !bytes.Equal(frame, want) {
-		t.Fatalf("frame %x want %x", frame, want)
+	if !bytes.Equal(frame.Bytes(), want) {
+		t.Fatalf("frame %x want %x", frame.Bytes(), want)
 	}
 	var addressPayload Encoder
 	_ = addressPayload.String("peer")

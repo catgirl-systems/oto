@@ -8,7 +8,6 @@ import (
 	"net"
 	"os"
 	"path/filepath"
-	"sync"
 	"testing"
 	"time"
 
@@ -34,7 +33,7 @@ func TestJournalRoundTripAndSafeResume(t *testing.T) {
 		t.Fatal(err)
 	}
 	jp := filepath.Join(d, "downloads.json")
-	s, err := NewWithJournal(c, jp)
+	s, err := New(c, jp)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -53,7 +52,7 @@ func TestJournalRoundTripAndSafeResume(t *testing.T) {
 	if err := json.Unmarshal(b, &j); err != nil || len(j.Downloads) != 1 {
 		t.Fatalf("journal: %v %+v", err, j)
 	}
-	s2, err := NewWithJournal(c, jp)
+	s2, err := New(c, jp)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,7 +76,7 @@ func TestStartConnectionFailureDoesNotDeadlock(t *testing.T) {
 	_ = peer.Close()
 	cfg := testConfig(t)
 	cfg.Soulseek.Server, cfg.Soulseek.ListenAddr = serverAddr, peerAddr
-	service, err := NewWithJournal(cfg, filepath.Join(t.TempDir(), "state.json"))
+	service, err := New(cfg, filepath.Join(t.TempDir(), "state.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -111,28 +110,12 @@ func TestContextWithEOF(t *testing.T) {
 	}
 }
 
-func TestEmitAfterCloseIsSafe(t *testing.T) {
-	service, err := NewWithJournal(testConfig(t), filepath.Join(t.TempDir(), "state.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := service.Close(); err != nil {
-		t.Fatal(err)
-	}
-	var workers sync.WaitGroup
-	for i := 0; i < 20; i++ {
-		workers.Add(1)
-		go func() { defer workers.Done(); service.emit("late", "", nil) }()
-	}
-	workers.Wait()
-}
-
 func TestSearchPagesCachedResults(t *testing.T) {
 	results := make([]SearchResult, 205)
 	for i := range results {
 		results[i] = SearchResult{Username: "peer", Path: fmt.Sprintf("song-%d", i)}
 	}
-	search := Search{ID: "search", Query: "song", Results: results, Total: len(results)}
+	search := Search{ID: "search", Query: "song", Results: results}
 
 	page, err := searchPage(search, 0, "")
 	if err != nil {

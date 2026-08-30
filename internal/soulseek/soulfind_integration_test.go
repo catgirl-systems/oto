@@ -22,6 +22,16 @@ type soulfindWatch struct {
 	files, folders uint32
 }
 
+func clientConn(c *Client) net.Conn { c.mu.Lock(); defer c.mu.Unlock(); return c.conn }
+func clientListenerAddr(c *Client) net.Addr {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.listener == nil {
+		return nil
+	}
+	return c.listener.Addr()
+}
+
 func TestSoulfindHandshakeCriticalValues(t *testing.T) {
 	addr := os.Getenv("OTO_SOULFIND_ADDR")
 	if addr == "" {
@@ -46,9 +56,9 @@ func TestSoulfindHandshakeCriticalValues(t *testing.T) {
 	t.Cleanup(func() { _ = target.Close() })
 	connectSoulfind(t, target)
 
-	listener, ok := target.ListenerAddr().(*net.TCPAddr)
+	listener, ok := clientListenerAddr(target).(*net.TCPAddr)
 	if !ok {
-		t.Fatalf("listener address: %v", target.ListenerAddr())
+		t.Fatalf("listener address: %v", clientListenerAddr(target))
 	}
 
 	observer := NewClient(ClientConfig{Address: addr, Username: observerUser, Password: "pw", ListenAddr: "127.0.0.1:0"})
@@ -60,7 +70,7 @@ func TestSoulfindHandshakeCriticalValues(t *testing.T) {
 		if err := observer.send(PeerAddressRequest{Username: targetUser}); err != nil {
 			t.Fatal(err)
 		}
-		payload := readSoulfindCommand(t, observer.Conn(), ServerGetPeerAddress)
+		payload := readSoulfindCommand(t, clientConn(observer), ServerGetPeerAddress)
 		peer, err := DecodePeerAddress(payload)
 		if err != nil {
 			t.Fatal(err)
@@ -269,7 +279,7 @@ func TestSoulfindUploadQueue(t *testing.T) {
 	firstName, secondName := "queue-a-"+stamp+".flac", "queue-b-"+stamp+".flac"
 	firstContents := bytes.Repeat([]byte("a"), 4<<20)
 	secondContents := []byte("second queued transfer")
-	target := startSoulfindClient(t, addr, "u"+stamp, map[string][]byte{firstName: firstContents, secondName: secondContents}, NewUploadManager(1, 1))
+	target := startSoulfindClient(t, addr, "u"+stamp, map[string][]byte{firstName: firstContents, secondName: secondContents}, NewUploadManager(1))
 	observer := startSoulfindClient(t, addr, "v"+stamp, nil, nil)
 
 	firstFile, err := os.CreateTemp(t.TempDir(), "first-")
@@ -397,7 +407,7 @@ func TestSoulfindReconnectDuringSearch(t *testing.T) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	if err := observer.Conn().Close(); err != nil {
+	if err := clientConn(observer).Close(); err != nil {
 		t.Fatal(err)
 	}
 	select {
@@ -548,7 +558,7 @@ func requestSoulfindWatch(t *testing.T, client *Client, username string) soulfin
 		t.Fatal(err)
 	}
 
-	d := NewDecoder(readSoulfindCommand(t, client.Conn(), soulfindWatchUserCommand))
+	d := NewDecoder(readSoulfindCommand(t, clientConn(client), soulfindWatchUserCommand))
 	watch := soulfindWatch{username: mustSoulfindValue(t, d.String), exists: mustSoulfindValue(t, d.Bool)}
 	if !watch.exists {
 		if err := d.Done(); err != nil {

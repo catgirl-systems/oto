@@ -65,6 +65,10 @@ type ProgressFunc func(Progress)
 
 // CopyAtMost copies exactly expected bytes from src to dst, starting at offset.
 func CopyAtMost(ctx context.Context, dst io.WriterAt, src io.Reader, expected, offset uint64, progress ProgressFunc) error {
+	return copyAtMost(ctx, io.NewOffsetWriter(dst, int64(offset)), src, expected, offset, progress)
+}
+
+func copyAtMost(ctx context.Context, dst io.Writer, src io.Reader, expected, offset uint64, progress ProgressFunc) error {
 	if offset > expected {
 		return ErrMalformed
 	}
@@ -77,17 +81,13 @@ func CopyAtMost(ctx context.Context, dst io.WriterAt, src io.Reader, expected, o
 			return ErrTransferCancelled
 		default:
 		}
-		nmax := uint64(len(buf))
-		if left < nmax {
-			nmax = left
-		}
-		n, e := io.ReadFull(src, buf[:nmax])
+		n, err := io.ReadFull(src, buf[:min(uint64(len(buf)), left)])
 		if n > 0 {
-			wn, we := dst.WriteAt(buf[:n], int64(done))
-			if we != nil {
-				return we
+			written, writeErr := dst.Write(buf[:n])
+			if writeErr != nil {
+				return writeErr
 			}
-			if wn != n {
+			if written != n {
 				return io.ErrShortWrite
 			}
 			done += uint64(n)
@@ -96,7 +96,7 @@ func CopyAtMost(ctx context.Context, dst io.WriterAt, src io.Reader, expected, o
 				progress(Progress{Done: done, Total: expected, State: "running"})
 			}
 		}
-		if e != nil {
+		if err != nil {
 			return fmt.Errorf("%w: expected %d bytes, got %d", ErrMalformed, expected, done-offset)
 		}
 	}
@@ -147,65 +147,28 @@ func SendFile(ctx context.Context, root, name string, dst io.Writer, expected, o
 	if _, e = f.Seek(int64(offset), io.SeekStart); e != nil {
 		return e
 	}
-	left := expected - offset
-	buf := make([]byte, 32<<10)
-	done := offset
-	for left > 0 {
-		select {
-		case <-ctx.Done():
-			return ErrTransferCancelled
-		default:
-		}
-		nmax := uint64(len(buf))
-		if left < nmax {
-			nmax = left
-		}
-		n, e := f.Read(buf[:nmax])
-		if n > 0 {
-			wn, we := dst.Write(buf[:n])
-			if we != nil {
-				return we
-			}
-			if wn != n {
-				return io.ErrShortWrite
-			}
-			done += uint64(n)
-			left -= uint64(n)
-			if progress != nil {
-				progress(Progress{Done: done, Total: expected, State: "running"})
-			}
-		}
-		if e != nil {
-			return e
-		}
-	}
-	return nil
+	return copyAtMost(ctx, dst, f, expected, offset, progress)
 }
 
 type UploadJob struct {
 	User    string
 	Request TransferRequest
 	Ready   chan struct{}
-	Err     error
 }
 
-// UploadManager schedules passive uploads FIFO with global and per-user slots.
+// UploadManager schedules passive uploads FIFO with global slots and one slot per user.
 type UploadManager struct {
-	mu                   sync.Mutex
-	max, perUser, active int
-	byUser               map[string]int
-	q                    []*UploadJob
-	wake                 chan struct{}
+	mu          sync.Mutex
+	max, active int
+	byUser      map[string]int
+	q           []*UploadJob
 }
 
-func NewUploadManager(maxSlots, maxPerUser int) *UploadManager {
+func NewUploadManager(maxSlots int) *UploadManager {
 	if maxSlots < 1 {
 		maxSlots = 1
 	}
-	if maxPerUser < 1 {
-		maxPerUser = 1
-	}
-	return &UploadManager{max: maxSlots, perUser: maxPerUser, byUser: make(map[string]int), wake: make(chan struct{}, 1)}
+	return &UploadManager{max: maxSlots, byUser: make(map[string]int)}
 }
 func (m *UploadManager) Enqueue(user string, r TransferRequest) *UploadJob {
 	j := &UploadJob{User: user, Request: r, Ready: make(chan struct{})}
@@ -216,23 +179,10 @@ func (m *UploadManager) Enqueue(user string, r TransferRequest) *UploadJob {
 	return j
 }
 
-// Cancel removes a queued upload. Active jobs are cancelled by their transfer context.
-func (m *UploadManager) Cancel(j *UploadJob) bool {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	for i, q := range m.q {
-		if q == j {
-			m.q = append(m.q[:i], m.q[i+1:]...)
-			j.Err = ErrTransferCancelled
-			return true
-		}
-	}
-	return false
-}
 func (m *UploadManager) promote() {
 	for len(m.q) > 0 && m.active < m.max {
 		j := m.q[0]
-		if m.byUser[j.User] >= m.perUser {
+		if m.byUser[j.User] > 0 {
 			break
 		}
 		m.q = m.q[1:]
@@ -251,17 +201,6 @@ func (m *UploadManager) Done(user string) {
 	}
 	m.promote()
 	m.mu.Unlock()
-}
-func (m *UploadManager) QueueLen() int { m.mu.Lock(); defer m.mu.Unlock(); return len(m.q) }
-func (m *UploadManager) Place(user string) int {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	for i, j := range m.q {
-		if j.User == user {
-			return i + 1
-		}
-	}
-	return 0
 }
 func (m *UploadManager) Wait(ctx context.Context, j *UploadJob) error {
 	select {

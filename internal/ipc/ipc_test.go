@@ -31,7 +31,7 @@ func TestStatusMethodsBodyAndSocketMode(t *testing.T) {
 	if err := config.SaveJSON(journalPath, daemon.Journal{Downloads: []daemon.Download{{ID: "d-1", State: "running"}}}); err != nil {
 		t.Fatal(err)
 	}
-	svc, err := daemon.NewWithJournal(c, journalPath)
+	svc, err := daemon.New(c, journalPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -134,7 +134,7 @@ func TestStaleSocketIsRemovedAfterFailedDial(t *testing.T) {
 	c := config.Default()
 	c.Soulseek.Username, c.Soulseek.Password = "u", "p"
 	c.DownloadDir = t.TempDir()
-	svc, _ := daemon.NewWithJournal(c, filepath.Join(d, "j"))
+	svc, _ := daemon.New(c, filepath.Join(d, "j"))
 	defer svc.Close()
 	srv := NewServer(svc, p)
 	ln, err := srv.Listen()

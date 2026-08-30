@@ -88,7 +88,7 @@ func TestFilteredSearchPagesUseFullCache(t *testing.T) {
 		}
 		results[i] = SearchResult{Path: extension, Extension: extension, Public: true}
 	}
-	search := Search{ID: "search", Query: "music", Results: results, Total: len(results)}
+	search := Search{ID: "search", Query: "music", Results: results}
 	first, err := searchPage(search, 0, "type:flac")
 	if err != nil {
 		t.Fatal(err)

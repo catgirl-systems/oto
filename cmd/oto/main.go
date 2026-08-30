@@ -179,7 +179,7 @@ func daemonCommand(args []string) error {
 	if err != nil {
 		return err
 	}
-	service, err := daemon.NewWithJournal(cfg, config.StatePath())
+	service, err := daemon.New(cfg, config.StatePath())
 	if err != nil {
 		return err
 	}

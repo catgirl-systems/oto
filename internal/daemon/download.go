@@ -232,7 +232,6 @@ func (s *Service) updateTransferProgress(id string, progress soulseek.Progress) 
 		s.transfers[id] = transfer
 	}
 	s.mu.Unlock()
-	s.emit("transfer_progress", id, Transfer{ID: id, Done: progress.Done, Total: progress.Total, State: state, Queue: progress.Queue})
 }
 
 func (s *Service) updateDownload(id, state string, offset uint64, failure error) {
@@ -256,7 +255,6 @@ func (s *Service) updateDownload(id, state string, offset uint64, failure error)
 
 func (s *Service) finishDownload(id, state string, offset uint64, failure error) {
 	s.updateDownload(id, state, offset, failure)
-	s.emit("transfer_"+state, id, nil)
 }
 
 func (s *Service) finalizePart(downloadRoot, partPath, relative, id string) (string, error) {

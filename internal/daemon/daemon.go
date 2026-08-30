@@ -21,7 +21,6 @@ var (
 	ErrClosed         = errors.New("daemon: closed")
 	ErrNotStarted     = errors.New("daemon: not connected")
 	ErrSearchNotFound = errors.New("daemon: search not found")
-	ErrUnsupported    = errors.New("daemon: operation unavailable in protocol core")
 )
 
 type Status string
@@ -35,13 +34,6 @@ const (
 )
 
 const searchPageSize = 100
-
-type Event struct {
-	Type    string    `json:"type"`
-	Time    time.Time `json:"time"`
-	Message string    `json:"message,omitempty"`
-	Data    any       `json:"data,omitempty"`
-}
 
 type Snapshot struct {
 	Status    Status            `json:"status"`
@@ -69,12 +61,9 @@ type SearchResult struct {
 	Public     bool   `json:"public"`
 }
 type Search struct {
-	ID      string         `json:"id"`
-	Query   string         `json:"query"`
-	Results []SearchResult `json:"-"`
-	Total   int            `json:"total"`
-	Error   string         `json:"error,omitempty"`
-	At      time.Time      `json:"at"`
+	ID      string
+	Query   string
+	Results []SearchResult
 }
 type SearchPage struct {
 	ID         string         `json:"id"`
@@ -138,7 +127,6 @@ type Service struct {
 	downloadSlots   chan struct{}
 	downloadCancels map[string]context.CancelFunc
 	downloadPeers   map[string]chan struct{}
-	events          chan Event
 	ctx             context.Context
 	cancel          context.CancelFunc
 	closed          bool
@@ -149,19 +137,13 @@ type Service struct {
 	journalPath     string
 	wg              sync.WaitGroup
 	downloadWG      sync.WaitGroup
-	eventClosed     bool
 }
 
-func New(cfg config.Config) (*Service, error)        { return NewWithJournal(cfg, "") }
-func NewService(cfg config.Config) (*Service, error) { return New(cfg) }
-func NewWithJournal(cfg config.Config, path string) (*Service, error) {
+func New(cfg config.Config, path string) (*Service, error) {
 	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
-	if path == "" {
-		path = config.StatePath()
-	}
-	s := &Service{cfg: cfg, configPath: config.ConfigPath(), shares: soulseek.NewShareIndex(), searches: make(map[string]Search), transfers: make(map[string]Transfer), downloadSlots: make(chan struct{}, cfg.DownloadSlots), downloadCancels: make(map[string]context.CancelFunc), downloadPeers: make(map[string]chan struct{}), events: make(chan Event, 128), status: StatusStopped, journalPath: path}
+	s := &Service{cfg: cfg, configPath: config.ConfigPath(), shares: soulseek.NewShareIndex(), searches: make(map[string]Search), transfers: make(map[string]Transfer), downloadSlots: make(chan struct{}, cfg.DownloadSlots), downloadCancels: make(map[string]context.CancelFunc), downloadPeers: make(map[string]chan struct{}), status: StatusStopped, journalPath: path}
 	if b, err := os.ReadFile(path); err == nil {
 		if err := json.Unmarshal(b, &s.journal); err != nil {
 			return nil, fmt.Errorf("daemon: load journal: %w", err)
@@ -184,7 +166,6 @@ func NewWithJournal(cfg config.Config, path string) (*Service, error) {
 	return s, nil
 }
 
-func (s *Service) Events() <-chan Event { return s.events }
 func (s *Service) SetConfigPath(path string) {
 	s.mu.Lock()
 	if path != "" {
@@ -192,7 +173,6 @@ func (s *Service) SetConfigPath(path string) {
 	}
 	s.mu.Unlock()
 }
-func (s *Service) Client() *soulseek.Client { s.mu.RLock(); defer s.mu.RUnlock(); return s.client }
 func (s *Service) Config() config.SafeConfig {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -213,20 +193,8 @@ func transferValues(m map[string]Transfer) []Transfer {
 	return out
 }
 
-// Start connects, logs in, and starts the reconnecting protocol loop. It accepts
-// one optional context; without one it runs until Close.
-func (s *Service) Start(args ...any) error {
-	ctx := context.Background()
-	if len(args) > 0 {
-		switch x := args[0].(type) {
-		case context.Context:
-			if x != nil {
-				ctx = x
-			}
-		case string:
-			return s.TransferAction(x, "resume")
-		}
-	}
+// Start connects, logs in, and starts the reconnecting protocol loop.
+func (s *Service) Start(ctx context.Context) error {
 	s.mu.Lock()
 	if s.closed {
 		s.mu.Unlock()
@@ -250,13 +218,11 @@ func (s *Service) Start(args ...any) error {
 			s.mu.Lock()
 			s.status, s.lastErr = StatusError, message
 			s.mu.Unlock()
-			s.emit("login_error", message, nil)
 			return err
 		}
 		s.mu.Lock()
 		s.status, s.lastErr = StatusReconnecting, message
 		s.mu.Unlock()
-		s.emit("connection_error", message, nil)
 		s.wg.Add(1)
 		go s.reconnectLoop()
 		return err
@@ -290,7 +256,7 @@ func (s *Service) connectOnce(ctx context.Context) error {
 	s.mu.RLock()
 	cfg, idx := s.cfg, s.shares
 	s.mu.RUnlock()
-	c := soulseek.NewClient(soulseek.ClientConfig{Address: cfg.Soulseek.Server, Username: cfg.Soulseek.Username, Password: cfg.Soulseek.Password, ListenAddr: cfg.Soulseek.ListenAddr, Share: idx, Uploads: soulseek.NewUploadManager(cfg.UploadSlots, 1)})
+	c := soulseek.NewClient(soulseek.ClientConfig{Address: cfg.Soulseek.Server, Username: cfg.Soulseek.Username, Password: cfg.Soulseek.Password, ListenAddr: cfg.Soulseek.ListenAddr, Share: idx, Uploads: soulseek.NewUploadManager(cfg.UploadSlots)})
 	if err := c.Connect(ctx); err != nil {
 		return err
 	}
@@ -308,7 +274,6 @@ func (s *Service) connectOnce(ctx context.Context) error {
 	s.status = StatusConnected
 	s.lastErr = ""
 	s.mu.Unlock()
-	s.emit("connected", "", nil)
 	return nil
 }
 func (s *Service) reconnectLoop() {
@@ -344,14 +309,12 @@ func (s *Service) reconnectLoop() {
 				s.status = StatusError
 				s.lastErr = message
 				s.mu.Unlock()
-				s.emit("connection_stopped", message, nil)
 				return
 			}
 			s.mu.Lock()
 			s.status = StatusReconnecting
 			s.lastErr = message
 			s.mu.Unlock()
-			s.emit("disconnected", message, nil)
 		}
 		t := time.NewTimer(backoff)
 		select {
@@ -375,7 +338,6 @@ func (s *Service) reconnectLoop() {
 				s.mu.Lock()
 				s.status, s.lastErr = StatusError, message
 				s.mu.Unlock()
-				s.emit("connection_stopped", message, nil)
 				return
 			}
 			s.mu.Lock()
@@ -405,19 +367,6 @@ func (s *Service) safeError(err error) string {
 	}
 	return x
 }
-func (s *Service) emit(typ, msg string, data any) {
-	e := Event{Type: typ, Time: time.Now().UTC(), Message: msg, Data: data}
-	s.mu.RLock()
-	closed := s.eventClosed
-	s.mu.RUnlock()
-	if closed {
-		return
-	}
-	select {
-	case s.events <- e:
-	default:
-	}
-}
 
 func (s *Service) Close() error {
 	s.mu.Lock()
@@ -440,13 +389,8 @@ func (s *Service) Close() error {
 	}
 	s.wg.Wait()
 	s.downloadWG.Wait()
-	s.emit("closed", "", nil)
-	s.mu.Lock()
-	s.eventClosed = true
-	s.mu.Unlock()
 	return nil
 }
-func (s *Service) Stop() error { return s.Close() }
 
 func (s *Service) Search(ctx context.Context, query, expression string) (SearchPage, error) {
 	filter, err := parseSearchFilter(expression)
@@ -468,11 +412,10 @@ func (s *Service) Search(ctx context.Context, query, expression string) (SearchP
 		out = append(out, SearchResult{Username: x.Username, Path: x.Path, Extension: x.Extension, Size: x.Size, Directory: x.IsDirectory, SlotFree: x.SlotFree, Speed: x.Speed, Queue: x.QueueLength, Bitrate: x.Bitrate, Duration: x.Duration, VBR: x.VBR, SampleRate: x.SampleRate, BitDepth: x.BitDepth, Public: x.Public})
 	}
 	sortSearchResults(out)
-	search := Search{ID: fmt.Sprintf("%d", time.Now().UnixNano()), Query: query, Results: out, Total: len(out), At: time.Now().UTC()}
+	search := Search{ID: fmt.Sprintf("%d", time.Now().UnixNano()), Query: query, Results: out}
 	s.mu.Lock()
 	s.searches[search.ID] = search
 	s.mu.Unlock()
-	s.emit("search", query, search)
 	return filteredSearchPage(search, filter, 0), nil
 }
 
@@ -531,15 +474,6 @@ func (s *Service) SearchPage(id string, cursor int, expression string) (SearchPa
 	}
 	return filteredSearchPage(search, filter, cursor), nil
 }
-func (s *Service) Searches() []Search {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	out := make([]Search, 0, len(s.searches))
-	for _, x := range s.searches {
-		out = append(out, x)
-	}
-	return out
-}
 
 func (s *Service) Browse(ctx context.Context, username, path string) ([]soulseek.ShareEntry, error) {
 	s.mu.RLock()
@@ -554,7 +488,7 @@ func (s *Service) BrowseLocal(path string) ([]soulseek.ShareEntry, error) {
 	s.mu.RLock()
 	idx := s.shares
 	s.mu.RUnlock()
-	return idx.BrowseIndexed(path)
+	return idx.Browse(path)
 }
 
 func (s *Service) QueueDownloads(reqs []DownloadRequest) ([]Download, error) {
@@ -608,9 +542,6 @@ func (s *Service) QueueDownloads(reqs []DownloadRequest) ([]Download, error) {
 	for _, download := range out {
 		s.startDownload(download.ID)
 	}
-	if len(out) > 0 {
-		s.emit("downloads_queued", "", out)
-	}
 	return out, nil
 }
 func (s *Service) saveJournalLocked() error { return config.SaveJSON(s.journalPath, s.journal) }
@@ -618,12 +549,6 @@ func (s *Service) Downloads() []Download {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return append([]Download(nil), s.journal.Downloads...)
-}
-func (s *Service) Cancel(ids ...string) error {
-	if len(ids) == 0 {
-		return s.Close()
-	}
-	return s.TransferAction(ids[0], "cancel")
 }
 func (s *Service) Transfers() []Transfer {
 	s.mu.RLock()
@@ -732,9 +657,6 @@ func (s *Service) Rescan() error {
 	s.mu.Lock()
 	err := s.configureSharesLocked()
 	s.mu.Unlock()
-	if err == nil {
-		s.emit("shares_rescanned", "", nil)
-	}
 	return err
 }
 func (s *Service) UpdateConfig(c config.Config) error {
@@ -772,7 +694,6 @@ func (s *Service) UpdateConfig(c config.Config) error {
 		parent = context.Background()
 	}
 	startErr := s.Start(parent)
-	s.emit("config_updated", "", c.Redacted())
 	if startErr != nil && isPermanentLoginError(startErr) {
 		return startErr
 	}

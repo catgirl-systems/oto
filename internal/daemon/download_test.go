@@ -13,7 +13,7 @@ func TestFinalizePartRenamesCollision(t *testing.T) {
 	cfg := config.Default()
 	cfg.Soulseek.Username, cfg.Soulseek.Password = "u", "p"
 	cfg.DownloadDir = t.TempDir()
-	service, err := NewWithJournal(cfg, filepath.Join(t.TempDir(), "state.json"))
+	service, err := New(cfg, filepath.Join(t.TempDir(), "state.json"))
 	if err != nil {
 		t.Fatal(err)
 	}

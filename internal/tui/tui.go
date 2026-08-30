@@ -17,11 +17,6 @@ import (
 	"github.com/catgirl-systems/oto/internal/ipc"
 )
 
-// Run loads config, presents setup when needed, then starts the terminal UI.
-func Run(ctx context.Context, client *ipc.Client, configPath string) error {
-	return RunWithTransient(ctx, client, configPath, false)
-}
-
 // RunSetup writes the initial config before a daemon exists.
 func RunSetup(ctx context.Context, configPath string) error {
 	cfg, err := config.Load(configPath)

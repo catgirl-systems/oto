@@ -139,77 +139,25 @@ func cleanVirtual(p string) ([]string, error) {
 	}
 	return out, nil
 }
-func (s *ShareIndex) local(root, virtual string) (string, error) {
-	parts, e := cleanVirtual(virtual)
-	if e != nil {
-		return "", e
-	}
-	base, ok := s.roots[root]
-	if !ok {
-		return "", os.ErrNotExist
-	}
-	p := base
-	for _, x := range parts {
-		p = filepath.Join(p, x)
-		if st, err := os.Lstat(p); err == nil && st.Mode()&os.ModeSymlink != 0 {
-			return "", ErrOutsideShare
-		}
-	}
-	rel, e := filepath.Rel(base, p)
-	if e != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return "", ErrOutsideShare
-	}
-	return p, nil
-}
 
 // Resolve maps a virtual root/path to a canonical local path and rejects escapes.
 func (s *ShareIndex) Resolve(virtual string) (string, error) {
-	parts, e := cleanVirtual(virtual)
-	if e != nil || len(parts) == 0 {
+	parts, err := cleanVirtual(virtual)
+	if err != nil || len(parts) == 0 {
 		return "", ErrOutsideShare
 	}
-	return s.local(parts[0], strings.Join(parts[1:], "/"))
+	root, ok := s.roots[parts[0]]
+	if !ok {
+		return "", os.ErrNotExist
+	}
+	if len(parts) == 1 {
+		return root, nil
+	}
+	return SafeJoin(root, strings.Join(parts[1:], "/"))
 }
 
-// Browse returns immediate children below a virtual path.
+// Browse returns immediate children from the last completed share scan.
 func (s *ShareIndex) Browse(virtual string) ([]ShareEntry, error) {
-	parts, e := cleanVirtual(virtual)
-	if e != nil {
-		return nil, e
-	}
-	if len(parts) == 0 {
-		var out []ShareEntry
-		for _, r := range s.Roots() {
-			out = append(out, ShareEntry{Name: r.Name, Directory: true})
-		}
-		return out, nil
-	}
-	root := parts[0]
-	local, e := s.local(root, strings.Join(parts[1:], "/"))
-	if e != nil {
-		return nil, e
-	}
-	ents, e := os.ReadDir(local)
-	if e != nil {
-		return nil, e
-	}
-	out := make([]ShareEntry, 0, len(ents))
-	for _, x := range ents {
-		if hidden(x.Name()) || x.Type()&os.ModeSymlink != 0 {
-			continue
-		}
-		info, e := x.Info()
-		if e != nil {
-			continue
-		}
-		out = append(out, ShareEntry{Name: x.Name(), Size: uint64(maxInt64(info.Size())), Directory: x.IsDir()})
-	}
-	sort.Slice(out, func(i, j int) bool { return strings.ToLower(out[i].Name) < strings.ToLower(out[j].Name) })
-	return out, nil
-}
-
-// BrowseIndexed returns immediate children from the last completed share scan.
-func (s *ShareIndex) BrowseIndexed(virtual string) ([]ShareEntry, error) {
 	parts, err := cleanVirtual(virtual)
 	if err != nil {
 		return nil, err
@@ -257,12 +205,6 @@ func (s *ShareIndex) BrowseIndexed(virtual string) ([]ShareEntry, error) {
 		return strings.ToLower(out[i].Name) < strings.ToLower(out[j].Name)
 	})
 	return out, nil
-}
-func maxInt64(n int64) int64 {
-	if n < 0 {
-		return 0
-	}
-	return n
 }
 
 // Search performs Unicode-aware case-insensitive token matching. A token prefixed by - excludes matches.

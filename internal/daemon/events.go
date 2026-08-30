@@ -20,7 +20,6 @@ func (s *Service) consumeClientEvents(ctx context.Context, client *soulseek.Clie
 			s.mu.Lock()
 			s.transfers[id] = Transfer{ID: id, Username: transfer.Username, Filename: transfer.Filename, Direction: transfer.Direction, State: transfer.State, Done: transfer.Done, Total: transfer.Total, Error: transfer.Error}
 			s.mu.Unlock()
-			s.emit("transfer_"+transfer.State, id, transfer)
 		}
 	}
 }

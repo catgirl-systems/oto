@@ -12,23 +12,6 @@ type DistributedMessage struct {
 	Payload []byte
 }
 
-func ParseDistributed(data []byte) (DistributedMessage, error) {
-	if len(data) < 1 {
-		return DistributedMessage{}, ErrTruncated
-	}
-	if len(data) > MaxFrameSize {
-		return DistributedMessage{}, ErrTooLarge
-	}
-	return DistributedMessage{Command: data[0], Payload: append([]byte(nil), data[1:]...)}, nil
-}
-
-func (m DistributedMessage) MarshalBinary() ([]byte, error) {
-	if len(m.Payload)+1 > MaxFrameSize {
-		return nil, ErrTooLarge
-	}
-	return append([]byte{m.Command}, m.Payload...), nil
-}
-
 func ReadDistributed(r io.Reader) (DistributedMessage, error) {
 	command, payload, err := ReadInitFrame(r)
 	return DistributedMessage{Command: command, Payload: payload}, err
@@ -85,7 +68,6 @@ func (n *DistributedNode) Dispatch(message DistributedMessage) int {
 	}
 	return sent
 }
-func (n *DistributedNode) ChildCount() int { n.mu.Lock(); defer n.mu.Unlock(); return len(n.children) }
 
 type DistributedSearchQuery struct {
 	Username string

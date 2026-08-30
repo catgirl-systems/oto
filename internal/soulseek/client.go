@@ -76,15 +76,14 @@ func NewClient(cfg ClientConfig) *Client {
 		cfg.Share = NewShareIndex()
 	}
 	if cfg.Uploads == nil {
-		cfg.Uploads = NewUploadManager(1, 1)
+		cfg.Uploads = NewUploadManager(1)
 	}
 	return &Client{cfg: cfg, events: make(chan Event, 32), pending: make(map[uint32]chan SearchResponse), addresses: make(map[string]*peerAddressLookup), pierce: make(map[uint32]chan net.Conn), requested: make(map[string]*pendingDownload), downloads: make(map[uint32]*pendingDownload), distributed: NewDistributedNode()}
 }
 
-// NewClientOnConn is useful for embedders and deterministic net.Pipe tests.
+// NewClientOnConn is useful for deterministic net.Pipe tests.
 func NewClientOnConn(cfg ClientConfig, c net.Conn) *Client { x := NewClient(cfg); x.conn = c; return x }
 func (c *Client) Events() <-chan Event                     { return c.events }
-func (c *Client) Conn() net.Conn                           { c.mu.Lock(); defer c.mu.Unlock(); return c.conn }
 func (c *Client) shareIndex() *ShareIndex                  { c.mu.Lock(); defer c.mu.Unlock(); return c.cfg.Share }
 func sharedCounts(index *ShareIndex) (counts SharedCounts) {
 	for _, file := range index.Files() {
@@ -114,15 +113,6 @@ func (c *Client) SetShareIndex(index *ShareIndex) {
 	_ = c.send(sharedCounts(index))
 }
 
-// ListenerAddr reports the passive peer address, if the listener is active.
-func (c *Client) ListenerAddr() net.Addr {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.listener == nil {
-		return nil
-	}
-	return c.listener.Addr()
-}
 func (c *Client) Connect(ctx context.Context) error {
 	c.mu.Lock()
 	if c.conn != nil {
@@ -424,9 +414,6 @@ func readFrameContext(ctx context.Context, c net.Conn) (uint32, []byte, error) {
 	case x := <-ch:
 		return x.cmd, x.p, x.e
 	}
-}
-func (c *Client) ConnectPeer(ctx context.Context, addr string) (net.Conn, error) {
-	return c.connectAddress(ctx, addr, "P")
 }
 
 func (c *Client) connectAddress(ctx context.Context, addr, kind string) (net.Conn, error) {

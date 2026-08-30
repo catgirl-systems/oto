@@ -206,20 +206,6 @@ func writeBody(w io.Writer, header, payload []byte) error {
 	return nil
 }
 
-func EncodeFrame(command uint32, fn func(*Encoder) error) ([]byte, error) {
-	var e Encoder
-	if fn != nil {
-		if err := fn(&e); err != nil {
-			return nil, err
-		}
-	}
-	var b bytes.Buffer
-	if err := WriteFrame(&b, command, e.Payload()); err != nil {
-		return nil, err
-	}
-	return b.Bytes(), nil
-}
-
 func DecompressZlib(data []byte) ([]byte, error) {
 	if len(data) > MaxFrameSize {
 		return nil, ErrTooLarge
