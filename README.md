@@ -40,13 +40,14 @@ Soulseek permits one login per username. Keeping the session in the daemon preve
 
 | Key | Action |
 | --- | --- |
-| `tab` / `shift+tab` | Search, Browse, Transfers, Shares |
-| arrows or `j` / `k` | move |
-| `/` | edit search, username, or `name:path` share |
+| `tab` / `shift+tab` | Search, Browse, Transfers, Shares, Settings |
+| arrows or `j` / `k` | move; left/right changes the Settings section |
+| `/` | edit search, username, `name:path` share, or setting |
 | `space` | select a file |
 | `d` | download, cancel transfer, or remove share (by workspace) |
 | `r` | retry transfer or rescan shares |
 | `c` | clear completed transfer |
+| `s` | save settings and reconnect |
 | `?` | help, source, and license notice |
 | `q` | quit |
 
