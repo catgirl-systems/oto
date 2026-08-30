@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 	"unicode"
 	"unicode/utf8"
 
@@ -62,7 +63,7 @@ type browseTab struct {
 }
 type transfer struct {
 	id, user, filename, direction, state, err string
-	done, total                               uint64
+	done, total, speed                        uint64
 	queue                                     uint32
 }
 type share struct{ name, path string }
@@ -106,6 +107,7 @@ type model struct {
 	browseRequest                          uint64
 	browseTree                             treeState
 	transfers                              []transfer
+	transferSampleAt                       time.Time
 	transferTab                            int
 	transferCursors                        [2]int
 	spinner                                int
@@ -582,10 +584,13 @@ func progressBar(done, total uint64, width int) (string, int) {
 	return strings.Repeat("█", filled) + strings.Repeat("░", width-filled), percent
 }
 
-func transferResultRow(row string, current, upload bool) string {
+func transferResultRow(row string, current, upload, failed bool) string {
 	color := lipgloss.Color("#89B4FA")
 	if upload {
 		color = lipgloss.Color("#FAB387")
+	}
+	if failed {
+		color = lipgloss.Color("#F38BA8")
 	}
 	style := lipgloss.NewStyle().Foreground(color)
 	prefix := "  "
@@ -633,12 +638,13 @@ func (m model) renderTransfers(width, height int) string {
 	for rowIndex := start; rowIndex < end; rowIndex++ {
 		nodeIndex := tree.visible[rowIndex]
 		node := tree.nodes[nodeIndex]
-		var done, total uint64
-		running := false
+		var done, total, speed uint64
+		running, failed := false, false
 		for _, source := range node.leaves {
 			x := m.transfers[source]
-			done, total = done+x.done, total+x.total
+			done, total, speed = done+x.done, total+x.total, speed+x.speed
 			running = running || x.state == "running"
+			failed = failed || x.state == "failed"
 		}
 		barWidth := 8
 		if width >= 70 {
@@ -659,6 +665,9 @@ func (m model) renderTransfers(width, height int) string {
 				state += "  @" + trunc(x.user, 16)
 			}
 		}
+		if speed > 0 {
+			state += "  " + formatBytes(speed) + "/s"
+		}
 		status := fmt.Sprintf("%s %3d%%  %s", bar, percent, state)
 		spinner := " "
 		if running {
@@ -671,7 +680,7 @@ func (m model) renderTransfers(width, height int) string {
 		nameWidth := max(4, width-lipgloss.Width(status)-10)
 		label := treeLabel(tree, nodeIndex)
 		row := fmt.Sprintf("%s %s %s %s  %s", spinner, direction, treeGlyph(tree, node), searchTextColumn(label, nameWidth), status)
-		lines = append(lines, transferResultRow(trunc(row, max(4, width-2)), rowIndex == m.cursor, m.transferTab == 1))
+		lines = append(lines, transferResultRow(trunc(row, max(4, width-2)), rowIndex == m.cursor, m.transferTab == 1, failed))
 	}
 	return strings.Join(lines, "\n")
 }

@@ -73,6 +73,7 @@ type browseMsg struct {
 }
 type transferMsg struct {
 	transfers []transfer
+	at        time.Time
 	err       error
 }
 type sharesMsg struct {
@@ -100,7 +101,26 @@ func (m model) loadStatus() tea.Cmd {
 	return func() tea.Msg { s, e := m.client.Status(m.ctx); return statusMsg{s, e} }
 }
 func (m model) loadTransfers() tea.Cmd {
-	return func() tea.Msg { x, e := m.client.Transfers(m.ctx); return transferMsg{toTransfers(x), e} }
+	return func() tea.Msg {
+		x, err := m.client.Transfers(m.ctx)
+		return transferMsg{transfers: toTransfers(x), at: time.Now(), err: err}
+	}
+}
+
+func setTransferSpeeds(next, previous []transfer, elapsed time.Duration) {
+	if elapsed <= 0 {
+		return
+	}
+	old := make(map[string]uint64, len(previous))
+	for _, transfer := range previous {
+		old[transfer.id] = transfer.done
+	}
+	for i := range next {
+		done, ok := old[next[i].id]
+		if ok && next[i].state == "running" && next[i].done > done {
+			next[i].speed = uint64(float64(next[i].done-done) / elapsed.Seconds())
+		}
+	}
 }
 func (m model) loadShares() tea.Cmd {
 	return func() tea.Msg { x, e := m.client.Shares(m.ctx); return sharesMsg{shares: toShares(x), err: e} }
@@ -554,6 +574,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case transferMsg:
 		if m.workspace == 2 {
 			m.transferCursors[m.transferTab] = m.cursor
+		}
+		if x.err == nil {
+			setTransferSpeeds(x.transfers, m.transfers, x.at.Sub(m.transferSampleAt))
+			m.transferSampleAt = x.at
 		}
 		m.transfers, m.err = x.transfers, errText(x.err)
 		for tab, direction := range []string{"download", "upload"} {
