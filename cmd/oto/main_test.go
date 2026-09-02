@@ -47,3 +47,19 @@ func TestParseDaemonShareRescanDelay(t *testing.T) {
 		}
 	}
 }
+
+func TestParseDaemonListenPortFile(t *testing.T) {
+	options, err := parseDaemonOptions([]string{"--listen-port-file", "/run/oto/port", "--listen-port-reconcile-interval", "7s"})
+	if err != nil || options.listenPortFile != "/run/oto/port" || options.listenPortReconcileInterval != 7*time.Second {
+		t.Fatalf("listen port options: %+v %v", options, err)
+	}
+	options, err = parseDaemonOptions([]string{"--listen-port-reconcile-interval", "0"})
+	if err != nil || options.listenPortReconcileInterval != 0 {
+		t.Fatalf("disabled reconciliation: %+v %v", options, err)
+	}
+	for _, args := range [][]string{{"--listen-port-reconcile-interval", "-1s"}, {"--listen-port-reconcile-interval", "later"}} {
+		if _, err := parseDaemonOptions(args); err == nil {
+			t.Fatalf("accepted invalid interval %q", args[1])
+		}
+	}
+}

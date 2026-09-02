@@ -30,8 +30,13 @@ func TestSoulfindShareWatcherPublishesWithoutReconnect(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cfg.Soulseek.ListenAddr = listener.Addr().String()
+	initialPort := listener.Addr().(*net.TCPAddr).Port
 	_ = listener.Close()
+	cfg.Soulseek.ListenAddr = "0.0.0.0:50300"
+	portFile := filepath.Join(t.TempDir(), "forwarded-port")
+	if err := os.WriteFile(portFile, []byte(fmt.Sprint(initialPort)), 0600); err != nil {
+		t.Fatal(err)
+	}
 	cfg.DownloadDir = t.TempDir()
 	cfg.Shares = []config.Share{{Name: "Music", Path: root}}
 
@@ -40,6 +45,9 @@ func TestSoulfindShareWatcherPublishesWithoutReconnect(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := service.SetShareRescanDelay(50 * time.Millisecond); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.SetListenPortFile(portFile, 20*time.Millisecond); err != nil {
 		t.Fatal(err)
 	}
 	serviceCtx, stopService := context.WithCancel(context.Background())
@@ -60,6 +68,27 @@ func TestSoulfindShareWatcherPublishesWithoutReconnect(t *testing.T) {
 	t.Cleanup(stopObserver)
 	observerDone := make(chan error, 1)
 	go func() { observerDone <- observer.Run(observerCtx) }()
+
+	replacementListener, err := net.Listen("tcp", "0.0.0.0:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	replacementPort := replacementListener.Addr().(*net.TCPAddr).Port
+	_ = replacementListener.Close()
+	if err := os.WriteFile(portFile, []byte(fmt.Sprint(replacementPort)), 0600); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool {
+		service.mu.RLock()
+		defer service.mu.RUnlock()
+		return service.listenPort == uint16(replacementPort)
+	})
+	service.mu.RLock()
+	reboundWithoutReconnect := service.client == connectedClient
+	service.mu.RUnlock()
+	if !reboundWithoutReconnect {
+		t.Fatal("listen port update reconnected the Soulseek client")
+	}
 
 	contents := []byte("published after fsnotify reindex")
 	directory := filepath.Join(root, "Dynamic")
