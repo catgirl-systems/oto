@@ -44,7 +44,7 @@ Soulseek permits one login per username. Keeping the session in the daemon preve
 | `i` in Search or Browse | show the selected file's properties and media metadata |
 | `ctrl+page up` / `ctrl+page down` in Search, Browse, or Transfers | switch result tabs or Downloads/Uploads |
 | `ctrl+w` in Search or Browse | close the active result tab |
-| `d` | download the selected/cursor subtree, cancel a transfer subtree, or remove a share root |
+| `d` | download selected files; choose folder-only or recursive download on a folder; cancel a transfer subtree; or remove a share root |
 | `r` | refresh a user browse, retry a transfer subtree, or rescan shares |
 | `s` | save settings and reconnect |
 | `?` | keyboard guide |
@@ -52,7 +52,7 @@ Soulseek permits one login per username. Keeping the session in the daemon preve
 
 Set `NO_COLOR=1` to suppress terminal styling.
 
-Search groups results as user → folders → files; Browse shows remote folders; Transfers groups each direction as user → folders → files; Shares lazily shows the daemon's scanned public-share index. Expansion and selection are session-local, and recursive Search/Browse actions include only currently loaded files.
+Search groups results as user → folders → files; Browse shows remote folders; Transfers groups each direction as user → folders → files; Shares lazily shows the daemon's scanned public-share index. Expansion and selection are session-local. Selection-based Search/Browse actions include only currently loaded files; using `d` on a folder can request that complete remote folder recursively without fetching the user's full share list.
 
 Searches support quoted phrases, excluded words (`-remix`), and partial terms (`*radio`). Filter cached results without another network search using fields such as:
 
@@ -157,7 +157,7 @@ This tracks user-visible Soulseek functionality and meaningful operational quali
 | Search within a loaded share list | :x: | :white_check_mark: |
 | Download selected files | :white_check_mark: | :white_check_mark: |
 | Download a loaded folder subtree | :white_check_mark: | :white_check_mark: |
-| Request and download a complete remote folder recursively | :x: | :white_check_mark: |
+| Request and download a complete remote folder recursively | :white_check_mark: | :white_check_mark: |
 | Choose a different download destination interactively | :x: | :white_check_mark: |
 | Save a remote share list to disk | :x: | :white_check_mark: |
 | Reopen a saved share list, including while offline | :x: | :white_check_mark: |
