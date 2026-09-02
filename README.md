@@ -16,6 +16,7 @@ The first launch asks for the Soulseek credentials, listening address, download 
 ```sh
 ./oto daemon          # foreground; use systemd, tmux, or Docker to keep it running
 ./oto daemon --share-rescan-delay 30s  # default 5m; use 0 to disable watching
+./oto daemon --listen-port-file /run/oto/forwarded-port --listen-port-reconcile-interval 30s
 ./oto status
 ./oto status --json
 ```
@@ -25,6 +26,8 @@ The TUI uses an owner-only Unix socket. If no standalone daemon exists, it start
 Soulseek permits one login per username. Keeping the session in the daemon prevents the TUI from kicking it off the network.
 
 The daemon watches every non-hidden, non-symlink directory under each share root using `fsnotify` (one recursive watch per directory). After filesystem changes stop for five minutes by default, it builds a complete shadow index and atomically publishes it; a fixed 30-minute maximum delay prevents continuous activity from postponing scans forever. Events during a scan discard that result and schedule another scan. Startup and manual rescans remain immediate, and watcher or scan failures keep the last good index available.
+
+For dynamically forwarded incoming ports, `--listen-port-file` watches the file's parent directory and hot-swaps the listener whenever the file contains a new port. `--listen-port-reconcile-interval` provides a periodic fallback (default `30s`; `0` disables it). Missing or empty files mark the port unavailable until a valid value appears. This interface is provider-neutral; for example, a VPN container can write its current forwarded port into a shared volume.
 
 ## TUI
 

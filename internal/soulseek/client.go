@@ -156,6 +156,50 @@ func (c *Client) startListener() error {
 	go c.acceptLoop(ln)
 	return nil
 }
+
+// SetListenPort replaces the incoming listener and advertises it without
+// interrupting the Soulseek session.
+func (c *Client) SetListenPort(port uint16) error {
+	c.mu.Lock()
+	host, _, err := net.SplitHostPort(c.cfg.ListenAddr)
+	if err != nil {
+		c.mu.Unlock()
+		return err
+	}
+	address := net.JoinHostPort(host, fmt.Sprint(port))
+	if c.listener != nil && c.listener.Addr().(*net.TCPAddr).Port == int(port) {
+		c.cfg.ListenAddr = address
+		c.mu.Unlock()
+		return nil
+	}
+	if c.conn == nil {
+		c.cfg.ListenAddr = address
+		c.mu.Unlock()
+		return nil
+	}
+	listener, err := net.Listen("tcp", address)
+	if err != nil {
+		c.mu.Unlock()
+		return err
+	}
+	oldListener, oldAddress := c.listener, c.cfg.ListenAddr
+	c.listener, c.cfg.ListenAddr = listener, address
+	c.mu.Unlock()
+	go c.acceptLoop(listener)
+	if err := c.send(ListenPort{Port: uint32(port)}); err != nil {
+		c.mu.Lock()
+		if c.listener == listener {
+			c.listener, c.cfg.ListenAddr = oldListener, oldAddress
+		}
+		c.mu.Unlock()
+		_ = listener.Close()
+		return err
+	}
+	if oldListener != nil {
+		_ = oldListener.Close()
+	}
+	return nil
+}
 func (c *Client) Login(ctx context.Context) error {
 	c.mu.Lock()
 	conn := c.conn

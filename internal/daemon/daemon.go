@@ -20,9 +20,10 @@ import (
 )
 
 var (
-	ErrClosed         = errors.New("daemon: closed")
-	ErrNotStarted     = errors.New("daemon: not connected")
-	ErrSearchNotFound = errors.New("daemon: search not found")
+	ErrClosed                = errors.New("daemon: closed")
+	ErrNotStarted            = errors.New("daemon: not connected")
+	ErrSearchNotFound        = errors.New("daemon: search not found")
+	ErrListenPortUnavailable = errors.New("daemon: listening port unavailable")
 )
 
 type Status string
@@ -143,6 +144,10 @@ type Service struct {
 	shareIndexBuilder    func(context.Context, []config.Share) (*soulseek.ShareIndex, error)
 	shareRescanDelay     time.Duration
 	shareWatchGeneration uint64
+	listenPortFile       string
+	listenPortInterval   time.Duration
+	listenPort           uint16
+	reconnectWake        chan struct{}
 	closed               bool
 	restarting           bool
 	status               Status
@@ -157,7 +162,7 @@ func New(cfg config.Config, path string) (*Service, error) {
 	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
-	s := &Service{cfg: cfg, configPath: config.ConfigPath(), shares: soulseek.NewShareIndex(), searches: make(map[string]Search), transfers: make(map[string]Transfer), downloadSlots: make(chan struct{}, cfg.DownloadSlots), downloadCancels: make(map[string]context.CancelFunc), downloadPeers: make(map[string]chan struct{}), shareIndexBuilder: buildShareIndex, shareRescanDelay: DefaultShareRescanDelay, status: StatusStopped, journalPath: path}
+	s := &Service{cfg: cfg, configPath: config.ConfigPath(), shares: soulseek.NewShareIndex(), searches: make(map[string]Search), transfers: make(map[string]Transfer), downloadSlots: make(chan struct{}, cfg.DownloadSlots), downloadCancels: make(map[string]context.CancelFunc), downloadPeers: make(map[string]chan struct{}), shareIndexBuilder: buildShareIndex, shareRescanDelay: DefaultShareRescanDelay, listenPortInterval: DefaultListenPortReconcileInterval, reconnectWake: make(chan struct{}, 1), status: StatusStopped, journalPath: path}
 	if b, err := os.ReadFile(path); err == nil {
 		if err := json.Unmarshal(b, &s.journal); err != nil {
 			return nil, fmt.Errorf("daemon: load journal: %w", err)
@@ -225,6 +230,7 @@ func (s *Service) Start(ctx context.Context) error {
 		s.lastErr = err.Error()
 	}
 	s.restartShareWatcherLocked()
+	s.startListenPortWatcherLocked()
 	s.mu.Unlock()
 	s.resumeDownloads()
 	if err := s.connectOnce(ctx); err != nil {
@@ -261,7 +267,18 @@ func (s *Service) configureSharesLocked() error {
 func (s *Service) connectOnce(ctx context.Context) error {
 	s.mu.RLock()
 	cfg, idx := s.cfg, s.shares
+	portFile, port := s.listenPortFile, s.listenPort
 	s.mu.RUnlock()
+	if portFile != "" {
+		if port == 0 {
+			return ErrListenPortUnavailable
+		}
+		var err error
+		cfg.Soulseek.ListenAddr, err = listenAddressWithPort(cfg.Soulseek.ListenAddr, port)
+		if err != nil {
+			return err
+		}
+	}
 	c := soulseek.NewClient(soulseek.ClientConfig{Address: cfg.Soulseek.Server, Username: cfg.Soulseek.Username, Password: cfg.Soulseek.Password, ListenAddr: cfg.Soulseek.ListenAddr, Share: idx, Uploads: soulseek.NewUploadManager(cfg.UploadSlots)})
 	if err := c.Connect(ctx); err != nil {
 		return err
@@ -329,6 +346,13 @@ func (s *Service) reconnectLoop() {
 		case <-ctx.Done():
 			t.Stop()
 			return
+		case <-s.reconnectWake:
+			if !t.Stop() {
+				select {
+				case <-t.C:
+				default:
+				}
+			}
 		case <-t.C:
 		}
 		if backoff < time.Minute {
