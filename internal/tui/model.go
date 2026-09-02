@@ -139,6 +139,8 @@ func (m model) rows() int {
 	}
 }
 
+func (m model) pageRows() int { return max(1, m.height-8) }
+
 func newModel(ctx context.Context, c *ipc.Client, path string, transient bool, cfg config.Config) model {
 	return model{ctx: ctx, client: c, configPath: path, cfg: cfg, transient: transient, width: 80, height: 24, selected: map[int]bool{}, setupVals: [5]string{cfg.Soulseek.Username, cfg.Soulseek.Password, cfg.Soulseek.ListenAddr, cfg.DownloadDir, ""}, inputCursor: utf8.RuneCountInString(cfg.Soulseek.Username)}
 }
@@ -299,8 +301,9 @@ func (m model) helpView() string {
 	rows := [][2]string{
 		{"tab / shift+tab", "switch workspace"},
 		{"↑ ↓  or  j k", "move through items or fields"},
+		{"page up/down", "move through items or fields by a page"},
 		{"← →", "collapse or expand trees; change Settings section"},
-		{"home end (editing)", "move the caret to a line boundary"},
+		{"home end", "first/last row; line boundary while editing"},
 		{"ctrl+← → / ctrl+⌫", "move or delete by word while editing"},
 		{"ctrl+a e u k", "jump or delete to a line boundary"},
 		{"/", "edit a query, username, share, or setting"},
@@ -916,7 +919,7 @@ func (m model) footerView() string {
 	if m.confirm {
 		return lipgloss.NewStyle().Width(m.width).Padding(0, 1).Render(danger("Quit and interrupt active transfers?  y confirm  •  esc cancel"))
 	}
-	hints := []string{"tab switch", "↑↓ move"}
+	hints := []string{"tab switch", "↑↓/page/home/end move"}
 	switch m.workspace {
 	case 0:
 		hints = append(hints, "←→ tree", "/ search", "ctrl+pgup/down tabs", "ctrl+w close", "f filter", "b browse folder", "i details", "space select", "d download/menu")

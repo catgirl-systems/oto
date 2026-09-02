@@ -47,6 +47,39 @@ func TestNavigationSelectionAndHelp(t *testing.T) {
 	}
 }
 
+func TestPageAndBoundaryNavigationAcrossTrees(t *testing.T) {
+	for _, workspace := range []int{0, 1, 2, 3} {
+		m := model{workspace: workspace, height: 20, cursor: 50, selected: map[int]bool{}}
+		tree := treeState{visible: make([]int, 100)}
+		switch workspace {
+		case 0:
+			m.searchTree = tree
+		case 1:
+			m.browseTree = tree
+		case 2:
+			m.transferTrees[0] = tree
+		case 3:
+			m.shareTree = tree
+		}
+		m.key(tea.KeyPressMsg(tea.Key{Code: tea.KeyPgUp}))
+		if m.cursor != 38 {
+			t.Fatalf("workspace %d page up cursor = %d", workspace, m.cursor)
+		}
+		m.key(tea.KeyPressMsg(tea.Key{Code: tea.KeyPgDown}))
+		if m.cursor != 50 {
+			t.Fatalf("workspace %d page down cursor = %d", workspace, m.cursor)
+		}
+		m.key(tea.KeyPressMsg(tea.Key{Code: tea.KeyHome}))
+		if m.cursor != 0 {
+			t.Fatalf("workspace %d home cursor = %d", workspace, m.cursor)
+		}
+		m.key(tea.KeyPressMsg(tea.Key{Code: tea.KeyEnd}))
+		if m.cursor != 99 {
+			t.Fatalf("workspace %d end cursor = %d", workspace, m.cursor)
+		}
+	}
+}
+
 func TestPasswordPaste(t *testing.T) {
 	m := newModel(context.Background(), nil, "", false, config.Default())
 	m.setup, m.setupField = true, 1

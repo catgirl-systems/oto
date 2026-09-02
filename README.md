@@ -35,8 +35,9 @@ For dynamically forwarded incoming ports, `--listen-port-file` watches the file'
 | --- | --- |
 | `tab` / `shift+tab` | Search, Browse, Transfers, Shares, Settings |
 | up/down or `j` / `k` | move through visible rows |
+| `page up` / `page down` | move through visible rows by one screen |
 | left/right | collapse/expand a tree node; switch Settings sections |
-| `home` / `end` | jump to the start/end of any text field |
+| `home` / `end` | jump to the first/last row, or start/end of a text field while editing |
 | `ctrl+left` / `ctrl+right` | move by word in any text field (`alt` also works) |
 | `ctrl+backspace` / `ctrl+delete` | delete by word (`ctrl+w`, `alt+backspace`, and `alt+delete` also work) |
 | `ctrl+a` / `ctrl+e`, `ctrl+u` / `ctrl+k` | jump to start/end; delete before/after the caret |

@@ -760,6 +760,19 @@ func (m *model) key(k tea.KeyPressMsg) tea.Cmd {
 			m.loadingMore = true
 			return m.loadSearchPage()
 		}
+	case "pgup":
+		m.cursor = max(0, m.cursor-m.pageRows())
+	case "pgdown":
+		if m.cursor+1 < m.rows() {
+			m.cursor = min(m.rows()-1, m.cursor+m.pageRows())
+		} else if m.workspace == 0 && !m.loadingMore && m.searchNext > 0 {
+			m.loadingMore = true
+			return m.loadSearchPage()
+		}
+	case "home":
+		m.cursor = 0
+	case "end":
+		m.cursor = max(0, m.rows()-1)
 	case "space":
 		m.toggle()
 	case "enter":
