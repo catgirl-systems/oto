@@ -598,6 +598,9 @@ func (s *Service) TransferAction(id, action string) error {
 			if d.State == "running" || d.State == "queued" || d.State == "incomplete" {
 				return errors.New("daemon: active download cannot be cleared")
 			}
+			if err := os.Remove(incompletePath(id)); err != nil && !errors.Is(err, os.ErrNotExist) {
+				return err
+			}
 			s.journal.Downloads = append(s.journal.Downloads[:i], s.journal.Downloads[i+1:]...)
 			delete(s.transfers, id)
 			return s.saveJournalLocked()

@@ -61,6 +61,33 @@ func TestJournalRoundTripAndSafeResume(t *testing.T) {
 	}
 }
 
+func TestClearDownloadRemovesIncompleteFile(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	s, err := New(testConfig(t), filepath.Join(t.TempDir(), "downloads.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.journal.Downloads = []Download{{ID: "d-1", State: "cancelled"}}
+	s.transfers["d-1"] = Transfer{ID: "d-1", Direction: "download", State: "cancelled"}
+	part := incompletePath("d-1")
+	if err := os.MkdirAll(filepath.Dir(part), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(part, []byte("partial"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := s.TransferAction("d-1", "clear"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(part); !os.IsNotExist(err) {
+		t.Fatalf("incomplete file still exists: %v", err)
+	}
+	if len(s.Downloads()) != 0 {
+		t.Fatal("cleared download remains in journal")
+	}
+}
+
 func TestStartConnectionFailureDoesNotDeadlock(t *testing.T) {
 	server, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {

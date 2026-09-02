@@ -29,6 +29,10 @@ func safeSegment(value string) string {
 	return value
 }
 
+func incompletePath(id string) string {
+	return filepath.Join(config.DataDir(), "incomplete", id+".part")
+}
+
 func (s *Service) startDownload(id string) {
 	s.mu.Lock()
 	if s.closed || s.restarting || s.ctx == nil {
@@ -105,12 +109,11 @@ func (s *Service) runDownload(id string) {
 	s.mu.RLock()
 	downloadRoot := s.cfg.DownloadDir
 	s.mu.RUnlock()
-	partDir := filepath.Join(config.DataDir(), "incomplete")
-	if err := os.MkdirAll(partDir, 0700); err != nil {
+	partPath := incompletePath(id)
+	if err := os.MkdirAll(filepath.Dir(partPath), 0700); err != nil {
 		s.finishDownload(id, "failed", 0, err)
 		return
 	}
-	partPath := filepath.Join(partDir, id+".part")
 	file, err := os.OpenFile(partPath, os.O_CREATE|os.O_RDWR, 0600)
 	if err != nil {
 		s.finishDownload(id, "failed", 0, err)

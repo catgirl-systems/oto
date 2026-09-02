@@ -194,7 +194,7 @@ This tracks user-visible Soulseek functionality and meaningful operational quali
 | Show transfer speed and progress | :white_check_mark: | :white_check_mark: |
 | Estimate elapsed and remaining transfer time | :x: | :white_check_mark: |
 | Search the network for a transfer's file or folder name | :x: | :white_check_mark: |
-| Remove the associated incomplete file when deleting a transfer | :x: | :white_check_mark: |
+| Remove the associated incomplete file when deleting a transfer | :white_check_mark: | :white_check_mark: |
 
 ### Uploads
 
