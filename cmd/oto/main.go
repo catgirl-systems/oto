@@ -51,7 +51,7 @@ func run(args []string) error {
 }
 
 func usage() {
-	fmt.Printf("oto — Soulseek search, browse, shares, and transfers\n\nUsage:\n  oto [--config PATH]\n  oto daemon [--config PATH]\n  oto status\n\nSource: %s\nLicense: AGPL-3.0-only; no warranty.\n", sourceURL)
+	fmt.Printf("oto — Soulseek search, browse, shares, and transfers\n\nUsage:\n  oto [--config PATH]\n  oto daemon [--config PATH] [--share-rescan-delay DURATION]\n  oto status\n\nSource: %s\nLicense: AGPL-3.0-only; no warranty.\n", sourceURL)
 }
 
 func configFlag(fs *flag.FlagSet) *string {
@@ -168,14 +168,32 @@ func startChild(ctx context.Context, path string) (*exec.Cmd, io.Closer, error) 
 	return abort(errors.New("timed out waiting for daemon"))
 }
 
-func daemonCommand(args []string) error {
+type daemonOptions struct {
+	configPath     string
+	child          bool
+	shareScanDelay time.Duration
+}
+
+func parseDaemonOptions(args []string) (daemonOptions, error) {
 	fs := flag.NewFlagSet("daemon", flag.ContinueOnError)
 	path := configFlag(fs)
 	child := fs.Bool("child", false, "exit when stdin closes")
+	delay := fs.Duration("share-rescan-delay", daemon.DefaultShareRescanDelay, "quiet period before automatically rescanning shares (0 disables)")
 	if err := fs.Parse(args); err != nil {
+		return daemonOptions{}, err
+	}
+	if *delay < 0 {
+		return daemonOptions{}, errors.New("share rescan delay cannot be negative")
+	}
+	return daemonOptions{configPath: *path, child: *child, shareScanDelay: *delay}, nil
+}
+
+func daemonCommand(args []string) error {
+	options, err := parseDaemonOptions(args)
+	if err != nil {
 		return err
 	}
-	cfg, err := config.Load(*path)
+	cfg, err := config.Load(options.configPath)
 	if err != nil {
 		return err
 	}
@@ -183,10 +201,13 @@ func daemonCommand(args []string) error {
 	if err != nil {
 		return err
 	}
-	service.SetConfigPath(*path)
+	if err := service.SetShareRescanDelay(options.shareScanDelay); err != nil {
+		return err
+	}
+	service.SetConfigPath(options.configPath)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	if *child {
+	if options.child {
 		ctx, stop = daemon.ContextWithEOF(ctx, os.Stdin)
 		defer stop()
 	}

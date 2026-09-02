@@ -1,6 +1,7 @@
 package soulseek
 
 import (
+	"context"
 	"errors"
 	"io/fs"
 	"os"
@@ -67,13 +68,19 @@ func (s *ShareIndex) Roots() []ShareRoot {
 func hidden(name string) bool { return strings.HasPrefix(name, ".") }
 
 // Scan rebuilds the snapshot, never follows symlinks, and skips hidden entries.
-func (s *ShareIndex) Scan() error {
+func (s *ShareIndex) Scan() error { return s.ScanContext(context.Background()) }
+
+// ScanContext builds a complete replacement snapshot and stops when ctx is cancelled.
+func (s *ShareIndex) ScanContext(ctx context.Context) error {
 	if s == nil {
 		return errors.New("nil share index")
 	}
 	var out []ShareFile
 	for _, r := range s.Roots() {
 		err := filepath.WalkDir(r.Path, func(path string, d fs.DirEntry, err error) error {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
 			if err != nil {
 				return err
 			}

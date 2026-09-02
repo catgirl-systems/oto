@@ -15,6 +15,7 @@ The first launch asks for the Soulseek credentials, listening address, download 
 
 ```sh
 ./oto daemon          # foreground; use systemd, tmux, or Docker to keep it running
+./oto daemon --share-rescan-delay 30s  # default 5m; use 0 to disable watching
 ./oto status
 ./oto status --json
 ```
@@ -22,6 +23,8 @@ The first launch asks for the Soulseek credentials, listening address, download 
 The TUI uses an owner-only Unix socket. If no standalone daemon exists, it starts a child daemon whose lifetime is tied to the TUI. Exiting the TUI asks for confirmation when that would pause active transfers. An attached standalone daemon and its transfers continue running.
 
 Soulseek permits one login per username. Keeping the session in the daemon prevents the TUI from kicking it off the network.
+
+The daemon watches every non-hidden, non-symlink directory under each share root using `fsnotify` (one recursive watch per directory). After filesystem changes stop for five minutes by default, it builds a complete shadow index and atomically publishes it; a fixed 30-minute maximum delay prevents continuous activity from postponing scans forever. Events during a scan discard that result and schedule another scan. Startup and manual rescans remain immediate, and watcher or scan failures keep the last good index available.
 
 ## TUI
 
