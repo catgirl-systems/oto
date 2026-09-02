@@ -336,7 +336,7 @@ func searchMetadata(x result, width int, peer bool) (string, string) {
 		}
 		duration := ""
 		if x.duration > 0 {
-			duration = formatDuration(x.duration)
+			duration = formatDuration(uint64(x.duration))
 		}
 		columns = append(columns, column{"RATE", quality, 6}, column{"TIME", duration, 6})
 	}
@@ -667,6 +667,9 @@ func (m model) renderTransfers(width, height int) string {
 		}
 		if speed > 0 {
 			state += "  " + formatBytes(speed) + "/s"
+			if running && total > done {
+				state += "  ETA " + formatDuration((total-done-1)/speed+1)
+			}
 		}
 		status := fmt.Sprintf("%s %3d%%  %s", bar, percent, state)
 		spinner := " "
@@ -971,7 +974,7 @@ func formatBytes(n uint64) string {
 	return fmt.Sprintf("%d B", n)
 }
 
-func formatDuration(seconds uint32) string {
+func formatDuration(seconds uint64) string {
 	if seconds >= 3600 {
 		return fmt.Sprintf("%d:%02d:%02d", seconds/3600, seconds/60%60, seconds%60)
 	}

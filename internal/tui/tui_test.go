@@ -438,7 +438,7 @@ func TestTransferDirectionTabsProgressAndSpinner(t *testing.T) {
 	m.cursor = m.transferTrees[0].cursorForSource(0)
 
 	downloads := m.renderTransfers(100, 10)
-	if !strings.Contains(downloads, "[↓ DOWNLOADS 2]") || !strings.Contains(downloads, "███░░░░░░░░░░░  25%") || !strings.Contains(downloads, "1.5 KiB/s") || !strings.Contains(downloads, "⠋") || strings.Contains(downloads, "shared.wav") {
+	if !strings.Contains(downloads, "[↓ DOWNLOADS 2]") || !strings.Contains(downloads, "███░░░░░░░░░░░  25%") || !strings.Contains(downloads, "1.5 KiB/s  ETA 0:01") || !strings.Contains(downloads, "⠋") || strings.Contains(downloads, "shared.wav") {
 		t.Fatalf("download tab did not render progress and spinner correctly: %q", downloads)
 	}
 	for _, width := range []int{40, 100} {
