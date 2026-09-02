@@ -28,6 +28,21 @@ jobs:
         image: ghcr.io/soulfind-dev/soulfind@sha256:714f9eb97793bdd3b88ebebe2bc6a63d7dbf343f93da7f09d3de95a456efb910
         ports:
           - 2242:2242
+      slskd:
+        image: slskd/slskd@sha256:ecd4026d4f8fb504e2cc55323efa2c1f5b56d20d3686b018249cc36b48ea17a6
+        env:
+          SLSKD_NO_AUTH: "true"
+          SLSKD_SLSK_ADDRESS: soulfind
+          SLSKD_SLSK_PORT: 2242
+          SLSKD_SLSK_USERNAME: slskdpeer
+          SLSKD_SLSK_PASSWORD: pw
+          SLSKD_SLSK_LISTEN_IP_ADDRESS: 0.0.0.0
+          SLSKD_SLSK_LISTEN_PORT: 50300
+        ports:
+          - 5030:5030
+          - 50300:50300
+        volumes:
+          - /tmp/oto-slskd:/app
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -37,4 +52,7 @@ jobs:
       - name: Test Soulfind integration
         env:
           OTO_SOULFIND_ADDR: 127.0.0.1:2242
+          OTO_SLSKD_API: http://127.0.0.1:5030
+          OTO_SLSKD_USERNAME: slskdpeer
+          OTO_SLSKD_DOWNLOAD_DIR: /tmp/oto-slskd/downloads
         run: go test -count=1 -run '^TestSoulfind' -v ./internal/soulseek

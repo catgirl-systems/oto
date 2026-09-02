@@ -862,7 +862,22 @@ func (c *Client) serveMessagePeer(peer net.Conn, peerInfo PeerInitMessage) {
 			}
 		case PeerTransferRequest:
 			request, err := DecodeTransferRequest(payload)
-			if err != nil || request.Direction != 1 {
+			if err != nil {
+				continue
+			}
+			if request.Direction == 0 {
+				localPath, job := c.enqueueUpload(peerInfo.Username, request.Filename)
+				if job == nil {
+					_ = writeMessage(peer, TransferResponse{Token: request.Token, Accepted: false, Reason: "File not shared"})
+					continue
+				}
+				_ = writeMessage(peer, TransferResponse{Token: request.Token, Accepted: false, Reason: "Queued"})
+				if err := c.upload(peer, peerInfo.Username, localPath, job); err != nil {
+					_ = writeMessage(peer, QueueFailedMessage{Filename: request.Filename})
+				}
+				continue
+			}
+			if request.Direction != 1 {
 				continue
 			}
 			c.mu.Lock()
@@ -878,23 +893,30 @@ func (c *Client) serveMessagePeer(peer net.Conn, peerInfo PeerInitMessage) {
 			if err != nil {
 				continue
 			}
-			localPath, err := c.shareIndex().Resolve(filename)
-			if err != nil {
+			localPath, job := c.enqueueUpload(peerInfo.Username, filename)
+			if job == nil {
 				_ = writeMessage(peer, QueueDenied{Filename: filename, Reason: "File not shared"})
 				continue
 			}
-			stat, err := os.Stat(localPath)
-			if err != nil || !stat.Mode().IsRegular() {
-				_ = writeMessage(peer, QueueDenied{Filename: filename, Reason: "File not shared"})
-				continue
-			}
-			job := c.cfg.Uploads.Enqueue(peerInfo.Username, TransferRequest{Direction: 1, Token: randomToken(), Filename: filename, Size: uint64(stat.Size())})
 			_ = writeMessage(peer, QueuePlace{Filename: filename, Place: 1})
 			if err := c.upload(peer, peerInfo.Username, localPath, job); err != nil {
 				_ = writeMessage(peer, QueueFailedMessage{Filename: filename})
 			}
 		}
 	}
+}
+
+func (c *Client) enqueueUpload(username, filename string) (string, *UploadJob) {
+	localPath, err := c.shareIndex().Resolve(filename)
+	if err != nil {
+		return "", nil
+	}
+	stat, err := os.Stat(localPath)
+	if err != nil || !stat.Mode().IsRegular() {
+		return "", nil
+	}
+	job := c.cfg.Uploads.Enqueue(username, TransferRequest{Direction: 1, Token: randomToken(), Filename: filename, Size: uint64(stat.Size())})
+	return localPath, job
 }
 
 func (c *Client) upload(messagePeer net.Conn, username, localPath string, job *UploadJob) (result error) {

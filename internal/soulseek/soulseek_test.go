@@ -266,6 +266,20 @@ func TestPipeLogin(t *testing.T) {
 	}
 }
 
+func TestDecodeLegacyDownloadRequestWithSize(t *testing.T) {
+	var payload Encoder
+	payload.U32(0)
+	payload.U32(7)
+	if err := payload.String("Music\\track.flac"); err != nil {
+		t.Fatal(err)
+	}
+	payload.U64(0)
+	request, err := DecodeTransferRequest(payload.Payload())
+	if err != nil || request.Direction != 0 || request.Token != 7 || request.Filename != "Music\\track.flac" || request.Size != 0 {
+		t.Fatalf("legacy transfer request: %+v %v", request, err)
+	}
+}
+
 func TestUploadFIFO(t *testing.T) {
 	m := NewUploadManager(1)
 	a := m.Enqueue("a", TransferRequest{})

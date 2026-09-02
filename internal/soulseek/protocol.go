@@ -1062,12 +1062,13 @@ func DecodeTransferRequest(b []byte) (TransferRequest, error) {
 	if message.Filename, err = d.String(); err != nil {
 		return message, err
 	}
-	if message.Direction == 1 {
+	if message.Direction > 1 {
+		return message, fmt.Errorf("%w: transfer direction", ErrMalformed)
+	}
+	if message.Direction == 1 || d.Remaining() > 0 {
 		if message.Size, err = d.U64(); err != nil {
 			return message, err
 		}
-	} else if message.Direction != 0 {
-		return message, fmt.Errorf("%w: transfer direction", ErrMalformed)
 	}
 	return message, d.Done()
 }
