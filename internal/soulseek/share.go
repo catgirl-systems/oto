@@ -207,6 +207,35 @@ func (s *ShareIndex) Browse(virtual string) ([]ShareEntry, error) {
 	return out, nil
 }
 
+// Subtree returns the requested directory and every indexed descendant using full virtual paths.
+func (s *ShareIndex) Subtree(virtual string) ([]ShareEntry, error) {
+	parts, err := cleanVirtual(virtual)
+	if err != nil || len(parts) == 0 {
+		return nil, ErrOutsideShare
+	}
+	if _, err = s.Browse(virtual); err != nil {
+		return nil, err
+	}
+	root, relative := parts[0], strings.Join(parts[1:], "/")
+	prefix := relative
+	if prefix != "" {
+		prefix += "/"
+	}
+	requested := strings.Join(parts, "\\")
+	out := []ShareEntry{{Name: requested, Directory: true}}
+	for _, file := range s.files {
+		if file.Root != root || file.Path == "" || file.Path == relative || (prefix != "" && !strings.HasPrefix(file.Path, prefix)) {
+			continue
+		}
+		out = append(out, ShareEntry{
+			Name:      root + "\\" + strings.ReplaceAll(file.Path, "/", "\\"),
+			Size:      file.Size,
+			Directory: file.Directory,
+		})
+	}
+	return out, nil
+}
+
 // Search performs Unicode-aware case-insensitive token matching. A token prefixed by - excludes matches.
 func (s *ShareIndex) Search(query string) []ShareFile {
 	fold := cases.Fold()

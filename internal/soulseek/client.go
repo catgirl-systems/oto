@@ -373,6 +373,11 @@ func (c *Client) Browse(ctx context.Context, peer net.Conn, path string) ([]Shar
 		response, err := DecodeSharedListResponse(payload)
 		return response.Entries, err
 	}
+	cleanPath, err := NormalizePath(path)
+	if err != nil {
+		return nil, err
+	}
+	path = strings.ReplaceAll(cleanPath, "/", "\\")
 	token := c.nextToken()
 	if err := writeMessage(peer, FolderRequest{Token: token, Path: path}); err != nil {
 		return nil, err
@@ -388,8 +393,9 @@ func (c *Client) Browse(ctx context.Context, peer net.Conn, path string) ([]Shar
 	if err != nil {
 		return nil, err
 	}
-	if response.Token != token {
-		return nil, fmt.Errorf("%w: folder token", ErrMalformed)
+	responsePath, pathErr := NormalizePath(response.Path)
+	if response.Token != token || pathErr != nil || !strings.EqualFold(cleanPath, responsePath) {
+		return nil, fmt.Errorf("%w: folder response", ErrMalformed)
 	}
 	return response.Entries, nil
 }
@@ -853,7 +859,7 @@ func (c *Client) serveMessagePeer(peer net.Conn, peerInfo PeerInitMessage) {
 			if err != nil || d.Done() != nil {
 				continue
 			}
-			entries, _ := c.shareIndex().Browse(path)
+			entries, _ := c.shareIndex().Subtree(path)
 			_ = writeMessage(peer, FolderResponse{Token: token, Path: path, Entries: entries})
 		case PeerSearch:
 			response, err := DecodeSearchResponse(payload)

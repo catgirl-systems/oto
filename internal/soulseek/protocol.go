@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"fmt"
 	"net"
-	"path/filepath"
 	"sort"
 	"strings"
 )
@@ -818,26 +817,52 @@ type FolderResponse struct {
 
 func (FolderResponse) command() uint32 { return PeerFolderResponse }
 func (m FolderResponse) encode(e *Encoder) error {
+	root := strings.ReplaceAll(m.Path, "/", "\\")
+	folders := map[string][]ShareEntry{root: nil}
+	total := 0
+	for _, entry := range m.Entries {
+		name := strings.ReplaceAll(entry.Name, "/", "\\")
+		if entry.Directory {
+			folders[name] = folders[name]
+			continue
+		}
+		dir, file := root, name
+		if cut := strings.LastIndexByte(name, '\\'); cut >= 0 {
+			dir, file = name[:cut], name[cut+1:]
+		}
+		entry.Name = file
+		folders[dir] = append(folders[dir], entry)
+		total++
+	}
+	if len(folders) > 50000 || total+len(folders) > 50000 {
+		return ErrTooLarge
+	}
+	dirs := make([]string, 0, len(folders))
+	for dir := range folders {
+		dirs = append(dirs, dir)
+	}
+	sort.Slice(dirs, func(i, j int) bool {
+		if dirs[i] == root || dirs[j] == root {
+			return dirs[i] == root && dirs[j] != root
+		}
+		return dirs[i] < dirs[j]
+	})
+
 	var raw Encoder
 	raw.U32(m.Token)
 	if err := raw.String(m.Path); err != nil {
 		return err
 	}
-	raw.U32(1)
-	if err := raw.String(m.Path); err != nil {
-		return err
-	}
-	files := make([]ShareEntry, 0, len(m.Entries))
-	for _, entry := range m.Entries {
-		if !entry.Directory {
-			files = append(files, entry)
-		}
-	}
-	raw.U32(uint32(len(files)))
-	for _, file := range files {
-		result := searchResultFromShare(file, filepath.Base(strings.ReplaceAll(file.Name, "\\", "/")))
-		if err := result.encode(&raw); err != nil {
+	raw.U32(uint32(len(dirs)))
+	for _, dir := range dirs {
+		if err := raw.String(dir); err != nil {
 			return err
+		}
+		raw.U32(uint32(len(folders[dir])))
+		for _, file := range folders[dir] {
+			if err := searchResultFromShare(file, file.Name).encode(&raw); err != nil {
+				return err
+			}
 		}
 	}
 	compressed, err := CompressZlib(raw.Payload())

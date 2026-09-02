@@ -5,6 +5,7 @@ import (
 	"compress/zlib"
 	"context"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -348,6 +349,80 @@ func TestSharedListRoundTrip(t *testing.T) {
 	decoded, err := DecodeSharedListResponse(payload)
 	if err != nil || len(decoded.Entries) != 4 || decoded.Entries[1].Name != "Music\\Album\\song.mp3" || decoded.Entries[1].Size != 42 || decoded.Entries[1].Bitrate != 320 || decoded.Entries[1].Duration != 125 || !decoded.Entries[1].VBR || decoded.Entries[2].Name != "Locked" || !decoded.Entries[2].Private || decoded.Entries[3].Name != "Locked\\secret.flac" || !decoded.Entries[3].Private {
 		t.Fatalf("shared list: %+v %v", decoded, err)
+	}
+}
+
+func TestFolderResponseAndShareSubtree(t *testing.T) {
+	root := t.TempDir()
+	for _, dir := range []string{"Album/Disc", "Album/Empty"} {
+		if err := os.MkdirAll(filepath.Join(root, dir), 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(root, "Album", "cover.jpg"), []byte("jpg"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "Album", "Disc", "song.flac"), []byte("audio"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	index := NewShareIndex()
+	if err := index.AddRoot("Music", root); err != nil {
+		t.Fatal(err)
+	}
+	if err := index.Scan(); err != nil {
+		t.Fatal(err)
+	}
+	children, err := index.Browse(`Music\Album`)
+	if err != nil || len(children) != 3 {
+		t.Fatalf("immediate browse changed: %+v %v", children, err)
+	}
+	entries, err := index.Subtree(`Music\Album`)
+	if err != nil || len(entries) != 5 {
+		t.Fatalf("subtree: %+v %v", entries, err)
+	}
+
+	encoded, err := EncodeMessage(FolderResponse{Token: 9, Path: `Music\Album`, Entries: entries})
+	if err != nil {
+		t.Fatal(err)
+	}
+	command, payload, err := ReadFrame(bytes.NewReader(encoded))
+	if err != nil || command != PeerFolderResponse {
+		t.Fatalf("folder frame: %d %v", command, err)
+	}
+	response, err := DecodeFolderResponse(payload)
+	if err != nil || response.Token != 9 || response.Path != `Music\Album` || len(response.Entries) != 5 {
+		t.Fatalf("folder response: %+v %v", response, err)
+	}
+	got := make(map[string]ShareEntry, len(response.Entries))
+	for _, entry := range response.Entries {
+		got[entry.Name] = entry
+	}
+	for _, name := range []string{`Music\Album`, `Music\Album\cover.jpg`, `Music\Album\Disc`, `Music\Album\Disc\song.flac`, `Music\Album\Empty`} {
+		if _, ok := got[name]; !ok {
+			t.Fatalf("folder response missing %q: %+v", name, response.Entries)
+		}
+	}
+}
+
+func TestBrowseRejectsMismatchedFolderResponse(t *testing.T) {
+	clientConn, peerConn := net.Pipe()
+	defer clientConn.Close()
+	client := NewClientOnConn(ClientConfig{Username: "u"}, clientConn)
+	go func() {
+		defer peerConn.Close()
+		command, payload, err := ReadFrame(peerConn)
+		if err != nil || command != PeerFolderContents {
+			return
+		}
+		d := NewDecoder(payload)
+		token, _ := d.U32()
+		_, _ = d.String()
+		_ = writeMessage(peerConn, FolderResponse{Token: token, Path: "Other"})
+	}()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if _, err := client.Browse(ctx, clientConn, "Music"); !errors.Is(err, ErrMalformed) {
+		t.Fatalf("mismatched response accepted: %v", err)
 	}
 }
 

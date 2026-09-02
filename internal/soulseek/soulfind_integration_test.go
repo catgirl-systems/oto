@@ -103,9 +103,16 @@ func TestSoulfindPeerFeatures(t *testing.T) {
 
 	stamp := time.Now().UnixNano()
 	filename := fmt.Sprintf("feature-%d.flac", stamp)
+	nestedFilename := fmt.Sprintf("nested-%d.flac", stamp)
 	contents := []byte("Soulfind integration transfer")
 	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, "Disc"), 0700); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(filepath.Join(root, filename), contents, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "Disc", nestedFilename), []byte("nested"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	shares := NewShareIndex()
@@ -171,9 +178,14 @@ func TestSoulfindPeerFeatures(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		want := "Music\\" + filename
-		if len(entries) != 2 || entries[0].Name != "Music" || !entries[0].Directory || entries[1].Name != want || entries[1].Size != uint64(len(contents)) || entries[1].Directory {
-			t.Fatalf("browse entries: %+v", entries)
+		got := make(map[string]ShareEntry, len(entries))
+		for _, entry := range entries {
+			got[entry.Name] = entry
+		}
+		rootFile, rootOK := got["Music\\"+filename]
+		nestedFile, nestedOK := got["Music\\Disc\\"+nestedFilename]
+		if len(entries) != 4 || !got["Music"].Directory || !got["Music\\Disc"].Directory || !rootOK || rootFile.Size != uint64(len(contents)) || !nestedOK || nestedFile.Size != 6 {
+			t.Fatalf("recursive browse entries: %+v", entries)
 		}
 	}
 	t.Run("browse", browse)
