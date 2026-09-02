@@ -441,6 +441,19 @@ func TestTransferDirectionTabsProgressAndSpinner(t *testing.T) {
 	if !strings.Contains(downloads, "[↓ DOWNLOADS 2]") || !strings.Contains(downloads, "███░░░░░░░░░░░  25%") || !strings.Contains(downloads, "1.5 KiB/s  ETA 0:01") || !strings.Contains(downloads, "⠋") || strings.Contains(downloads, "shared.wav") {
 		t.Fatalf("download tab did not render progress and spinner correctly: %q", downloads)
 	}
+	barColumn, bars := -1, 0
+	for _, line := range strings.Split(downloads, "\n") {
+		if i := strings.IndexAny(line, "█░"); i >= 0 {
+			column := lipgloss.Width(line[:i])
+			if barColumn >= 0 && column != barColumn {
+				t.Fatalf("progress bars are not aligned: columns %d and %d", barColumn, column)
+			}
+			barColumn, bars = column, bars+1
+		}
+	}
+	if bars < 2 {
+		t.Fatalf("expected multiple progress bars: %q", downloads)
+	}
 	for _, width := range []int{40, 100} {
 		for _, line := range strings.Split(m.renderTransfers(width, 10), "\n") {
 			if lipgloss.Width(line) > width {

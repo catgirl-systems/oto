@@ -761,7 +761,11 @@ func (m model) renderTransfers(width, height int) string {
 				state += "  ETA " + formatDuration((total-done-1)/speed+1)
 			}
 		}
-		status := fmt.Sprintf("%s %3d%%  %s", bar, percent, state)
+		stateWidth := 16
+		if width >= 90 {
+			stateWidth = 40
+		}
+		status := fmt.Sprintf("%s %3d%%  %s", bar, percent, searchTextColumn(state, stateWidth))
 		spinner := " "
 		if running {
 			spinner = string(frames[m.spinner%len(frames)])
