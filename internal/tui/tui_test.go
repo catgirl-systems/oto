@@ -650,6 +650,61 @@ func TestTreeNavigationGroupingAndRecursiveSelection(t *testing.T) {
 	}
 }
 
+func TestFolderDownloadMenu(t *testing.T) {
+	results := []result{{user: "peer", path: `Music\Album\song.flac`, size: 5}, {user: "peer", path: `Music\Album\Disc\two.flac`, size: 6}}
+	tree, _ := buildSearchTree(results, treeState{}, 0)
+	folderID := treeID("search-dir", "peer", `Music\Album`)
+	folderCursor := 0
+	for cursor, index := range tree.visible {
+		if index == tree.byID[folderID] {
+			folderCursor = cursor
+			break
+		}
+	}
+	m := model{workspace: 0, results: results, searchTree: tree, cursor: folderCursor, selected: map[int]bool{}, width: 80, height: 24}
+	if cmd := m.key(key("d")); cmd != nil || !m.folderMenu || m.folderMenuUser != "peer" || m.folderMenuPath != `Music\Album` {
+		t.Fatalf("folder menu did not open: %+v", m)
+	}
+	if !strings.Contains(m.View().Content, "Download folder + subfolders") {
+		t.Fatal("folder menu was not rendered")
+	}
+	m.folderMenuKey(tea.KeyPressMsg(tea.Key{Code: tea.KeyDown}))
+	if req := m.folderMenuRequest(); !req.Recursive || len(req.Subfolders) != 1 || req.Subfolders[0] != `Music\Album\Disc` || len(req.Files) != 2 {
+		t.Fatalf("recursive option request: %+v", req)
+	}
+	m.folderMenuKey(tea.KeyPressMsg(tea.Key{Code: tea.KeyUp}))
+	if req := m.folderMenuRequest(); req.Recursive || len(req.Subfolders) != 0 || len(req.Files) != 1 || req.Files[0].Filename != `Music\Album\song.flac` {
+		t.Fatalf("folder-only option request: %+v", req)
+	}
+	m.folderMenuKey(tea.KeyPressMsg(tea.Key{Code: tea.KeyEscape}))
+	if m.folderMenu {
+		t.Fatal("escape did not close folder menu")
+	}
+	m.key(key("d"))
+	m.folderMenuKey(key("j"))
+	if cmd := m.folderMenuKey(key("enter")); cmd == nil || m.folderMenu {
+		t.Fatal("enter did not dispatch and close folder menu")
+	}
+
+	m.selected[0] = true
+	if cmd := m.key(key("d")); cmd == nil || m.folderMenu {
+		t.Fatal("selected file did not keep immediate download behavior")
+	}
+	m.selected[0] = false
+	m.cursor = m.searchTree.cursorForSource(0)
+	if cmd := m.key(key("d")); cmd == nil || m.folderMenu {
+		t.Fatal("file cursor did not keep immediate download behavior")
+	}
+
+	browseEntries := []entry{{name: `Music\Album`, directory: true}, {name: `Music\Album\song.flac`, size: 5}}
+	browseTree, _ := buildBrowseTree(browseEntries, treeState{}, 0)
+	m = model{workspace: 1, browseUser: "peer", entries: browseEntries, browseTree: browseTree, selected: map[int]bool{}}
+	m.cursor = 0
+	if cmd := m.key(key("d")); cmd != nil || !m.folderMenu || m.folderMenuUser != "peer" {
+		t.Fatalf("browse folder menu did not open: %+v", m)
+	}
+}
+
 func TestSharesTreeIgnoresStaleBrowseResponses(t *testing.T) {
 	m := model{workspace: 3, selected: map[int]bool{}, shares: []share{{name: "Music", path: "/music"}}, shareGeneration: 2}
 	m.shareTree, m.cursor = buildShareRoots(m.shares, treeState{}, 0, true)

@@ -66,6 +66,7 @@ type browseMsg struct {
 	entries []entry
 	err     error
 }
+type folderDownloadMsg struct{ err error }
 type transferMsg struct {
 	transfers []transfer
 	at        time.Time
@@ -566,6 +567,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			break
 		}
+	case folderDownloadMsg:
+		m.err = errText(x.err)
 	case transferMsg:
 		if m.workspace == 2 {
 			m.transferCursors[m.transferTab] = m.cursor
@@ -679,6 +682,9 @@ func (m *model) key(k tea.KeyPressMsg) tea.Cmd {
 		}
 		return nil
 	}
+	if m.folderMenu {
+		return m.folderMenuKey(k)
+	}
 	if m.setup {
 		return m.setupKey(k)
 	}
@@ -780,9 +786,15 @@ func (m *model) key(k tea.KeyPressMsg) tea.Cmd {
 		}
 	case "d":
 		if m.workspace == 0 {
+			if m.openFolderMenu() {
+				return nil
+			}
 			return m.queueResult()
 		}
 		if m.workspace == 1 {
+			if m.openFolderMenu() {
+				return nil
+			}
 			return m.queueBrowse()
 		}
 		if m.workspace == 2 {
@@ -830,6 +842,96 @@ func (m *model) key(k tea.KeyPressMsg) tea.Cmd {
 	case "/":
 		m.beginEdit()
 		return nil
+	}
+	return nil
+}
+
+func (m *model) openFolderMenu() bool {
+	for _, selected := range m.selected {
+		if selected {
+			return false
+		}
+	}
+	tree := m.currentTree()
+	if tree == nil {
+		return false
+	}
+	index, node := tree.node(m.cursor)
+	if node == nil || node.kind != treeFolder || normalizeBrowsePath(node.path) == "" {
+		return false
+	}
+	user := node.user
+	if user == "" && m.workspace == 1 {
+		user = m.browseUser
+	}
+	if user == "" {
+		return false
+	}
+	fileAt := func(source int) (download, bool) {
+		if m.workspace == 0 && source >= 0 && source < len(m.results) && !m.results[source].directory {
+			return download{filename: m.results[source].path, size: m.results[source].size}, true
+		}
+		if m.workspace == 1 && source >= 0 && source < len(m.entries) && !m.entries[source].directory {
+			return download{filename: m.entries[source].name, size: m.entries[source].size}, true
+		}
+		return download{}, false
+	}
+	var directFiles []download
+	for _, child := range node.children {
+		if tree.nodes[child].kind == treeFile {
+			if file, ok := fileAt(tree.nodes[child].source); ok {
+				directFiles = append(directFiles, file)
+			}
+		}
+	}
+	allFiles := make([]download, 0, len(node.leaves))
+	for _, source := range node.leaves {
+		if file, ok := fileAt(source); ok {
+			allFiles = append(allFiles, file)
+		}
+	}
+	var subfolders []string
+	var visit func(int)
+	visit = func(parent int) {
+		for _, child := range tree.nodes[parent].children {
+			if tree.nodes[child].kind != treeFolder {
+				continue
+			}
+			subfolders = append(subfolders, normalizeBrowsePath(tree.nodes[child].path))
+			visit(child)
+		}
+	}
+	visit(index)
+	m.folderMenu, m.folderMenuChoice = true, 0
+	m.folderMenuUser, m.folderMenuPath = user, normalizeBrowsePath(node.path)
+	m.folderMenuSubfolders, m.folderMenuFiles = subfolders, [2][]download{directFiles, allFiles}
+	return true
+}
+
+func (m *model) folderMenuRequest() daemon.FolderDownloadRequest {
+	recursive := m.folderMenuChoice == 1
+	req := daemon.FolderDownloadRequest{Username: m.folderMenuUser, Folder: m.folderMenuPath, Recursive: recursive}
+	if recursive {
+		req.Subfolders = append([]string(nil), m.folderMenuSubfolders...)
+	}
+	for _, file := range m.folderMenuFiles[m.folderMenuChoice] {
+		req.Files = append(req.Files, daemon.DownloadItem{Filename: file.filename, Size: file.size})
+	}
+	return req
+}
+
+func (m *model) folderMenuKey(k tea.KeyPressMsg) tea.Cmd {
+	switch k.String() {
+	case "esc":
+		m.folderMenu = false
+	case "up", "k":
+		m.folderMenuChoice = max(0, m.folderMenuChoice-1)
+	case "down", "j":
+		m.folderMenuChoice = min(1, m.folderMenuChoice+1)
+	case "enter":
+		req := m.folderMenuRequest()
+		m.folderMenu = false
+		return m.queueFolder(req)
 	}
 	return nil
 }
@@ -1111,6 +1213,13 @@ func (m *model) queue(files []download, user string) tea.Cmd {
 		}
 		_, e := m.client.QueueDownloads(m.ctx, []daemon.DownloadRequest{{Username: user, Files: items}})
 		return statusMsg{err: e}
+	}
+}
+
+func (m *model) queueFolder(req daemon.FolderDownloadRequest) tea.Cmd {
+	return func() tea.Msg {
+		_, err := m.client.QueueFolder(m.ctx, req)
+		return folderDownloadMsg{err: err}
 	}
 }
 

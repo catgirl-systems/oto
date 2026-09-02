@@ -84,14 +84,17 @@ type model struct {
 	cfg                                    config.Config
 	transient                              bool
 	setup, help, confirm, editing, loading bool
-	details                                bool
+	details, folderMenu                    bool
 	loadingMore, filterEditing             bool
 	width, height                          int
 	workspace, cursor, settingsSection     int
 	searchTotal, searchFound, searchNext   int
 	input, query, browseUser, searchID     string
 	searchFilter, searchFilterUndo         string
-	inputCursor                            int
+	folderMenuUser, folderMenuPath         string
+	folderMenuSubfolders                   []string
+	folderMenuFiles                        [2][]download
+	folderMenuChoice, inputCursor          int
 	setupField                             int
 	setupVals                              [5]string
 	setupErr                               string
@@ -143,6 +146,8 @@ func (m model) View() tea.View {
 	content := m.mainView()
 	if m.setup {
 		content = m.setupView()
+	} else if m.folderMenu {
+		content = m.folderMenuView()
 	} else if m.help {
 		content = m.helpView()
 	} else if m.details {
@@ -268,6 +273,25 @@ func (m model) compactView() string {
 	return strings.Join(lines, "\n")
 }
 
+func (m model) folderMenuView() string {
+	var b strings.Builder
+	b.WriteString(strong("Download folder") + "\n")
+	b.WriteString(muted(m.folderMenuUser+"  "+m.folderMenuPath) + "\n\n")
+	options := []string{"Download folder only", "Download folder + subfolders"}
+	for i, option := range options {
+		marker := "  "
+		if i == m.folderMenuChoice {
+			marker = accent("› ")
+			option = strong(option)
+		}
+		b.WriteString(marker + option + "\n")
+	}
+	b.WriteString("\n" + muted("↑↓ / j k choose  •  enter download  •  esc cancel"))
+	cardWidth := max(38, min(64, m.width-4))
+	card := panelStyle().Width(cardWidth).Padding(1, 2).Render(b.String())
+	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, card)
+}
+
 func (m model) helpView() string {
 	var b strings.Builder
 	b.WriteString(styled("Keyboard guide", lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#CBA6F7"))))
@@ -286,7 +310,7 @@ func (m model) helpView() string {
 		{"c", "clear or restore search filters"},
 		{"tab (filter)", "complete fields and special values"},
 		{"space", "select a file or all loaded descendants"},
-		{"d", "act on selected files or the cursor subtree"},
+		{"d", "download files or choose a folder download mode"},
 		{"r", "refresh browse, retry transfer, or rescan shares"},
 		{"b (search)", "browse the selected result's user and folder"},
 		{"ctrl+page up/down", "switch search, browse, or transfer tabs"},
@@ -891,9 +915,9 @@ func (m model) footerView() string {
 	hints := []string{"tab switch", "↑↓ move"}
 	switch m.workspace {
 	case 0:
-		hints = append(hints, "←→ tree", "/ search", "ctrl+pgup/down tabs", "ctrl+w close", "f filter", "b browse folder", "i details", "space select", "d download")
+		hints = append(hints, "←→ tree", "/ search", "ctrl+pgup/down tabs", "ctrl+w close", "f filter", "b browse folder", "i details", "space select", "d download/menu")
 	case 1:
-		hints = append(hints, "←→ tree", "/ user", "ctrl+pgup/down tabs", "ctrl+w close", "r refresh", "i details", "space select", "d download")
+		hints = append(hints, "←→ tree", "/ user", "ctrl+pgup/down tabs", "ctrl+w close", "r refresh", "i details", "space select", "d download/menu")
 	case 2:
 		hints = append(hints, "←→ tree", "ctrl+pgup/down downloads/uploads", "d cancel", "r retry", "c clear")
 	case 3:
