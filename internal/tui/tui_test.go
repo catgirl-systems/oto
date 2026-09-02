@@ -487,6 +487,39 @@ func TestTransferDirectionTabsProgressAndSpinner(t *testing.T) {
 	}
 }
 
+func TestFileDetails(t *testing.T) {
+	t.Setenv("NO_COLOR", "1")
+	m := model{workspace: 0, width: 100, height: 30, selected: map[int]bool{}, results: []result{{
+		user: "alice", path: `Music\song.flac`, extension: "flac", size: 1536, free: true,
+		bitrate: 320, duration: 125, vbr: true, sampleRate: 44100, bitDepth: 24, public: true,
+	}}}
+	m.searchTree, m.cursor = buildSearchTree(m.results, treeState{}, 0)
+	m.cursor = m.searchTree.cursorForSource(0)
+	m.key(key("i"))
+	view := m.View().Content
+	for _, want := range []string{"File details", `Music\song.flac`, "alice", "1.5 KiB", "public", "flac", "320 kbps VBR", "2:05", "44100 Hz", "24-bit", "free slot"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("file details missing %q: %q", want, view)
+		}
+	}
+	m.key(tea.KeyPressMsg(tea.Key{Code: tea.KeyEscape}))
+	if m.details {
+		t.Fatal("escape did not close file details")
+	}
+
+	m.workspace, m.browseUser = 1, "bob"
+	m.entries = []entry{{name: `Private\demo.wav`, extension: "wav", size: 42, private: true, bitrate: 1411}}
+	m.browseTree, m.cursor = buildBrowseTree(m.entries, treeState{}, 0)
+	m.cursor = m.browseTree.cursorForSource(0)
+	m.key(key("i"))
+	view = m.View().Content
+	for _, want := range []string{"bob", "private", "1411 kbps CBR"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("browse details missing %q: %q", want, view)
+		}
+	}
+}
+
 func TestBrowseResultFolderAndUserTabs(t *testing.T) {
 	m := model{
 		workspace: 0,

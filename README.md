@@ -41,6 +41,7 @@ Soulseek permits one login per username. Keeping the session in the daemon preve
 | `c` | clear/restore search filters or clear the selected transfer subtree |
 | `space` | select a file or every loaded file below a user/folder node |
 | `b` in Search | browse the selected result's user and jump to its folder |
+| `i` in Search or Browse | show the selected file's properties and media metadata |
 | `ctrl+page up` / `ctrl+page down` in Search, Browse, or Transfers | switch result tabs or Downloads/Uploads |
 | `ctrl+w` in Search or Browse | close the active result tab |
 | `d` | download the selected/cursor subtree, cancel a transfer subtree, or remove a share root |
@@ -161,7 +162,7 @@ This tracks user-visible Soulseek functionality and meaningful operational quali
 | Save a remote share list to disk | :x: | :white_check_mark: |
 | Reopen a saved share list, including while offline | :x: | :white_check_mark: |
 | Show progress while retrieving large share lists | :x: | :white_check_mark: |
-| View detailed file properties and media metadata | :x: | :white_check_mark: |
+| View detailed file properties and media metadata | :white_check_mark: | :white_check_mark: |
 
 ### Downloads
 

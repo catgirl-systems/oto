@@ -673,6 +673,12 @@ func (m *model) key(k tea.KeyPressMsg) tea.Cmd {
 		}
 		return nil
 	}
+	if m.details {
+		if s == "i" || s == "esc" {
+			m.details = false
+		}
+		return nil
+	}
 	if m.setup {
 		return m.setupKey(k)
 	}
@@ -766,6 +772,11 @@ func (m *model) key(k tea.KeyPressMsg) tea.Cmd {
 				}
 				return m.openBrowse(node.user, folder, false)
 			}
+		}
+	case "i":
+		if m.workspace == 0 || m.workspace == 1 {
+			_, node := m.currentTree().node(m.cursor)
+			m.details = node != nil && node.kind == treeFile && node.source >= 0
 		}
 	case "d":
 		if m.workspace == 0 {

@@ -84,6 +84,7 @@ type model struct {
 	cfg                                    config.Config
 	transient                              bool
 	setup, help, confirm, editing, loading bool
+	details                                bool
 	loadingMore, filterEditing             bool
 	width, height                          int
 	workspace, cursor, settingsSection     int
@@ -144,6 +145,8 @@ func (m model) View() tea.View {
 		content = m.setupView()
 	} else if m.help {
 		content = m.helpView()
+	} else if m.details {
+		content = m.detailView()
 	}
 	v := tea.NewView(content)
 	v.AltScreen = true
@@ -278,6 +281,7 @@ func (m model) helpView() string {
 		{"ctrl+a e u k", "jump or delete to a line boundary"},
 		{"/", "edit a query, username, share, or setting"},
 		{"enter", "toggle a folder or download a Search/Browse file"},
+		{"i", "show Search/Browse file details"},
 		{"f", "edit cached search filters"},
 		{"c", "clear or restore search filters"},
 		{"tab (filter)", "complete fields and special values"},
@@ -295,6 +299,68 @@ func (m model) helpView() string {
 		fmt.Fprintf(&b, "%-20s %s\n", strong(row[0]), row[1])
 	}
 	cardWidth := max(34, min(72, m.width-4))
+	card := panelStyle().Width(cardWidth).Padding(1, 2).Render(b.String())
+	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, card)
+}
+
+func (m model) detailView() string {
+	tree := m.currentTree()
+	if tree == nil {
+		return m.mainView()
+	}
+	_, node := tree.node(m.cursor)
+	if node == nil || node.kind != treeFile || node.source < 0 {
+		return m.mainView()
+	}
+
+	x := result{path: node.path, user: node.user}
+	if m.workspace == 0 && node.source < len(m.results) {
+		x = m.results[node.source]
+	} else if m.workspace == 1 && node.source < len(m.entries) {
+		entry := m.entries[node.source]
+		x = result{path: node.path, user: m.browseUser, extension: entry.extension, size: entry.size, bitrate: entry.bitrate, duration: entry.duration, vbr: entry.vbr, sampleRate: entry.sampleRate, bitDepth: entry.bitDepth, public: !entry.private}
+	}
+	access := "private"
+	if x.public {
+		access = "public"
+	}
+	rows := [][2]string{{"Path", x.path}, {"User", x.user}, {"Size", formatBytes(x.size)}, {"Access", access}}
+	if x.extension != "" {
+		rows = append(rows, [2]string{"Type", x.extension})
+	}
+	if x.bitrate > 0 {
+		encoding := "CBR"
+		if x.vbr {
+			encoding = "VBR"
+		}
+		rows = append(rows, [2]string{"Bitrate", fmt.Sprintf("%d kbps %s", x.bitrate, encoding)})
+	}
+	if x.duration > 0 {
+		rows = append(rows, [2]string{"Duration", formatDuration(uint64(x.duration))})
+	}
+	if x.sampleRate > 0 {
+		rows = append(rows, [2]string{"Sample rate", fmt.Sprintf("%d Hz", x.sampleRate)})
+	}
+	if x.bitDepth > 0 {
+		rows = append(rows, [2]string{"Bit depth", fmt.Sprintf("%d-bit", x.bitDepth)})
+	}
+	if m.workspace == 0 {
+		availability := "queued"
+		if x.free {
+			availability = "free slot"
+		} else if x.queue > 0 {
+			availability = fmt.Sprintf("queue %d", x.queue)
+		}
+		rows = append(rows, [2]string{"Availability", availability})
+	}
+
+	cardWidth := max(34, min(72, m.width-4))
+	var b strings.Builder
+	b.WriteString(accent("File details") + "\n\n")
+	for _, row := range rows {
+		fmt.Fprintf(&b, "%s %s\n", strong(fmt.Sprintf("%-13s", row[0])), trunc(row[1], cardWidth-18))
+	}
+	b.WriteString("\n" + muted("i / esc close"))
 	card := panelStyle().Width(cardWidth).Padding(1, 2).Render(b.String())
 	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, card)
 }
@@ -825,9 +891,9 @@ func (m model) footerView() string {
 	hints := []string{"tab switch", "↑↓ move"}
 	switch m.workspace {
 	case 0:
-		hints = append(hints, "←→ tree", "/ search", "ctrl+pgup/down tabs", "ctrl+w close", "f filter", "b browse folder", "space select", "d download")
+		hints = append(hints, "←→ tree", "/ search", "ctrl+pgup/down tabs", "ctrl+w close", "f filter", "b browse folder", "i details", "space select", "d download")
 	case 1:
-		hints = append(hints, "←→ tree", "/ user", "ctrl+pgup/down tabs", "ctrl+w close", "r refresh", "space select", "d download")
+		hints = append(hints, "←→ tree", "/ user", "ctrl+pgup/down tabs", "ctrl+w close", "r refresh", "i details", "space select", "d download")
 	case 2:
 		hints = append(hints, "←→ tree", "ctrl+pgup/down downloads/uploads", "d cancel", "r retry", "c clear")
 	case 3:
