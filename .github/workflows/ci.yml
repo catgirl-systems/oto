@@ -18,6 +18,36 @@ jobs:
           cache: true
       - run: go test -race ./...
       - run: go vet ./...
+      - name: Test bind-mounted share notifications
+        run: |
+          set -eu
+          tmp=$(mktemp -d)
+          image="oto-share-watch-test:${GITHUB_RUN_ID}"
+          cid=
+          cleanup() {
+            if [ -n "$cid" ]; then docker rm -f "$cid" >/dev/null 2>&1 || true; fi
+            docker image rm "$image" >/dev/null 2>&1 || true
+            rm -rf "$tmp"
+          }
+          trap cleanup EXIT
+          mkdir -p "$tmp/share/.tmp"
+          CGO_ENABLED=0 go test -c -o "$tmp/daemon.test" ./internal/daemon
+          cat >"$tmp/Dockerfile" <<'EOF'
+          FROM scratch
+          COPY daemon.test /daemon.test
+          ENTRYPOINT ["/daemon.test", "-test.run", "^TestBindMountedShareWatcher$", "-test.v"]
+          EOF
+          docker build -q -t "$image" "$tmp"
+          cid=$(docker run -d -e OTO_SHARE_WATCH_ROOT=/share -e TMPDIR=/share/.tmp -v "$tmp/share:/share" "$image")
+          for _ in $(seq 1 100); do
+            [ -f "$tmp/share/.oto-watch-ready" ] && break
+            sleep 0.1
+          done
+          [ -f "$tmp/share/.oto-watch-ready" ] || { docker logs "$cid"; exit 1; }
+          printf 'host-side-fsnotify\n' >"$tmp/share/host-created.flac"
+          status=$(docker wait "$cid")
+          docker logs "$cid"
+          [ "$status" = 0 ]
 
   soulfind:
     needs: unit
@@ -55,4 +85,4 @@ jobs:
           OTO_SLSKD_API: http://127.0.0.1:5030
           OTO_SLSKD_USERNAME: slskdpeer
           OTO_SLSKD_DOWNLOAD_DIR: /tmp/oto-slskd/downloads
-        run: go test -count=1 -run '^TestSoulfind' -v ./internal/soulseek
+        run: go test -count=1 -run '^TestSoulfind' -v ./internal/soulseek ./internal/daemon
