@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -112,6 +114,14 @@ type DownloadItem struct {
 type DownloadRequest struct {
 	Username string         `json:"username"`
 	Files    []DownloadItem `json:"files"`
+}
+
+type FolderDownloadRequest struct {
+	Username   string         `json:"username"`
+	Folder     string         `json:"folder"`
+	Subfolders []string       `json:"subfolders,omitempty"`
+	Files      []DownloadItem `json:"files,omitempty"`
+	Recursive  bool           `json:"recursive"`
 }
 
 type Service struct {
@@ -489,6 +499,127 @@ func (s *Service) BrowseLocal(path string) ([]soulseek.ShareEntry, error) {
 	idx := s.shares
 	s.mu.RUnlock()
 	return idx.Browse(path)
+}
+
+func folderDownloadItems(req FolderDownloadRequest, entries []soulseek.ShareEntry) ([]DownloadItem, error) {
+	folder, err := soulseek.NormalizePath(req.Folder)
+	if err != nil {
+		return nil, err
+	}
+	folderLower := strings.ToLower(folder)
+	prefix := folderLower + "/"
+	seen := make(map[string]bool)
+	var items []DownloadItem
+	for _, entry := range entries {
+		name, err := soulseek.NormalizePath(entry.Name)
+		if err != nil {
+			return nil, err
+		}
+		nameLower := strings.ToLower(name)
+		if nameLower != folderLower && !strings.HasPrefix(nameLower, prefix) {
+			return nil, fmt.Errorf("daemon: folder response entry outside %q", folder)
+		}
+		if entry.Directory || seen[name] || (!req.Recursive && !strings.EqualFold(path.Dir(name), folder)) {
+			continue
+		}
+		seen[name] = true
+		items = append(items, DownloadItem{Filename: name, Size: entry.Size})
+	}
+	if len(items) == 0 {
+		return nil, errors.New("daemon: folder contains no downloadable files")
+	}
+	return items, nil
+}
+
+func withoutExistingFolderDownloads(items []DownloadItem, downloads []Download, username string) []DownloadItem {
+	existing := make(map[string]bool)
+	for _, download := range downloads {
+		if strings.EqualFold(download.Username, username) {
+			if name, err := soulseek.NormalizePath(download.Filename); err == nil {
+				existing[name] = true
+			}
+		}
+	}
+	return slices.DeleteFunc(items, func(item DownloadItem) bool { return existing[item.Filename] })
+}
+
+func (s *Service) QueueFolder(ctx context.Context, req FolderDownloadRequest) ([]Download, error) {
+	req.Username = strings.TrimSpace(req.Username)
+	if req.Username == "" {
+		return nil, errors.New("daemon: download username is required")
+	}
+	folder, err := soulseek.NormalizePath(req.Folder)
+	if err != nil {
+		return nil, err
+	}
+	req.Folder = folder
+	folders := []string{folder}
+	seen := map[string]bool{strings.ToLower(folder): true}
+	if req.Recursive {
+		prefix := strings.ToLower(folder) + "/"
+		for _, subfolder := range req.Subfolders {
+			subfolder, err = soulseek.NormalizePath(subfolder)
+			if err != nil {
+				return nil, err
+			}
+			key := strings.ToLower(subfolder)
+			if key != strings.ToLower(folder) && !strings.HasPrefix(key, prefix) {
+				return nil, fmt.Errorf("daemon: subfolder outside %q", folder)
+			}
+			if !seen[key] {
+				seen[key] = true
+				folders = append(folders, subfolder)
+			}
+		}
+	}
+	entries := make([]soulseek.ShareEntry, 0, len(req.Files))
+	for _, file := range req.Files {
+		entries = append(entries, soulseek.ShareEntry{Name: file.Filename, Size: file.Size})
+	}
+	type browseResult struct {
+		entries []soulseek.ShareEntry
+		err     error
+	}
+	jobs := make(chan string, len(folders))
+	results := make(chan browseResult, len(folders))
+	for _, folder := range folders {
+		jobs <- folder
+	}
+	close(jobs)
+	for range min(4, len(folders)) {
+		go func() {
+			for folder := range jobs {
+				response, browseErr := s.Browse(ctx, req.Username, folder)
+				results <- browseResult{response, browseErr}
+			}
+		}()
+	}
+	var browseErr error
+	for range folders {
+		result := <-results
+		if result.err != nil {
+			if browseErr == nil {
+				browseErr = result.err
+			}
+			continue
+		}
+		entries = append(entries, result.entries...)
+	}
+	items, err := folderDownloadItems(req, entries)
+	if err != nil {
+		if browseErr != nil && len(req.Files) == 0 {
+			return nil, browseErr
+		}
+		return nil, err
+	}
+	sort.Slice(items, func(i, j int) bool { return items[i].Filename < items[j].Filename })
+	s.mu.RLock()
+	items = withoutExistingFolderDownloads(items, s.journal.Downloads, req.Username)
+	s.mu.RUnlock()
+	if len(items) == 0 {
+		return nil, nil
+	}
+	return s.QueueDownloads([]DownloadRequest{{Username: req.Username, Files: items}})
 }
 
 func (s *Service) QueueDownloads(reqs []DownloadRequest) ([]Download, error) {

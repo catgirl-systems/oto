@@ -105,6 +105,22 @@ func TestStatusMethodsBodyAndSocketMode(t *testing.T) {
 		t.Fatalf("method status %d", resp.StatusCode)
 	}
 	resp.Body.Close()
+	resp, err = cl.http.Do(mustRequest("GET", "http://oto.local/v1/folder-downloads", nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != http.StatusMethodNotAllowed {
+		t.Fatalf("folder download method status %d", resp.StatusCode)
+	}
+	resp.Body.Close()
+	resp, err = cl.http.Do(mustRequest("POST", "http://oto.local/v1/folder-downloads", strings.NewReader(`{}`)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("invalid folder download status %d", resp.StatusCode)
+	}
+	resp.Body.Close()
 	big := strings.Repeat("x", int(MaxBodySize)+1)
 	resp, err = cl.http.Do(mustRequest("POST", "http://oto.local/v1/downloads", strings.NewReader(big)))
 	if err != nil {
@@ -168,6 +184,23 @@ func TestSearchClientSendsFilters(t *testing.T) {
 	}
 	if _, err := client.SearchPage(context.Background(), "s", 100, `in:"live session"`); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestFolderDownloadClient(t *testing.T) {
+	client := &Client{http: &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		var req daemon.FolderDownloadRequest
+		if request.Method != "POST" || request.URL.Path != "/v1/folder-downloads" {
+			t.Fatalf("folder request: %s %s", request.Method, request.URL.Path)
+		}
+		if err := json.NewDecoder(request.Body).Decode(&req); err != nil || req.Username != "peer" || req.Folder != `Music\Album` || !req.Recursive || len(req.Subfolders) != 1 || len(req.Files) != 1 {
+			t.Fatalf("folder request body: %+v %v", req, err)
+		}
+		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(`{"queued":2}`)), Header: make(http.Header)}, nil
+	})}}
+	queued, err := client.QueueFolder(context.Background(), daemon.FolderDownloadRequest{Username: "peer", Folder: `Music\Album`, Subfolders: []string{`Music\Album\Disc`}, Files: []daemon.DownloadItem{{Filename: `Music\Album\song.flac`, Size: 5}}, Recursive: true})
+	if err != nil || queued != 2 {
+		t.Fatalf("folder response: %d %v", queued, err)
 	}
 }
 

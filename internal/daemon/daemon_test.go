@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/catgirl-systems/oto/internal/config"
+	"github.com/catgirl-systems/oto/internal/soulseek"
 )
 
 func testConfig(t *testing.T) config.Config {
@@ -58,6 +59,44 @@ func TestJournalRoundTripAndSafeResume(t *testing.T) {
 	}
 	if len(s2.Downloads()) != 1 {
 		t.Fatal("journal did not reload")
+	}
+}
+
+func TestFolderDownloadItems(t *testing.T) {
+	entries := []soulseek.ShareEntry{
+		{Name: `Music\Album`, Directory: true},
+		{Name: `Music\Album\cover.jpg`, Size: 3},
+		{Name: `Music\Album\cover.jpg`, Size: 3},
+		{Name: `Music\Album\Disc`, Directory: true},
+		{Name: `Music\Album\Disc\song.flac`, Size: 5},
+	}
+	direct, err := folderDownloadItems(FolderDownloadRequest{Folder: `Music\Album`}, entries)
+	if err != nil || len(direct) != 1 || direct[0].Filename != "Music/Album/cover.jpg" {
+		t.Fatalf("direct folder items: %+v %v", direct, err)
+	}
+	recursive, err := folderDownloadItems(FolderDownloadRequest{Folder: `Music\Album`, Recursive: true}, entries)
+	if err != nil || len(recursive) != 2 || recursive[1].Filename != "Music/Album/Disc/song.flac" {
+		t.Fatalf("recursive folder items: %+v %v", recursive, err)
+	}
+	remaining := withoutExistingFolderDownloads(append([]DownloadItem(nil), recursive...), []Download{{Username: "peer", Filename: `Music\Album\cover.jpg`}}, "peer")
+	if len(remaining) != 1 || remaining[0].Filename != "Music/Album/Disc/song.flac" {
+		t.Fatalf("existing folder download was not skipped: %+v", remaining)
+	}
+	if _, err := folderDownloadItems(FolderDownloadRequest{Folder: `Music\Album`, Recursive: true}, append(entries, soulseek.ShareEntry{Name: `Music\Other\bad`})); err == nil {
+		t.Fatal("out-of-subtree entry accepted")
+	}
+	if _, err := folderDownloadItems(FolderDownloadRequest{Folder: `Music\Album`, Recursive: true}, []soulseek.ShareEntry{{Name: `..\bad`}}); err == nil {
+		t.Fatal("malformed entry accepted")
+	}
+
+	s, err := New(testConfig(t), filepath.Join(t.TempDir(), "downloads.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	queued, err := s.QueueDownloads([]DownloadRequest{{Username: "peer", Files: recursive}})
+	if err != nil || len(queued) != 2 || queued[0].Destination != "peer/Music/Album/cover.jpg" || queued[1].Destination != "peer/Music/Album/Disc/song.flac" {
+		t.Fatalf("folder destinations: %+v %v", queued, err)
 	}
 }
 

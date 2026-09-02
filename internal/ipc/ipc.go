@@ -101,6 +101,7 @@ func (s *Server) handler() http.Handler {
 	mux.HandleFunc("/v1/search", s.search)
 	mux.HandleFunc("/v1/browse", s.browse)
 	mux.HandleFunc("/v1/downloads", s.downloads)
+	mux.HandleFunc("/v1/folder-downloads", s.folderDownloads)
 	mux.HandleFunc("/v1/transfers", s.transfers)
 	mux.HandleFunc("/v1/transfers/", s.transfers)
 	mux.HandleFunc("/v1/shares", s.shares)
@@ -213,6 +214,23 @@ func (s *Server) downloads(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, 200, out)
+}
+
+func (s *Server) folderDownloads(w http.ResponseWriter, r *http.Request) {
+	if !method(w, r, "POST") {
+		return
+	}
+	var req daemon.FolderDownloadRequest
+	if err := decode(w, r, &req); err != nil {
+		writeErr(w, 400, err)
+		return
+	}
+	out, err := s.service.QueueFolder(r.Context(), req)
+	if err != nil {
+		writeErr(w, 400, err)
+		return
+	}
+	writeJSON(w, 200, map[string]int{"queued": len(out)})
 }
 func (s *Server) transfers(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path != "/v1/transfers" {
@@ -386,6 +404,14 @@ func (c *Client) QueueDownloads(ctx context.Context, r []daemon.DownloadRequest)
 	var x []daemon.Download
 	err := c.Do(ctx, "POST", "/v1/downloads", r, &x)
 	return x, err
+}
+
+func (c *Client) QueueFolder(ctx context.Context, req daemon.FolderDownloadRequest) (int, error) {
+	var response struct {
+		Queued int `json:"queued"`
+	}
+	err := c.Do(ctx, "POST", "/v1/folder-downloads", req, &response)
+	return response.Queued, err
 }
 func (c *Client) Transfers(ctx context.Context) ([]daemon.Transfer, error) {
 	var x []daemon.Transfer
