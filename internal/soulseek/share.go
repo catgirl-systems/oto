@@ -57,6 +57,34 @@ func (s *ShareIndex) AddRoot(name, path string) error {
 	s.roots[name] = filepath.Clean(p)
 	return nil
 }
+
+// RestoreShareIndex reconstructs a scanned index after validating cached entries.
+func RestoreShareIndex(roots []ShareRoot, files []ShareFile) (*ShareIndex, error) {
+	index := NewShareIndex()
+	for _, root := range roots {
+		if err := index.AddRoot(root.Name, root.Path); err != nil {
+			return nil, err
+		}
+	}
+	for _, file := range files {
+		if _, ok := index.roots[file.Root]; !ok {
+			return nil, errors.New("share index contains an unknown root")
+		}
+		if file.Path == "" {
+			if !file.Directory {
+				return nil, errors.New("share index contains an invalid path")
+			}
+			continue
+		}
+		normalized, err := NormalizePath(file.Path)
+		if err != nil || normalized != file.Path {
+			return nil, errors.New("share index contains an invalid path")
+		}
+	}
+	index.files = append([]ShareFile(nil), files...)
+	sortShareFiles(index.files)
+	return index, nil
+}
 func (s *ShareIndex) Roots() []ShareRoot {
 	out := make([]ShareRoot, 0, len(s.roots))
 	for n, p := range s.roots {
@@ -66,6 +94,15 @@ func (s *ShareIndex) Roots() []ShareRoot {
 	return out
 }
 func hidden(name string) bool { return strings.HasPrefix(name, ".") }
+
+func sortShareFiles(files []ShareFile) {
+	sort.Slice(files, func(i, j int) bool {
+		if files[i].Root != files[j].Root {
+			return files[i].Root < files[j].Root
+		}
+		return files[i].Path < files[j].Path
+	})
+}
 
 // ScanContext builds a complete replacement snapshot and stops when ctx is cancelled.
 func (s *ShareIndex) ScanContext(ctx context.Context) error {
@@ -112,12 +149,7 @@ func (s *ShareIndex) ScanContext(ctx context.Context) error {
 			return err
 		}
 	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].Root != out[j].Root {
-			return out[i].Root < out[j].Root
-		}
-		return out[i].Path < out[j].Path
-	})
+	sortShareFiles(out)
 	s.files = out
 	return nil
 }

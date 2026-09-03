@@ -9,6 +9,7 @@ import (
 	"log"
 	"os"
 	"path"
+	"path/filepath"
 	"slices"
 	"sort"
 	"strconv"
@@ -164,6 +165,7 @@ type Service struct {
 	cancel               context.CancelFunc
 	shareWatchCancel     context.CancelFunc
 	shareIndexBuilder    func(context.Context, []config.Share) (*soulseek.ShareIndex, error)
+	shareIndexPath       string
 	shareRescanDelay     time.Duration
 	shareWatchGeneration uint64
 	listenPortFile       string
@@ -189,6 +191,7 @@ func New(cfg config.Config, path string) (*Service, error) {
 	s := &Service{cfg: cfg, configPath: config.ConfigPath(), shares: soulseek.NewShareIndex(), searches: make(map[string]Search), transfers: make(map[string]Transfer), downloadSlots: make(chan struct{}, cfg.DownloadSlots), downloadCancels: make(map[string]context.CancelFunc), downloadPeers: make(map[string]chan struct{}), shareIndexBuilder: buildShareIndex, shareRescanDelay: DefaultShareRescanDelay, listenPortInterval: DefaultListenPortReconcileInterval, portMapOpen: func(ctx context.Context, port uint16, natPMP, upnp bool, changed func(uint16)) (portMapping, error) {
 		return portmap.Open(ctx, port, natPMP, upnp, changed)
 	}, reconnectWake: make(chan struct{}, 1), status: StatusStopped, presence: PresenceOffline, journalPath: path}
+	s.shareIndexPath = filepath.Join(filepath.Dir(path), "shares.json")
 	if b, err := os.ReadFile(path); err == nil {
 		if err := json.Unmarshal(b, &s.journal); err != nil {
 			return nil, fmt.Errorf("daemon: load journal: %w", err)
@@ -253,8 +256,15 @@ func (s *Service) Start(ctx context.Context) error {
 		return nil
 	}
 	s.runCtx, s.runCancel = context.WithCancel(ctx)
-	if err := s.configureSharesLocked(); err != nil {
-		s.lastErr = err.Error()
+	if idx, err := loadShareIndexCache(s.shareIndexPath, s.cfg.Shares); err == nil {
+		s.shares = idx
+	} else {
+		if !errors.Is(err, os.ErrNotExist) {
+			log.Printf("load share index cache: %v", err)
+		}
+		if err := s.configureSharesLocked(); err != nil {
+			s.lastErr = err.Error()
+		}
 	}
 	s.restartShareWatcherLocked()
 	s.startListenPortWatcherLocked()
@@ -387,6 +397,7 @@ func (s *Service) configureSharesLocked() error {
 	if s.client != nil {
 		s.client.SetShareIndex(idx)
 	}
+	s.persistShareIndex(idx)
 	return nil
 }
 func (s *Service) connectOnce(ctx context.Context) error {
@@ -1074,6 +1085,7 @@ func (s *Service) UpdateConfig(c config.Config) error {
 	s.downloadSlots = make(chan struct{}, c.DownloadSlots)
 	s.restartShareWatcherLocked()
 	s.mu.Unlock()
+	s.persistShareIndex(idx)
 	if active {
 		return s.startSessionLocked()
 	}

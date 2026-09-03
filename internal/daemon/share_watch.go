@@ -2,12 +2,14 @@ package daemon
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
 	"log"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -19,12 +21,55 @@ import (
 const (
 	DefaultShareRescanDelay = 5 * time.Minute
 	shareRescanMaxDelay     = 30 * time.Minute
+	shareIndexCacheVersion  = 1
 )
 
 type shareScanResult struct {
 	index    *soulseek.ShareIndex
 	revision uint64
 	err      error
+}
+
+type shareIndexCache struct {
+	Version int                  `json:"version"`
+	Roots   []soulseek.ShareRoot `json:"roots"`
+	Files   []soulseek.ShareFile `json:"files"`
+}
+
+func loadShareIndexCache(path string, shares []config.Share) (*soulseek.ShareIndex, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	var cache shareIndexCache
+	if err := json.Unmarshal(data, &cache); err != nil {
+		return nil, err
+	}
+	if cache.Version != shareIndexCacheVersion {
+		return nil, fmt.Errorf("unsupported share index cache version %d", cache.Version)
+	}
+	roots := make([]soulseek.ShareRoot, len(shares))
+	for i, share := range shares {
+		roots[i] = soulseek.ShareRoot{Name: share.Name, Path: share.Path}
+	}
+	index, err := soulseek.RestoreShareIndex(roots, cache.Files)
+	if err != nil {
+		return nil, err
+	}
+	if !slices.Equal(cache.Roots, index.Roots()) {
+		return nil, errors.New("share index cache roots changed")
+	}
+	return index, nil
+}
+
+func saveShareIndexCache(path string, index *soulseek.ShareIndex) error {
+	return config.SaveJSON(path, shareIndexCache{Version: shareIndexCacheVersion, Roots: index.Roots(), Files: index.Files()})
+}
+
+func (s *Service) persistShareIndex(index *soulseek.ShareIndex) {
+	if err := saveShareIndexCache(s.shareIndexPath, index); err != nil {
+		log.Printf("save share index cache: %v", err)
+	}
 }
 
 func buildShareIndex(ctx context.Context, shares []config.Share) (*soulseek.ShareIndex, error) {
@@ -92,6 +137,7 @@ func (s *Service) publishWatchedShareIndex(generation uint64, index *soulseek.Sh
 	if client != nil {
 		client.SetShareIndex(index)
 	}
+	s.persistShareIndex(index)
 	return true
 }
 

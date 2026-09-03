@@ -96,7 +96,7 @@ Incoming TCP port `50300` must be reachable for best peer connectivity. Automati
 Search-result country codes are approximate IP geolocation, not identity or residence data. oto performs the lookup offline using an embedded table generated from a pinned [sapics/ip-location-db](https://github.com/sapics/ip-location-db) `user-country-ipv4` snapshot released under the PDDL; peer IP addresses are not exposed or persisted.
 ## Feature comparison with Nicotine+
 
-This tracks user-visible Soulseek functionality and meaningful operational quality-of-life features for a terminal client. Cosmetic GUI details, desktop integration, deep links, themes, layout customization, and similar presentation-only features are intentionally excluded. A check means the feature works end to end for users in the current client; internal scaffolding alone is not counted.
+This tracks user-visible Soulseek functionality and meaningful operational quality-of-life features for a terminal client. Cosmetic GUI details, desktop integration, deep links, themes, layout customization, and similar presentation-only features are intentionally excluded. :white_check_mark: means the feature works end to end, :x: means it is unavailable, and :fast_forward: means oto supersedes the same user need with a different approach; internal scaffolding alone is not counted.
 
 ### Network and session
 
@@ -256,8 +256,8 @@ This tracks user-visible Soulseek functionality and meaningful operational quali
 | Scan shares on startup | :white_check_mark: | :white_check_mark: |
 | Exclude hidden files and folders | :white_check_mark: | :white_check_mark: |
 | Configurable share exclusion patterns | :x: | :white_check_mark: |
-| Persistent on-disk share index | :x: | :white_check_mark: |
-| Scheduled daily share rescans | :x: | :white_check_mark: |
+| Persistent on-disk share index | :white_check_mark: | :white_check_mark: |
+| Scheduled daily share rescans | :fast_forward: | :white_check_mark: |
 | Force a full share rebuild | :x: | :white_check_mark: |
 | Stop an in-progress share scan | :x: | :white_check_mark: |
 | Report share-scan progress | :x: | :white_check_mark: |
@@ -268,6 +268,8 @@ This tracks user-visible Soulseek functionality and meaningful operational quali
 | Trusted-buddy-only shares | :x: | :white_check_mark: |
 | Reveal restricted share tiers selectively | :x: | :white_check_mark: |
 | Use buddy trust as a share permission | :x: | :white_check_mark: |
+
+:fast_forward: oto watches share filesystem changes and reconciles after its quiet/max delays instead of waiting for a daily schedule.
 
 ### Users, chat, and community
 

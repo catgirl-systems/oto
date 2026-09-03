@@ -62,6 +62,171 @@ func hasLocalFile(service *Service, virtual, name string, size int64) bool {
 	return false
 }
 
+func hasIndexedFile(index *soulseek.ShareIndex, virtual, name string, size uint64) bool {
+	entries, err := index.Browse(virtual)
+	if err != nil {
+		return false
+	}
+	for _, entry := range entries {
+		if entry.Name == name && !entry.Directory && entry.Size == size {
+			return true
+		}
+	}
+	return false
+}
+
+func TestShareIndexCacheRoundTrip(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "song.flac"), []byte("audio"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	shares := []config.Share{{Name: "Music", Path: root}}
+	index, err := buildShareIndex(context.Background(), shares)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cachePath := filepath.Join(t.TempDir(), "shares.json")
+	if err := saveShareIndexCache(cachePath, index); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(root, "song.flac")); err != nil {
+		t.Fatal(err)
+	}
+	restored, err := loadShareIndexCache(cachePath, shares)
+	if err != nil || !hasIndexedFile(restored, "Music", "song.flac", 5) {
+		t.Fatalf("cache round trip failed: %v", err)
+	}
+	if info, err := os.Stat(cachePath); err != nil || info.Mode().Perm() != 0600 {
+		t.Fatalf("cache permissions: %v %v", info, err)
+	}
+}
+
+func TestStartRestoresShareIndexCache(t *testing.T) {
+	root := t.TempDir()
+	filename := filepath.Join(root, "cached.flac")
+	if err := os.WriteFile(filename, []byte("cached"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := testConfig(t)
+	cfg.Soulseek.ConnectOnStartup = false
+	cfg.Shares = []config.Share{{Name: "Music", Path: root}}
+	service, err := New(cfg, filepath.Join(t.TempDir(), "downloads.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	index, err := buildShareIndex(context.Background(), cfg.Shares)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := saveShareIndexCache(service.shareIndexPath, index); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filename); err != nil {
+		t.Fatal(err)
+	}
+	var scans atomic.Int32
+	service.shareIndexBuilder = func(context.Context, []config.Share) (*soulseek.ShareIndex, error) {
+		scans.Add(1)
+		return nil, errors.New("unexpected startup scan")
+	}
+	if err := service.SetShareRescanDelay(0); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer service.Close()
+	if scans.Load() != 0 || !hasLocalFile(service, "Music", "cached.flac", 6) {
+		t.Fatalf("startup did not use cache; scans=%d", scans.Load())
+	}
+}
+
+func TestStartRebuildsInvalidShareIndexCaches(t *testing.T) {
+	for _, test := range []string{"changed roots", "corrupt JSON", "unsupported version"} {
+		t.Run(test, func(t *testing.T) {
+			root := t.TempDir()
+			cfg := testConfig(t)
+			cfg.Soulseek.ConnectOnStartup = false
+			cfg.Shares = []config.Share{{Name: "Music", Path: root}}
+			service, err := New(cfg, filepath.Join(t.TempDir(), "downloads.json"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			switch test {
+			case "changed roots":
+				other, err := buildShareIndex(context.Background(), []config.Share{{Name: "Other", Path: t.TempDir()}})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := saveShareIndexCache(service.shareIndexPath, other); err != nil {
+					t.Fatal(err)
+				}
+			case "corrupt JSON":
+				if err := os.WriteFile(service.shareIndexPath, []byte("{"), 0600); err != nil {
+					t.Fatal(err)
+				}
+			case "unsupported version":
+				if err := config.SaveJSON(service.shareIndexPath, shareIndexCache{Version: shareIndexCacheVersion + 1}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			var scans atomic.Int32
+			service.shareIndexBuilder = func(ctx context.Context, shares []config.Share) (*soulseek.ShareIndex, error) {
+				scans.Add(1)
+				return buildShareIndex(ctx, shares)
+			}
+			if err := service.SetShareRescanDelay(0); err != nil {
+				t.Fatal(err)
+			}
+			if err := service.Start(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			defer service.Close()
+			if scans.Load() != 1 {
+				t.Fatalf("fallback scans = %d", scans.Load())
+			}
+			if _, err := loadShareIndexCache(service.shareIndexPath, cfg.Shares); err != nil {
+				t.Fatalf("fallback did not replace cache: %v", err)
+			}
+		})
+	}
+}
+
+func TestManualRescanReplacesShareIndexCache(t *testing.T) {
+	root := t.TempDir()
+	oldPath := filepath.Join(root, "old.flac")
+	if err := os.WriteFile(oldPath, []byte("old"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := testConfig(t)
+	cfg.Soulseek.ConnectOnStartup = false
+	cfg.Shares = []config.Share{{Name: "Music", Path: root}}
+	service, err := New(cfg, filepath.Join(t.TempDir(), "downloads.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := service.SetShareRescanDelay(0); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer service.Close()
+	if err := os.Remove(oldPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "new.flac"), []byte("new"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.Rescan(); err != nil {
+		t.Fatal(err)
+	}
+	cached, err := loadShareIndexCache(service.shareIndexPath, cfg.Shares)
+	if err != nil || !hasIndexedFile(cached, "Music", "new.flac", 3) || hasIndexedFile(cached, "Music", "old.flac", 3) {
+		t.Fatalf("rescan did not replace cache: %v", err)
+	}
+}
+
 func TestShareWatcherReindexesFilesAndDirectories(t *testing.T) {
 	root := t.TempDir()
 	nested := filepath.Join(root, "Existing")

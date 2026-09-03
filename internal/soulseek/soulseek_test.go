@@ -101,6 +101,38 @@ func TestShareScanSearchAndContainment(t *testing.T) {
 	}
 }
 
+func TestRestoreShareIndexValidatesCachedFiles(t *testing.T) {
+	root := t.TempDir()
+	roots := []ShareRoot{{Name: "Music", Path: root}}
+	index, err := RestoreShareIndex(roots, []ShareFile{
+		{Root: "Music", Path: "Album", Directory: true},
+		{Root: "Music", Path: "Album/song.flac", Size: 5},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	entries, err := index.Browse("Music/Album")
+	if err != nil || len(entries) != 1 || entries[0].Name != "song.flac" || entries[0].Size != 5 {
+		t.Fatalf("restored entries: %+v %v", entries, err)
+	}
+
+	for name, file := range map[string]ShareFile{
+		"unknown root":     {Root: "Other", Path: "song.flac"},
+		"traversal":        {Root: "Music", Path: "../song.flac"},
+		"absolute":         {Root: "Music", Path: "/song.flac"},
+		"Windows absolute": {Root: "Music", Path: "C:/song.flac"},
+		"unnormalized":     {Root: "Music", Path: `Album\song.flac`},
+		"null byte":        {Root: "Music", Path: "song\x00.flac"},
+		"empty file":       {Root: "Music"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := RestoreShareIndex(roots, []ShareFile{file}); err == nil {
+				t.Fatal("invalid cached entry accepted")
+			}
+		})
+	}
+}
+
 func TestBrowseUsesBoundedSnapshotChildren(t *testing.T) {
 	root := t.TempDir()
 	album := filepath.Join(root, "Album")
