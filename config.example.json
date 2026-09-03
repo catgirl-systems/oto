@@ -4,7 +4,9 @@
     "password": "",
     "server": "server.slsknet.org:2242",
     "listen_addr": "0.0.0.0:50300",
-    "connect_on_startup": true
+    "connect_on_startup": true,
+    "nat_pmp_port_mapping": true,
+    "upnp_port_mapping": true
   },
   "search": {
     "remember_searches": true,

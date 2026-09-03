@@ -29,7 +29,7 @@ Press `o` to choose Online, Away, or Offline without stopping the daemon. Offlin
 
 The daemon watches every non-hidden, non-symlink directory under each share root using `fsnotify` (one recursive watch per directory). After filesystem changes stop for five minutes by default, it builds a complete shadow index and atomically publishes it; a fixed 30-minute maximum delay prevents continuous activity from postponing scans forever. Events during a scan discard that result and schedule another scan. Startup and manual rescans remain immediate, and watcher or scan failures keep the last good index available.
 
-For dynamically forwarded incoming ports, `--listen-port-file` watches the file's parent directory and hot-swaps the listener whenever the file contains a new port. `--listen-port-reconcile-interval` provides a periodic fallback (default `30s`; `0` disables it). Missing or empty files mark the port unavailable until a valid value appears. This interface is provider-neutral; for example, a VPN container can write its current forwarded port into a shared volume.
+For dynamically forwarded incoming ports, `--listen-port-file` watches the file's parent directory and hot-swaps the listener whenever the file contains a new port. `--listen-port-reconcile-interval` provides a periodic fallback (default `30s`; `0` disables it). Missing or empty files mark the port unavailable until a valid value appears. This interface is provider-neutral; for example, a VPN container can write its current forwarded port into a shared volume. When configured, it takes precedence over and skips automatic NAT-PMP/UPnP forwarding without changing the saved settings.
 
 ## TUI
 
@@ -74,7 +74,7 @@ in:"live|radio session" out:remix type:audio,!mp3 size:>=20MiB bitrate:>=320 dur
 
 Search queries and complete filter expressions are kept as separate most-recent-first histories. Press up/down while editing to recall entries. The Settings → Search section independently enables each history, sets its retention limit (`0` means unlimited), and clears it immediately.
 
-Settings → Connection also controls **Connect on startup** (`soulseek.connect_on_startup` in JSON). It defaults to On for compatibility and only affects the next daemon start; saving it does not change the current session.
+Settings → Connection controls **Connect on startup** (`soulseek.connect_on_startup`), **NAT-PMP port forwarding** (`soulseek.nat_pmp_port_mapping`), and **UPnP port forwarding** (`soulseek.upnp_port_mapping`). All default to On and the forwarding protocols can be enabled independently. With both enabled, oto tries NAT-PMP before UPnP. It maps only the incoming TCP listener through an IPv4 router, requests a 12-hour lease, and renews it every two hours. Discovery and mapping are best effort: failures do not prevent Soulseek login or its server-mediated firewall-piercing fallback.
 
 ## Files and environment
 
@@ -90,7 +90,7 @@ Default locations follow XDG:
 
 History enablement and limits are user choices in `config.json`; the mutable entries live in `history.json` so searches do not continually rewrite daemon configuration. Both files are private.
 
-Incoming TCP port `50300` must be reachable for best peer connectivity. Direct connections are attempted first and server-mediated firewall piercing is used as fallback. The Soulseek protocol itself is not encrypted; do not treat usernames, searches, or transferred data as private.
+Incoming TCP port `50300` must be reachable for best peer connectivity. Automatic NAT-PMP/UPnP forwarding can make it reachable when supported by the IPv4 router; otherwise configure the router or use `--listen-port-file` for a VPN-assigned port. Direct connections are attempted first and server-mediated firewall piercing is used as fallback. The Soulseek protocol itself is not encrypted; do not treat usernames, searches, or transferred data as private.
 
 
 ## Feature comparison with Nicotine+
@@ -114,8 +114,8 @@ This tracks user-visible Soulseek functionality and meaningful operational quali
 | Manually connect and disconnect without quitting | :white_check_mark: | :white_check_mark: |
 | Configure whether to connect on startup | :white_check_mark: | :white_check_mark: |
 | Bind Soulseek traffic to a VPN or network interface | :x: | :white_check_mark: |
-| Automatic UPnP port forwarding | :x: | :white_check_mark: |
-| Automatic NAT-PMP port forwarding | :x: | :white_check_mark: |
+| Automatic UPnP port forwarding | :white_check_mark: | :white_check_mark: |
+| Automatic NAT-PMP port forwarding | :white_check_mark: | :white_check_mark: |
 | External listening-port check | :x: | :white_check_mark: |
 | Public IP address lookup | :x: | :white_check_mark: |
 | Change Soulseek password from the client | :x: | :white_check_mark: |

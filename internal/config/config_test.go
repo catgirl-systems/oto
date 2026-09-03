@@ -65,21 +65,30 @@ func TestSearchDefaultsCompatibilityAndValidation(t *testing.T) {
 	if got.Search != want || got.Redacted().Search != want {
 		t.Fatalf("search defaults or redaction: got %+v safe %+v", got.Search, got.Redacted().Search)
 	}
-	if !got.Soulseek.ConnectOnStartup || !got.Redacted().Soulseek.ConnectOnStartup {
-		t.Fatal("older config did not retain connect-on-startup default")
+	if !got.Soulseek.ConnectOnStartup || !got.Soulseek.NATPMPPortMapping || !got.Soulseek.UPnPPortMapping {
+		t.Fatal("older config did not retain connection defaults")
+	}
+	safe := got.Redacted().Soulseek
+	if !safe.ConnectOnStartup || !safe.NATPMPPortMapping || !safe.UPnPPortMapping {
+		t.Fatal("redacted config omitted connection defaults")
 	}
 	got.Search.SearchHistoryLimit, got.Search.FilterHistoryLimit = 0, 0
 	if err := got.Validate(); err != nil {
 		t.Fatalf("zero should mean unlimited: %v", err)
 	}
 	got.Soulseek.ConnectOnStartup = false
+	got.Soulseek.NATPMPPortMapping = false
 	roundTripPath := filepath.Join(d, "round-trip.json")
 	if err := got.Save(roundTripPath); err != nil {
 		t.Fatal(err)
 	}
 	roundTrip, err := Load(roundTripPath)
-	if err != nil || roundTrip.Search != got.Search || roundTrip.Soulseek.ConnectOnStartup || roundTrip.Redacted().Soulseek.ConnectOnStartup {
+	if err != nil || roundTrip.Search != got.Search || roundTrip.Soulseek.ConnectOnStartup || roundTrip.Soulseek.NATPMPPortMapping || !roundTrip.Soulseek.UPnPPortMapping {
 		t.Fatalf("config round trip: %+v %v", roundTrip, err)
+	}
+	roundTripSafe := roundTrip.Redacted().Soulseek
+	if roundTripSafe.NATPMPPortMapping || !roundTripSafe.UPnPPortMapping {
+		t.Fatalf("redacted port mapping settings: %+v", roundTripSafe)
 	}
 	got.Search.FilterHistoryLimit = -1
 	if err := got.Validate(); err == nil {

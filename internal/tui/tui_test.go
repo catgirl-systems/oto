@@ -287,7 +287,7 @@ func TestSettingsSidebarEditsAccountWithoutLeakingPassword(t *testing.T) {
 	cfg := config.Default()
 	cfg.Soulseek.Username, cfg.Soulseek.Password = "alice", "secret"
 	m := newModel(context.Background(), nil, "", false, cfg)
-	m.width, m.height, m.workspace = 80, 12, 4
+	m.width, m.height, m.workspace = 80, 16, 4
 
 	view := m.View().Content
 	if !strings.Contains(view, "Settings") || !strings.Contains(view, "Account") || strings.Contains(view, "secret") || !strings.Contains(view, "••••••") {
@@ -308,13 +308,23 @@ func TestSettingsSidebarEditsAccountWithoutLeakingPassword(t *testing.T) {
 	}
 
 	m.key(tea.KeyPressMsg(tea.Key{Code: tea.KeyRight}))
-	if m.settingsSection != 1 || !strings.Contains(m.View().Content, "Listen address") || !strings.Contains(m.View().Content, "Connect on startup") {
+	if view := m.View().Content; m.settingsSection != 1 || !strings.Contains(view, "Listen address") || !strings.Contains(view, "Connect on startup") || !strings.Contains(view, "NAT-PMP port forwarding") || !strings.Contains(view, "UPnP port forwarding") {
 		t.Fatal("settings sidebar did not navigate to connection settings")
 	}
 	m.cursor = 2
 	m.key(key("enter"))
 	if m.cfg.Soulseek.ConnectOnStartup {
 		t.Fatal("connect-on-startup setting was not staged")
+	}
+	m.cursor = 3
+	m.key(key("enter"))
+	if m.editing || m.cfg.Soulseek.NATPMPPortMapping || !m.cfg.Soulseek.UPnPPortMapping {
+		t.Fatal("NAT-PMP setting did not toggle independently")
+	}
+	m.cursor = 4
+	m.key(key("enter"))
+	if m.editing || m.cfg.Soulseek.NATPMPPortMapping || m.cfg.Soulseek.UPnPPortMapping {
+		t.Fatal("UPnP setting did not toggle independently")
 	}
 	m.key(tea.KeyPressMsg(tea.Key{Code: tea.KeyRight}))
 	m.key(tea.KeyPressMsg(tea.Key{Code: tea.KeyRight}))

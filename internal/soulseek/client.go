@@ -58,23 +58,25 @@ type peerAddressLookup struct {
 
 // Client owns one server connection; reconnecting creates a fresh lifecycle.
 type Client struct {
-	cfg         ClientConfig
-	mu          sync.Mutex
-	writeMu     sync.Mutex
-	browseSlot  chan struct{}
-	conn        net.Conn
-	listener    net.Listener
-	ctx         context.Context
-	cancel      context.CancelFunc
-	done        chan struct{}
-	events      chan Event
-	pending     map[uint32]chan SearchResponse
-	addresses   map[string]*peerAddressLookup
-	pierce      map[uint32]chan net.Conn
-	requested   map[string]*pendingDownload
-	downloads   map[uint32]*pendingDownload
-	distributed *DistributedNode
-	token       uint32
+	cfg            ClientConfig
+	mu             sync.Mutex
+	writeMu        sync.Mutex
+	browseSlot     chan struct{}
+	conn           net.Conn
+	listener       net.Listener
+	advertisedPort uint16
+	loggedIn       bool
+	ctx            context.Context
+	cancel         context.CancelFunc
+	done           chan struct{}
+	events         chan Event
+	pending        map[uint32]chan SearchResponse
+	addresses      map[string]*peerAddressLookup
+	pierce         map[uint32]chan net.Conn
+	requested      map[string]*pendingDownload
+	downloads      map[uint32]*pendingDownload
+	distributed    *DistributedNode
+	token          uint32
 }
 
 func NewClient(cfg ClientConfig) *Client {
@@ -166,6 +168,31 @@ func (c *Client) startListener() error {
 	return nil
 }
 
+// ListenPort returns the actual TCP listener port.
+func (c *Client) ListenPort() uint16 {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.listener == nil {
+		return 0
+	}
+	return uint16(c.listener.Addr().(*net.TCPAddr).Port)
+}
+
+// SetAdvertisedPort changes the externally reachable port without rebinding.
+func (c *Client) SetAdvertisedPort(port uint16) error {
+	if port == 0 {
+		return errors.New("soulseek: invalid advertised port")
+	}
+	c.mu.Lock()
+	c.advertisedPort = port
+	loggedIn := c.loggedIn
+	c.mu.Unlock()
+	if loggedIn {
+		return c.send(ListenPort{Port: uint32(port)})
+	}
+	return nil
+}
+
 // SetListenPort replaces the incoming listener and advertises it without
 // interrupting the Soulseek session.
 func (c *Client) SetListenPort(port uint16) error {
@@ -177,12 +204,16 @@ func (c *Client) SetListenPort(port uint16) error {
 	}
 	address := net.JoinHostPort(host, fmt.Sprint(port))
 	if c.listener != nil && c.listener.Addr().(*net.TCPAddr).Port == int(port) {
-		c.cfg.ListenAddr = address
+		changed, loggedIn := c.advertisedPort != port, c.loggedIn
+		c.cfg.ListenAddr, c.advertisedPort = address, port
 		c.mu.Unlock()
+		if changed && loggedIn {
+			return c.send(ListenPort{Port: uint32(port)})
+		}
 		return nil
 	}
 	if c.conn == nil {
-		c.cfg.ListenAddr = address
+		c.cfg.ListenAddr, c.advertisedPort = address, port
 		c.mu.Unlock()
 		return nil
 	}
@@ -191,14 +222,14 @@ func (c *Client) SetListenPort(port uint16) error {
 		c.mu.Unlock()
 		return err
 	}
-	oldListener, oldAddress := c.listener, c.cfg.ListenAddr
-	c.listener, c.cfg.ListenAddr = listener, address
+	oldListener, oldAddress, oldAdvertisedPort := c.listener, c.cfg.ListenAddr, c.advertisedPort
+	c.listener, c.cfg.ListenAddr, c.advertisedPort = listener, address, port
 	c.mu.Unlock()
 	go c.acceptLoop(listener)
 	if err := c.send(ListenPort{Port: uint32(port)}); err != nil {
 		c.mu.Lock()
 		if c.listener == listener {
-			c.listener, c.cfg.ListenAddr = oldListener, oldAddress
+			c.listener, c.cfg.ListenAddr, c.advertisedPort = oldListener, oldAddress, oldAdvertisedPort
 		}
 		c.mu.Unlock()
 		_ = listener.Close()
@@ -250,10 +281,14 @@ func (c *Client) Login(ctx context.Context) error {
 			return errors.New(r.Message)
 		}
 		c.mu.Lock()
-		ln := c.listener
+		ln, port := c.listener, c.advertisedPort
+		c.loggedIn = true
 		c.mu.Unlock()
-		if ln != nil {
-			_ = c.send(ListenPort{Port: uint32(ln.Addr().(*net.TCPAddr).Port)})
+		if port == 0 && ln != nil {
+			port = uint16(ln.Addr().(*net.TCPAddr).Port)
+		}
+		if port != 0 {
+			_ = c.send(ListenPort{Port: uint32(port)})
 		}
 		_ = c.SetStatus(UserStatusOnline)
 		index := c.shareIndex()
@@ -1069,6 +1104,7 @@ func (c *Client) Close() error {
 	c.listener = nil
 	c.conn = nil
 	c.cancel = nil
+	c.loggedIn, c.advertisedPort = false, 0
 	c.mu.Unlock()
 	if cancel != nil {
 		cancel()

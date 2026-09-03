@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"path"
 	"slices"
@@ -16,6 +17,7 @@ import (
 	"time"
 
 	"github.com/catgirl-systems/oto/internal/config"
+	"github.com/catgirl-systems/oto/internal/portmap"
 	"github.com/catgirl-systems/oto/internal/soulseek"
 )
 
@@ -134,6 +136,12 @@ type FolderDownloadRequest struct {
 	Recursive  bool           `json:"recursive"`
 }
 
+type portMapping interface {
+	Close() error
+}
+
+type portMappingOpener func(context.Context, uint16, bool, bool, func(uint16)) (portMapping, error)
+
 type Service struct {
 	mu                   sync.RWMutex
 	lifecycleMu          sync.Mutex
@@ -143,6 +151,8 @@ type Service struct {
 	runCancel            context.CancelFunc
 	shares               *soulseek.ShareIndex
 	client               *soulseek.Client
+	mapping              portMapping
+	portMapOpen          portMappingOpener
 	journal              Journal
 	searches             map[string]Search
 	transfers            map[string]Transfer
@@ -175,7 +185,9 @@ func New(cfg config.Config, path string) (*Service, error) {
 	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
-	s := &Service{cfg: cfg, configPath: config.ConfigPath(), shares: soulseek.NewShareIndex(), searches: make(map[string]Search), transfers: make(map[string]Transfer), downloadSlots: make(chan struct{}, cfg.DownloadSlots), downloadCancels: make(map[string]context.CancelFunc), downloadPeers: make(map[string]chan struct{}), shareIndexBuilder: buildShareIndex, shareRescanDelay: DefaultShareRescanDelay, listenPortInterval: DefaultListenPortReconcileInterval, reconnectWake: make(chan struct{}, 1), status: StatusStopped, presence: PresenceOffline, journalPath: path}
+	s := &Service{cfg: cfg, configPath: config.ConfigPath(), shares: soulseek.NewShareIndex(), searches: make(map[string]Search), transfers: make(map[string]Transfer), downloadSlots: make(chan struct{}, cfg.DownloadSlots), downloadCancels: make(map[string]context.CancelFunc), downloadPeers: make(map[string]chan struct{}), shareIndexBuilder: buildShareIndex, shareRescanDelay: DefaultShareRescanDelay, listenPortInterval: DefaultListenPortReconcileInterval, portMapOpen: func(ctx context.Context, port uint16, natPMP, upnp bool, changed func(uint16)) (portMapping, error) {
+		return portmap.Open(ctx, port, natPMP, upnp, changed)
+	}, reconnectWake: make(chan struct{}, 1), status: StatusStopped, presence: PresenceOffline, journalPath: path}
 	if b, err := os.ReadFile(path); err == nil {
 		if err := json.Unmarshal(b, &s.journal); err != nil {
 			return nil, fmt.Errorf("daemon: load journal: %w", err)
@@ -341,8 +353,8 @@ func (s *Service) startSessionLocked() error {
 // stopSessionLocked requires lifecycleMu and preserves partial downloads.
 func (s *Service) stopSessionLocked(offline bool) {
 	s.mu.Lock()
-	cancel, client := s.cancel, s.client
-	s.ctx, s.cancel, s.client = nil, nil, nil
+	cancel, client, mapping := s.cancel, s.client, s.mapping
+	s.ctx, s.cancel, s.client, s.mapping = nil, nil, nil, nil
 	s.requeueDownloads = cancel != nil
 	s.status, s.lastErr = StatusStopped, ""
 	if offline {
@@ -352,6 +364,7 @@ func (s *Service) stopSessionLocked(offline bool) {
 	if cancel != nil {
 		cancel()
 	}
+	closePortMapping(mapping)
 	if client != nil {
 		_ = client.Close()
 	}
@@ -382,7 +395,7 @@ func (s *Service) connectOnce(ctx context.Context) error {
 		return context.Canceled
 	}
 	cfg, idx := s.cfg, s.shares
-	portFile, port := s.listenPortFile, s.listenPort
+	portFile, port, openMapping := s.listenPortFile, s.listenPort, s.portMapOpen
 	s.mu.RUnlock()
 	if portFile != "" {
 		if port == 0 {
@@ -398,29 +411,57 @@ func (s *Service) connectOnce(ctx context.Context) error {
 	if err := client.Connect(ctx); err != nil {
 		return err
 	}
+
+	var mapping portMapping
+	if portFile != "" {
+		if cfg.Soulseek.NATPMPPortMapping || cfg.Soulseek.UPnPPortMapping {
+			log.Printf("port mapping: skipped because --listen-port-file is configured")
+		}
+	} else if cfg.Soulseek.NATPMPPortMapping || cfg.Soulseek.UPnPPortMapping {
+		var err error
+		mapping, err = openMapping(ctx, client.ListenPort(), cfg.Soulseek.NATPMPPortMapping, cfg.Soulseek.UPnPPortMapping, func(port uint16) {
+			if err := client.SetAdvertisedPort(port); err != nil {
+				log.Printf("port mapping: advertise external port %d: %v", port, err)
+			}
+		})
+		if err != nil {
+			log.Printf("port mapping: %v; continuing without automatic forwarding", err)
+		}
+	}
 	if err := client.Login(ctx); err != nil {
+		closePortMapping(mapping)
 		_ = client.Close()
 		return err
 	}
 	s.mu.Lock()
 	if s.closed || s.ctx != ctx || s.presence == PresenceOffline {
 		s.mu.Unlock()
+		closePortMapping(mapping)
 		_ = client.Close()
 		return context.Canceled
 	}
 	if s.presence == PresenceAway {
 		if err := client.SetStatus(soulseek.UserStatusAway); err != nil {
 			s.mu.Unlock()
+			closePortMapping(mapping)
 			_ = client.Close()
 			return err
 		}
 	}
-	s.client = client
+	s.client, s.mapping = client, mapping
 	idx = s.shares
 	s.status, s.lastErr = StatusConnected, ""
 	s.mu.Unlock()
 	client.SetShareIndex(idx)
 	return nil
+}
+
+func closePortMapping(mapping portMapping) {
+	if mapping != nil {
+		if err := mapping.Close(); err != nil {
+			log.Printf("port mapping: remove: %v", err)
+		}
+	}
 }
 
 func (s *Service) setSessionStatus(ctx context.Context, status Status, message string) bool {
@@ -457,7 +498,7 @@ func (s *Service) reconnectLoop(ctx context.Context) {
 		}
 
 		s.mu.RLock()
-		client, current := s.client, s.ctx == ctx
+		client, mapping, current := s.client, s.mapping, s.ctx == ctx
 		s.mu.RUnlock()
 		if !current || ctx.Err() != nil {
 			return
@@ -473,10 +514,11 @@ func (s *Service) reconnectLoop(ctx context.Context) {
 			err = client.Run(ctx)
 			stopEvents()
 			<-eventsDone
+			closePortMapping(mapping)
 			_ = client.Close()
 			s.mu.Lock()
 			if s.client == client {
-				s.client = nil
+				s.client, s.mapping = nil, nil
 			}
 			s.mu.Unlock()
 		}
@@ -545,13 +587,14 @@ func (s *Service) Close() error {
 		return nil
 	}
 	s.closed = true
-	runCancel, cancel, client := s.runCancel, s.cancel, s.client
-	s.runCtx, s.runCancel, s.ctx, s.cancel, s.client = nil, nil, nil, nil, nil
+	runCancel, cancel, client, mapping := s.runCancel, s.cancel, s.client, s.mapping
+	s.runCtx, s.runCancel, s.ctx, s.cancel, s.client, s.mapping = nil, nil, nil, nil, nil, nil
 	s.status, s.presence = StatusStopped, PresenceOffline
 	s.mu.Unlock()
 	if cancel != nil {
 		cancel()
 	}
+	closePortMapping(mapping)
 	if client != nil {
 		_ = client.Close()
 	}

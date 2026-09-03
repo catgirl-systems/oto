@@ -929,7 +929,7 @@ func (m model) settingFields() []settingField {
 	case 0:
 		return []settingField{{"Username", m.cfg.Soulseek.Username, settingText}, {"Password", m.cfg.Soulseek.Password, settingSecret}}
 	case 1:
-		return []settingField{{"Server", m.cfg.Soulseek.Server, settingText}, {"Listen address", m.cfg.Soulseek.ListenAddr, settingText}, {"Connect on startup", strconv.FormatBool(m.cfg.Soulseek.ConnectOnStartup), settingBool}}
+		return []settingField{{"Server", m.cfg.Soulseek.Server, settingText}, {"Listen address", m.cfg.Soulseek.ListenAddr, settingText}, {"Connect on startup", strconv.FormatBool(m.cfg.Soulseek.ConnectOnStartup), settingBool}, {"NAT-PMP port forwarding", strconv.FormatBool(m.cfg.Soulseek.NATPMPPortMapping), settingBool}, {"UPnP port forwarding", strconv.FormatBool(m.cfg.Soulseek.UPnPPortMapping), settingBool}}
 	case 2:
 		return []settingField{{"Download path", m.cfg.DownloadDir, settingText}}
 	default:

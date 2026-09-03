@@ -21,11 +21,13 @@ const (
 )
 
 type Soulseek struct {
-	Username         string `json:"username" validate:"required"`
-	Password         string `json:"password" validate:"required"`
-	Server           string `json:"server" validate:"required"`
-	ListenAddr       string `json:"listen_addr" validate:"required"`
-	ConnectOnStartup bool   `json:"connect_on_startup"`
+	Username          string `json:"username" validate:"required"`
+	Password          string `json:"password" validate:"required"`
+	Server            string `json:"server" validate:"required"`
+	ListenAddr        string `json:"listen_addr" validate:"required"`
+	ConnectOnStartup  bool   `json:"connect_on_startup"`
+	NATPMPPortMapping bool   `json:"nat_pmp_port_mapping"`
+	UPnPPortMapping   bool   `json:"upnp_port_mapping"`
 }
 
 type Share struct {
@@ -51,11 +53,13 @@ type Config struct {
 
 type SafeConfig struct {
 	Soulseek struct {
-		Username         string `json:"username"`
-		Password         string `json:"-"`
-		Server           string `json:"server"`
-		ListenAddr       string `json:"listen_addr"`
-		ConnectOnStartup bool   `json:"connect_on_startup"`
+		Username          string `json:"username"`
+		Password          string `json:"-"`
+		Server            string `json:"server"`
+		ListenAddr        string `json:"listen_addr"`
+		ConnectOnStartup  bool   `json:"connect_on_startup"`
+		NATPMPPortMapping bool   `json:"nat_pmp_port_mapping"`
+		UPnPPortMapping   bool   `json:"upnp_port_mapping"`
 	} `json:"soulseek"`
 	Search        Search  `json:"search"`
 	DownloadDir   string  `json:"download_dir"`
@@ -66,12 +70,12 @@ type SafeConfig struct {
 
 func Default() Config {
 	home, _ := os.UserHomeDir()
-	return Config{Soulseek: Soulseek{Server: DefaultServer, ListenAddr: DefaultListenAddr, ConnectOnStartup: true}, Search: Search{RememberSearches: true, SearchHistoryLimit: 200, RememberFilters: true, FilterHistoryLimit: 50}, DownloadDir: filepath.Join(home, DefaultDownloadDir), DownloadSlots: 4, UploadSlots: 2}
+	return Config{Soulseek: Soulseek{Server: DefaultServer, ListenAddr: DefaultListenAddr, ConnectOnStartup: true, NATPMPPortMapping: true, UPnPPortMapping: true}, Search: Search{RememberSearches: true, SearchHistoryLimit: 200, RememberFilters: true, FilterHistoryLimit: 50}, DownloadDir: filepath.Join(home, DefaultDownloadDir), DownloadSlots: 4, UploadSlots: 2}
 }
 
 func (c Config) Redacted() SafeConfig {
 	var out SafeConfig
-	out.Soulseek.Username, out.Soulseek.Password, out.Soulseek.Server, out.Soulseek.ListenAddr, out.Soulseek.ConnectOnStartup = c.Soulseek.Username, "[redacted]", c.Soulseek.Server, c.Soulseek.ListenAddr, c.Soulseek.ConnectOnStartup
+	out.Soulseek.Username, out.Soulseek.Password, out.Soulseek.Server, out.Soulseek.ListenAddr, out.Soulseek.ConnectOnStartup, out.Soulseek.NATPMPPortMapping, out.Soulseek.UPnPPortMapping = c.Soulseek.Username, "[redacted]", c.Soulseek.Server, c.Soulseek.ListenAddr, c.Soulseek.ConnectOnStartup, c.Soulseek.NATPMPPortMapping, c.Soulseek.UPnPPortMapping
 	out.Search, out.DownloadDir, out.Shares, out.DownloadSlots, out.UploadSlots = c.Search, c.DownloadDir, append([]Share(nil), c.Shares...), c.DownloadSlots, c.UploadSlots
 	return out
 }

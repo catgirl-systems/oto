@@ -19,6 +19,7 @@ func testConfig(t *testing.T) config.Config {
 	t.Helper()
 	c := config.Default()
 	c.Soulseek.Username, c.Soulseek.Password = "u", "p"
+	c.Soulseek.NATPMPPortMapping, c.Soulseek.UPnPPortMapping = false, false
 	c.DownloadDir = t.TempDir()
 	return c
 }

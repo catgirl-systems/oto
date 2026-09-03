@@ -807,7 +807,14 @@ func (m *model) key(k tea.KeyPressMsg) tea.Cmd {
 			switch fields[m.cursor].kind {
 			case settingBool:
 				if m.settingsSection == 1 {
-					m.cfg.Soulseek.ConnectOnStartup = !m.cfg.Soulseek.ConnectOnStartup
+					switch m.cursor {
+					case 2:
+						m.cfg.Soulseek.ConnectOnStartup = !m.cfg.Soulseek.ConnectOnStartup
+					case 3:
+						m.cfg.Soulseek.NATPMPPortMapping = !m.cfg.Soulseek.NATPMPPortMapping
+					case 4:
+						m.cfg.Soulseek.UPnPPortMapping = !m.cfg.Soulseek.UPnPPortMapping
+					}
 				} else if m.cursor == 0 {
 					m.cfg.Search.RememberSearches = !m.cfg.Search.RememberSearches
 				} else {
