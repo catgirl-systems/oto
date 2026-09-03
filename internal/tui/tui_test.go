@@ -513,7 +513,7 @@ func TestTransferDirectionTabsProgressAndSpinner(t *testing.T) {
 	if m.cursor != downloadCursor {
 		t.Fatalf("download cursor was not restored: %d", m.cursor)
 	}
-	updated, _ := m.Update(spinnerTickMsg{})
+	updated, _ := m.Update(tickMsg{})
 	if next := updated.(model).renderTransfers(100, 10); !strings.Contains(next, "⠙") {
 		t.Fatalf("spinner did not advance: %q", next)
 	}

@@ -46,7 +46,6 @@ func RunWithTransient(ctx context.Context, client *ipc.Client, configPath string
 }
 
 type tickMsg time.Time
-type spinnerTickMsg time.Time
 type statusMsg struct {
 	snapshot daemon.Snapshot
 	err      error
@@ -90,9 +89,6 @@ type transferActionMsg struct {
 }
 
 func tick() tea.Cmd { return tea.Tick(time.Second, func(t time.Time) tea.Msg { return tickMsg(t) }) }
-func spinnerTick() tea.Cmd {
-	return tea.Tick(120*time.Millisecond, func(t time.Time) tea.Msg { return spinnerTickMsg(t) })
-}
 func (m model) loadStatus() tea.Cmd {
 	return func() tea.Msg { s, e := m.client.Status(m.ctx); return statusMsg{s, e} }
 }
@@ -471,17 +467,15 @@ func (m model) Init() tea.Cmd {
 	if m.setup {
 		return nil
 	}
-	return tea.Batch(m.loadStatus(), m.loadTransfers(), m.loadShares(), tick(), spinnerTick())
+	return tea.Batch(m.loadStatus(), m.loadTransfers(), m.loadShares(), tick())
 }
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch x := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = x.Width, x.Height
 	case tickMsg:
-		return m, tea.Batch(m.loadStatus(), m.loadTransfers(), m.loadShares(), tick())
-	case spinnerTickMsg:
 		m.spinner++
-		return m, spinnerTick()
+		return m, tea.Batch(m.loadStatus(), m.loadTransfers(), m.loadShares(), tick())
 	case statusMsg:
 		if x.err != nil {
 			m.status.err = x.err.Error()
