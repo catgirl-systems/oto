@@ -122,7 +122,7 @@ func TestPageAndBoundaryNavigationAcrossTrees(t *testing.T) {
 		case 0:
 			m.searchTree = tree
 		case 1:
-			m.browseTree = tree
+			m.browseTree, m.browseTabs = tree, []browseTab{{user: "peer"}}
 		case 2:
 			m.transferTrees[0] = tree
 		case 3:
@@ -779,6 +779,63 @@ func TestBrowseResultFolderAndUserTabs(t *testing.T) {
 	m.key(tea.KeyPressMsg(tea.Key{Code: 'w', Mod: tea.ModCtrl}))
 	if len(m.browseTabs) != 1 || m.browseUser != "LittleDeng" {
 		t.Fatalf("ctrl+w did not close active user tab: user=%q tabs=%d", m.browseUser, len(m.browseTabs))
+	}
+}
+
+func TestSavedBrowsePickerAndCacheActions(t *testing.T) {
+	savedAt := time.Date(2026, 3, 13, 12, 30, 0, 0, time.UTC)
+	m := model{
+		workspace:    1,
+		width:        100,
+		height:       20,
+		selected:     map[int]bool{},
+		savedBrowses: []daemon.SavedBrowse{{Username: "alice", SavedAt: savedAt}, {Username: "bob", SavedAt: savedAt}},
+	}
+	view := m.renderBrowse(100, 12)
+	for _, want := range []string{"2 saved users", "SAVED USER", "alice", "bob"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("saved browse picker missing %q: %q", want, view)
+		}
+	}
+	m.key(key("j"))
+	if m.cursor != 1 {
+		t.Fatalf("saved browse cursor = %d", m.cursor)
+	}
+	if cmd := m.key(key("enter")); cmd == nil || m.browseUser != "bob" || len(m.browseTabs) != 1 || !m.loading {
+		t.Fatalf("saved browse did not open: user=%q tabs=%d loading=%v", m.browseUser, len(m.browseTabs), m.loading)
+	}
+
+	request := m.browseTabs[0].request
+	updated, _ := m.Update(browseMsg{user: "bob", request: request, cached: true, savedAt: savedAt, revision: 7})
+	m = updated.(model)
+	view = m.renderBrowse(100, 12)
+	if !m.browseLoaded || !m.browseCached || !strings.Contains(view, "bob (cached)") || !strings.Contains(view, "No shared files") {
+		t.Fatalf("cached empty browse not rendered: %q", view)
+	}
+	if cmd := m.key(key("s")); cmd == nil {
+		t.Fatal("loaded browse could not be saved")
+	}
+	updated, _ = m.Update(saveBrowseMsg{saved: daemon.SavedBrowse{Username: "bob", SavedAt: savedAt.Add(time.Minute)}})
+	m = updated.(model)
+	if !strings.Contains(m.notice, "Saved share list for bob") {
+		t.Fatalf("save notice = %q", m.notice)
+	}
+
+	if cmd := m.key(key("r")); cmd == nil || !m.loading {
+		t.Fatalf("cached browse refresh not started: loading=%v", m.loading)
+	}
+	request = m.browseTabs[0].request
+	updated, _ = m.Update(browseMsg{user: "bob", request: request, revision: 8, entries: []entry{{name: "Music", directory: true}}})
+	m = updated.(model)
+	if m.browseCached || strings.Contains(m.renderBrowse(100, 12), "bob (cached)") {
+		t.Fatal("live refresh kept cached marker")
+	}
+	m.closeBrowseTab()
+	if len(m.browseTabs) != 0 || m.browseUser != "" || !strings.Contains(m.renderBrowse(100, 12), "SAVED USER") {
+		t.Fatal("closing final browse tab did not return to picker")
+	}
+	if cmd := m.key(key("r")); cmd == nil || !m.savedBrowseLoading {
+		t.Fatal("saved browse picker refresh not started")
 	}
 }
 

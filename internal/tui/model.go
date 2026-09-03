@@ -60,8 +60,10 @@ type browseTab struct {
 	entries           []entry
 	cursor            int
 	selected          map[int]bool
-	loading           bool
-	request           uint64
+	loading, loaded   bool
+	cached            bool
+	request, revision uint64
+	savedAt           time.Time
 	tree              treeState
 }
 type transfer struct {
@@ -127,8 +129,13 @@ type model struct {
 	entries                                []entry
 	browseTabs                             []browseTab
 	browseTabIndex                         int
-	browseRequest                          uint64
+	browseRequest, browseRevision          uint64
+	browseLoaded, browseCached             bool
+	browseSavedAt                          time.Time
 	browseTree                             treeState
+	savedBrowses                           []daemon.SavedBrowse
+	savedBrowseCursor                      int
+	savedBrowseLoading                     bool
 	transfers                              []transfer
 	transferSampleAt                       time.Time
 	noticeUntil                            time.Time
@@ -149,6 +156,9 @@ func (m model) rows() int {
 	case 0:
 		return len(m.searchTree.visible)
 	case 1:
+		if len(m.browseTabs) == 0 {
+			return len(m.savedBrowses)
+		}
 		return len(m.browseTree.visible)
 	case 2:
 		return len(m.transferTrees[m.transferTab].visible)
@@ -162,7 +172,7 @@ func (m model) rows() int {
 func (m model) pageRows() int { return max(1, m.height-8) }
 
 func newModel(ctx context.Context, c *ipc.Client, path string, transient bool, cfg config.Config) model {
-	m := model{ctx: ctx, client: c, configPath: path, historyPath: config.HistoryPath(), cfg: cfg, activeSearch: cfg.Search, transient: transient, width: 80, height: 24, selected: map[int]bool{}, setupVals: [5]string{cfg.Soulseek.Username, cfg.Soulseek.Password, cfg.Soulseek.ListenAddr, cfg.DownloadDir, ""}, inputCursor: utf8.RuneCountInString(cfg.Soulseek.Username)}
+	m := model{ctx: ctx, client: c, configPath: path, historyPath: config.HistoryPath(), cfg: cfg, activeSearch: cfg.Search, transient: transient, width: 80, height: 24, selected: map[int]bool{}, setupVals: [5]string{cfg.Soulseek.Username, cfg.Soulseek.Password, cfg.Soulseek.ListenAddr, cfg.DownloadDir, ""}, inputCursor: utf8.RuneCountInString(cfg.Soulseek.Username), savedBrowseLoading: c != nil}
 	m.historyCursor.reset("")
 	return m
 }
@@ -402,7 +412,7 @@ func (m model) helpView() string {
 		{"b (search)", "browse the selected result's user and folder"},
 		{"ctrl+page up/down", "switch search, browse, or transfer tabs"},
 		{"ctrl+w (results)", "close the active search or user tab"},
-		{"s", "save settings; active sessions adopt connection changes"},
+		{"s", "save the active Browse share list or Settings"},
 		{"o", "choose Online, Away, or Offline"},
 		{"? / esc", "open or close this guide"},
 		{"q", "quit"},
@@ -679,6 +689,9 @@ func (m model) browseTabsLine(width int) string {
 	labels := make([]string, len(m.browseTabs))
 	for i, tab := range m.browseTabs {
 		label := tab.user
+		if tab.cached {
+			label += " (cached)"
+		}
 		if tab.loading {
 			label += "…"
 		}
@@ -699,13 +712,38 @@ func (m model) renderBrowse(width, height int) string {
 	} else if m.browseUser != "" {
 		prompt = styled("/  "+m.browseUser, inputStyle)
 	}
-	lines := []string{sectionHeader("BROWSE", countLabel(len(m.entries), "item"), width)}
+	count, singular := len(m.entries), "item"
+	if len(m.browseTabs) == 0 {
+		count, singular = len(m.savedBrowses), "saved user"
+	}
+	lines := []string{sectionHeader("BROWSE", countLabel(count, singular), width)}
 	if tabs := m.browseTabsLine(width); tabs != "" {
 		lines = append(lines, tabs)
 	}
 	lines = append(lines, trunc(prompt, width))
+
+	if len(m.browseTabs) == 0 {
+		if m.savedBrowseLoading && height > len(lines) {
+			return strings.Join(append(lines, muted("◌  Loading saved share lists…")), "\n")
+		}
+		if len(m.savedBrowses) == 0 && height > len(lines) {
+			return strings.Join(append(lines, "\n"+muted("No saved share lists. Enter a Soulseek username to browse.")), "\n")
+		}
+		lines = append(lines, muted("SAVED USER"))
+		limit := max(0, height-len(lines))
+		start, end := visibleRange(len(m.savedBrowses), m.cursor, limit)
+		for i := start; i < end; i++ {
+			saved := m.savedBrowses[i]
+			row := fmt.Sprintf("  %-24s  %s", saved.Username, saved.SavedAt.Local().Format("2006-01-02 15:04"))
+			lines = append(lines, selectedRow(trunc(row, width), i == m.cursor))
+		}
+		return strings.Join(lines, "\n")
+	}
 	if m.loading && height > len(lines) {
 		return strings.Join(append(lines, muted("◌  Loading shared files…")), "\n")
+	}
+	if m.browseLoaded && len(m.entries) == 0 && height > len(lines) {
+		return strings.Join(append(lines, muted("No shared files.")), "\n")
 	}
 	if len(m.entries) == 0 && height > len(lines) {
 		return strings.Join(append(lines, "\n"+muted("Enter a Soulseek username to browse their shared files.")), "\n")
@@ -1052,7 +1090,7 @@ func (m model) footerView() string {
 	case 0:
 		hints = append(hints, "←→ tree", "/ search", "↑↓ history while editing", "ctrl+pgup/down tabs", "ctrl+w close", "f filter", "b browse folder", "i details", "space select", "d download/menu")
 	case 1:
-		hints = append(hints, "←→ tree", "/ user", "ctrl+pgup/down tabs", "ctrl+w close", "r refresh", "i details", "space select", "d download/menu")
+		hints = append(hints, "←→ tree", "/ user", "enter open saved", "ctrl+pgup/down tabs", "ctrl+w close", "r refresh", "s save list", "i details", "space select", "d download/menu")
 	case 2:
 		hints = append(hints, "←→ tree", "ctrl+pgup/down downloads/uploads", "d cancel", "r retry", "c clear")
 	case 3:

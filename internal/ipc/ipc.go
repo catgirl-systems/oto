@@ -102,6 +102,8 @@ func (s *Server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/searches", s.searches)
 	mux.HandleFunc("POST /v1/search", s.search)
 	mux.HandleFunc("GET /v1/browse", s.browse)
+	mux.HandleFunc("GET /v1/browse/saved", s.savedBrowses)
+	mux.HandleFunc("POST /v1/browse/save", s.saveBrowse)
 	mux.HandleFunc("POST /v1/downloads", s.downloads)
 	mux.HandleFunc("POST /v1/folder-downloads", s.folderDownloads)
 	mux.HandleFunc("GET /v1/transfers", s.transfers)
@@ -212,7 +214,32 @@ func (s *Server) search(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, out)
 }
 func (s *Server) browse(w http.ResponseWriter, r *http.Request) {
-	out, err := s.service.Browse(r.Context(), r.URL.Query().Get("user"), r.URL.Query().Get("path"))
+	out, err := s.service.BrowseComplete(r.Context(), r.URL.Query().Get("user"))
+	if err != nil {
+		writeErr(w, 400, err)
+		return
+	}
+	writeJSON(w, 200, out)
+}
+
+func (s *Server) savedBrowses(w http.ResponseWriter, _ *http.Request) {
+	out, err := s.service.SavedBrowses()
+	if err != nil {
+		writeErr(w, 400, err)
+		return
+	}
+	writeJSON(w, 200, out)
+}
+
+func (s *Server) saveBrowse(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Revision uint64 `json:"revision"`
+	}
+	if err := decode(w, r, &req); err != nil {
+		writeErr(w, 400, err)
+		return
+	}
+	out, err := s.service.SaveBrowse(r.URL.Query().Get("user"), req.Revision)
 	if err != nil {
 		writeErr(w, 400, err)
 		return
@@ -391,10 +418,22 @@ func (c *Client) SearchPage(ctx context.Context, id string, cursor int, filter s
 	err := c.Do(ctx, "GET", path, nil, &page)
 	return page, err
 }
-func (c *Client) Browse(ctx context.Context, username string) ([]soulseek.ShareEntry, error) {
-	var entries []soulseek.ShareEntry
-	err := c.do(ctx, "GET", "/v1/browse?user="+url.QueryEscape(username), nil, &entries, MaxBrowseBodySize)
-	return entries, err
+func (c *Client) Browse(ctx context.Context, username string) (daemon.BrowseResult, error) {
+	var result daemon.BrowseResult
+	err := c.do(ctx, "GET", "/v1/browse?user="+url.QueryEscape(username), nil, &result, MaxBrowseBodySize)
+	return result, err
+}
+
+func (c *Client) SavedBrowses(ctx context.Context) ([]daemon.SavedBrowse, error) {
+	var saved []daemon.SavedBrowse
+	err := c.Do(ctx, "GET", "/v1/browse/saved", nil, &saved)
+	return saved, err
+}
+
+func (c *Client) SaveBrowse(ctx context.Context, username string, revision uint64) (daemon.SavedBrowse, error) {
+	var saved daemon.SavedBrowse
+	err := c.Do(ctx, "POST", "/v1/browse/save?user="+url.QueryEscape(username), map[string]uint64{"revision": revision}, &saved)
+	return saved, err
 }
 func (c *Client) QueueDownloads(ctx context.Context, r []daemon.DownloadRequest) ([]daemon.Download, error) {
 	var x []daemon.Download

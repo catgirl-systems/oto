@@ -44,7 +44,7 @@ For dynamically forwarded incoming ports, `--listen-port-file` watches the file'
 | `ctrl+backspace` / `ctrl+delete` | delete by word (`ctrl+w`, `alt+backspace`, and `alt+delete` also work) |
 | `ctrl+a` / `ctrl+e`, `ctrl+u` / `ctrl+k` | jump to start/end; delete before/after the caret |
 | `/` | edit search, username, `name:path` share, or setting |
-| `enter` | toggle a folder; download a Search/Browse file |
+| `enter` | open a saved Browse user; toggle a folder; download a Search/Browse file |
 | `f` | edit cached search filters |
 | `tab` / `shift+tab` while filtering | complete fields, types, booleans, and comparison operators |
 | `c` | clear/restore search filters or clear the selected transfer subtree |
@@ -54,15 +54,17 @@ For dynamically forwarded incoming ports, `--listen-port-file` watches the file'
 | `ctrl+page up` / `ctrl+page down` in Search, Browse, or Transfers | switch result tabs or Downloads/Uploads |
 | `ctrl+w` in Search or Browse | close the active result tab |
 | `d` | download selected files; choose folder-only or recursive download on a folder; cancel a transfer subtree; or remove a share root |
-| `r` | refresh a user browse, retry a transfer subtree, or rescan shares |
+| `r` | refresh a user browse or saved-user list, retry a transfer subtree, or rescan shares |
 | `o` | choose Online, Away, or Offline without quitting |
-| `s` | save settings; live session changes reconnect only when not Offline |
+| `s` | explicitly save the active remote share list, or save Settings |
 | `?` | keyboard guide |
 | `q` | quit |
 
 Set `NO_COLOR=1` to suppress terminal styling.
 
 Search groups results as user → folders → files; Browse shows remote folders; Transfers groups each direction as user → folders → files; Shares lazily shows the daemon's scanned public-share index. Expansion and selection are session-local. Selection-based Search/Browse actions include only currently loaded files; using `d` on a folder can request that complete remote folder recursively without fetching the user's full share list.
+
+Press `s` in a loaded Browse tab to save that user's complete share list. With no Browse tabs open, saved users are listed for selection with the arrow keys and Enter. Opening remains network-first while connected, but falls back to the saved list when offline or when the peer cannot be reached; cached tabs are labeled `(cached)`, and `r` retries the live list.
 
 Searches support quoted phrases, excluded words (`-remix`), and partial terms (`*radio`). Filter cached results without another network search using fields such as:
 
@@ -86,6 +88,7 @@ Default locations follow XDG:
 - config: `${XDG_CONFIG_HOME:-~/.config}/oto/config.json`;
 - state and incomplete downloads: `${XDG_STATE_HOME:-~/.local/state}/oto/`;
 - search and filter history: `${XDG_STATE_HOME:-~/.local/state}/oto/history.json`;
+- explicitly saved remote share lists: `${XDG_STATE_HOME:-~/.local/state}/oto/usershares/`;
 - socket: `${XDG_RUNTIME_DIR:-/tmp/oto-$UID}/oto/oto.sock`;
 - downloads: `~/Downloads/oto`.
 
@@ -179,8 +182,8 @@ This tracks user-visible Soulseek functionality and meaningful operational quali
 | Download a loaded folder subtree | :white_check_mark: | :white_check_mark: |
 | Request and download a complete remote folder recursively | :white_check_mark: | :white_check_mark: |
 | Choose a different download destination interactively | :x: | :white_check_mark: |
-| Save a remote share list to disk | :x: | :white_check_mark: |
-| Reopen a saved share list, including while offline | :x: | :white_check_mark: |
+| Save a remote share list to disk | :white_check_mark: | :white_check_mark: |
+| Reopen a saved share list, including while offline | :white_check_mark: | :white_check_mark: |
 | Show progress while retrieving large share lists | :x: | :white_check_mark: |
 | View detailed file properties and media metadata | :white_check_mark: | :white_check_mark: |
 

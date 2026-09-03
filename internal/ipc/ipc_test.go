@@ -99,6 +99,27 @@ func TestStatusMethodsBodyAndSocketMode(t *testing.T) {
 	if _, err := cl.BrowseShares(context.Background(), "Music/../outside"); err == nil {
 		t.Fatal("share traversal route accepted")
 	}
+	cachePath := filepath.Join(filepath.Dir(journalPath), "usershares", "cGVlcg.json")
+	if err := config.SaveJSON(cachePath, map[string]any{
+		"version": 1, "username": "peer", "saved_at": time.Now().UTC(),
+		"entries": []map[string]any{{"Name": `Music\cached.flac`, "Size": 42}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	savedBrowses, err := cl.SavedBrowses(context.Background())
+	if err != nil || len(savedBrowses) != 1 || savedBrowses[0].Username != "peer" {
+		t.Fatalf("saved browse list: %+v %v", savedBrowses, err)
+	}
+	browse, err := cl.Browse(context.Background(), "peer")
+	if err != nil || !browse.Cached || browse.Revision == 0 || len(browse.Entries) != 1 || browse.Entries[0].Name != `Music\cached.flac` {
+		t.Fatalf("cached browse route: %+v %v", browse, err)
+	}
+	if _, err := cl.SaveBrowse(context.Background(), "peer", browse.Revision); err != nil {
+		t.Fatalf("save browse route: %v", err)
+	}
+	if _, err := cl.SaveBrowse(context.Background(), "peer", browse.Revision+1); err == nil {
+		t.Fatal("save browse route accepted stale revision")
+	}
 	resp, err := cl.http.Do(mustRequest("POST", "http://oto.local/v1/search", strings.NewReader(`{"query":"song","filter":"wat:true"}`)))
 	if err != nil {
 		t.Fatal(err)
@@ -232,12 +253,12 @@ func TestFolderDownloadClient(t *testing.T) {
 
 func TestBrowseClientAcceptsLargeShareLists(t *testing.T) {
 	name := strings.Repeat("x", int(MaxBodySize)+1024)
-	payload := `[{"Name":"` + name + `"}]`
+	payload := `{"entries":[{"Name":"` + name + `"}],"revision":1}`
 	client := &Client{http: &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
 		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(payload)), Header: make(http.Header)}, nil
 	})}}
-	entries, err := client.Browse(context.Background(), "peer")
-	if err != nil || len(entries) != 1 || entries[0].Name != name {
-		t.Fatalf("large browse response: entries=%d err=%v", len(entries), err)
+	result, err := client.Browse(context.Background(), "peer")
+	if err != nil || len(result.Entries) != 1 || result.Entries[0].Name != name {
+		t.Fatalf("large browse response: entries=%d err=%v", len(result.Entries), err)
 	}
 }

@@ -163,6 +163,10 @@ type Service struct {
 	portMapOpen          portMappingOpener
 	journal              Journal
 	searches             map[string]Search
+	browses              map[string]loadedBrowse
+	fullBrowse           fullBrowseFunc
+	browseSeq            uint64
+	remoteSharesDir      string
 	transfers            map[string]Transfer
 	downloadSlots        chan struct{}
 	downloadCancels      map[string]context.CancelFunc
@@ -194,10 +198,13 @@ func New(cfg config.Config, path string) (*Service, error) {
 	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
-	s := &Service{cfg: cfg, configPath: config.ConfigPath(), shares: soulseek.NewShareIndex(), searches: make(map[string]Search), transfers: make(map[string]Transfer), downloadSlots: make(chan struct{}, cfg.DownloadSlots), downloadCancels: make(map[string]context.CancelFunc), downloadPeers: make(map[string]chan struct{}), shareIndexBuilder: buildShareIndex, shareRescanDelay: DefaultShareRescanDelay, listenPortInterval: DefaultListenPortReconcileInterval, portMapOpen: func(ctx context.Context, port uint16, natPMP, upnp bool, changed func(uint16)) (portMapping, error) {
+	s := &Service{cfg: cfg, configPath: config.ConfigPath(), shares: soulseek.NewShareIndex(), searches: make(map[string]Search), browses: make(map[string]loadedBrowse), fullBrowse: func(ctx context.Context, client *soulseek.Client, username string) ([]soulseek.ShareEntry, error) {
+		return client.BrowseUser(ctx, username, "")
+	}, transfers: make(map[string]Transfer), downloadSlots: make(chan struct{}, cfg.DownloadSlots), downloadCancels: make(map[string]context.CancelFunc), downloadPeers: make(map[string]chan struct{}), shareIndexBuilder: buildShareIndex, shareRescanDelay: DefaultShareRescanDelay, listenPortInterval: DefaultListenPortReconcileInterval, portMapOpen: func(ctx context.Context, port uint16, natPMP, upnp bool, changed func(uint16)) (portMapping, error) {
 		return portmap.Open(ctx, port, natPMP, upnp, changed)
 	}, reconnectWake: make(chan struct{}, 1), status: StatusStopped, presence: PresenceOffline, journalPath: path}
 	s.shareIndexPath = filepath.Join(filepath.Dir(path), "shares.json")
+	s.remoteSharesDir = filepath.Join(filepath.Dir(path), "usershares")
 	if b, err := os.ReadFile(path); err == nil {
 		if err := json.Unmarshal(b, &s.journal); err != nil {
 			return nil, fmt.Errorf("daemon: load journal: %w", err)

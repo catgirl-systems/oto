@@ -64,10 +64,23 @@ type searchMsg struct {
 	err          error
 }
 type browseMsg struct {
-	user    string
-	request uint64
-	entries []entry
-	err     error
+	user     string
+	request  uint64
+	entries  []entry
+	cached   bool
+	savedAt  time.Time
+	revision uint64
+	err      error
+}
+type savedBrowsesMsg struct {
+	saved []daemon.SavedBrowse
+	err   error
+}
+type saveBrowseMsg struct {
+	user     string
+	revision uint64
+	saved    daemon.SavedBrowse
+	err      error
 }
 type folderDownloadMsg struct{ err error }
 type transferMsg struct {
@@ -302,9 +315,36 @@ func applySearchMsg(tab *searchTab, message searchMsg) {
 }
 func (m model) browse(user string, request uint64) tea.Cmd {
 	return func() tea.Msg {
-		x, err := m.client.Browse(m.ctx, user)
-		return browseMsg{user: user, request: request, entries: toEntries(x), err: err}
+		result, err := m.client.Browse(m.ctx, user)
+		return browseMsg{user: user, request: request, entries: toEntries(result.Entries), cached: result.Cached, savedAt: result.SavedAt, revision: result.Revision, err: err}
 	}
+}
+
+func (m model) loadSavedBrowses() tea.Cmd {
+	return func() tea.Msg {
+		saved, err := m.client.SavedBrowses(m.ctx)
+		return savedBrowsesMsg{saved: saved, err: err}
+	}
+}
+
+func (m model) saveBrowse() tea.Cmd {
+	user, revision := m.browseUser, m.browseRevision
+	return func() tea.Msg {
+		saved, err := m.client.SaveBrowse(m.ctx, user, revision)
+		return saveBrowseMsg{user: user, revision: revision, saved: saved, err: err}
+	}
+}
+
+func (m *model) upsertSavedBrowse(saved daemon.SavedBrowse) {
+	for i := range m.savedBrowses {
+		if strings.EqualFold(m.savedBrowses[i].Username, saved.Username) {
+			m.savedBrowses[i] = saved
+			sort.Slice(m.savedBrowses, func(i, j int) bool { return m.savedBrowses[i].Username < m.savedBrowses[j].Username })
+			return
+		}
+	}
+	m.savedBrowses = append(m.savedBrowses, saved)
+	sort.Slice(m.savedBrowses, func(i, j int) bool { return m.savedBrowses[i].Username < m.savedBrowses[j].Username })
 }
 
 func normalizeBrowsePath(path string) string {
@@ -336,11 +376,14 @@ func (m *model) saveBrowseTab() {
 	}
 	tab := &m.browseTabs[m.browseTabIndex]
 	tab.entries, tab.cursor, tab.selected, tab.loading, tab.tree = m.entries, m.cursor, m.selected, m.loading, m.browseTree
+	tab.loaded, tab.cached, tab.revision, tab.savedAt = m.browseLoaded, m.browseCached, m.browseRevision, m.browseSavedAt
 }
 
 func (m *model) loadBrowseTab(index int) {
 	if index < 0 || index >= len(m.browseTabs) {
-		m.browseUser, m.entries, m.cursor, m.loading = "", nil, 0, false
+		m.browseTabIndex = -1
+		m.browseUser, m.entries, m.cursor, m.loading = "", nil, max(0, min(m.savedBrowseCursor, len(m.savedBrowses)-1)), false
+		m.browseLoaded, m.browseCached, m.browseRevision, m.browseSavedAt = false, false, 0, time.Time{}
 		m.selected, m.err = map[int]bool{}, ""
 		m.browseTree = treeState{}
 		return
@@ -351,6 +394,7 @@ func (m *model) loadBrowseTab(index int) {
 		tab.selected = map[int]bool{}
 	}
 	m.browseUser, m.entries, m.cursor, m.selected, m.loading, m.browseTree = tab.user, tab.entries, tab.cursor, tab.selected, tab.loading, tab.tree
+	m.browseLoaded, m.browseCached, m.browseRevision, m.browseSavedAt = tab.loaded, tab.cached, tab.revision, tab.savedAt
 	m.err = tab.err
 }
 
@@ -358,7 +402,11 @@ func (m *model) switchWorkspace(workspace int) {
 	if m.workspace == 0 {
 		m.saveSearchTab()
 	} else if m.workspace == 1 {
-		m.saveBrowseTab()
+		if len(m.browseTabs) > 0 {
+			m.saveBrowseTab()
+		} else {
+			m.savedBrowseCursor = m.cursor
+		}
 	} else if m.workspace == 2 {
 		m.transferCursors[m.transferTab] = m.cursor
 	} else if m.workspace == 3 {
@@ -464,7 +512,7 @@ func (m *model) openBrowse(user, target string, refresh bool) tea.Cmd {
 	}
 	tab := &m.browseTabs[index]
 	tab.target = normalizeBrowsePath(target)
-	request := refresh || (len(tab.entries) == 0 && !tab.loading)
+	request := refresh || (!tab.loaded && !tab.loading)
 	if request {
 		m.browseRequest++
 		tab.request, tab.loading = m.browseRequest, true
@@ -499,7 +547,7 @@ func (m model) Init() tea.Cmd {
 	if m.setup {
 		return nil
 	}
-	return tea.Batch(m.loadStatus(), m.loadTransfers(), m.loadShares(), tick())
+	return tea.Batch(m.loadStatus(), m.loadTransfers(), m.loadShares(), m.loadSavedBrowses(), tick())
 }
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch x := msg.(type) {
@@ -585,6 +633,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if x.err == nil {
 				target := browseTargetCursor(x.entries, tab.target)
 				tab.entries, tab.selected = x.entries, map[int]bool{}
+				tab.loaded, tab.cached, tab.revision, tab.savedAt = true, x.cached, x.revision, x.savedAt
 				tab.tree, tab.cursor = buildBrowseTree(tab.entries, tab.tree, tab.cursor)
 				if tab.target != "" {
 					tab.cursor = tab.tree.cursorForSource(target)
@@ -593,8 +642,37 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			tab.target = ""
 			if m.workspace == 1 && i == m.browseTabIndex {
 				m.loadBrowseTab(i)
+				if x.err == nil && x.cached {
+					m.setNotice("Showing saved share list; press r to retry")
+				}
 			}
 			break
+		}
+	case savedBrowsesMsg:
+		m.savedBrowseLoading = false
+		m.err = errText(x.err)
+		if x.err == nil {
+			m.savedBrowses = x.saved
+			m.savedBrowseCursor = max(0, min(m.savedBrowseCursor, len(m.savedBrowses)-1))
+			if m.workspace == 1 && len(m.browseTabs) == 0 {
+				m.cursor = m.savedBrowseCursor
+			}
+		}
+	case saveBrowseMsg:
+		m.err = errText(x.err)
+		if x.err == nil {
+			m.upsertSavedBrowse(x.saved)
+			for i := range m.browseTabs {
+				tab := &m.browseTabs[i]
+				if strings.EqualFold(tab.user, x.user) && tab.revision == x.revision {
+					tab.savedAt = x.saved.SavedAt
+					if m.workspace == 1 && i == m.browseTabIndex {
+						m.browseSavedAt = x.saved.SavedAt
+					}
+					break
+				}
+			}
+			m.setNotice("Saved share list for " + x.saved.Username)
 		}
 	case folderDownloadMsg:
 		m.err = errText(x.err)
@@ -843,6 +921,12 @@ func (m *model) key(k tea.KeyPressMsg) tea.Cmd {
 	case "space":
 		m.toggle()
 	case "enter":
+		if m.workspace == 1 && len(m.browseTabs) == 0 {
+			if m.cursor >= 0 && m.cursor < len(m.savedBrowses) {
+				return m.openBrowse(m.savedBrowses[m.cursor].Username, "", false)
+			}
+			return nil
+		}
 		if m.workspace == 4 {
 			fields := m.settingFields()
 			if m.cursor >= len(fields) {
@@ -912,8 +996,12 @@ func (m *model) key(k tea.KeyPressMsg) tea.Cmd {
 			return m.removeShare()
 		}
 	case "r":
-		if m.workspace == 1 && m.browseUser != "" {
-			return m.openBrowse(m.browseUser, "", true)
+		if m.workspace == 1 {
+			if m.browseUser != "" {
+				return m.openBrowse(m.browseUser, "", true)
+			}
+			m.savedBrowseCursor, m.savedBrowseLoading = m.cursor, true
+			return m.loadSavedBrowses()
 		}
 		if m.workspace == 2 {
 			return m.action("retry")
@@ -938,6 +1026,9 @@ func (m *model) key(k tea.KeyPressMsg) tea.Cmd {
 			return m.action("clear")
 		}
 	case "s":
+		if m.workspace == 1 && m.browseLoaded && !m.loading && m.browseRevision != 0 {
+			return m.saveBrowse()
+		}
 		if m.workspace == 4 {
 			return m.saveSettings()
 		}
@@ -1309,6 +1400,9 @@ func filterCompletionHint(input string) string {
 	}
 }
 func (m *model) enter() tea.Cmd {
+	if m.workspace == 1 && len(m.browseTabs) == 0 {
+		return nil
+	}
 	tree := m.currentTree()
 	if tree == nil {
 		return nil
