@@ -837,10 +837,32 @@ func (s *Service) Rescan() error {
 	}
 	return nil
 }
+
+func hotConfigUpdate(old, next config.Config) bool {
+	return old.Soulseek == next.Soulseek &&
+		slices.Equal(old.Shares, next.Shares) &&
+		old.DownloadSlots == next.DownloadSlots &&
+		old.UploadSlots == next.UploadSlots
+}
+
 func (s *Service) UpdateConfig(c config.Config) error {
 	if err := c.Validate(); err != nil {
 		return err
 	}
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return ErrClosed
+	}
+	if hotConfigUpdate(s.cfg, c) {
+		err := c.Save(s.configPath)
+		if err == nil {
+			s.cfg = c
+		}
+		s.mu.Unlock()
+		return err
+	}
+	s.mu.Unlock()
 	s.mu.RLock()
 	if s.closed {
 		s.mu.RUnlock()

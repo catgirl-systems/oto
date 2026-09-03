@@ -211,3 +211,40 @@ func TestSearchResultsSortPrivateLast(t *testing.T) {
 		t.Fatalf("search order: %+v", results)
 	}
 }
+
+func TestUpdateConfigHotAppliesSearchAndDownload(t *testing.T) {
+	cfg := testConfig(t)
+	s, err := New(cfg, filepath.Join(t.TempDir(), "downloads.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	s.SetConfigPath(configPath)
+
+	builderCalled := false
+	s.shareIndexBuilder = func(context.Context, []config.Share) (*soulseek.ShareIndex, error) {
+		builderCalled = true
+		return nil, fmt.Errorf("share builder called")
+	}
+	next := cfg
+	next.DownloadDir = t.TempDir()
+	next.Search.RememberFilters = false
+	next.Search.SearchHistoryLimit = 0
+	if err := s.UpdateConfig(next); err != nil {
+		t.Fatalf("hot update: %v", err)
+	}
+	if builderCalled || s.cfg.DownloadDir != next.DownloadDir || s.cfg.Search != next.Search {
+		t.Fatalf("hot update rebuilt or was not adopted: called=%v cfg=%+v", builderCalled, s.cfg)
+	}
+	loaded, err := config.Load(configPath)
+	if err != nil || loaded.Search != next.Search || loaded.DownloadDir != next.DownloadDir {
+		t.Fatalf("saved hot update: %+v %v", loaded, err)
+	}
+
+	connectionChange := next
+	connectionChange.Soulseek.Server = "example.com:2242"
+	if err := s.UpdateConfig(connectionChange); err == nil || !builderCalled {
+		t.Fatalf("session update bypassed existing full path: called=%v err=%v", builderCalled, err)
+	}
+}
