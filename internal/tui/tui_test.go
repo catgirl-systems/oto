@@ -366,6 +366,11 @@ func TestSearchFilterEditingAndMetadata(t *testing.T) {
 	if m.input != "type:!audio" {
 		t.Fatalf("excluded type completion = %q", m.input)
 	}
+	m.input = "cou"
+	m.editKey(key("tab"))
+	if m.input != "country:" {
+		t.Fatalf("country completion = %q", m.input)
+	}
 	m.input = "free:"
 	m.editKey(key("tab"))
 	if m.input != "free:true" {
@@ -430,9 +435,9 @@ func TestSearchFilterEditingAndMetadata(t *testing.T) {
 	if wide := m.renderSearch(140, 10); !strings.Contains(wide, "USER") {
 		t.Fatalf("wide search columns missing user: %q", wide)
 	}
-	updated, _ := m.Update(searchMsg{append: true, page: daemon.SearchPage{ID: "s", Results: []daemon.SearchResult{{Path: "next.flac", Public: true}}, Total: 2, FoundTotal: 4}})
+	updated, _ := m.Update(searchMsg{append: true, page: daemon.SearchPage{ID: "s", Results: []daemon.SearchResult{{Path: "next.flac", CountryCode: "CA", Public: true}}, Total: 2, FoundTotal: 4}})
 	m = updated.(model)
-	if len(m.results) != 2 || m.searchTotal != 2 || m.searchFound != 4 {
+	if len(m.results) != 2 || m.results[1].country != "CA" || m.searchTotal != 2 || m.searchFound != 4 {
 		t.Fatal("filtered page was not appended with its totals")
 	}
 }
@@ -600,14 +605,14 @@ func TestTransferDirectionTabsProgressAndSpinner(t *testing.T) {
 func TestFileDetails(t *testing.T) {
 	t.Setenv("NO_COLOR", "1")
 	m := model{workspace: 0, width: 100, height: 30, selected: map[int]bool{}, results: []result{{
-		user: "alice", path: `Music\song.flac`, extension: "flac", size: 1536, free: true,
+		user: "alice", path: `Music\song.flac`, extension: "flac", country: "US", size: 1536, free: true,
 		bitrate: 320, duration: 125, vbr: true, sampleRate: 44100, bitDepth: 24, public: true,
 	}}}
 	m.searchTree, m.cursor = buildSearchTree(m.results, treeState{}, 0)
 	m.cursor = m.searchTree.cursorForSource(0)
 	m.key(key("i"))
 	view := m.View().Content
-	for _, want := range []string{"File details", `Music\song.flac`, "alice", "1.5 KiB", "public", "flac", "320 kbps VBR", "2:05", "44100 Hz", "24-bit", "free slot"} {
+	for _, want := range []string{"File details", `Music\song.flac`, "alice", "Country       US", "1.5 KiB", "public", "flac", "320 kbps VBR", "2:05", "44100 Hz", "24-bit", "free slot"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("file details missing %q: %q", want, view)
 		}
@@ -627,6 +632,9 @@ func TestFileDetails(t *testing.T) {
 		if !strings.Contains(view, want) {
 			t.Fatalf("browse details missing %q: %q", want, view)
 		}
+	}
+	if strings.Contains(view, "Country") {
+		t.Fatalf("unknown country was shown: %q", view)
 	}
 }
 

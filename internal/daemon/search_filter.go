@@ -23,11 +23,12 @@ type numberCondition struct {
 }
 
 type searchFilter struct {
-	include, exclude        []*regexp.Regexp
-	includeTypes, denyTypes []string
-	sizes, bitrates         []numberCondition
-	durations               []numberCondition
-	free, public            *bool
+	include, exclude                []*regexp.Regexp
+	includeTypes, denyTypes         []string
+	includeCountries, denyCountries []string
+	sizes, bitrates                 []numberCondition
+	durations                       []numberCondition
+	free, public                    *bool
 }
 
 var fileTypeCategories = map[string]map[string]bool{
@@ -82,6 +83,20 @@ func parseSearchFilter(expression string) (searchFilter, error) {
 					filter.denyTypes = append(filter.denyTypes, item)
 				} else {
 					filter.includeTypes = append(filter.includeTypes, item)
+				}
+			}
+		case "country":
+			for _, item := range strings.Split(value, ",") {
+				item = strings.ToUpper(strings.TrimSpace(item))
+				denied := strings.HasPrefix(item, "!")
+				item = strings.TrimPrefix(item, "!")
+				if !validCountryCode(item) {
+					return filter, invalidFilter("invalid country code %q", item)
+				}
+				if denied {
+					filter.denyCountries = append(filter.denyCountries, item)
+				} else {
+					filter.includeCountries = append(filter.includeCountries, item)
 				}
 			}
 		case "size":
@@ -225,6 +240,13 @@ func (filter searchFilter) matches(result SearchResult) bool {
 	if matchesAnyType(extension, filter.denyTypes) {
 		return false
 	}
+	countryCode := strings.ToUpper(result.CountryCode)
+	if len(filter.includeCountries) > 0 && !contains(filter.includeCountries, countryCode) {
+		return false
+	}
+	if contains(filter.denyCountries, countryCode) {
+		return false
+	}
 	if !matchesConditions(result.Size, filter.sizes) || !matchesConditions(uint64(result.Bitrate), filter.bitrates) || !matchesConditions(uint64(result.Duration), filter.durations) {
 		return false
 	}
@@ -237,6 +259,15 @@ func (filter searchFilter) matches(result SearchResult) bool {
 func matchesAnyType(extension string, types []string) bool {
 	for _, value := range types {
 		if extension == value || fileTypeCategories[value][extension] {
+			return true
+		}
+	}
+	return false
+}
+
+func contains(values []string, target string) bool {
+	for _, value := range values {
+		if value == target {
 			return true
 		}
 	}
@@ -265,6 +296,10 @@ func matchesConditions(value uint64, conditions []numberCondition) bool {
 		}
 	}
 	return true
+}
+
+func validCountryCode(value string) bool {
+	return len(value) == 2 && value[0] >= 'A' && value[0] <= 'Z' && value[1] >= 'A' && value[1] <= 'Z'
 }
 
 func validExtension(value string) bool {

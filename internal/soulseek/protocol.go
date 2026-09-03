@@ -459,6 +459,7 @@ type SearchResult struct {
 	Username    string `json:"username,omitempty"`
 	Path        string `json:"path"`
 	Extension   string `json:"extension,omitempty"`
+	CountryCode string `json:"country_code,omitempty"`
 	Size        uint64 `json:"size"`
 	IsDirectory bool   `json:"directory,omitempty"`
 	SlotFree    bool   `json:"slot_free,omitempty"`

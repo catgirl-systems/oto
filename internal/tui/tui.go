@@ -1118,7 +1118,7 @@ func (m *model) editKey(k tea.KeyPressMsg) tea.Cmd {
 	return nil
 }
 
-var filterFields = []string{"in:", "out:", "type:", "size:", "bitrate:", "duration:", "free:", "public:"}
+var filterFields = []string{"in:", "out:", "type:", "country:", "size:", "bitrate:", "duration:", "free:", "public:"}
 var filterTypes = []string{"audio", "video", "image", "document", "text", "archive", "executable"}
 var filterComparisons = []string{">=", "<=", "=", "==", "!=", ">", "<"}
 

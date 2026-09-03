@@ -14,6 +14,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/catgirl-systems/oto/internal/country"
 )
 
 type ClientConfig struct {
@@ -939,6 +941,14 @@ func (c *Client) servePeer(p net.Conn) {
 	}
 }
 
+func countryCodeForAddress(addr net.Addr) string {
+	tcpAddr, ok := addr.(*net.TCPAddr)
+	if !ok {
+		return ""
+	}
+	return country.Lookup(tcpAddr.AddrPort().Addr())
+}
+
 func (c *Client) serveMessagePeer(peer net.Conn, peerInfo PeerInitMessage) {
 	for {
 		command, payload, err := ReadFrame(peer)
@@ -965,6 +975,10 @@ func (c *Client) serveMessagePeer(peer net.Conn, peerInfo PeerInitMessage) {
 		case PeerSearch:
 			response, err := DecodeSearchResponse(payload)
 			if err == nil {
+				countryCode := countryCodeForAddress(peer.RemoteAddr())
+				for index := range response.Results {
+					response.Results[index].CountryCode = countryCode
+				}
 				c.route(command, response)
 			}
 		case PeerTransferRequest:

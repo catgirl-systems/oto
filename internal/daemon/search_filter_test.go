@@ -6,7 +6,7 @@ import (
 )
 
 func TestSearchFilterParsingAndMatching(t *testing.T) {
-	result := SearchResult{Username: "Alice", Path: `Music\Live Radio Session.flac`, Extension: "flac", Size: 25 << 20, Bitrate: 320, Duration: 185, SlotFree: true, Public: true}
+	result := SearchResult{Username: "Alice", Path: `Music\Live Radio Session.flac`, Extension: "flac", CountryCode: "US", Size: 25 << 20, Bitrate: 320, Duration: 185, SlotFree: true, Public: true}
 	tests := []struct {
 		expression string
 		match      bool
@@ -16,6 +16,12 @@ func TestSearchFilterParsingAndMatching(t *testing.T) {
 		{`out:radio`, false},
 		{`type:audio,!mp3`, true},
 		{`type:video,mp3`, false},
+		{`country:us`, true},
+		{`country:CA,US`, true},
+		{`country:CA,!GB`, false},
+		{`country:US,!GB`, true},
+		{`country:!US,!DE`, false},
+		{`country:!GB,!DE`, true},
 		{`size:>20MiB size:<=25MiB`, true},
 		{`size:>=26MB`, true},
 		{`size:<25000000B`, false},
@@ -40,6 +46,14 @@ func TestSearchFilterParsingAndMatching(t *testing.T) {
 	filter, _ := parseSearchFilter(`bitrate:!0 duration:>0`)
 	if filter.matches(unknown) {
 		t.Fatal("missing media attributes matched non-zero filters")
+	}
+
+	unknownCountry := result
+	unknownCountry.CountryCode = ""
+	included, _ := parseSearchFilter(`country:US`)
+	excluded, _ := parseSearchFilter(`country:!GB`)
+	if included.matches(unknownCountry) || !excluded.matches(unknownCountry) {
+		t.Fatal("unknown country did not follow include/exclude semantics")
 	}
 }
 
@@ -72,7 +86,7 @@ func TestSearchFilterValuesAndErrors(t *testing.T) {
 			t.Errorf("category %q did not match %q: %v", category, extension, err)
 		}
 	}
-	for _, expression := range []string{`wat:true`, `in:[`, `type:audio,!`, `size:12XB`, `duration:1:60`, `free:maybe`, `in:"open`} {
+	for _, expression := range []string{`wat:true`, `in:[`, `type:audio,!`, `country:`, `country:U`, `country:USA`, `country:US,`, `country:U1`, `country:!!US`, `size:12XB`, `duration:1:60`, `free:maybe`, `in:"open`} {
 		if _, err := parseSearchFilter(expression); !errors.Is(err, ErrInvalidFilter) {
 			t.Errorf("parseSearchFilter(%q) error = %v", expression, err)
 		}

@@ -15,6 +15,13 @@ import (
 	"time"
 )
 
+type remoteAddressConn struct {
+	net.Conn
+	remote net.Addr
+}
+
+func (c remoteAddressConn) RemoteAddr() net.Addr { return c.remote }
+
 func TestCodecMalformedAndCompressionLimit(t *testing.T) {
 	var e Encoder
 	if err := e.String("héllo"); err != nil {
@@ -165,6 +172,38 @@ func TestProtocolFixture(t *testing.T) {
 	}
 	if private.Public || private.Path != "Secret/b.flac" || !private.SlotFree || private.QueueLength != 3 {
 		t.Fatalf("private search result: %+v", private)
+	}
+}
+
+func TestSearchResponseCountry(t *testing.T) {
+	client := NewClient(ClientConfig{})
+	responses := make(chan SearchResponse, 1)
+	client.pending[7] = responses
+
+	reader, writer := net.Pipe()
+	peer := remoteAddressConn{Conn: reader, remote: &net.TCPAddr{IP: net.ParseIP("1.0.0.1"), Port: 1234}}
+	done := make(chan struct{})
+	go func() {
+		client.serveMessagePeer(peer, PeerInitMessage{Username: "peer", Type: "P"})
+		close(done)
+	}()
+
+	message, err := EncodeMessage(SearchResponse{Token: 7, Username: "peer", Results: []SearchResult{{Path: "song.flac"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := writer.Write(message); err != nil {
+		t.Fatal(err)
+	}
+	_ = writer.Close()
+	<-done
+
+	response := <-responses
+	if got := response.Results[0].CountryCode; got != "AU" {
+		t.Fatalf("country code = %q, want AU", got)
+	}
+	if got := countryCodeForAddress(&net.IPAddr{IP: net.ParseIP("1.0.0.1")}); got != "" {
+		t.Fatalf("non-TCP address country = %q", got)
 	}
 }
 

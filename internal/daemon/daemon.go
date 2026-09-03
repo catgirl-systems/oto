@@ -59,20 +59,21 @@ type Snapshot struct {
 }
 
 type SearchResult struct {
-	Username   string `json:"username"`
-	Path       string `json:"path"`
-	Extension  string `json:"extension,omitempty"`
-	Size       uint64 `json:"size"`
-	Directory  bool   `json:"directory"`
-	SlotFree   bool   `json:"slot_free"`
-	Speed      uint32 `json:"speed"`
-	Queue      uint32 `json:"queue"`
-	Bitrate    uint32 `json:"bitrate,omitempty"`
-	Duration   uint32 `json:"duration,omitempty"`
-	VBR        bool   `json:"vbr,omitempty"`
-	SampleRate uint32 `json:"sample_rate,omitempty"`
-	BitDepth   uint32 `json:"bit_depth,omitempty"`
-	Public     bool   `json:"public"`
+	Username    string `json:"username"`
+	Path        string `json:"path"`
+	Extension   string `json:"extension,omitempty"`
+	CountryCode string `json:"country_code,omitempty"`
+	Size        uint64 `json:"size"`
+	Directory   bool   `json:"directory"`
+	SlotFree    bool   `json:"slot_free"`
+	Speed       uint32 `json:"speed"`
+	Queue       uint32 `json:"queue"`
+	Bitrate     uint32 `json:"bitrate,omitempty"`
+	Duration    uint32 `json:"duration,omitempty"`
+	VBR         bool   `json:"vbr,omitempty"`
+	SampleRate  uint32 `json:"sample_rate,omitempty"`
+	BitDepth    uint32 `json:"bit_depth,omitempty"`
+	Public      bool   `json:"public"`
 }
 type Search struct {
 	ID      string
@@ -624,7 +625,7 @@ func (s *Service) Search(ctx context.Context, query, expression string) (SearchP
 	}
 	out := make([]SearchResult, 0, len(r))
 	for _, x := range r {
-		out = append(out, SearchResult{Username: x.Username, Path: x.Path, Extension: x.Extension, Size: x.Size, Directory: x.IsDirectory, SlotFree: x.SlotFree, Speed: x.Speed, Queue: x.QueueLength, Bitrate: x.Bitrate, Duration: x.Duration, VBR: x.VBR, SampleRate: x.SampleRate, BitDepth: x.BitDepth, Public: x.Public})
+		out = append(out, SearchResult{Username: x.Username, Path: x.Path, Extension: x.Extension, CountryCode: x.CountryCode, Size: x.Size, Directory: x.IsDirectory, SlotFree: x.SlotFree, Speed: x.Speed, Queue: x.QueueLength, Bitrate: x.Bitrate, Duration: x.Duration, VBR: x.VBR, SampleRate: x.SampleRate, BitDepth: x.BitDepth, Public: x.Public})
 	}
 	sortSearchResults(out)
 	search := Search{ID: fmt.Sprintf("%d", time.Now().UnixNano()), Query: query, Results: out}

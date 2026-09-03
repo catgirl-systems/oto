@@ -67,11 +67,12 @@ Search groups results as user → folders → files; Browse shows remote folders
 Searches support quoted phrases, excluded words (`-remix`), and partial terms (`*radio`). Filter cached results without another network search using fields such as:
 
 ```text
-in:"live|radio session" out:remix type:audio,!mp3 size:>=20MiB bitrate:>=320 duration:>2:00 free:true public:true
+in:"live|radio session" out:remix type:audio,!mp3 size:>=20MiB bitrate:>=320 duration:>2:00 free:true public:true country:US,CA
 ```
 
 `in` and `out` are case-insensitive regular expressions. `type` accepts extensions or `audio`, `video`, `image`, `document`, `text`, `archive`, and `executable`. Size units may be binary (`MiB`) or decimal (`MB`); duration accepts seconds, `MM:SS`, or `HH:MM:SS`. Repeat numeric fields to form ranges. Comparisons support `<`, `<=`, `=`, `==`, `!=`, `>=`, and `>`. While editing filters, use `tab` and `shift+tab` to complete or cycle fields and special values.
 
+`country` accepts case-insensitive, comma-separated two-letter codes. Positive codes are alternatives (`country:US,CA`); prefix exclusions with `!` (`country:!GB,!DE`). Unknown locations match exclusion-only filters but not positive codes.
 Search queries and complete filter expressions are kept as separate most-recent-first histories. Press up/down while editing to recall entries. The Settings → Search section independently enables each history, sets its retention limit (`0` means unlimited), and clears it immediately.
 
 Settings → Connection controls **Connect on startup** (`soulseek.connect_on_startup`), **NAT-PMP port forwarding** (`soulseek.nat_pmp_port_mapping`), and **UPnP port forwarding** (`soulseek.upnp_port_mapping`). All default to On and the forwarding protocols can be enabled independently. With both enabled, oto tries NAT-PMP before UPnP. It maps only the incoming TCP listener through an IPv4 router, requests a 12-hour lease, and renews it every two hours. Discovery and mapping are best effort: failures do not prevent Soulseek login or its server-mediated firewall-piercing fallback.
@@ -92,7 +93,7 @@ History enablement and limits are user choices in `config.json`; the mutable ent
 
 Incoming TCP port `50300` must be reachable for best peer connectivity. Automatic NAT-PMP/UPnP forwarding can make it reachable when supported by the IPv4 router; otherwise configure the router or use `--listen-port-file` for a VPN-assigned port. Direct connections are attempted first and server-mediated firewall piercing is used as fallback. The Soulseek protocol itself is not encrypted; do not treat usernames, searches, or transferred data as private.
 
-
+Search-result country codes are approximate IP geolocation, not identity or residence data. oto performs the lookup offline using an embedded table generated from a pinned [sapics/ip-location-db](https://github.com/sapics/ip-location-db) `user-country-ipv4` snapshot released under the PDDL; peer IP addresses are not exposed or persisted.
 ## Feature comparison with Nicotine+
 
 This tracks user-visible Soulseek functionality and meaningful operational quality-of-life features for a terminal client. Cosmetic GUI details, desktop integration, deep links, themes, layout customization, and similar presentation-only features are intentionally excluded. A check means the feature works end to end for users in the current client; internal scaffolding alone is not counted.
@@ -148,7 +149,7 @@ This tracks user-visible Soulseek functionality and meaningful operational quali
 | Available-upload-slot filter | :white_check_mark: | :white_check_mark: |
 | Public/private-file filter | :white_check_mark: | :white_check_mark: |
 | Display locked private search results | :white_check_mark: | :white_check_mark: |
-| Country-code result filter | :x: | :white_check_mark: |
+| Country-code result filter | :white_check_mark: | :white_check_mark: |
 | Persistent search history | :white_check_mark: | :white_check_mark: |
 | Persistent filter history | :white_check_mark: | :white_check_mark: |
 | Configurable default result filters | :x: | :white_check_mark: |

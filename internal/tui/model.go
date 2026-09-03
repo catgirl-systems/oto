@@ -27,14 +27,14 @@ type snapshot struct {
 	err      string
 }
 type result struct {
-	user, path, extension string
-	size                  uint64
-	directory, free       bool
-	speed, queue          uint32
-	bitrate, duration     uint32
-	vbr                   bool
-	sampleRate, bitDepth  uint32
-	public                bool
+	user, path, extension, country string
+	size                           uint64
+	directory, free                bool
+	speed, queue                   uint32
+	bitrate, duration              uint32
+	vbr                            bool
+	sampleRate, bitDepth           uint32
+	public                         bool
 }
 type entry struct {
 	name, extension      string
@@ -395,6 +395,9 @@ func (m model) detailView() string {
 		access = "public"
 	}
 	rows := [][2]string{{"Path", x.path}, {"User", x.user}, {"Size", formatBytes(x.size)}, {"Access", access}}
+	if x.country != "" {
+		rows = append(rows, [2]string{"Country", x.country})
+	}
 	if x.extension != "" {
 		rows = append(rows, [2]string{"Type", x.extension})
 	}
@@ -1352,7 +1355,7 @@ func (m *model) setupKey(k tea.KeyPressMsg) tea.Cmd {
 func toResults(x []daemon.SearchResult) []result {
 	r := make([]result, len(x))
 	for i, v := range x {
-		r[i] = result{user: v.Username, path: v.Path, extension: v.Extension, size: v.Size, directory: v.Directory, free: v.SlotFree, speed: v.Speed, queue: v.Queue, bitrate: v.Bitrate, duration: v.Duration, vbr: v.VBR, sampleRate: v.SampleRate, bitDepth: v.BitDepth, public: v.Public}
+		r[i] = result{user: v.Username, path: v.Path, extension: v.Extension, country: v.CountryCode, size: v.Size, directory: v.Directory, free: v.SlotFree, speed: v.Speed, queue: v.Queue, bitrate: v.Bitrate, duration: v.Duration, vbr: v.VBR, sampleRate: v.SampleRate, bitDepth: v.BitDepth, public: v.Public}
 	}
 	return r
 }
