@@ -34,7 +34,7 @@ For dynamically forwarded incoming ports, `--listen-port-file` watches the file'
 | Key | Action |
 | --- | --- |
 | `tab` / `shift+tab` | Search, Browse, Transfers, Shares, Settings |
-| up/down or `j` / `k` | move through visible rows |
+| up/down or `j` / `k` | move through visible rows; up/down recalls search or filter history while editing |
 | `page up` / `page down` | move through visible rows by one screen |
 | left/right | collapse/expand a tree node; switch Settings sections |
 | `home` / `end` | jump to the first/last row, or start/end of a text field while editing |
@@ -53,7 +53,7 @@ For dynamically forwarded incoming ports, `--listen-port-file` watches the file'
 | `ctrl+w` in Search or Browse | close the active result tab |
 | `d` | download selected files; choose folder-only or recursive download on a folder; cancel a transfer subtree; or remove a share root |
 | `r` | refresh a user browse, retry a transfer subtree, or rescan shares |
-| `s` | save settings and reconnect |
+| `s` | save settings; account or connection changes reconnect |
 | `?` | keyboard guide |
 | `q` | quit |
 
@@ -69,16 +69,21 @@ in:"live|radio session" out:remix type:audio,!mp3 size:>=20MiB bitrate:>=320 dur
 
 `in` and `out` are case-insensitive regular expressions. `type` accepts extensions or `audio`, `video`, `image`, `document`, `text`, `archive`, and `executable`. Size units may be binary (`MiB`) or decimal (`MB`); duration accepts seconds, `MM:SS`, or `HH:MM:SS`. Repeat numeric fields to form ranges. Comparisons support `<`, `<=`, `=`, `==`, `!=`, `>=`, and `>`. While editing filters, use `tab` and `shift+tab` to complete or cycle fields and special values.
 
+Search queries and complete filter expressions are kept as separate most-recent-first histories. Press up/down while editing to recall entries. The Settings → Search section independently enables each history, sets its retention limit (`0` means unlimited), and clears it immediately.
+
 ## Files and environment
 
 Default locations follow XDG:
 
 - config: `${XDG_CONFIG_HOME:-~/.config}/oto/config.json`;
 - state and incomplete downloads: `${XDG_STATE_HOME:-~/.local/state}/oto/`;
+- search and filter history: `${XDG_STATE_HOME:-~/.local/state}/oto/history.json`;
 - socket: `${XDG_RUNTIME_DIR:-/tmp/oto-$UID}/oto/oto.sock`;
 - downloads: `~/Downloads/oto`.
 
 `OTO_USERNAME`, `OTO_PASSWORD`, `OTO_SERVER`, `OTO_LISTEN_ADDR`, and `OTO_DOWNLOAD_DIR` override JSON values. The daemon never returns or logs the password.
+
+History enablement and limits are user choices in `config.json`; the mutable entries live in `history.json` so searches do not continually rewrite daemon configuration. Both files are private.
 
 Incoming TCP port `50300` must be reachable for best peer connectivity. Direct connections are attempted first and server-mediated firewall piercing is used as fallback. The Soulseek protocol itself is not encrypted; do not treat usernames, searches, or transferred data as private.
 
@@ -139,8 +144,8 @@ This tracks user-visible Soulseek functionality and meaningful operational quali
 | Public/private-file filter | :white_check_mark: | :white_check_mark: |
 | Display locked private search results | :white_check_mark: | :white_check_mark: |
 | Country-code result filter | :x: | :white_check_mark: |
-| Persistent search history | :x: | :white_check_mark: |
-| Persistent filter history | :x: | :white_check_mark: |
+| Persistent search history | :white_check_mark: | :white_check_mark: |
+| Persistent filter history | :white_check_mark: | :white_check_mark: |
 | Configurable default result filters | :x: | :white_check_mark: |
 | Persistent wishlist searches | :x: | :white_check_mark: |
 | Periodically rerun wishlist searches | :x: | :white_check_mark: |
