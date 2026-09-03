@@ -3,7 +3,8 @@
     "username": "",
     "password": "",
     "server": "server.slsknet.org:2242",
-    "listen_addr": "0.0.0.0:50300"
+    "listen_addr": "0.0.0.0:50300",
+    "connect_on_startup": true
   },
   "search": {
     "remember_searches": true,

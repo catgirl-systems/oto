@@ -243,7 +243,7 @@ func TestPipeLogin(t *testing.T) {
 			x.Bool(false)
 			e = WriteFrame(b, ServerLogin, x.Payload())
 		}
-		for _, want := range []Message{Status{Status: 2}, SharedCounts{}, AcceptChildren{Value: true}, HaveNoParent{Value: true}} {
+		for _, want := range []Message{Status{Status: uint32(UserStatusOnline)}, SharedCounts{}, AcceptChildren{Value: true}, HaveNoParent{Value: true}, Status{Status: uint32(UserStatusAway)}, Status{Status: uint32(UserStatusOnline)}} {
 			if e != nil {
 				break
 			}
@@ -261,6 +261,15 @@ func TestPipeLogin(t *testing.T) {
 	}()
 	if err := c.Login(ctx); err != nil {
 		t.Fatal(err)
+	}
+	if err := c.SetStatus(UserStatusAway); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.SetStatus(UserStatusOnline); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.SetStatus(0); err == nil {
+		t.Fatal("invalid user status accepted")
 	}
 	if err := <-server; err != nil {
 		t.Fatal(err)

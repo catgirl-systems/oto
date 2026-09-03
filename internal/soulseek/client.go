@@ -21,6 +21,14 @@ type ClientConfig struct {
 	Share                                   *ShareIndex
 	Uploads                                 *UploadManager
 }
+
+type UserStatus uint32
+
+const (
+	UserStatusAway   UserStatus = 1
+	UserStatusOnline UserStatus = 2
+)
+
 type Event struct {
 	Command uint32
 	Message any
@@ -247,13 +255,20 @@ func (c *Client) Login(ctx context.Context) error {
 		if ln != nil {
 			_ = c.send(ListenPort{Port: uint32(ln.Addr().(*net.TCPAddr).Port)})
 		}
-		_ = c.send(Status{Status: 2})
+		_ = c.SetStatus(UserStatusOnline)
 		index := c.shareIndex()
 		_ = c.send(sharedCounts(index))
 		_ = c.send(AcceptChildren{Value: true})
 		_ = c.send(HaveNoParent{Value: true})
 		return nil
 	}
+}
+
+func (c *Client) SetStatus(status UserStatus) error {
+	if status != UserStatusAway && status != UserStatusOnline {
+		return errors.New("soulseek: invalid user status")
+	}
+	return c.send(Status{Status: uint32(status)})
 }
 func writeAll(w net.Conn, b []byte) error {
 	for len(b) > 0 {

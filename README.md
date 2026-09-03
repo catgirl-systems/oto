@@ -25,6 +25,8 @@ The TUI uses an owner-only Unix socket. If no standalone daemon exists, it start
 
 Soulseek permits one login per username. Keeping the session in the daemon prevents the TUI from kicking it off the network.
 
+Press `o` to choose Online, Away, or Offline without stopping the daemon. Offline stops reconnect attempts and requeues active downloads without deleting partial data; choosing Online or Away resumes them. Away survives automatic reconnects for the current daemon run.
+
 The daemon watches every non-hidden, non-symlink directory under each share root using `fsnotify` (one recursive watch per directory). After filesystem changes stop for five minutes by default, it builds a complete shadow index and atomically publishes it; a fixed 30-minute maximum delay prevents continuous activity from postponing scans forever. Events during a scan discard that result and schedule another scan. Startup and manual rescans remain immediate, and watcher or scan failures keep the last good index available.
 
 For dynamically forwarded incoming ports, `--listen-port-file` watches the file's parent directory and hot-swaps the listener whenever the file contains a new port. `--listen-port-reconcile-interval` provides a periodic fallback (default `30s`; `0` disables it). Missing or empty files mark the port unavailable until a valid value appears. This interface is provider-neutral; for example, a VPN container can write its current forwarded port into a shared volume.
@@ -53,7 +55,8 @@ For dynamically forwarded incoming ports, `--listen-port-file` watches the file'
 | `ctrl+w` in Search or Browse | close the active result tab |
 | `d` | download selected files; choose folder-only or recursive download on a folder; cancel a transfer subtree; or remove a share root |
 | `r` | refresh a user browse, retry a transfer subtree, or rescan shares |
-| `s` | save settings; account or connection changes reconnect |
+| `o` | choose Online, Away, or Offline without quitting |
+| `s` | save settings; live session changes reconnect only when not Offline |
 | `?` | keyboard guide |
 | `q` | quit |
 
@@ -70,6 +73,8 @@ in:"live|radio session" out:remix type:audio,!mp3 size:>=20MiB bitrate:>=320 dur
 `in` and `out` are case-insensitive regular expressions. `type` accepts extensions or `audio`, `video`, `image`, `document`, `text`, `archive`, and `executable`. Size units may be binary (`MiB`) or decimal (`MB`); duration accepts seconds, `MM:SS`, or `HH:MM:SS`. Repeat numeric fields to form ranges. Comparisons support `<`, `<=`, `=`, `==`, `!=`, `>=`, and `>`. While editing filters, use `tab` and `shift+tab` to complete or cycle fields and special values.
 
 Search queries and complete filter expressions are kept as separate most-recent-first histories. Press up/down while editing to recall entries. The Settings → Search section independently enables each history, sets its retention limit (`0` means unlimited), and clears it immediately.
+
+Settings → Connection also controls **Connect on startup** (`soulseek.connect_on_startup` in JSON). It defaults to On for compatibility and only affects the next daemon start; saving it does not change the current session.
 
 ## Files and environment
 
@@ -106,15 +111,15 @@ This tracks user-visible Soulseek functionality and meaningful operational quali
 | Distributed-search network participation | :white_check_mark: | :white_check_mark: |
 | Respond to incoming searches | :white_check_mark: | :white_check_mark: |
 | Automatic reconnect after connection failure | :white_check_mark: | :white_check_mark: |
-| Manually connect and disconnect without quitting | :x: | :white_check_mark: |
-| Configure whether to connect on startup | :x: | :white_check_mark: |
+| Manually connect and disconnect without quitting | :white_check_mark: | :white_check_mark: |
+| Configure whether to connect on startup | :white_check_mark: | :white_check_mark: |
 | Bind Soulseek traffic to a VPN or network interface | :x: | :white_check_mark: |
 | Automatic UPnP port forwarding | :x: | :white_check_mark: |
 | Automatic NAT-PMP port forwarding | :x: | :white_check_mark: |
 | External listening-port check | :x: | :white_check_mark: |
 | Public IP address lookup | :x: | :white_check_mark: |
 | Change Soulseek password from the client | :x: | :white_check_mark: |
-| Online, away, and offline status controls | :x: | :white_check_mark: |
+| Online, away, and offline status controls | :white_check_mark: | :white_check_mark: |
 | Automatic away status after inactivity | :x: | :white_check_mark: |
 | Automatic private-message reply while away | :x: | :white_check_mark: |
 | Check remaining Soulseek supporter privileges | :x: | :white_check_mark: |

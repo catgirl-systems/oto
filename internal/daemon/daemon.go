@@ -36,10 +36,19 @@ const (
 	StatusError        Status = "error"
 )
 
+type Presence string
+
+const (
+	PresenceOffline Presence = "offline"
+	PresenceAway    Presence = "away"
+	PresenceOnline  Presence = "online"
+)
+
 const searchPageSize = 100
 
 type Snapshot struct {
 	Status    Status            `json:"status"`
+	Presence  Presence          `json:"presence"`
 	Error     string            `json:"error,omitempty"`
 	Config    config.SafeConfig `json:"config"`
 	Shares    []config.Share    `json:"shares"`
@@ -127,9 +136,11 @@ type FolderDownloadRequest struct {
 
 type Service struct {
 	mu                   sync.RWMutex
+	lifecycleMu          sync.Mutex
 	cfg                  config.Config
 	configPath           string
-	parentCtx            context.Context
+	runCtx               context.Context
+	runCancel            context.CancelFunc
 	shares               *soulseek.ShareIndex
 	client               *soulseek.Client
 	journal              Journal
@@ -149,12 +160,14 @@ type Service struct {
 	listenPort           uint16
 	reconnectWake        chan struct{}
 	closed               bool
-	restarting           bool
+	requeueDownloads     bool
 	status               Status
+	presence             Presence
 	lastErr              string
 	seq                  uint64
 	journalPath          string
 	wg                   sync.WaitGroup
+	sessionWG            sync.WaitGroup
 	downloadWG           sync.WaitGroup
 }
 
@@ -162,7 +175,7 @@ func New(cfg config.Config, path string) (*Service, error) {
 	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
-	s := &Service{cfg: cfg, configPath: config.ConfigPath(), shares: soulseek.NewShareIndex(), searches: make(map[string]Search), transfers: make(map[string]Transfer), downloadSlots: make(chan struct{}, cfg.DownloadSlots), downloadCancels: make(map[string]context.CancelFunc), downloadPeers: make(map[string]chan struct{}), shareIndexBuilder: buildShareIndex, shareRescanDelay: DefaultShareRescanDelay, listenPortInterval: DefaultListenPortReconcileInterval, reconnectWake: make(chan struct{}, 1), status: StatusStopped, journalPath: path}
+	s := &Service{cfg: cfg, configPath: config.ConfigPath(), shares: soulseek.NewShareIndex(), searches: make(map[string]Search), transfers: make(map[string]Transfer), downloadSlots: make(chan struct{}, cfg.DownloadSlots), downloadCancels: make(map[string]context.CancelFunc), downloadPeers: make(map[string]chan struct{}), shareIndexBuilder: buildShareIndex, shareRescanDelay: DefaultShareRescanDelay, listenPortInterval: DefaultListenPortReconcileInterval, reconnectWake: make(chan struct{}, 1), status: StatusStopped, presence: PresenceOffline, journalPath: path}
 	if b, err := os.ReadFile(path); err == nil {
 		if err := json.Unmarshal(b, &s.journal); err != nil {
 			return nil, fmt.Errorf("daemon: load journal: %w", err)
@@ -201,7 +214,7 @@ func (s *Service) Config() config.SafeConfig {
 func (s *Service) Snapshot() Snapshot {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return Snapshot{Status: s.status, Error: s.lastErr, Config: s.cfg.Redacted(), Shares: append([]config.Share(nil), s.cfg.Shares...), Downloads: append([]Download(nil), s.journal.Downloads...), Transfers: transferValues(s.transfers)}
+	return Snapshot{Status: s.status, Presence: s.presence, Error: s.lastErr, Config: s.cfg.Redacted(), Shares: append([]config.Share(nil), s.cfg.Shares...), Downloads: append([]Download(nil), s.journal.Downloads...), Transfers: transferValues(s.transfers)}
 }
 func transferValues(m map[string]Transfer) []Transfer {
 	out := make([]Transfer, 0, len(m))
@@ -212,45 +225,143 @@ func transferValues(m map[string]Transfer) []Transfer {
 	return out
 }
 
-// Start connects, logs in, and starts the reconnecting protocol loop.
+// Start initializes daemon-owned work and optionally starts a Soulseek session.
 func (s *Service) Start(ctx context.Context) error {
+	s.lifecycleMu.Lock()
+	defer s.lifecycleMu.Unlock()
+
 	s.mu.Lock()
 	if s.closed {
 		s.mu.Unlock()
 		return ErrClosed
 	}
-	if s.cancel != nil {
+	if s.runCancel != nil {
 		s.mu.Unlock()
 		return nil
 	}
-	s.ctx, s.cancel = context.WithCancel(ctx)
-	s.parentCtx = ctx
-	s.status, s.lastErr = StatusConnecting, ""
+	s.runCtx, s.runCancel = context.WithCancel(ctx)
 	if err := s.configureSharesLocked(); err != nil {
 		s.lastErr = err.Error()
 	}
 	s.restartShareWatcherLocked()
 	s.startListenPortWatcherLocked()
+	connect := s.cfg.Soulseek.ConnectOnStartup
 	s.mu.Unlock()
-	s.resumeDownloads()
-	if err := s.connectOnce(ctx); err != nil {
-		message := s.safeError(err)
-		if isPermanentLoginError(err) {
-			s.mu.Lock()
-			s.status, s.lastErr = StatusError, message
-			s.mu.Unlock()
-			return err
-		}
-		s.mu.Lock()
-		s.status, s.lastErr = StatusReconnecting, message
-		s.mu.Unlock()
-		s.wg.Add(1)
-		go s.reconnectLoop()
-		return err
+	if connect {
+		return s.setPresenceLocked(PresenceOnline)
 	}
-	s.wg.Add(1)
-	go s.reconnectLoop()
 	return nil
+}
+
+func (s *Service) SetPresence(presence Presence) error {
+	if presence != PresenceOffline && presence != PresenceAway && presence != PresenceOnline {
+		return fmt.Errorf("daemon: invalid presence %q", presence)
+	}
+	s.lifecycleMu.Lock()
+	defer s.lifecycleMu.Unlock()
+	s.mu.RLock()
+	closed := s.closed
+	s.mu.RUnlock()
+	if closed {
+		return ErrClosed
+	}
+	if presence == PresenceOffline {
+		s.stopSessionLocked(true)
+		return nil
+	}
+	return s.setPresenceLocked(presence)
+}
+
+func (s *Service) setPresenceLocked(presence Presence) error {
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return ErrClosed
+	}
+	if s.runCtx == nil {
+		s.mu.Unlock()
+		return ErrNotStarted
+	}
+	if s.presence == presence && s.client != nil {
+		s.mu.Unlock()
+		return nil
+	}
+	s.presence = presence
+	client, active := s.client, s.cancel != nil
+	s.mu.Unlock()
+
+	if client != nil {
+		status := soulseek.UserStatusOnline
+		if presence == PresenceAway {
+			status = soulseek.UserStatusAway
+		}
+		if err := client.SetStatus(status); err != nil {
+			_ = client.Close()
+			s.wakeReconnect()
+		}
+		return nil
+	}
+	if active {
+		s.wakeReconnect()
+		return nil
+	}
+	return s.startSessionLocked()
+}
+
+func (s *Service) startSessionLocked() error {
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return ErrClosed
+	}
+	if s.runCtx == nil {
+		s.mu.Unlock()
+		return ErrNotStarted
+	}
+	if s.cancel != nil {
+		s.mu.Unlock()
+		s.wakeReconnect()
+		return nil
+	}
+	select {
+	case <-s.reconnectWake:
+	default:
+	}
+	ctx, cancel := context.WithCancel(s.runCtx)
+	s.ctx, s.cancel = ctx, cancel
+	s.status, s.lastErr = StatusConnecting, ""
+	s.sessionWG.Add(1)
+	s.mu.Unlock()
+
+	s.resumeDownloads()
+	go s.reconnectLoop(ctx)
+	return nil
+}
+
+// stopSessionLocked requires lifecycleMu and preserves partial downloads.
+func (s *Service) stopSessionLocked(offline bool) {
+	s.mu.Lock()
+	cancel, client := s.cancel, s.client
+	s.ctx, s.cancel, s.client = nil, nil, nil
+	s.requeueDownloads = cancel != nil
+	s.status, s.lastErr = StatusStopped, ""
+	if offline {
+		s.presence = PresenceOffline
+	}
+	s.mu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+	if client != nil {
+		_ = client.Close()
+	}
+	if cancel != nil {
+		s.sessionWG.Wait()
+		s.downloadWG.Wait()
+	}
+	s.mu.Lock()
+	s.requeueDownloads = false
+	s.mu.Unlock()
 }
 
 func (s *Service) configureSharesLocked() error {
@@ -266,6 +377,10 @@ func (s *Service) configureSharesLocked() error {
 }
 func (s *Service) connectOnce(ctx context.Context) error {
 	s.mu.RLock()
+	if s.ctx != ctx {
+		s.mu.RUnlock()
+		return context.Canceled
+	}
 	cfg, idx := s.cfg, s.shares
 	portFile, port := s.listenPortFile, s.listenPort
 	s.mu.RUnlock()
@@ -279,44 +394,83 @@ func (s *Service) connectOnce(ctx context.Context) error {
 			return err
 		}
 	}
-	c := soulseek.NewClient(soulseek.ClientConfig{Address: cfg.Soulseek.Server, Username: cfg.Soulseek.Username, Password: cfg.Soulseek.Password, ListenAddr: cfg.Soulseek.ListenAddr, Share: idx, Uploads: soulseek.NewUploadManager(cfg.UploadSlots)})
-	if err := c.Connect(ctx); err != nil {
+	client := soulseek.NewClient(soulseek.ClientConfig{Address: cfg.Soulseek.Server, Username: cfg.Soulseek.Username, Password: cfg.Soulseek.Password, ListenAddr: cfg.Soulseek.ListenAddr, Share: idx, Uploads: soulseek.NewUploadManager(cfg.UploadSlots)})
+	if err := client.Connect(ctx); err != nil {
 		return err
 	}
-	if err := c.Login(ctx); err != nil {
-		_ = c.Close()
+	if err := client.Login(ctx); err != nil {
+		_ = client.Close()
 		return err
 	}
 	s.mu.Lock()
-	if s.closed {
+	if s.closed || s.ctx != ctx || s.presence == PresenceOffline {
 		s.mu.Unlock()
-		_ = c.Close()
-		return ErrClosed
+		_ = client.Close()
+		return context.Canceled
 	}
-	s.client = c
+	if s.presence == PresenceAway {
+		if err := client.SetStatus(soulseek.UserStatusAway); err != nil {
+			s.mu.Unlock()
+			_ = client.Close()
+			return err
+		}
+	}
+	s.client = client
 	idx = s.shares
-	s.status = StatusConnected
-	s.lastErr = ""
+	s.status, s.lastErr = StatusConnected, ""
 	s.mu.Unlock()
-	c.SetShareIndex(idx)
+	client.SetShareIndex(idx)
 	return nil
 }
-func (s *Service) reconnectLoop() {
-	defer s.wg.Done()
-	backoff := time.Second
+
+func (s *Service) setSessionStatus(ctx context.Context, status Status, message string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.ctx != ctx {
+		return false
+	}
+	s.status, s.lastErr = status, message
+	return true
+}
+
+func (s *Service) reconnectLoop(ctx context.Context) {
+	defer s.sessionWG.Done()
+	backoff, delay := time.Second, time.Duration(0)
 	for {
+		if delay > 0 {
+			timer := time.NewTimer(delay)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return
+			case <-s.reconnectWake:
+				if !timer.Stop() {
+					select {
+					case <-timer.C:
+					default:
+					}
+				}
+				backoff = time.Second
+			case <-timer.C:
+			}
+			delay = 0
+		}
+
 		s.mu.RLock()
-		ctx, cancel, client := s.ctx, s.cancel, s.client
-		closed := s.closed
+		client, current := s.client, s.ctx == ctx
 		s.mu.RUnlock()
-		if closed || cancel == nil {
+		if !current || ctx.Err() != nil {
 			return
 		}
-		if client != nil {
+
+		var err error
+		if client == nil {
+			err = s.connectOnce(ctx)
+		} else {
 			eventCtx, stopEvents := context.WithCancel(ctx)
 			eventsDone := make(chan struct{})
 			go func() { s.consumeClientEvents(eventCtx, client); close(eventsDone) }()
-			err := client.Run(ctx)
+			err = client.Run(ctx)
 			stopEvents()
 			<-eventsDone
 			_ = client.Close()
@@ -325,56 +479,37 @@ func (s *Service) reconnectLoop() {
 				s.client = nil
 			}
 			s.mu.Unlock()
-			if ctx.Err() != nil {
-				return
-			}
-			message := s.safeError(err)
-			if isPermanentLoginError(err) {
-				s.mu.Lock()
-				s.status = StatusError
-				s.lastErr = message
-				s.mu.Unlock()
-				return
-			}
-			s.mu.Lock()
-			s.status = StatusReconnecting
-			s.lastErr = message
-			s.mu.Unlock()
 		}
-		t := time.NewTimer(backoff)
-		select {
-		case <-ctx.Done():
-			t.Stop()
-			return
-		case <-s.reconnectWake:
-			if !t.Stop() {
-				select {
-				case <-t.C:
-				default:
-				}
-			}
-		case <-t.C:
-		}
-		if backoff < time.Minute {
-			backoff *= 2
-			if backoff > time.Minute {
-				backoff = time.Minute
-			}
-		}
-		if err := s.connectOnce(ctx); err == nil {
+		if err == nil {
 			backoff = time.Second
 			continue
-		} else {
-			message := s.safeError(err)
-			if isPermanentLoginError(err) {
-				s.mu.Lock()
-				s.status, s.lastErr = StatusError, message
-				s.mu.Unlock()
+		}
+		if ctx.Err() != nil {
+			return
+		}
+
+		message := s.safeError(err)
+		if isPermanentLoginError(err) {
+			if !s.setSessionStatus(ctx, StatusError, message) {
 				return
 			}
-			s.mu.Lock()
-			s.status, s.lastErr = StatusReconnecting, message
-			s.mu.Unlock()
+			select {
+			case <-ctx.Done():
+				return
+			case <-s.reconnectWake:
+			}
+			if !s.setSessionStatus(ctx, StatusConnecting, "") {
+				return
+			}
+			backoff = time.Second
+			continue
+		}
+		if !s.setSessionStatus(ctx, StatusReconnecting, message) {
+			return
+		}
+		delay = backoff
+		if backoff < time.Minute {
+			backoff = min(2*backoff, time.Minute)
 		}
 	}
 }
@@ -401,26 +536,31 @@ func (s *Service) safeError(err error) string {
 }
 
 func (s *Service) Close() error {
+	s.lifecycleMu.Lock()
+	defer s.lifecycleMu.Unlock()
+
 	s.mu.Lock()
 	if s.closed {
 		s.mu.Unlock()
 		return nil
 	}
 	s.closed = true
-	cancel := s.cancel
-	c := s.client
-	s.cancel = nil
-	s.client = nil
-	s.status = StatusStopped
+	runCancel, cancel, client := s.runCancel, s.cancel, s.client
+	s.runCtx, s.runCancel, s.ctx, s.cancel, s.client = nil, nil, nil, nil, nil
+	s.status, s.presence = StatusStopped, PresenceOffline
 	s.mu.Unlock()
 	if cancel != nil {
 		cancel()
 	}
-	if c != nil {
-		_ = c.Close()
+	if client != nil {
+		_ = client.Close()
 	}
-	s.wg.Wait()
+	if runCancel != nil {
+		runCancel()
+	}
+	s.sessionWG.Wait()
 	s.downloadWG.Wait()
+	s.wg.Wait()
 	return nil
 }
 
@@ -839,7 +979,9 @@ func (s *Service) Rescan() error {
 }
 
 func hotConfigUpdate(old, next config.Config) bool {
-	return old.Soulseek == next.Soulseek &&
+	oldSoulseek := old.Soulseek
+	oldSoulseek.ConnectOnStartup = next.Soulseek.ConnectOnStartup
+	return oldSoulseek == next.Soulseek &&
 		slices.Equal(old.Shares, next.Shares) &&
 		old.DownloadSlots == next.DownloadSlots &&
 		old.UploadSlots == next.UploadSlots
@@ -849,6 +991,9 @@ func (s *Service) UpdateConfig(c config.Config) error {
 	if err := c.Validate(); err != nil {
 		return err
 	}
+	s.lifecycleMu.Lock()
+	defer s.lifecycleMu.Unlock()
+
 	s.mu.Lock()
 	if s.closed {
 		s.mu.Unlock()
@@ -862,14 +1007,9 @@ func (s *Service) UpdateConfig(c config.Config) error {
 		s.mu.Unlock()
 		return err
 	}
-	s.mu.Unlock()
-	s.mu.RLock()
-	if s.closed {
-		s.mu.RUnlock()
-		return ErrClosed
-	}
 	builder, configPath := s.shareIndexBuilder, s.configPath
-	s.mu.RUnlock()
+	s.mu.Unlock()
+
 	idx, err := builder(context.Background(), append([]config.Share(nil), c.Shares...))
 	if err != nil {
 		return err
@@ -877,36 +1017,21 @@ func (s *Service) UpdateConfig(c config.Config) error {
 	if err := c.Save(configPath); err != nil {
 		return err
 	}
-	s.mu.Lock()
-	if s.closed {
-		s.mu.Unlock()
-		return ErrClosed
+
+	s.mu.RLock()
+	active := s.cancel != nil
+	s.mu.RUnlock()
+	if active {
+		s.stopSessionLocked(false)
 	}
-	s.cfg, s.shares = c, idx
+	s.mu.Lock()
 	s.stopShareWatcherLocked()
-	old, stop, parent := s.client, s.cancel, s.parentCtx
-	s.client, s.cancel, s.ctx = nil, nil, nil
-	s.restarting = true
-	s.status = StatusStopped
-	s.mu.Unlock()
-	if stop != nil {
-		stop()
-	}
-	if old != nil {
-		_ = old.Close()
-	}
-	s.wg.Wait()
-	s.downloadWG.Wait()
-	s.mu.Lock()
+	s.cfg, s.shares = c, idx
 	s.downloadSlots = make(chan struct{}, c.DownloadSlots)
-	s.restarting = false
+	s.restartShareWatcherLocked()
 	s.mu.Unlock()
-	if parent == nil {
-		parent = context.Background()
-	}
-	startErr := s.Start(parent)
-	if startErr != nil && isPermanentLoginError(startErr) {
-		return startErr
+	if active {
+		return s.startSessionLocked()
 	}
 	return nil
 }

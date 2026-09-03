@@ -23,6 +23,17 @@ func testConfig(t *testing.T) config.Config {
 	return c
 }
 
+func closedAddress(t *testing.T) string {
+	t.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	address := listener.Addr().String()
+	_ = listener.Close()
+	return address
+}
+
 func TestJournalRoundTripAndSafeResume(t *testing.T) {
 	d := t.TempDir()
 	c := testConfig(t)
@@ -128,40 +139,170 @@ func TestClearDownloadRemovesIncompleteFile(t *testing.T) {
 }
 
 func TestStartConnectionFailureDoesNotDeadlock(t *testing.T) {
-	server, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	serverAddr := server.Addr().String()
-	_ = server.Close()
-	peer, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	peerAddr := peer.Addr().String()
-	_ = peer.Close()
 	cfg := testConfig(t)
-	cfg.Soulseek.Server, cfg.Soulseek.ListenAddr = serverAddr, peerAddr
+	cfg.Soulseek.Server, cfg.Soulseek.ListenAddr = closedAddress(t), closedAddress(t)
 	service, err := New(cfg, filepath.Join(t.TempDir(), "state.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	done := make(chan error, 1)
-	go func() { done <- service.Start(ctx) }()
-	select {
-	case err := <-done:
-		if err == nil {
-			t.Fatal("expected connection failure")
+	defer service.Close()
+	if err := service.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool { return service.Snapshot().Status == StatusReconnecting })
+	if service.Snapshot().Presence != PresenceOnline {
+		t.Fatalf("presence: %s", service.Snapshot().Presence)
+	}
+	if err := service.SetPresence(PresenceOffline); err != nil {
+		t.Fatal(err)
+	}
+	if snapshot := service.Snapshot(); snapshot.Status != StatusStopped || snapshot.Presence != PresenceOffline {
+		t.Fatalf("offline snapshot: %+v", snapshot)
+	}
+	if err := service.SetPresence(PresenceOffline); err != nil {
+		t.Fatalf("repeated offline: %v", err)
+	}
+}
+
+func TestPermanentLoginErrorWaitsForManualRetry(t *testing.T) {
+	server, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer server.Close()
+	attempts := make(chan struct{}, 4)
+	go func() {
+		for {
+			conn, acceptErr := server.Accept()
+			if acceptErr != nil {
+				return
+			}
+			attempts <- struct{}{}
+			_, _, _ = soulseek.ReadFrame(conn)
+			frame, _ := soulseek.EncodeMessage(soulseek.LoginResponse{Message: "invalid credentials"})
+			_, _ = conn.Write(frame)
+			_ = conn.Close()
 		}
+	}()
+
+	cfg := testConfig(t)
+	cfg.Soulseek.Server, cfg.Soulseek.ListenAddr = server.Addr().String(), closedAddress(t)
+	service, err := New(cfg, filepath.Join(t.TempDir(), "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer service.Close()
+	if err := service.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool { return service.Snapshot().Status == StatusError })
+	<-attempts
+	select {
+	case <-attempts:
+		t.Fatal("permanent login error retried automatically")
+	case <-time.After(1100 * time.Millisecond):
+	}
+	if err := service.SetPresence(PresenceOnline); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-attempts:
 	case <-time.After(2 * time.Second):
-		t.Fatal("Start deadlocked while recording connection error")
+		t.Fatal("manual retry did not reconnect")
 	}
-	if service.Snapshot().Status != StatusReconnecting {
-		t.Fatalf("status: %s", service.Snapshot().Status)
+}
+
+func TestStartupDisabledAndAwayRetry(t *testing.T) {
+	cfg := testConfig(t)
+	cfg.Soulseek.ConnectOnStartup = false
+	cfg.Soulseek.Server, cfg.Soulseek.ListenAddr = closedAddress(t), closedAddress(t)
+	service, err := New(cfg, filepath.Join(t.TempDir(), "state.json"))
+	if err != nil {
+		t.Fatal(err)
 	}
-	_ = service.Close()
+	defer service.Close()
+	if err := service.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(20 * time.Millisecond)
+	if snapshot := service.Snapshot(); snapshot.Status != StatusStopped || snapshot.Presence != PresenceOffline {
+		t.Fatalf("startup-disabled snapshot: %+v", snapshot)
+	}
+	if err := service.SetPresence(PresenceAway); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool { return service.Snapshot().Status == StatusReconnecting })
+	if service.Snapshot().Presence != PresenceAway {
+		t.Fatalf("away was not retained: %+v", service.Snapshot())
+	}
+	if err := service.SetPresence(PresenceAway); err != nil {
+		t.Fatalf("retry away: %v", err)
+	}
+	if err := service.SetPresence(PresenceOffline); err != nil {
+		t.Fatal(err)
+	}
+	service.SetConfigPath(filepath.Join(t.TempDir(), "config.json"))
+	next := cfg
+	next.Soulseek.ConnectOnStartup = true
+	if err := service.UpdateConfig(next); err != nil {
+		t.Fatal(err)
+	}
+	next.Soulseek.Server = "example.com:2242"
+	if err := service.UpdateConfig(next); err != nil {
+		t.Fatal(err)
+	}
+	if snapshot := service.Snapshot(); snapshot.Status != StatusStopped || snapshot.Presence != PresenceOffline {
+		t.Fatalf("offline config update connected: %+v", snapshot)
+	}
+}
+
+func TestOfflineRequeuesAndResumesPartialDownload(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	cfg := testConfig(t)
+	cfg.Soulseek.ConnectOnStartup = false
+	cfg.Soulseek.Server, cfg.Soulseek.ListenAddr = closedAddress(t), closedAddress(t)
+	service, err := New(cfg, filepath.Join(t.TempDir(), "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer service.Close()
+	if err := service.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	downloads, err := service.QueueDownloads([]DownloadRequest{{Username: "peer", Files: []DownloadItem{{Filename: "song.flac", Size: 20}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	part := incompletePath(downloads[0].ID)
+	if err := os.MkdirAll(filepath.Dir(part), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(part, []byte("partial"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.SetPresence(PresenceOnline); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool { return service.Downloads()[0].State == "running" })
+	if err := service.SetPresence(PresenceOffline); err != nil {
+		t.Fatal(err)
+	}
+	if download := service.Downloads()[0]; download.State != "queued" || download.Offset != 7 {
+		t.Fatalf("paused download: %+v", download)
+	}
+	if data, err := os.ReadFile(part); err != nil || string(data) != "partial" {
+		t.Fatalf("partial file: %q %v", data, err)
+	}
+	if err := service.SetPresence(PresenceOnline); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool {
+		download := service.Downloads()[0]
+		return download.State == "running" && download.Offset == 7
+	})
+	if err := service.SetPresence(PresenceOffline); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestContextWithEOF(t *testing.T) {
@@ -231,14 +372,15 @@ func TestUpdateConfigHotAppliesSearchAndDownload(t *testing.T) {
 	next.DownloadDir = t.TempDir()
 	next.Search.RememberFilters = false
 	next.Search.SearchHistoryLimit = 0
+	next.Soulseek.ConnectOnStartup = false
 	if err := s.UpdateConfig(next); err != nil {
 		t.Fatalf("hot update: %v", err)
 	}
-	if builderCalled || s.cfg.DownloadDir != next.DownloadDir || s.cfg.Search != next.Search {
+	if builderCalled || s.cfg.DownloadDir != next.DownloadDir || s.cfg.Search != next.Search || s.cfg.Soulseek.ConnectOnStartup {
 		t.Fatalf("hot update rebuilt or was not adopted: called=%v cfg=%+v", builderCalled, s.cfg)
 	}
 	loaded, err := config.Load(configPath)
-	if err != nil || loaded.Search != next.Search || loaded.DownloadDir != next.DownloadDir {
+	if err != nil || loaded.Search != next.Search || loaded.DownloadDir != next.DownloadDir || loaded.Soulseek.ConnectOnStartup {
 		t.Fatalf("saved hot update: %+v %v", loaded, err)
 	}
 

@@ -21,9 +21,10 @@ import (
 )
 
 type snapshot struct {
-	status daemon.Status
-	user   string
-	err    string
+	status   daemon.Status
+	presence daemon.Presence
+	user     string
+	err      string
 }
 type result struct {
 	user, path, extension string
@@ -99,10 +100,11 @@ type model struct {
 	historyCursor                          historyCursor
 	transient                              bool
 	setup, help, confirm, editing, loading bool
-	details, folderMenu                    bool
+	details, folderMenu, statusMenu        bool
 	loadingMore, filterEditing             bool
 	width, height                          int
 	workspace, cursor, settingsSection     int
+	statusMenuChoice                       int
 	searchTotal, searchFound, searchNext   int
 	input, query, browseUser, searchID     string
 	searchFilter, searchFilterUndo         string
@@ -167,6 +169,8 @@ func (m model) View() tea.View {
 		content = m.setupView()
 	} else if m.folderMenu {
 		content = m.folderMenuView()
+	} else if m.statusMenu {
+		content = m.statusMenuView()
 	} else if m.help {
 		content = m.helpView()
 	} else if m.details {
@@ -284,10 +288,10 @@ func (m model) mainView() string {
 func (m model) compactView() string {
 	names := m.workspaceNames()
 	lines := []string{
-		trunc("oto  "+string(m.status.status), m.width),
+		trunc("oto  "+m.statusText(), m.width),
 		trunc("["+names[m.workspace]+"]", m.width),
 		trunc(m.errorText(), m.width),
-		trunc("tab switch  ? help  q quit", m.width),
+		trunc("tab switch  o status  ? help  q quit", m.width),
 	}
 	return strings.Join(lines, "\n")
 }
@@ -308,6 +312,27 @@ func (m model) folderMenuView() string {
 	b.WriteString("\n" + muted("↑↓ / j k choose  •  enter download  •  esc cancel"))
 	cardWidth := max(38, min(64, m.width-4))
 	card := panelStyle().Width(cardWidth).Padding(1, 2).Render(b.String())
+	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, card)
+}
+
+var presenceChoices = []daemon.Presence{daemon.PresenceOnline, daemon.PresenceAway, daemon.PresenceOffline}
+
+func (m model) statusMenuView() string {
+	var b strings.Builder
+	b.WriteString(strong("Soulseek status") + "\n\n")
+	for i, presence := range presenceChoices {
+		label := strings.ToUpper(string(presence[:1])) + string(presence[1:])
+		if presence == m.status.presence {
+			label += muted("  current")
+		}
+		marker := "  "
+		if i == m.statusMenuChoice {
+			marker, label = accent("› "), strong(label)
+		}
+		b.WriteString(marker + label + "\n")
+	}
+	b.WriteString("\n" + muted("↑↓ / j k choose  •  enter apply  •  esc / o cancel"))
+	card := panelStyle().Width(max(34, min(48, m.width-4))).Padding(1, 2).Render(b.String())
 	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, card)
 }
 
@@ -335,7 +360,8 @@ func (m model) helpView() string {
 		{"b (search)", "browse the selected result's user and folder"},
 		{"ctrl+page up/down", "switch search, browse, or transfer tabs"},
 		{"ctrl+w (results)", "close the active search or user tab"},
-		{"s", "save settings; connection changes reconnect"},
+		{"s", "save settings; active sessions adopt connection changes"},
+		{"o", "choose Online, Away, or Offline"},
 		{"? / esc", "open or close this guide"},
 		{"q", "quit"},
 	}
@@ -903,7 +929,7 @@ func (m model) settingFields() []settingField {
 	case 0:
 		return []settingField{{"Username", m.cfg.Soulseek.Username, settingText}, {"Password", m.cfg.Soulseek.Password, settingSecret}}
 	case 1:
-		return []settingField{{"Server", m.cfg.Soulseek.Server, settingText}, {"Listen address", m.cfg.Soulseek.ListenAddr, settingText}}
+		return []settingField{{"Server", m.cfg.Soulseek.Server, settingText}, {"Listen address", m.cfg.Soulseek.ListenAddr, settingText}, {"Connect on startup", strconv.FormatBool(m.cfg.Soulseek.ConnectOnStartup), settingBool}}
 	case 2:
 		return []settingField{{"Download path", m.cfg.DownloadDir, settingText}}
 	default:
@@ -948,15 +974,25 @@ func (m *model) setSettingValue(value string) error {
 	return nil
 }
 
-func (m model) statusView() string {
-	status := string(m.status.status)
-	if status == "" {
-		status = "starting"
+func (m model) statusText() string {
+	if m.status.status == daemon.StatusConnected && (m.status.presence == daemon.PresenceOnline || m.status.presence == daemon.PresenceAway) {
+		return string(m.status.presence)
 	}
+	if m.status.status == daemon.StatusStopped {
+		return string(daemon.PresenceOffline)
+	}
+	if m.status.status == "" {
+		return "starting"
+	}
+	return string(m.status.status)
+}
+
+func (m model) statusView() string {
+	status := m.statusText()
 	color := lipgloss.Color("#F9E2AF")
-	if m.status.status == daemon.StatusConnected {
+	if status == string(daemon.PresenceOnline) {
 		color = lipgloss.Color("#A6E3A1")
-	} else if m.status.status == daemon.StatusError || m.status.status == daemon.StatusStopped {
+	} else if status == string(daemon.PresenceOffline) || m.status.status == daemon.StatusError {
 		color = lipgloss.Color("#F38BA8")
 	}
 	label := styled("●", lipgloss.NewStyle().Foreground(color)) + " " + status
@@ -983,7 +1019,7 @@ func (m model) footerView() string {
 	case 4:
 		hints = append(hints, "←→ section", "enter edit/toggle/run", "s save")
 	}
-	hints = append(hints, "? help", "q quit")
+	hints = append(hints, "o status", "? help", "q quit")
 	return lipgloss.NewStyle().Width(m.width).Padding(0, 1).Render(muted(trunc(strings.Join(hints, "  •  "), m.width-2)))
 }
 

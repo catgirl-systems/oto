@@ -87,6 +87,10 @@ type settingsMsg struct {
 	search config.Search
 	err    error
 }
+type presenceMsg struct {
+	presence daemon.Presence
+	err      error
+}
 type transferActionMsg struct {
 	transfers []transfer
 	err       error
@@ -95,6 +99,9 @@ type transferActionMsg struct {
 func tick() tea.Cmd { return tea.Tick(time.Second, func(t time.Time) tea.Msg { return tickMsg(t) }) }
 func (m model) loadStatus() tea.Cmd {
 	return func() tea.Msg { s, e := m.client.Status(m.ctx); return statusMsg{s, e} }
+}
+func (m model) setPresence(presence daemon.Presence) tea.Cmd {
+	return func() tea.Msg { return presenceMsg{presence, m.client.SetPresence(m.ctx, presence)} }
 }
 func (m model) loadTransfers() tea.Cmd {
 	return func() tea.Msg {
@@ -485,7 +492,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if x.err != nil {
 			m.status.err = x.err.Error()
 		} else {
-			m.status = snapshot{status: x.snapshot.Status, user: x.snapshot.Config.Soulseek.Username, err: x.snapshot.Error}
+			m.status = snapshot{status: x.snapshot.Status, presence: x.snapshot.Presence, user: x.snapshot.Config.Soulseek.Username, err: x.snapshot.Error}
 		}
 	case searchMsg:
 		if x.request != 0 {
@@ -632,6 +639,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.notice = "Settings saved"
 			return m, m.loadStatus()
 		}
+	case presenceMsg:
+		m.err = errText(x.err)
+		if x.err == nil {
+			m.notice = "Status set to " + string(x.presence)
+			return m, m.loadStatus()
+		}
 	case transferActionMsg:
 		m.err = errText(x.err)
 		if m.workspace == 2 {
@@ -675,6 +688,9 @@ func errText(e error) string {
 func (m *model) key(k tea.KeyPressMsg) tea.Cmd {
 	s := k.String()
 	m.notice = ""
+	if m.statusMenu {
+		return m.statusMenuKey(k)
+	}
 	if m.help {
 		if s == "?" || s == "esc" {
 			m.help = false
@@ -714,6 +730,8 @@ func (m *model) key(k tea.KeyPressMsg) tea.Cmd {
 		return tea.Quit
 	case "?":
 		m.help = true
+	case "o":
+		m.openStatusMenu()
 	case "ctrl+pgup":
 		if m.workspace == 0 {
 			m.switchSearchTab(-1)
@@ -788,7 +806,9 @@ func (m *model) key(k tea.KeyPressMsg) tea.Cmd {
 			}
 			switch fields[m.cursor].kind {
 			case settingBool:
-				if m.cursor == 0 {
+				if m.settingsSection == 1 {
+					m.cfg.Soulseek.ConnectOnStartup = !m.cfg.Soulseek.ConnectOnStartup
+				} else if m.cursor == 0 {
 					m.cfg.Search.RememberSearches = !m.cfg.Search.RememberSearches
 				} else {
 					m.cfg.Search.RememberFilters = !m.cfg.Search.RememberFilters
@@ -876,6 +896,32 @@ func (m *model) key(k tea.KeyPressMsg) tea.Cmd {
 	case "/":
 		m.beginEdit()
 		return nil
+	}
+	return nil
+}
+
+func (m *model) openStatusMenu() {
+	m.statusMenu, m.statusMenuChoice = true, 0
+	for i, presence := range presenceChoices {
+		if presence == m.status.presence {
+			m.statusMenuChoice = i
+			return
+		}
+	}
+}
+
+func (m *model) statusMenuKey(k tea.KeyPressMsg) tea.Cmd {
+	switch k.String() {
+	case "esc", "o":
+		m.statusMenu = false
+	case "up", "k":
+		m.statusMenuChoice = max(0, m.statusMenuChoice-1)
+	case "down", "j":
+		m.statusMenuChoice = min(len(presenceChoices)-1, m.statusMenuChoice+1)
+	case "enter":
+		presence := presenceChoices[m.statusMenuChoice]
+		m.statusMenu = false
+		return m.setPresence(presence)
 	}
 	return nil
 }

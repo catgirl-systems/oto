@@ -97,6 +97,7 @@ func (s *Server) Close() error {
 func (s *Server) handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/state", s.state)
+	mux.HandleFunc("PUT /v1/presence", s.presence)
 	mux.HandleFunc("GET /v1/searches", s.searches)
 	mux.HandleFunc("POST /v1/search", s.search)
 	mux.HandleFunc("GET /v1/browse", s.browse)
@@ -135,6 +136,21 @@ func decode(w http.ResponseWriter, r *http.Request, v any) error {
 }
 func (s *Server) state(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, 200, s.service.Snapshot())
+}
+
+func (s *Server) presence(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Presence daemon.Presence `json:"presence"`
+	}
+	if err := decode(w, r, &req); err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	if err := s.service.SetPresence(req.Presence); err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 func (s *Server) searches(w http.ResponseWriter, r *http.Request) {
 	id := r.URL.Query().Get("id")
@@ -332,6 +348,10 @@ func (c *Client) Status(ctx context.Context) (daemon.Snapshot, error) {
 	var x daemon.Snapshot
 	err := c.Do(ctx, "GET", "/v1/state", nil, &x)
 	return x, err
+}
+
+func (c *Client) SetPresence(ctx context.Context, presence daemon.Presence) error {
+	return c.Do(ctx, "PUT", "/v1/presence", map[string]daemon.Presence{"presence": presence}, nil)
 }
 func (c *Client) Search(ctx context.Context, q, filter string) (daemon.SearchPage, error) {
 	var page daemon.SearchPage

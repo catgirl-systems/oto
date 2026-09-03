@@ -35,7 +35,7 @@ func incompletePath(id string) string {
 
 func (s *Service) startDownload(id string) {
 	s.mu.Lock()
-	if s.closed || s.restarting || s.ctx == nil {
+	if s.closed || s.requeueDownloads || s.ctx == nil {
 		s.mu.Unlock()
 		return
 	}
@@ -159,10 +159,13 @@ func (s *Service) runDownload(id string) {
 		}
 	}
 	if ctx.Err() != nil {
+		if current, err := file.Stat(); err == nil && current.Size() >= 0 {
+			offset = uint64(current.Size())
+		}
 		s.mu.RLock()
-		restarting := s.restarting
+		requeue := s.requeueDownloads
 		s.mu.RUnlock()
-		if restarting {
+		if requeue {
 			s.updateDownload(id, "queued", offset, nil)
 		} else {
 			s.updateDownload(id, "cancelled", offset, ctx.Err())

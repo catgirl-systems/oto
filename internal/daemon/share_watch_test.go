@@ -31,7 +31,7 @@ func watchingService(t *testing.T, shares []config.Share, quiet time.Duration, b
 		service.shareIndexBuilder = builder
 	}
 	service.shareRescanDelay = quiet
-	service.ctx, service.cancel = context.WithCancel(context.Background())
+	service.runCtx, service.runCancel = context.WithCancel(context.Background())
 	service.restartShareWatcherLocked()
 	service.mu.Unlock()
 	t.Cleanup(func() { _ = service.Close() })

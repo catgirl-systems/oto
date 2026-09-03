@@ -26,7 +26,7 @@ func (s *Service) SetListenPortFile(path string, reconcileInterval time.Duration
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.cancel != nil {
+	if s.runCancel != nil {
 		return errors.New("daemon: listen port file must be configured before starting")
 	}
 	s.listenPortFile = filepath.Clean(path)
@@ -39,10 +39,10 @@ func (s *Service) SetListenPortFile(path string, reconcileInterval time.Duration
 }
 
 func (s *Service) startListenPortWatcherLocked() {
-	if s.listenPortFile == "" || s.ctx == nil {
+	if s.listenPortFile == "" || s.runCtx == nil {
 		return
 	}
-	ctx, path, interval := s.ctx, s.listenPortFile, s.listenPortInterval
+	ctx, path, interval := s.runCtx, s.listenPortFile, s.listenPortInterval
 	s.wg.Add(1)
 	go func() {
 		defer s.wg.Done()
@@ -60,11 +60,14 @@ func (s *Service) applyListenPort(port uint16, available bool) {
 		return
 	}
 	s.listenPort = port
-	client := s.client
-	if port == 0 {
+	client, active := s.client, s.cancel != nil
+	if port == 0 && active {
 		s.status, s.lastErr = StatusReconnecting, ErrListenPortUnavailable.Error()
 	}
 	s.mu.Unlock()
+	if !active {
+		return
+	}
 
 	if port == 0 {
 		if client != nil {

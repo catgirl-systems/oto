@@ -46,7 +46,7 @@ func (s *Service) SetShareRescanDelay(delay time.Duration) error {
 	}
 	s.mu.Lock()
 	s.shareRescanDelay = delay
-	if s.ctx != nil {
+	if s.runCtx != nil {
 		s.restartShareWatcherLocked()
 	}
 	s.mu.Unlock()
@@ -63,10 +63,10 @@ func (s *Service) stopShareWatcherLocked() {
 
 func (s *Service) restartShareWatcherLocked() {
 	s.stopShareWatcherLocked()
-	if s.shareRescanDelay == 0 || s.ctx == nil || s.closed || len(s.cfg.Shares) == 0 {
+	if s.shareRescanDelay == 0 || s.runCtx == nil || s.closed || len(s.cfg.Shares) == 0 {
 		return
 	}
-	ctx, cancel := context.WithCancel(s.ctx)
+	ctx, cancel := context.WithCancel(s.runCtx)
 	s.shareWatchCancel = cancel
 	generation := s.shareWatchGeneration
 	shares := append([]config.Share(nil), s.cfg.Shares...)

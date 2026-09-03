@@ -13,6 +13,7 @@ func TestSaveLoadModesEnvAndRedaction(t *testing.T) {
 	p := filepath.Join(d, "nested", "config.json")
 	c := Default()
 	c.Soulseek.Username, c.Soulseek.Password = "alice", "secret"
+	c.Soulseek.ConnectOnStartup = false
 	if err := c.Save(p); err != nil {
 		t.Fatal(err)
 	}
@@ -30,12 +31,12 @@ func TestSaveLoadModesEnvAndRedaction(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Soulseek.Server != "example:1234" || got.Soulseek.Password != "override" {
-		t.Fatalf("env overrides: %+v", got.Soulseek)
+	if got.Soulseek.Server != "example:1234" || got.Soulseek.Password != "override" || got.Soulseek.ConnectOnStartup {
+		t.Fatalf("env overrides or startup setting: %+v", got.Soulseek)
 	}
 	b, _ := json.Marshal(got.Redacted())
-	if strings.Contains(string(b), "override") {
-		t.Fatal("password leaked")
+	if strings.Contains(string(b), "override") || !strings.Contains(string(b), `"connect_on_startup":false`) {
+		t.Fatalf("unsafe or incomplete redaction: %s", b)
 	}
 	q := filepath.Join(d, "env-config.json")
 	if err := got.Save(q); err != nil {
@@ -64,17 +65,21 @@ func TestSearchDefaultsCompatibilityAndValidation(t *testing.T) {
 	if got.Search != want || got.Redacted().Search != want {
 		t.Fatalf("search defaults or redaction: got %+v safe %+v", got.Search, got.Redacted().Search)
 	}
+	if !got.Soulseek.ConnectOnStartup || !got.Redacted().Soulseek.ConnectOnStartup {
+		t.Fatal("older config did not retain connect-on-startup default")
+	}
 	got.Search.SearchHistoryLimit, got.Search.FilterHistoryLimit = 0, 0
 	if err := got.Validate(); err != nil {
 		t.Fatalf("zero should mean unlimited: %v", err)
 	}
+	got.Soulseek.ConnectOnStartup = false
 	roundTripPath := filepath.Join(d, "round-trip.json")
 	if err := got.Save(roundTripPath); err != nil {
 		t.Fatal(err)
 	}
 	roundTrip, err := Load(roundTripPath)
-	if err != nil || roundTrip.Search != got.Search {
-		t.Fatalf("search round trip: %+v %v", roundTrip.Search, err)
+	if err != nil || roundTrip.Search != got.Search || roundTrip.Soulseek.ConnectOnStartup || roundTrip.Redacted().Soulseek.ConnectOnStartup {
+		t.Fatalf("config round trip: %+v %v", roundTrip, err)
 	}
 	got.Search.FilterHistoryLimit = -1
 	if err := got.Validate(); err == nil {

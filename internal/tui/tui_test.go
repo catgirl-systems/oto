@@ -47,6 +47,50 @@ func TestNavigationSelectionAndHelp(t *testing.T) {
 	}
 }
 
+func TestStatusMenuAndLabels(t *testing.T) {
+	t.Setenv("NO_COLOR", "1")
+	m := model{width: 80, height: 24, selected: map[int]bool{}, status: snapshot{status: daemon.StatusConnected, presence: daemon.PresenceAway}}
+	if m.statusText() != "away" {
+		t.Fatalf("connected label: %q", m.statusText())
+	}
+	m.key(key("o"))
+	if !m.statusMenu || m.statusMenuChoice != 1 {
+		t.Fatalf("status menu did not select Away: %+v", m)
+	}
+	view := m.View().Content
+	for _, label := range []string{"Online", "Away", "Offline", "current"} {
+		if !strings.Contains(view, label) {
+			t.Fatalf("status menu missing %q", label)
+		}
+	}
+	m.key(key("j"))
+	if m.statusMenuChoice != 2 {
+		t.Fatal("status menu did not move down")
+	}
+	m.key(key("k"))
+	if cmd := m.key(key("enter")); cmd == nil || m.statusMenu {
+		t.Fatal("status menu did not apply and close")
+	}
+	m.key(key("o"))
+	m.key(tea.KeyPressMsg(tea.Key{Code: tea.KeyEscape}))
+	if m.statusMenu {
+		t.Fatal("escape did not close status menu")
+	}
+	m.key(key("o"))
+	m.key(key("o"))
+	if m.statusMenu {
+		t.Fatal("o did not close status menu")
+	}
+	m.status.status, m.status.presence = daemon.StatusStopped, daemon.PresenceOffline
+	if m.statusText() != "offline" {
+		t.Fatalf("stopped label: %q", m.statusText())
+	}
+	m.status.status = daemon.StatusReconnecting
+	if m.statusText() != "reconnecting" {
+		t.Fatalf("transition label: %q", m.statusText())
+	}
+}
+
 func TestPageAndBoundaryNavigationAcrossTrees(t *testing.T) {
 	for _, workspace := range []int{0, 1, 2, 3} {
 		m := model{workspace: workspace, height: 20, cursor: 50, selected: map[int]bool{}}
@@ -243,7 +287,7 @@ func TestSettingsSidebarEditsAccountWithoutLeakingPassword(t *testing.T) {
 	cfg := config.Default()
 	cfg.Soulseek.Username, cfg.Soulseek.Password = "alice", "secret"
 	m := newModel(context.Background(), nil, "", false, cfg)
-	m.width, m.height, m.workspace = 80, 10, 4
+	m.width, m.height, m.workspace = 80, 12, 4
 
 	view := m.View().Content
 	if !strings.Contains(view, "Settings") || !strings.Contains(view, "Account") || strings.Contains(view, "secret") || !strings.Contains(view, "••••••") {
@@ -264,8 +308,13 @@ func TestSettingsSidebarEditsAccountWithoutLeakingPassword(t *testing.T) {
 	}
 
 	m.key(tea.KeyPressMsg(tea.Key{Code: tea.KeyRight}))
-	if m.settingsSection != 1 || !strings.Contains(m.View().Content, "Listen address") {
+	if m.settingsSection != 1 || !strings.Contains(m.View().Content, "Listen address") || !strings.Contains(m.View().Content, "Connect on startup") {
 		t.Fatal("settings sidebar did not navigate to connection settings")
+	}
+	m.cursor = 2
+	m.key(key("enter"))
+	if m.cfg.Soulseek.ConnectOnStartup {
+		t.Fatal("connect-on-startup setting was not staged")
 	}
 	m.key(tea.KeyPressMsg(tea.Key{Code: tea.KeyRight}))
 	m.key(tea.KeyPressMsg(tea.Key{Code: tea.KeyRight}))

@@ -50,12 +50,26 @@ func TestStatusMethodsBodyAndSocketMode(t *testing.T) {
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
-	if snap.Config.Soulseek.Username != "u" {
+	if snap.Config.Soulseek.Username != "u" || snap.Presence != daemon.PresenceOffline {
 		t.Fatalf("snapshot: %+v", snap)
 	}
 	if st, err := os.Stat(path); err != nil || st.Mode().Perm() != 0600 {
 		t.Fatalf("socket mode: %v %v", st, err)
 	}
+	if err := cl.SetPresence(context.Background(), daemon.PresenceOffline); err != nil {
+		t.Fatalf("offline presence route: %v", err)
+	}
+	if err := cl.SetPresence(context.Background(), daemon.Presence("busy")); err == nil {
+		t.Fatal("invalid presence accepted")
+	}
+	malformedResp, requestErr := cl.http.Do(mustRequest("PUT", "http://oto.local/v1/presence", strings.NewReader(`{`)))
+	if requestErr != nil {
+		t.Fatal(requestErr)
+	}
+	if malformedResp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("malformed presence status %d", malformedResp.StatusCode)
+	}
+	malformedResp.Body.Close()
 	if err := cl.TransferAction(context.Background(), "d-1", "cancel"); err != nil || svc.Downloads()[0].State != "cancelled" {
 		t.Fatalf("cancel transfer route: %v %+v", err, svc.Downloads())
 	}

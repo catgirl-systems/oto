@@ -257,7 +257,7 @@ func statusCommand(args []string) error {
 	if *jsonOut {
 		return json.NewEncoder(os.Stdout).Encode(s)
 	}
-	fmt.Printf("%s user=%s shares=%d transfers=%d", s.Status, s.Config.Soulseek.Username, len(s.Shares), len(s.Transfers))
+	fmt.Printf("%s presence=%s user=%s shares=%d transfers=%d", s.Status, s.Presence, s.Config.Soulseek.Username, len(s.Shares), len(s.Transfers))
 	if s.Error != "" {
 		fmt.Printf(" error=%q", s.Error)
 	}
