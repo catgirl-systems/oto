@@ -267,6 +267,11 @@ func TestSettingsSidebarEditsAccountWithoutLeakingPassword(t *testing.T) {
 	if m.settingsSection != 1 || !strings.Contains(m.View().Content, "Listen address") {
 		t.Fatal("settings sidebar did not navigate to connection settings")
 	}
+	m.key(tea.KeyPressMsg(tea.Key{Code: tea.KeyRight}))
+	m.key(tea.KeyPressMsg(tea.Key{Code: tea.KeyRight}))
+	if m.settingsSection != 3 || !strings.Contains(m.View().Content, "Remember searches") {
+		t.Fatal("settings sidebar did not navigate to search settings")
+	}
 	m.key(key("tab"))
 	if m.workspace != 0 {
 		t.Fatal("settings tab did not wrap to search")

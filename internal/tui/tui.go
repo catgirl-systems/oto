@@ -38,6 +38,7 @@ func RunWithTransient(ctx context.Context, client *ipc.Client, configPath string
 		return fmt.Errorf("load config: %w", err)
 	}
 	m := newModel(ctx, client, configPath, transient, cfg)
+	m.initializeHistory()
 	if strings.TrimSpace(cfg.Soulseek.Username) == "" || strings.TrimSpace(cfg.Soulseek.Password) == "" {
 		m.setup = true
 	}
@@ -82,7 +83,10 @@ type shareBrowseMsg struct {
 	entries             []entry
 	err                 error
 }
-type settingsMsg struct{ err error }
+type settingsMsg struct {
+	search config.Search
+	err    error
+}
 type transferActionMsg struct {
 	transfers []transfer
 	err       error
@@ -236,6 +240,7 @@ func (m *model) openSearch(query string) tea.Cmd {
 	if query == "" {
 		return nil
 	}
+	m.recordHistory(query, false)
 	if m.workspace == 0 {
 		m.saveSearchTab()
 	}
@@ -459,7 +464,7 @@ func (m model) saveSettings() tea.Cmd {
 	cfg := m.cfg
 	return func() tea.Msg {
 		_, err := m.client.UpdateConfig(m.ctx, cfg)
-		return settingsMsg{err}
+		return settingsMsg{search: cfg.Search, err: err}
 	}
 }
 
@@ -623,6 +628,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case settingsMsg:
 		m.err = errText(x.err)
 		if x.err == nil {
+			m.applyHistorySettings(x.search)
+			m.notice = "Settings saved"
 			return m, m.loadStatus()
 		}
 	case transferActionMsg:
@@ -648,6 +655,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.setupVals[m.setupField], m.inputCursor = insertText(m.setupVals[m.setupField], text, m.inputCursor)
 		} else if m.editing {
 			m.input, m.inputCursor = insertText(m.input, text, m.inputCursor)
+			if m.workspace == 0 {
+				m.historyCursor.reset(m.input)
+			}
 		}
 		return m, nil
 	case tea.KeyPressMsg:
@@ -664,6 +674,7 @@ func errText(e error) string {
 
 func (m *model) key(k tea.KeyPressMsg) tea.Cmd {
 	s := k.String()
+	m.notice = ""
 	if m.help {
 		if s == "?" || s == "esc" {
 			m.help = false
@@ -731,14 +742,14 @@ func (m *model) key(k tea.KeyPressMsg) tea.Cmd {
 		m.switchWorkspace(m.workspace - 1)
 	case "right":
 		if m.workspace == 4 {
-			m.settingsSection = (m.settingsSection + 1) % 3
+			m.settingsSection = (m.settingsSection + 1) % 4
 			m.cursor, m.selected = 0, map[int]bool{}
 		} else {
 			return m.openTreeNode(false)
 		}
 	case "left":
 		if m.workspace == 4 {
-			m.settingsSection = (m.settingsSection + 2) % 3
+			m.settingsSection = (m.settingsSection + 3) % 4
 			m.cursor, m.selected = 0, map[int]bool{}
 		} else if tree := m.currentTree(); tree != nil {
 			m.cursor = tree.left(m.cursor)
@@ -771,7 +782,22 @@ func (m *model) key(k tea.KeyPressMsg) tea.Cmd {
 		m.toggle()
 	case "enter":
 		if m.workspace == 4 {
-			m.beginEdit()
+			fields := m.settingFields()
+			if m.cursor >= len(fields) {
+				return nil
+			}
+			switch fields[m.cursor].kind {
+			case settingBool:
+				if m.cursor == 0 {
+					m.cfg.Search.RememberSearches = !m.cfg.Search.RememberSearches
+				} else {
+					m.cfg.Search.RememberFilters = !m.cfg.Search.RememberFilters
+				}
+			case settingAction:
+				m.clearHistory(m.cursor == 5)
+			default:
+				m.beginEdit()
+			}
 			return nil
 		}
 		return m.enter()
@@ -844,6 +870,7 @@ func (m *model) key(k tea.KeyPressMsg) tea.Cmd {
 		if m.workspace == 0 {
 			m.editing, m.filterEditing, m.input = true, true, m.searchFilter
 			m.inputCursor = len([]rune(m.input))
+			m.historyCursor.reset(m.input)
 			return nil
 		}
 	case "/":
@@ -944,6 +971,12 @@ func (m *model) folderMenuKey(k tea.KeyPressMsg) tea.Cmd {
 }
 
 func (m *model) beginEdit() {
+	if m.workspace == 4 {
+		fields := m.settingFields()
+		if m.cursor >= len(fields) || fields[m.cursor].kind == settingBool || fields[m.cursor].kind == settingAction {
+			return
+		}
+	}
 	m.editing, m.filterEditing = true, false
 	switch m.workspace {
 	case 0:
@@ -959,15 +992,23 @@ func (m *model) beginEdit() {
 		m.input = ""
 	}
 	m.inputCursor = len([]rune(m.input))
+	if m.workspace == 0 {
+		m.historyCursor.reset(m.input)
+	}
 }
 func (m *model) editKey(k tea.KeyPressMsg) tea.Cmd {
 	s := k.String()
+	if m.workspace == 0 && (s == "up" || s == "down") {
+		m.recallHistory(s == "up")
+		return nil
+	}
 	if m.filterEditing && (s == "tab" || s == "shift+tab") {
 		before := inputBeforeCursor(m.input, m.inputCursor)
 		after := []rune(m.input)[len([]rune(before)):]
 		completed := completeFilter(before, s == "shift+tab")
 		m.input = completed + string(after)
 		m.inputCursor = len([]rune(completed))
+		m.historyCursor.reset(m.input)
 		return nil
 	}
 	if s == "esc" {
@@ -984,6 +1025,7 @@ func (m *model) editKey(k tea.KeyPressMsg) tea.Cmd {
 				m.err = err.Error()
 				return nil
 			}
+			m.recordHistory(filter, true)
 			if m.searchID == "" {
 				m.searchFilter = filter
 				m.err = ""
@@ -1006,12 +1048,20 @@ func (m *model) editKey(k tea.KeyPressMsg) tea.Cmd {
 			if m.settingsSection != 0 || m.cursor != 1 {
 				value = strings.TrimSpace(value)
 			}
-			m.setSettingValue(value)
+			if err := m.setSettingValue(value); err != nil {
+				m.err = err.Error()
+			} else {
+				m.err = ""
+			}
 			return nil
 		}
 		return nil
 	}
+	before := m.input
 	m.input, m.inputCursor, _ = editText(m.input, m.inputCursor, k)
+	if m.workspace == 0 && m.input != before {
+		m.historyCursor.reset(m.input)
+	}
 	return nil
 }
 

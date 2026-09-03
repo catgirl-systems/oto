@@ -2,8 +2,10 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -72,16 +74,29 @@ type download struct {
 	size     uint64
 }
 
+type settingKind uint8
+
+const (
+	settingText settingKind = iota
+	settingSecret
+	settingBool
+	settingInt
+	settingAction
+)
+
 type settingField struct {
 	label, value string
-	secret       bool
+	kind         settingKind
 }
 
 type model struct {
 	ctx                                    context.Context
 	client                                 *ipc.Client
-	configPath                             string
+	configPath, historyPath                string
 	cfg                                    config.Config
+	activeSearch                           config.Search
+	history                                historyState
+	historyCursor                          historyCursor
 	transient                              bool
 	setup, help, confirm, editing, loading bool
 	details, folderMenu                    bool
@@ -121,7 +136,7 @@ type model struct {
 	shareCursor                            int
 	shareGeneration, shareRequest          uint64
 	selected                               map[int]bool
-	err                                    string
+	err, historyErr, notice                string
 }
 
 func (m model) rows() int {
@@ -142,7 +157,9 @@ func (m model) rows() int {
 func (m model) pageRows() int { return max(1, m.height-8) }
 
 func newModel(ctx context.Context, c *ipc.Client, path string, transient bool, cfg config.Config) model {
-	return model{ctx: ctx, client: c, configPath: path, cfg: cfg, transient: transient, width: 80, height: 24, selected: map[int]bool{}, setupVals: [5]string{cfg.Soulseek.Username, cfg.Soulseek.Password, cfg.Soulseek.ListenAddr, cfg.DownloadDir, ""}, inputCursor: utf8.RuneCountInString(cfg.Soulseek.Username)}
+	m := model{ctx: ctx, client: c, configPath: path, historyPath: config.HistoryPath(), cfg: cfg, activeSearch: cfg.Search, transient: transient, width: 80, height: 24, selected: map[int]bool{}, setupVals: [5]string{cfg.Soulseek.Username, cfg.Soulseek.Password, cfg.Soulseek.ListenAddr, cfg.DownloadDir, ""}, inputCursor: utf8.RuneCountInString(cfg.Soulseek.Username)}
+	m.historyCursor.reset("")
+	return m
 }
 func (m model) View() tea.View {
 	content := m.mainView()
@@ -300,7 +317,7 @@ func (m model) helpView() string {
 	b.WriteString("\n" + muted("Everything is reachable without a mouse.") + "\n\n")
 	rows := [][2]string{
 		{"tab / shift+tab", "switch workspace"},
-		{"↑ ↓  or  j k", "move through items or fields"},
+		{"↑ ↓  or  j k", "move items; ↑ ↓ recalls history while editing"},
 		{"page up/down", "move through items or fields by a page"},
 		{"← →", "collapse or expand trees; change Settings section"},
 		{"home end", "first/last row; line boundary while editing"},
@@ -318,7 +335,7 @@ func (m model) helpView() string {
 		{"b (search)", "browse the selected result's user and folder"},
 		{"ctrl+page up/down", "switch search, browse, or transfer tabs"},
 		{"ctrl+w (results)", "close the active search or user tab"},
-		{"s", "save settings and reconnect"},
+		{"s", "save settings; connection changes reconnect"},
 		{"? / esc", "open or close this guide"},
 		{"q", "quit"},
 	}
@@ -517,13 +534,13 @@ func (m model) renderSearch(width, height int) string {
 	inputStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#F5E0DC"))
 	prompt := muted("/  Press / to search the network")
 	if m.editing && !m.filterEditing {
-		prompt = renderInput("/  ", m.input, m.inputCursor, false, inputStyle) + muted("   enter search  •  esc cancel")
+		prompt = renderInput("/  ", m.input, m.inputCursor, false, inputStyle) + muted("   ↑↓ history  •  enter search  •  esc cancel")
 	} else if m.query != "" {
 		prompt = styled("/  "+m.query, inputStyle)
 	}
 	filterLine := muted("f  Press f to filter cached results")
 	if m.editing && m.filterEditing {
-		filterLine = renderInput("f  ", m.input, m.inputCursor, false, inputStyle) + muted("   enter apply  •  esc cancel")
+		filterLine = renderInput("f  ", m.input, m.inputCursor, false, inputStyle) + muted("   ↑↓ history  •  enter apply  •  esc cancel")
 	} else if m.searchFilter != "" {
 		filterLine = styled("f  "+m.searchFilter, inputStyle)
 	}
@@ -819,21 +836,23 @@ func (m model) renderShares(width, height int) string {
 }
 
 func (m model) renderSettings(width, height int) string {
-	sections := []string{"Account", "Connection", "Downloads"}
-	lines := []string{sectionHeader("SETTINGS", "Changes reconnect the session", width)}
+	sections := []string{"Account", "Connection", "Downloads", "Search"}
+	lines := []string{sectionHeader("SETTINGS", "Press s to save changes", width)}
 	sidebarWidth := max(14, min(20, width/4))
+	contentHeight := max(1, height-1)
+	start, end := visibleRange(len(sections), m.settingsSection, contentHeight)
 	var sidebar strings.Builder
-	for i, section := range sections {
+	for i := start; i < end; i++ {
+		section := sections[i]
 		if i == m.settingsSection {
 			sidebar.WriteString(styled("› "+section, lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#F5E0DC"))))
 		} else {
 			sidebar.WriteString("  " + muted(section))
 		}
-		if i < len(sections)-1 {
+		if i < end-1 {
 			sidebar.WriteByte('\n')
 		}
 	}
-	contentHeight := max(1, height-1)
 	sideStyle := lipgloss.NewStyle().Width(sidebarWidth).Height(contentHeight).Border(lipgloss.NormalBorder(), false, true, false, false).PaddingRight(1)
 	if colorsEnabled() {
 		sideStyle = sideStyle.BorderForeground(lipgloss.Color("#45475A"))
@@ -841,26 +860,38 @@ func (m model) renderSettings(width, height int) string {
 
 	fields := m.settingFields()
 	formLines := []string{strong(sections[m.settingsSection])}
-	for i, field := range fields {
+	fieldStart, fieldEnd := visibleRange(len(fields), m.cursor, max(1, contentHeight-1))
+	for i := fieldStart; i < fieldEnd; i++ {
+		field := fields[i]
 		value := field.value
 		if m.editing && i == m.cursor {
-			value = renderInput("", m.input, m.inputCursor, field.secret, lipgloss.NewStyle())
+			value = renderInput("", m.input, m.inputCursor, field.kind == settingSecret, lipgloss.NewStyle())
 		} else {
-			if field.secret && value != "" {
-				value = strings.Repeat("•", utf8.RuneCountInString(value))
+			switch field.kind {
+			case settingSecret:
+				if value != "" {
+					value = strings.Repeat("•", utf8.RuneCountInString(value))
+				}
+			case settingBool:
+				if value == "true" {
+					value = "On"
+				} else {
+					value = "Off"
+				}
+			case settingInt:
+				if value == "0" {
+					value = "Unlimited"
+				}
 			}
 			if value == "" {
 				value = muted("Not set")
 			}
 		}
-		row := fmt.Sprintf("%-16s %s", field.label, value)
+		row := fmt.Sprintf("%-22s %s", field.label, value)
 		formLines = append(formLines, selectedRow(trunc(row, max(4, width-sidebarWidth-4)), i == m.cursor))
 	}
-	if len(formLines) < contentHeight {
-		formLines = append(formLines, "", muted("enter edit  •  s save  •  ← → section"))
-	}
-	if len(formLines) > contentHeight {
-		formLines = formLines[:contentHeight]
+	if fieldStart == 0 && fieldEnd == len(fields) && len(formLines)+2 <= contentHeight {
+		formLines = append(formLines, "", muted("enter edit/toggle/run  •  s save  •  ← → section"))
 	}
 	formWidth := max(12, width-sidebarWidth-2)
 	content := lipgloss.JoinHorizontal(lipgloss.Top, sideStyle.Render(sidebar.String()), lipgloss.NewStyle().Width(formWidth).PaddingLeft(2).Render(strings.Join(formLines, "\n")))
@@ -870,15 +901,24 @@ func (m model) renderSettings(width, height int) string {
 func (m model) settingFields() []settingField {
 	switch m.settingsSection {
 	case 0:
-		return []settingField{{"Username", m.cfg.Soulseek.Username, false}, {"Password", m.cfg.Soulseek.Password, true}}
+		return []settingField{{"Username", m.cfg.Soulseek.Username, settingText}, {"Password", m.cfg.Soulseek.Password, settingSecret}}
 	case 1:
-		return []settingField{{"Server", m.cfg.Soulseek.Server, false}, {"Listen address", m.cfg.Soulseek.ListenAddr, false}}
+		return []settingField{{"Server", m.cfg.Soulseek.Server, settingText}, {"Listen address", m.cfg.Soulseek.ListenAddr, settingText}}
+	case 2:
+		return []settingField{{"Download path", m.cfg.DownloadDir, settingText}}
 	default:
-		return []settingField{{"Download path", m.cfg.DownloadDir, false}}
+		return []settingField{
+			{"Remember searches", strconv.FormatBool(m.cfg.Search.RememberSearches), settingBool},
+			{"Search history limit", strconv.Itoa(m.cfg.Search.SearchHistoryLimit), settingInt},
+			{"Remember filters", strconv.FormatBool(m.cfg.Search.RememberFilters), settingBool},
+			{"Filter history limit", strconv.Itoa(m.cfg.Search.FilterHistoryLimit), settingInt},
+			{"Clear search history", "Press Enter", settingAction},
+			{"Clear filter history", "Press Enter", settingAction},
+		}
 	}
 }
 
-func (m *model) setSettingValue(value string) {
+func (m *model) setSettingValue(value string) error {
 	switch m.settingsSection {
 	case 0:
 		if m.cursor == 0 {
@@ -892,9 +932,20 @@ func (m *model) setSettingValue(value string) {
 		} else {
 			m.cfg.Soulseek.ListenAddr = value
 		}
-	default:
+	case 2:
 		m.cfg.DownloadDir = value
+	case 3:
+		limit, err := strconv.Atoi(value)
+		if err != nil || limit < 0 {
+			return errors.New("history limit must be a nonnegative integer")
+		}
+		if m.cursor == 1 {
+			m.cfg.Search.SearchHistoryLimit = limit
+		} else {
+			m.cfg.Search.FilterHistoryLimit = limit
+		}
 	}
+	return nil
 }
 
 func (m model) statusView() string {
@@ -922,7 +973,7 @@ func (m model) footerView() string {
 	hints := []string{"tab switch", "↑↓/page/home/end move"}
 	switch m.workspace {
 	case 0:
-		hints = append(hints, "←→ tree", "/ search", "ctrl+pgup/down tabs", "ctrl+w close", "f filter", "b browse folder", "i details", "space select", "d download/menu")
+		hints = append(hints, "←→ tree", "/ search", "↑↓ history while editing", "ctrl+pgup/down tabs", "ctrl+w close", "f filter", "b browse folder", "i details", "space select", "d download/menu")
 	case 1:
 		hints = append(hints, "←→ tree", "/ user", "ctrl+pgup/down tabs", "ctrl+w close", "r refresh", "i details", "space select", "d download/menu")
 	case 2:
@@ -930,7 +981,7 @@ func (m model) footerView() string {
 	case 3:
 		hints = append(hints, "←→ tree", "/ add", "d remove root", "r rescan")
 	case 4:
-		hints = append(hints, "←→ section", "enter edit", "s save")
+		hints = append(hints, "←→ section", "enter edit/toggle/run", "s save")
 	}
 	hints = append(hints, "? help", "q quit")
 	return lipgloss.NewStyle().Width(m.width).Padding(0, 1).Render(muted(trunc(strings.Join(hints, "  •  "), m.width-2)))
@@ -1017,6 +1068,9 @@ func (m model) errorText() string {
 	if m.err != "" {
 		return "Error: " + m.err
 	}
+	if m.historyErr != "" {
+		return "Error: history: " + m.historyErr
+	}
 	return ""
 }
 
@@ -1024,6 +1078,8 @@ func (m model) errorView() string {
 	message := m.errorText()
 	if message != "" {
 		message = danger(message)
+	} else if m.notice != "" {
+		message = muted(m.notice)
 	}
 	return lipgloss.NewStyle().Width(m.width).Padding(0, 1).Render(trunc(message, m.width-2))
 }
