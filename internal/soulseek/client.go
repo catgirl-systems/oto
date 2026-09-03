@@ -73,6 +73,7 @@ type Client struct {
 	done           chan struct{}
 	events         chan Event
 	pending        map[uint32]chan SearchResponse
+	passwordChange chan string
 	addresses      map[string]*peerAddressLookup
 	pierce         map[uint32]chan net.Conn
 	requested      map[string]*pendingDownload
@@ -307,6 +308,51 @@ func (c *Client) SetStatus(status UserStatus) error {
 	}
 	return c.send(Status{Status: uint32(status)})
 }
+
+func (c *Client) ChangePassword(ctx context.Context, password string) error {
+	if strings.TrimSpace(password) == "" {
+		return errors.New("soulseek: password cannot be empty")
+	}
+	response := make(chan string, 1)
+	c.mu.Lock()
+	if c.conn == nil || !c.loggedIn {
+		c.mu.Unlock()
+		return errors.New("soulseek: not logged in")
+	}
+	if c.passwordChange != nil {
+		c.mu.Unlock()
+		return errors.New("soulseek: password change already in progress")
+	}
+	c.passwordChange = response
+	done := c.done
+	c.mu.Unlock()
+	defer func() {
+		c.mu.Lock()
+		if c.passwordChange == response {
+			c.passwordChange = nil
+		}
+		c.mu.Unlock()
+	}()
+	if err := c.send(ChangePassword{Password: password}); err != nil {
+		return err
+	}
+	for {
+		select {
+		case got := <-response:
+			if got != password {
+				continue
+			}
+			c.mu.Lock()
+			c.cfg.Password = password
+			c.mu.Unlock()
+			return nil
+		case <-done:
+			return errors.New("soulseek: connection closed before password changed")
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+}
 func writeAll(w net.Conn, b []byte) error {
 	for len(b) > 0 {
 		n, e := w.Write(b)
@@ -364,6 +410,25 @@ func (c *Client) route(cmd uint32, m any) {
 			default:
 			}
 		}
+	case ChangePassword:
+		c.mu.Lock()
+		ch := c.passwordChange
+		c.mu.Unlock()
+		if ch != nil {
+			select {
+			case ch <- message.Password:
+			default:
+				select {
+				case <-ch:
+				default:
+				}
+				select {
+				case ch <- message.Password:
+				default:
+				}
+			}
+		}
+		return
 	case PeerAddress:
 		c.mu.Lock()
 		lookup := c.addresses[message.Username]

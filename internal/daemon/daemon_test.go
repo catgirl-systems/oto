@@ -3,11 +3,13 @@ package daemon
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -389,5 +391,95 @@ func TestUpdateConfigHotAppliesSearchAndDownload(t *testing.T) {
 	connectionChange.Soulseek.Server = "example.com:2242"
 	if err := s.UpdateConfig(connectionChange); err == nil || !builderCalled {
 		t.Fatalf("session update bypassed existing full path: called=%v err=%v", builderCalled, err)
+	}
+}
+
+func TestChangePasswordPersistenceAndOwnership(t *testing.T) {
+	cfg := testConfig(t)
+	service, err := New(cfg, filepath.Join(t.TempDir(), "downloads.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer service.Close()
+	if _, err := service.ChangePassword(context.Background(), "new"); !errors.Is(err, ErrNotStarted) {
+		t.Fatalf("disconnected password change: %v", err)
+	}
+	t.Setenv("OTO_PASSWORD", "owned")
+	if _, err := service.ChangePassword(context.Background(), "new"); err == nil || !strings.Contains(err.Error(), "OTO_PASSWORD") {
+		t.Fatalf("environment-owned password change: %v", err)
+	}
+	t.Setenv("OTO_PASSWORD", "")
+	_ = os.Unsetenv("OTO_PASSWORD")
+
+	clientConn, serverConn := net.Pipe()
+	defer clientConn.Close()
+	defer serverConn.Close()
+	client := soulseek.NewClientOnConn(soulseek.ClientConfig{Username: "u", Password: "p"}, clientConn)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	serverDone := make(chan error, 1)
+	go func() {
+		command, _, err := soulseek.ReadFrame(serverConn)
+		if err == nil && command != soulseek.ServerLogin {
+			err = fmt.Errorf("login command: %d", command)
+		}
+		if err == nil {
+			var response soulseek.Encoder
+			response.Bool(true)
+			_ = response.String("ok")
+			response.U32(0)
+			_ = response.String("hash")
+			response.Bool(false)
+			err = soulseek.WriteFrame(serverConn, soulseek.ServerLogin, response.Payload())
+		}
+		for range 4 {
+			if err == nil {
+				_, _, err = soulseek.ReadFrame(serverConn)
+			}
+		}
+		for range 2 {
+			if err != nil {
+				break
+			}
+			command, payload, readErr := soulseek.ReadFrame(serverConn)
+			err = readErr
+			if err == nil && command != soulseek.ServerChangePassword {
+				err = fmt.Errorf("password command: %d", command)
+			}
+			if err == nil {
+				err = soulseek.WriteFrame(serverConn, soulseek.ServerChangePassword, payload)
+			}
+		}
+		serverDone <- err
+	}()
+	if err := client.Login(ctx); err != nil {
+		t.Fatal(err)
+	}
+	go client.Run(ctx)
+	service.mu.Lock()
+	service.client, service.status = client, StatusConnected
+	service.mu.Unlock()
+
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	service.SetConfigPath(configPath)
+	result, err := service.ChangePassword(ctx, " new secret ")
+	if err != nil || !result.Changed || !result.Saved || result.Warning != "" {
+		t.Fatalf("password change result: %+v %v", result, err)
+	}
+	loaded, err := config.Load(configPath)
+	if err != nil || loaded.Soulseek.Password != " new secret " || service.cfg.Soulseek.Password != " new secret " {
+		t.Fatalf("persisted password: %q/%q %v", loaded.Soulseek.Password, service.cfg.Soulseek.Password, err)
+	}
+	if info, err := os.Stat(configPath); err != nil || info.Mode().Perm() != 0600 {
+		t.Fatalf("config permissions: %v %v", info, err)
+	}
+
+	service.SetConfigPath(t.TempDir())
+	result, err = service.ChangePassword(ctx, "unsaved-secret")
+	if err != nil || !result.Changed || result.Saved || !strings.Contains(result.Warning, "not saved") || strings.Contains(result.Warning, "unsaved-secret") || service.cfg.Soulseek.Password != "unsaved-secret" {
+		t.Fatalf("partial password change: %+v %v", result, err)
+	}
+	if err := <-serverDone; err != nil {
+		t.Fatal(err)
 	}
 }

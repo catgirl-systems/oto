@@ -11,6 +11,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -345,6 +346,133 @@ func TestPipeLogin(t *testing.T) {
 	if err := <-server; err != nil {
 		t.Fatal(err)
 	}
+}
+
+func TestChangePassword(t *testing.T) {
+	message := ChangePassword{Password: " new secret "}
+	frame, err := EncodeMessage(message)
+	if err != nil {
+		t.Fatal(err)
+	}
+	command, payload, err := ReadFrame(bytes.NewReader(frame))
+	decoded, decodeErr := DecodeMessage(command, payload)
+	if err != nil || decodeErr != nil || command != ServerChangePassword || decoded != message {
+		t.Fatalf("password frame: command=%d message=%#v errors=%v/%v", command, decoded, err, decodeErr)
+	}
+
+	t.Run("matching acknowledgement ignores stale response", func(t *testing.T) {
+		clientConn, serverConn := net.Pipe()
+		defer clientConn.Close()
+		defer serverConn.Close()
+		client := NewClientOnConn(ClientConfig{Username: "alice", Password: "old"}, clientConn)
+		client.loggedIn, client.done = true, make(chan struct{})
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		runDone := make(chan error, 1)
+		go func() { runDone <- client.Run(ctx) }()
+		serverDone := make(chan error, 1)
+		go func() {
+			command, payload, err := ReadFrame(serverConn)
+			if err == nil && command != ServerChangePassword {
+				err = fmt.Errorf("password command: %d", command)
+			}
+			if err == nil {
+				request, decodeErr := DecodeChangePassword(payload)
+				err = decodeErr
+				if err == nil && request.Password != message.Password {
+					err = fmt.Errorf("password payload: %q", request.Password)
+				}
+			}
+			if err == nil {
+				stale, _ := EncodeMessage(ChangePassword{Password: "stale"})
+				_, err = serverConn.Write(stale)
+			}
+			if err == nil {
+				ack, _ := EncodeMessage(message)
+				_, err = serverConn.Write(ack)
+			}
+			serverDone <- err
+		}()
+		if err := client.ChangePassword(ctx, message.Password); err != nil {
+			t.Fatal(err)
+		}
+		if client.cfg.Password != message.Password {
+			t.Fatal("client credential was not updated")
+		}
+		if err := <-serverDone; err != nil {
+			t.Fatal(err)
+		}
+		cancel()
+		_ = clientConn.Close()
+		<-runDone
+	})
+
+	t.Run("concurrent request is rejected", func(t *testing.T) {
+		clientConn, serverConn := net.Pipe()
+		defer clientConn.Close()
+		defer serverConn.Close()
+		client := NewClientOnConn(ClientConfig{}, clientConn)
+		client.loggedIn, client.done = true, make(chan struct{})
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		go client.Run(ctx)
+		requestRead := make(chan error, 1)
+		go func() {
+			command, _, err := ReadFrame(serverConn)
+			if err == nil && command != ServerChangePassword {
+				err = fmt.Errorf("password command: %d", command)
+			}
+			requestRead <- err
+		}()
+		first := make(chan error, 1)
+		go func() { first <- client.ChangePassword(ctx, "first") }()
+		if err := <-requestRead; err != nil {
+			t.Fatal(err)
+		}
+		if err := client.ChangePassword(ctx, "second"); err == nil || !strings.Contains(err.Error(), "already in progress") {
+			t.Fatalf("concurrent password change: %v", err)
+		}
+		ack, _ := EncodeMessage(ChangePassword{Password: "first"})
+		if _, err := serverConn.Write(ack); err != nil {
+			t.Fatal(err)
+		}
+		if err := <-first; err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	t.Run("cancellation and connection closure", func(t *testing.T) {
+		for _, closeConnection := range []bool{false, true} {
+			clientConn, serverConn := net.Pipe()
+			client := NewClientOnConn(ClientConfig{}, clientConn)
+			client.loggedIn, client.done = true, make(chan struct{})
+			runCtx, stopRun := context.WithCancel(context.Background())
+			go client.Run(runCtx)
+			requestRead := make(chan struct{})
+			go func() {
+				_, _, _ = ReadFrame(serverConn)
+				close(requestRead)
+			}()
+			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+			result := make(chan error, 1)
+			go func() { result <- client.ChangePassword(ctx, "new") }()
+			<-requestRead
+			if closeConnection {
+				_ = serverConn.Close()
+			}
+			err := <-result
+			if closeConnection && (err == nil || !strings.Contains(err.Error(), "connection closed")) {
+				t.Fatalf("connection closure: %v", err)
+			}
+			if !closeConnection && !errors.Is(err, context.DeadlineExceeded) {
+				t.Fatalf("cancellation: %v", err)
+			}
+			cancel()
+			stopRun()
+			_ = clientConn.Close()
+			_ = serverConn.Close()
+		}
+	})
 }
 
 func TestDecodeLegacyDownloadRequestWithSize(t *testing.T) {

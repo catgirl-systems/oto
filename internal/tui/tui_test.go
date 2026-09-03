@@ -313,8 +313,8 @@ func TestSettingsSidebarEditsAccountWithoutLeakingPassword(t *testing.T) {
 	m.width, m.height, m.workspace = 80, 16, 4
 
 	view := m.View().Content
-	if !strings.Contains(view, "Settings") || !strings.Contains(view, "Account") || strings.Contains(view, "secret") || !strings.Contains(view, "••••••") {
-		t.Fatal("settings account sidebar is missing or exposed the password")
+	if !strings.Contains(view, "Settings") || !strings.Contains(view, "Account") || strings.Contains(view, "secret") || strings.Contains(view, "••••••") || !strings.Contains(view, "Change Soulseek password") {
+		t.Fatal("settings account sidebar is missing the password action or exposed the password")
 	}
 	settingsLines := strings.Count(view, "\n")
 	m.workspace = 0
@@ -357,6 +357,66 @@ func TestSettingsSidebarEditsAccountWithoutLeakingPassword(t *testing.T) {
 	m.key(key("tab"))
 	if m.workspace != 0 {
 		t.Fatal("settings tab did not wrap to search")
+	}
+}
+
+func TestChangePasswordForm(t *testing.T) {
+	t.Setenv("NO_COLOR", "1")
+	cfg := config.Default()
+	cfg.Soulseek.Username, cfg.Soulseek.Password = "alice", "old-secret"
+	m := newModel(context.Background(), nil, "", false, cfg)
+	m.width, m.height, m.workspace, m.cursor = 80, 20, 4, 1
+
+	m.key(key("enter"))
+	if m.passwordForm || !strings.Contains(m.err, "Connect") {
+		t.Fatal("disconnected password action was not rejected")
+	}
+	m.status = snapshot{status: daemon.StatusConnected, user: "alice"}
+	m.cfg.Soulseek.Username = "staged"
+	m.key(key("enter"))
+	if m.passwordForm || !strings.Contains(m.err, "Save or revert") {
+		t.Fatal("staged username password action was not rejected")
+	}
+	m.cfg.Soulseek.Username = "alice"
+	m.key(key("enter"))
+	if !m.passwordForm || m.passwordUser != "alice" || !strings.Contains(m.View().Content, "Username") {
+		t.Fatal("password form did not open for the authenticated user")
+	}
+
+	updated, _ := m.Update(tea.PasteMsg{Content: " new secret \n"})
+	m = updated.(model)
+	if strings.Contains(m.View().Content, "new secret") || !strings.Contains(m.View().Content, "••••••••••••") {
+		t.Fatal("new password paste was not masked")
+	}
+	m.passwordFormKey(key("enter"))
+	m.passwordVals[1] = "different"
+	if cmd := m.passwordFormKey(key("enter")); cmd != nil || !strings.Contains(m.passwordErr, "match") {
+		t.Fatal("password confirmation mismatch was accepted")
+	}
+	m.passwordVals[1] = m.passwordVals[0]
+	if cmd := m.passwordFormKey(key("enter")); cmd == nil || !m.passwordChanging {
+		t.Fatal("matching passwords were not submitted")
+	}
+
+	updated, _ = m.Update(passwordMsg{password: m.passwordVals[0], result: daemon.PasswordChangeResult{Changed: true, Saved: true}})
+	m = updated.(model)
+	if m.passwordForm || m.cfg.Soulseek.Password != " new secret " || m.notice != "Password changed" || m.passwordVals != ([2]string{}) {
+		t.Fatal("successful password change did not update and clear form state")
+	}
+
+	m.openPasswordForm()
+	m.passwordVals = [2]string{"again", "again"}
+	updated, _ = m.Update(passwordMsg{password: "again", result: daemon.PasswordChangeResult{Changed: true, Warning: "password changed but config was not saved"}})
+	m = updated.(model)
+	if m.cfg.Soulseek.Password != "again" || !strings.Contains(m.err, "not saved") {
+		t.Fatal("partial password change did not retain the credential and warning")
+	}
+
+	m.openPasswordForm()
+	m.passwordVals = [2]string{"temporary", "temporary"}
+	m.passwordFormKey(key("esc"))
+	if m.passwordForm || m.passwordVals != ([2]string{}) {
+		t.Fatal("escape did not clear password form secrets")
 	}
 }
 

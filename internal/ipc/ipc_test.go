@@ -62,6 +62,18 @@ func TestStatusMethodsBodyAndSocketMode(t *testing.T) {
 	if err := cl.SetPresence(context.Background(), daemon.Presence("busy")); err == nil {
 		t.Fatal("invalid presence accepted")
 	}
+	passwordResp, err := cl.http.Do(mustRequest("PUT", "http://oto.local/v1/account/password", strings.NewReader(`{"password":"   "}`)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if passwordResp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("empty password status %d", passwordResp.StatusCode)
+	}
+	passwordResp.Body.Close()
+	result, err := cl.ChangePassword(context.Background(), "new-secret")
+	if err == nil || result.Changed || strings.Contains(err.Error(), "new-secret") {
+		t.Fatalf("disconnected password route leaked or accepted the password: %+v %v", result, err)
+	}
 	malformedResp, requestErr := cl.http.Do(mustRequest("PUT", "http://oto.local/v1/presence", strings.NewReader(`{`)))
 	if requestErr != nil {
 		t.Fatal(requestErr)

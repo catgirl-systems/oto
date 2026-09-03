@@ -95,6 +95,38 @@ func TestSoulfindHandshakeCriticalValues(t *testing.T) {
 	}
 }
 
+func TestSoulfindChangePassword(t *testing.T) {
+	addr := soulfindAddress(t)
+	stamp := fmt.Sprintf("%d", time.Now().UnixNano())
+	username, newPassword := "password"+stamp, "changed-"+stamp
+
+	client := NewClient(ClientConfig{Address: addr, Username: username, Password: "pw", ListenAddr: "127.0.0.1:0"})
+	t.Cleanup(func() { _ = client.Close() })
+	connectSoulfind(t, client)
+	runSoulfind(client)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := client.ChangePassword(ctx, newPassword); err != nil {
+		t.Fatalf("change password: %v", err)
+	}
+	if err := client.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	old := NewClient(ClientConfig{Address: addr, Username: username, Password: "pw", ListenAddr: "127.0.0.1:0"})
+	t.Cleanup(func() { _ = old.Close() })
+	if err := old.Connect(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := old.Login(ctx); err == nil || !strings.Contains(err.Error(), "INVALIDPASS") {
+		t.Fatalf("old password login: %v", err)
+	}
+
+	changed := NewClient(ClientConfig{Address: addr, Username: username, Password: newPassword, ListenAddr: "127.0.0.1:0"})
+	t.Cleanup(func() { _ = changed.Close() })
+	connectSoulfind(t, changed)
+}
+
 func TestSoulfindPeerFeatures(t *testing.T) {
 	addr := os.Getenv("OTO_SOULFIND_ADDR")
 	if addr == "" {

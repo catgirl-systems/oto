@@ -90,6 +90,11 @@ type settingsMsg struct {
 	search config.Search
 	err    error
 }
+type passwordMsg struct {
+	password string
+	result   daemon.PasswordChangeResult
+	err      error
+}
 type presenceMsg struct {
 	presence daemon.Presence
 	err      error
@@ -483,6 +488,13 @@ func (m model) saveSettings() tea.Cmd {
 	}
 }
 
+func (m model) changePassword(password string) tea.Cmd {
+	return func() tea.Msg {
+		result, err := m.client.ChangePassword(m.ctx, password)
+		return passwordMsg{password: password, result: result, err: err}
+	}
+}
+
 func (m model) Init() tea.Cmd {
 	if m.setup {
 		return nil
@@ -650,6 +662,20 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.setNotice("Settings saved")
 			return m, m.loadStatus()
 		}
+	case passwordMsg:
+		m.passwordChanging = false
+		if x.err != nil {
+			m.passwordErr = errText(x.err)
+			break
+		}
+		if !x.result.Changed {
+			m.passwordErr = "Soulseek did not confirm the password change"
+			break
+		}
+		m.cfg.Soulseek.Password = x.password
+		m.closePasswordForm()
+		m.setNotice("Password changed")
+		m.err = x.result.Warning
 	case presenceMsg:
 		m.err = errText(x.err)
 		if x.err == nil {
@@ -675,6 +701,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return r
 		}, x.Content)
+		if m.passwordForm && !m.passwordChanging {
+			m.passwordVals[m.passwordField], m.inputCursor = insertText(m.passwordVals[m.passwordField], text, m.inputCursor)
+			m.passwordErr = ""
+			return m, nil
+		}
 		if m.setup {
 			m.setupVals[m.setupField], m.inputCursor = insertText(m.setupVals[m.setupField], text, m.inputCursor)
 		} else if m.editing {
@@ -698,6 +729,9 @@ func errText(e error) string {
 
 func (m *model) key(k tea.KeyPressMsg) tea.Cmd {
 	s := k.String()
+	if m.passwordForm {
+		return m.passwordFormKey(k)
+	}
 	if m.statusMenu {
 		return m.statusMenuKey(k)
 	}
@@ -831,7 +865,11 @@ func (m *model) key(k tea.KeyPressMsg) tea.Cmd {
 					m.cfg.Search.RememberFilters = !m.cfg.Search.RememberFilters
 				}
 			case settingAction:
-				m.clearHistory(m.cursor == 5)
+				if m.settingsSection == 0 {
+					m.openPasswordForm()
+				} else {
+					m.clearHistory(m.cursor == 5)
+				}
 			default:
 				m.beginEdit()
 			}
@@ -939,6 +977,69 @@ func (m *model) statusMenuKey(k tea.KeyPressMsg) tea.Cmd {
 		presence := presenceChoices[m.statusMenuChoice]
 		m.statusMenu = false
 		return m.setPresence(presence)
+	}
+	return nil
+}
+
+func (m *model) openPasswordForm() {
+	if m.status.status != daemon.StatusConnected || m.status.user == "" {
+		m.err = "Connect to Soulseek before changing the password"
+		return
+	}
+	if m.cfg.Soulseek.Username != m.status.user {
+		m.err = "Save or revert the username change before changing the password"
+		return
+	}
+	m.passwordForm, m.passwordChanging = true, false
+	m.passwordField, m.inputCursor = 0, 0
+	m.passwordVals, m.passwordUser, m.passwordErr, m.err = [2]string{}, m.status.user, "", ""
+}
+
+func (m *model) closePasswordForm() {
+	m.passwordForm, m.passwordChanging = false, false
+	m.passwordField, m.inputCursor = 0, 0
+	m.passwordVals, m.passwordUser, m.passwordErr = [2]string{}, "", ""
+}
+
+func (m *model) passwordFormKey(k tea.KeyPressMsg) tea.Cmd {
+	if m.passwordChanging {
+		return nil
+	}
+	s := k.String()
+	switch s {
+	case "esc":
+		m.closePasswordForm()
+		return nil
+	case "up", "shift+tab":
+		m.passwordField = max(0, m.passwordField-1)
+		m.inputCursor = len([]rune(m.passwordVals[m.passwordField]))
+		return nil
+	case "down", "tab":
+		m.passwordField = min(1, m.passwordField+1)
+		m.inputCursor = len([]rune(m.passwordVals[m.passwordField]))
+		return nil
+	case "enter":
+		if m.passwordField == 0 {
+			m.passwordField = 1
+			m.inputCursor = len([]rune(m.passwordVals[1]))
+			return nil
+		}
+		password := m.passwordVals[0]
+		if strings.TrimSpace(password) == "" {
+			m.passwordErr = "password cannot be empty"
+			return nil
+		}
+		if password != m.passwordVals[1] {
+			m.passwordErr = "passwords do not match"
+			return nil
+		}
+		m.passwordChanging, m.passwordErr = true, ""
+		return m.changePassword(password)
+	}
+	before := m.passwordVals[m.passwordField]
+	m.passwordVals[m.passwordField], m.inputCursor, _ = editText(before, m.inputCursor, k)
+	if m.passwordVals[m.passwordField] != before {
+		m.passwordErr = ""
 	}
 	return nil
 }
@@ -1107,10 +1208,7 @@ func (m *model) editKey(k tea.KeyPressMsg) tea.Cmd {
 			return m.addShare()
 		}
 		if m.workspace == 4 {
-			value := m.input
-			if m.settingsSection != 0 || m.cursor != 1 {
-				value = strings.TrimSpace(value)
-			}
+			value := strings.TrimSpace(m.input)
 			if err := m.setSettingValue(value); err != nil {
 				m.err = err.Error()
 			} else {

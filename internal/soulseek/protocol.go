@@ -26,6 +26,7 @@ const (
 	ServerBranchLevel      uint32 = 126
 	ServerBranchRoot       uint32 = 127
 	ServerResetDistributed uint32 = 130
+	ServerChangePassword   uint32 = 142
 
 	PeerInit                uint32 = 1
 	PeerSearch              uint32 = 9
@@ -171,6 +172,20 @@ type Status struct{ Status uint32 }
 
 func (Status) command() uint32           { return ServerSetStatus }
 func (m Status) encode(e *Encoder) error { e.U32(m.Status); return nil }
+
+type ChangePassword struct{ Password string }
+
+func (ChangePassword) command() uint32           { return ServerChangePassword }
+func (m ChangePassword) encode(e *Encoder) error { return e.String(m.Password) }
+
+func DecodeChangePassword(b []byte) (ChangePassword, error) {
+	d := NewDecoder(b)
+	password, err := d.String()
+	if err != nil {
+		return ChangePassword{}, err
+	}
+	return ChangePassword{Password: password}, d.Done()
+}
 
 type SharedCounts struct{ Folders, Files uint32 }
 
@@ -1023,6 +1038,8 @@ func DecodeMessage(command uint32, payload []byte) (any, error) {
 	switch command {
 	case ServerLogin:
 		return DecodeLoginResponse(payload)
+	case ServerChangePassword:
+		return DecodeChangePassword(payload)
 	case ServerGetPeerAddress:
 		return DecodePeerAddress(payload)
 	case ServerConnectToPeer:

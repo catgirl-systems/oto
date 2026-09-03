@@ -98,6 +98,7 @@ func (s *Server) handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/state", s.state)
 	mux.HandleFunc("PUT /v1/presence", s.presence)
+	mux.HandleFunc("PUT /v1/account/password", s.accountPassword)
 	mux.HandleFunc("GET /v1/searches", s.searches)
 	mux.HandleFunc("POST /v1/search", s.search)
 	mux.HandleFunc("GET /v1/browse", s.browse)
@@ -151,6 +152,26 @@ func (s *Server) presence(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) accountPassword(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Password string `json:"password"`
+	}
+	if err := decode(w, r, &req); err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	if strings.TrimSpace(req.Password) == "" {
+		writeErr(w, http.StatusBadRequest, errors.New("ipc: password cannot be empty"))
+		return
+	}
+	result, err := s.service.ChangePassword(r.Context(), req.Password)
+	if err != nil {
+		writeErr(w, http.StatusServiceUnavailable, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
 }
 func (s *Server) searches(w http.ResponseWriter, r *http.Request) {
 	id := r.URL.Query().Get("id")
@@ -352,6 +373,12 @@ func (c *Client) Status(ctx context.Context) (daemon.Snapshot, error) {
 
 func (c *Client) SetPresence(ctx context.Context, presence daemon.Presence) error {
 	return c.Do(ctx, "PUT", "/v1/presence", map[string]daemon.Presence{"presence": presence}, nil)
+}
+
+func (c *Client) ChangePassword(ctx context.Context, password string) (daemon.PasswordChangeResult, error) {
+	var result daemon.PasswordChangeResult
+	err := c.Do(ctx, "PUT", "/v1/account/password", map[string]string{"password": password}, &result)
+	return result, err
 }
 func (c *Client) Search(ctx context.Context, q, filter string) (daemon.SearchPage, error) {
 	var page daemon.SearchPage

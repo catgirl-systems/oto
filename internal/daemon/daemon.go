@@ -59,6 +59,12 @@ type Snapshot struct {
 	Transfers []Transfer        `json:"transfers"`
 }
 
+type PasswordChangeResult struct {
+	Changed bool   `json:"changed"`
+	Saved   bool   `json:"saved"`
+	Warning string `json:"warning,omitempty"`
+}
+
 type SearchResult struct {
 	Username    string `json:"username"`
 	Path        string `json:"path"`
@@ -293,6 +299,39 @@ func (s *Service) SetPresence(presence Presence) error {
 		return nil
 	}
 	return s.setPresenceLocked(presence)
+}
+
+func (s *Service) ChangePassword(ctx context.Context, password string) (PasswordChangeResult, error) {
+	if strings.TrimSpace(password) == "" {
+		return PasswordChangeResult{}, errors.New("daemon: password cannot be empty")
+	}
+	if _, overridden := os.LookupEnv("OTO_PASSWORD"); overridden {
+		return PasswordChangeResult{}, errors.New("daemon: password is controlled by OTO_PASSWORD; update that environment source directly")
+	}
+
+	s.lifecycleMu.Lock()
+	defer s.lifecycleMu.Unlock()
+	s.mu.RLock()
+	client := s.client
+	s.mu.RUnlock()
+	if client == nil {
+		return PasswordChangeResult{}, ErrNotStarted
+	}
+	if err := client.ChangePassword(ctx, password); err != nil {
+		return PasswordChangeResult{}, err
+	}
+
+	result := PasswordChangeResult{Changed: true}
+	s.mu.Lock()
+	s.cfg.Soulseek.Password = password
+	err := s.cfg.Save(s.configPath)
+	s.mu.Unlock()
+	if err != nil {
+		result.Warning = fmt.Sprintf("password changed on Soulseek but config was not saved: %v; fix the config path and press s to retry", err)
+		return result, nil
+	}
+	result.Saved = true
+	return result, nil
 }
 
 func (s *Service) setPresenceLocked(presence Presence) error {

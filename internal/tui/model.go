@@ -102,6 +102,7 @@ type model struct {
 	setup, help, confirm, editing, loading bool
 	details, folderMenu, statusMenu        bool
 	loadingMore, filterEditing             bool
+	passwordForm, passwordChanging         bool
 	width, height                          int
 	workspace, cursor, settingsSection     int
 	statusMenuChoice                       int
@@ -112,9 +113,10 @@ type model struct {
 	folderMenuSubfolders                   []string
 	folderMenuFiles                        [2][]download
 	folderMenuChoice, inputCursor          int
-	setupField                             int
+	setupField, passwordField              int
 	setupVals                              [5]string
-	setupErr                               string
+	passwordVals                           [2]string
+	setupErr, passwordUser, passwordErr    string
 	status                                 snapshot
 	results                                []result
 	searchTabs                             []searchTab
@@ -168,6 +170,8 @@ func (m model) View() tea.View {
 	content := m.mainView()
 	if m.setup {
 		content = m.setupView()
+	} else if m.passwordForm {
+		content = m.passwordFormView()
 	} else if m.folderMenu {
 		content = m.folderMenuView()
 	} else if m.statusMenu {
@@ -216,6 +220,43 @@ func (m model) setupView() string {
 	}
 	b.WriteString("\n\n" + muted("↑↓ / tab fields   •   ←→ move caret   •   enter next / save   •   esc quit"))
 
+	cardWidth := max(34, min(64, m.width-4))
+	card := panelStyle().Width(cardWidth).Padding(1, 2).Render(b.String())
+	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, card)
+}
+
+func (m model) passwordFormView() string {
+	var b strings.Builder
+	b.WriteString(styled("Change Soulseek password", lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#CBA6F7"))))
+	b.WriteString("\n\n" + strong("Username") + "\n  " + m.passwordUser)
+	labels := []string{"New password", "Confirm new password"}
+	placeholders := []string{"Required", "Enter it again"}
+	fieldWidth := max(24, min(52, m.width-12))
+	for i, label := range labels {
+		raw := m.passwordVals[i]
+		value := strings.Repeat("•", utf8.RuneCountInString(raw))
+		if value == "" {
+			value = muted(placeholders[i])
+		}
+		marker := "  "
+		if i == m.passwordField {
+			marker = styled("› ", lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#CBA6F7")))
+			if raw == "" {
+				value = inputCursorStyle().Render("█") + muted(placeholders[i])
+			} else {
+				value = renderInput("", raw, m.inputCursor, true, lipgloss.NewStyle())
+			}
+		}
+		fmt.Fprintf(&b, "\n\n%s%s\n  %s", marker, strong(label), trunc(value, fieldWidth))
+	}
+	if m.passwordErr != "" {
+		b.WriteString("\n\n" + danger("! "+m.passwordErr))
+	}
+	if m.passwordChanging {
+		b.WriteString("\n\n" + muted("Changing password…"))
+	} else {
+		b.WriteString("\n\n" + muted("↑↓ / tab fields   •   ←→ move caret   •   enter next / change   •   esc cancel"))
+	}
 	cardWidth := max(34, min(64, m.width-4))
 	card := panelStyle().Width(cardWidth).Padding(1, 2).Render(b.String())
 	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, card)
@@ -931,7 +972,7 @@ func (m model) renderSettings(width, height int) string {
 func (m model) settingFields() []settingField {
 	switch m.settingsSection {
 	case 0:
-		return []settingField{{"Username", m.cfg.Soulseek.Username, settingText}, {"Password", m.cfg.Soulseek.Password, settingSecret}}
+		return []settingField{{"Username", m.cfg.Soulseek.Username, settingText}, {"Change Soulseek password", "Press Enter", settingAction}}
 	case 1:
 		return []settingField{{"Server", m.cfg.Soulseek.Server, settingText}, {"Listen address", m.cfg.Soulseek.ListenAddr, settingText}, {"Connect on startup", strconv.FormatBool(m.cfg.Soulseek.ConnectOnStartup), settingBool}, {"NAT-PMP port forwarding", strconv.FormatBool(m.cfg.Soulseek.NATPMPPortMapping), settingBool}, {"UPnP port forwarding", strconv.FormatBool(m.cfg.Soulseek.UPnPPortMapping), settingBool}}
 	case 2:
@@ -951,11 +992,7 @@ func (m model) settingFields() []settingField {
 func (m *model) setSettingValue(value string) error {
 	switch m.settingsSection {
 	case 0:
-		if m.cursor == 0 {
-			m.cfg.Soulseek.Username = value
-		} else {
-			m.cfg.Soulseek.Password = value
-		}
+		m.cfg.Soulseek.Username = value
 	case 1:
 		if m.cursor == 0 {
 			m.cfg.Soulseek.Server = value
