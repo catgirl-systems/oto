@@ -96,17 +96,21 @@ func (s *Server) Close() error {
 
 func (s *Server) handler() http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("/v1/state", s.state)
-	mux.HandleFunc("/v1/searches", s.searches)
-	mux.HandleFunc("/v1/search", s.search)
-	mux.HandleFunc("/v1/browse", s.browse)
-	mux.HandleFunc("/v1/downloads", s.downloads)
-	mux.HandleFunc("/v1/folder-downloads", s.folderDownloads)
-	mux.HandleFunc("/v1/transfers", s.transfers)
-	mux.HandleFunc("/v1/transfers/", s.transfers)
-	mux.HandleFunc("/v1/shares", s.shares)
-	mux.HandleFunc("/v1/shares/", s.shares)
-	mux.HandleFunc("/v1/config", s.updateConfig)
+	mux.HandleFunc("GET /v1/state", s.state)
+	mux.HandleFunc("GET /v1/searches", s.searches)
+	mux.HandleFunc("POST /v1/search", s.search)
+	mux.HandleFunc("GET /v1/browse", s.browse)
+	mux.HandleFunc("POST /v1/downloads", s.downloads)
+	mux.HandleFunc("POST /v1/folder-downloads", s.folderDownloads)
+	mux.HandleFunc("GET /v1/transfers", s.transfers)
+	mux.HandleFunc("POST /v1/transfers/{id}", s.transfers)
+	mux.HandleFunc("GET /v1/shares", s.shares)
+	mux.HandleFunc("POST /v1/shares", s.shares)
+	mux.HandleFunc("GET /v1/shares/browse", s.shares)
+	mux.HandleFunc("POST /v1/shares/rescan", s.shares)
+	mux.HandleFunc("DELETE /v1/shares/{name}", s.shares)
+	mux.HandleFunc("PUT /v1/config", s.updateConfig)
+	mux.HandleFunc("PATCH /v1/config", s.updateConfig)
 	return mux
 }
 func writeJSON(w http.ResponseWriter, status int, v any) {
@@ -116,15 +120,6 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 }
 func writeErr(w http.ResponseWriter, status int, err error) {
 	writeJSON(w, status, map[string]string{"error": err.Error()})
-}
-func method(w http.ResponseWriter, r *http.Request, allowed ...string) bool {
-	for _, x := range allowed {
-		if r.Method == x {
-			return true
-		}
-	}
-	writeErr(w, http.StatusMethodNotAllowed, errors.New("ipc: method not allowed"))
-	return false
 }
 func decode(w http.ResponseWriter, r *http.Request, v any) error {
 	r.Body = http.MaxBytesReader(w, r.Body, MaxBodySize)
@@ -138,16 +133,10 @@ func decode(w http.ResponseWriter, r *http.Request, v any) error {
 	}
 	return nil
 }
-func (s *Server) state(w http.ResponseWriter, r *http.Request) {
-	if !method(w, r, "GET") {
-		return
-	}
+func (s *Server) state(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, 200, s.service.Snapshot())
 }
 func (s *Server) searches(w http.ResponseWriter, r *http.Request) {
-	if !method(w, r, "GET") {
-		return
-	}
 	id := r.URL.Query().Get("id")
 	cursor, err := strconv.Atoi(r.URL.Query().Get("cursor"))
 	if err != nil && r.URL.Query().Get("cursor") != "" {
@@ -166,9 +155,6 @@ func (s *Server) searches(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, page)
 }
 func (s *Server) search(w http.ResponseWriter, r *http.Request) {
-	if !method(w, r, "POST") {
-		return
-	}
 	var req struct {
 		Query  string `json:"query"`
 		Filter string `json:"filter"`
@@ -189,9 +175,6 @@ func (s *Server) search(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, out)
 }
 func (s *Server) browse(w http.ResponseWriter, r *http.Request) {
-	if !method(w, r, "GET") {
-		return
-	}
 	out, err := s.service.Browse(r.Context(), r.URL.Query().Get("user"), r.URL.Query().Get("path"))
 	if err != nil {
 		writeErr(w, 400, err)
@@ -200,9 +183,6 @@ func (s *Server) browse(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, out)
 }
 func (s *Server) downloads(w http.ResponseWriter, r *http.Request) {
-	if !method(w, r, "POST") {
-		return
-	}
 	var req []daemon.DownloadRequest
 	if err := decode(w, r, &req); err != nil {
 		writeErr(w, 400, err)
@@ -217,9 +197,6 @@ func (s *Server) downloads(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) folderDownloads(w http.ResponseWriter, r *http.Request) {
-	if !method(w, r, "POST") {
-		return
-	}
 	var req daemon.FolderDownloadRequest
 	if err := decode(w, r, &req); err != nil {
 		writeErr(w, 400, err)
@@ -233,11 +210,7 @@ func (s *Server) folderDownloads(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]int{"queued": len(out)})
 }
 func (s *Server) transfers(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Path != "/v1/transfers" {
-		id := strings.TrimPrefix(r.URL.Path, "/v1/transfers/")
-		if !method(w, r, "POST") {
-			return
-		}
+	if id := r.PathValue("id"); id != "" {
 		var req struct {
 			Action string `json:"action"`
 		}
@@ -252,51 +225,32 @@ func (s *Server) transfers(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, map[string]bool{"ok": true})
 		return
 	}
-	if !method(w, r, "GET") {
-		return
-	}
 	writeJSON(w, 200, s.service.Transfers())
 }
 func (s *Server) shares(w http.ResponseWriter, r *http.Request) {
-	path := strings.TrimPrefix(r.URL.Path, "/v1/shares")
-	if path == "/browse" && r.Method == "GET" {
-		if !method(w, r, "GET") {
-			return
-		}
+	switch {
+	case r.URL.Path == "/v1/shares/browse":
 		out, err := s.service.BrowseLocal(r.URL.Query().Get("path"))
 		if err != nil {
 			writeErr(w, 400, err)
 			return
 		}
 		writeJSON(w, 200, out)
-		return
-	}
-	if path == "/rescan" {
-		if !method(w, r, "POST") {
-			return
-		}
+	case r.URL.Path == "/v1/shares/rescan":
 		if err := s.service.Rescan(); err != nil {
 			writeErr(w, 400, err)
 			return
 		}
 		writeJSON(w, 200, s.service.Shares())
-		return
-	}
-	if path != "" && path != "/" {
-		if !method(w, r, "DELETE") {
-			return
-		}
-		if err := s.service.RemoveShare(strings.TrimPrefix(path, "/")); err != nil {
+	case r.PathValue("name") != "":
+		if err := s.service.RemoveShare(r.PathValue("name")); err != nil {
 			writeErr(w, 404, err)
 			return
 		}
 		writeJSON(w, 200, s.service.Shares())
-		return
-	}
-	switch r.Method {
-	case "GET":
+	case r.Method == "GET":
 		writeJSON(w, 200, s.service.Shares())
-	case "POST":
+	case r.Method == "POST":
 		var sh config.Share
 		if err := decode(w, r, &sh); err != nil {
 			writeErr(w, 400, err)
@@ -307,14 +261,9 @@ func (s *Server) shares(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeJSON(w, 200, s.service.Shares())
-	default:
-		writeErr(w, 405, errors.New("ipc: method not allowed"))
 	}
 }
 func (s *Server) updateConfig(w http.ResponseWriter, r *http.Request) {
-	if !method(w, r, "PUT", "PATCH") {
-		return
-	}
 	var c config.Config
 	if err := decode(w, r, &c); err != nil {
 		writeErr(w, 400, err)
@@ -391,13 +340,13 @@ func (c *Client) Search(ctx context.Context, q, filter string) (daemon.SearchPag
 }
 func (c *Client) SearchPage(ctx context.Context, id string, cursor int, filter string) (daemon.SearchPage, error) {
 	var page daemon.SearchPage
-	path := fmt.Sprintf("/v1/searches?id=%s&cursor=%d&filter=%s", urlQuery(id), cursor, urlQuery(filter))
+	path := fmt.Sprintf("/v1/searches?id=%s&cursor=%d&filter=%s", url.QueryEscape(id), cursor, url.QueryEscape(filter))
 	err := c.Do(ctx, "GET", path, nil, &page)
 	return page, err
 }
 func (c *Client) Browse(ctx context.Context, username string) ([]soulseek.ShareEntry, error) {
 	var entries []soulseek.ShareEntry
-	err := c.do(ctx, "GET", "/v1/browse?user="+urlQuery(username), nil, &entries, MaxBrowseBodySize)
+	err := c.do(ctx, "GET", "/v1/browse?user="+url.QueryEscape(username), nil, &entries, MaxBrowseBodySize)
 	return entries, err
 }
 func (c *Client) QueueDownloads(ctx context.Context, r []daemon.DownloadRequest) ([]daemon.Download, error) {
@@ -419,7 +368,7 @@ func (c *Client) Transfers(ctx context.Context) ([]daemon.Transfer, error) {
 	return x, err
 }
 func (c *Client) TransferAction(ctx context.Context, id, action string) error {
-	return c.Do(ctx, "POST", "/v1/transfers/"+urlQuery(id), map[string]string{"action": action}, nil)
+	return c.Do(ctx, "POST", "/v1/transfers/"+url.QueryEscape(id), map[string]string{"action": action}, nil)
 }
 func (c *Client) Shares(ctx context.Context) ([]config.Share, error) {
 	var x []config.Share
@@ -429,7 +378,7 @@ func (c *Client) Shares(ctx context.Context) ([]config.Share, error) {
 
 func (c *Client) BrowseShares(ctx context.Context, path string) ([]soulseek.ShareEntry, error) {
 	var entries []soulseek.ShareEntry
-	err := c.Do(ctx, "GET", "/v1/shares/browse?path="+urlQuery(path), nil, &entries)
+	err := c.Do(ctx, "GET", "/v1/shares/browse?path="+url.QueryEscape(path), nil, &entries)
 	return entries, err
 }
 func (c *Client) AddShare(ctx context.Context, sh config.Share) ([]config.Share, error) {
@@ -447,4 +396,3 @@ func (c *Client) UpdateConfig(ctx context.Context, cfg config.Config) (config.Sa
 	err := c.Do(ctx, "PUT", "/v1/config", cfg, &x)
 	return x, err
 }
-func urlQuery(x string) string { return url.QueryEscape(x) }

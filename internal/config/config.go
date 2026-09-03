@@ -126,10 +126,11 @@ func (c Config) Save(path string) error {
 	if _, fromEnv := os.LookupEnv("OTO_PASSWORD"); fromEnv {
 		c.Soulseek.Password = ""
 	}
-	return atomicJSON(path, c, 0600)
+	return SaveJSON(path, c)
 }
 
-func atomicJSON(path string, v any, mode os.FileMode) error {
+// SaveJSON writes a private JSON file atomically.
+func SaveJSON(path string, v any) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		return err
 	}
@@ -151,7 +152,7 @@ func atomicJSON(path string, v any, mode os.FileMode) error {
 			_ = os.Remove(tmp)
 		}
 	}()
-	if err = f.Chmod(mode); err == nil {
+	if err = f.Chmod(0600); err == nil {
 		_, err = f.Write(b)
 	}
 	if err == nil {
@@ -165,19 +166,11 @@ func atomicJSON(path string, v any, mode os.FileMode) error {
 	}
 	if err == nil {
 		ok = true
-		_ = os.Chmod(path, mode)
+		_ = os.Chmod(path, 0600)
 	}
 	return err
 }
 
-func ConfigHome() string { return xdg("XDG_CONFIG_HOME", ".config") }
-func DataHome() string   { return xdg("XDG_STATE_HOME", filepath.Join(".local", "state")) }
-func RuntimeHome() string {
-	if p := os.Getenv("XDG_RUNTIME_DIR"); p != "" {
-		return p
-	}
-	return filepath.Join(os.TempDir(), "oto-"+strconv.Itoa(os.Getuid()))
-}
 func xdg(env, suffix string) string {
 	if p := os.Getenv(env); p != "" {
 		return p
@@ -190,9 +183,17 @@ func xdg(env, suffix string) string {
 	}
 	return filepath.Join(h, suffix)
 }
-func ConfigDir() string  { return filepath.Join(ConfigHome(), "oto") }
-func DataDir() string    { return filepath.Join(DataHome(), "oto") }
-func RuntimeDir() string { return filepath.Join(RuntimeHome(), "oto") }
-func ConfigPath() string { return filepath.Join(ConfigDir(), "config.json") }
-func StatePath() string  { return filepath.Join(DataDir(), "downloads.json") }
-func SocketPath() string { return filepath.Join(RuntimeDir(), "oto.sock") }
+
+func ConfigPath() string {
+	return filepath.Join(xdg("XDG_CONFIG_HOME", ".config"), "oto", "config.json")
+}
+func DataDir() string {
+	return filepath.Join(xdg("XDG_STATE_HOME", filepath.Join(".local", "state")), "oto")
+}
+func StatePath() string { return filepath.Join(DataDir(), "downloads.json") }
+func SocketPath() string {
+	if p := os.Getenv("XDG_RUNTIME_DIR"); p != "" {
+		return filepath.Join(p, "oto", "oto.sock")
+	}
+	return filepath.Join(os.TempDir(), "oto-"+strconv.Itoa(os.Getuid()), "oto", "oto.sock")
+}

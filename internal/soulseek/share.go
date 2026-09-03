@@ -67,9 +67,6 @@ func (s *ShareIndex) Roots() []ShareRoot {
 }
 func hidden(name string) bool { return strings.HasPrefix(name, ".") }
 
-// Scan rebuilds the snapshot, never follows symlinks, and skips hidden entries.
-func (s *ShareIndex) Scan() error { return s.ScanContext(context.Background()) }
-
 // ScanContext builds a complete replacement snapshot and stops when ctx is cancelled.
 func (s *ShareIndex) ScanContext(ctx context.Context) error {
 	if s == nil {
@@ -254,7 +251,7 @@ func (s *ShareIndex) Search(query string) []ShareFile {
 			need = append(need, t)
 		}
 	}
-	out := make([]ShareFile, 0, minInt(len(s.files), 500))
+	out := make([]ShareFile, 0, min(len(s.files), 500))
 	for _, f := range s.files {
 		v := fold.String(f.Root + "/" + f.Path)
 		ok := true
@@ -281,10 +278,4 @@ func (s *ShareIndex) Search(query string) []ShareFile {
 		}
 	}
 	return out
-}
-func minInt(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }

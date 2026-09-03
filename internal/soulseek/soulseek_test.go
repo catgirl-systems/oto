@@ -72,7 +72,7 @@ func TestShareScanSearchAndContainment(t *testing.T) {
 	if err := s.AddRoot("Songs", root); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.Scan(); err != nil {
+	if err := s.ScanContext(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	if counts := sharedCounts(s); counts != (SharedCounts{Folders: 1, Files: 2}) {
@@ -111,7 +111,7 @@ func TestBrowseUsesBoundedSnapshotChildren(t *testing.T) {
 	if err := index.AddRoot("Music", root); err != nil {
 		t.Fatal(err)
 	}
-	if err := index.Scan(); err != nil {
+	if err := index.ScanContext(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Remove(song); err != nil {
@@ -369,7 +369,7 @@ func TestFolderResponseAndShareSubtree(t *testing.T) {
 	if err := index.AddRoot("Music", root); err != nil {
 		t.Fatal(err)
 	}
-	if err := index.Scan(); err != nil {
+	if err := index.ScanContext(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	children, err := index.Browse(`Music\Album`)

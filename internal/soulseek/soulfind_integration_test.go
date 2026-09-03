@@ -44,7 +44,7 @@ func TestSoulfindHandshakeCriticalValues(t *testing.T) {
 	if err := shares.AddRoot("Music", root); err != nil {
 		t.Fatal(err)
 	}
-	if err := shares.Scan(); err != nil {
+	if err := shares.ScanContext(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -119,7 +119,7 @@ func TestSoulfindPeerFeatures(t *testing.T) {
 	if err := shares.AddRoot("Music", root); err != nil {
 		t.Fatal(err)
 	}
-	if err := shares.Scan(); err != nil {
+	if err := shares.ScanContext(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 
