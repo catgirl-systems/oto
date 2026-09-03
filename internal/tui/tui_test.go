@@ -91,6 +91,29 @@ func TestStatusMenuAndLabels(t *testing.T) {
 	}
 }
 
+func TestNoticeExpiresAfterMinimumDuration(t *testing.T) {
+	m := model{selected: map[int]bool{}}
+	m.setNotice("saved")
+	deadline := m.noticeUntil
+
+	m.key(key("?"))
+	if m.notice != "saved" {
+		t.Fatal("keypress cleared fresh notice")
+	}
+
+	updated, _ := m.Update(tickMsg(deadline.Add(-time.Nanosecond)))
+	m = updated.(model)
+	if m.notice != "saved" {
+		t.Fatal("notice cleared before deadline")
+	}
+
+	updated, _ = m.Update(tickMsg(deadline))
+	m = updated.(model)
+	if m.notice != "" {
+		t.Fatal("notice remained after deadline")
+	}
+}
+
 func TestPageAndBoundaryNavigationAcrossTrees(t *testing.T) {
 	for _, workspace := range []int{0, 1, 2, 3} {
 		m := model{workspace: workspace, height: 20, cursor: 50, selected: map[int]bool{}}

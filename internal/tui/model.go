@@ -129,6 +129,7 @@ type model struct {
 	browseTree                             treeState
 	transfers                              []transfer
 	transferSampleAt                       time.Time
+	noticeUntil                            time.Time
 	transferTab                            int
 	transferCursors                        [2]int
 	spinner                                int

@@ -47,6 +47,9 @@ func RunWithTransient(ctx context.Context, client *ipc.Client, configPath string
 }
 
 type tickMsg time.Time
+
+const noticeDuration = 2500 * time.Millisecond
+
 type statusMsg struct {
 	snapshot daemon.Snapshot
 	err      error
@@ -97,6 +100,11 @@ type transferActionMsg struct {
 }
 
 func tick() tea.Cmd { return tea.Tick(time.Second, func(t time.Time) tea.Msg { return tickMsg(t) }) }
+
+func (m *model) setNotice(message string) {
+	m.notice = message
+	m.noticeUntil = time.Now().Add(noticeDuration)
+}
 func (m model) loadStatus() tea.Cmd {
 	return func() tea.Msg { s, e := m.client.Status(m.ctx); return statusMsg{s, e} }
 }
@@ -487,6 +495,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width, m.height = x.Width, x.Height
 	case tickMsg:
 		m.spinner++
+		if m.notice != "" && !time.Time(x).Before(m.noticeUntil) {
+			m.notice = ""
+		}
 		return m, tea.Batch(m.loadStatus(), m.loadTransfers(), m.loadShares(), tick())
 	case statusMsg:
 		if x.err != nil {
@@ -636,13 +647,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.err = errText(x.err)
 		if x.err == nil {
 			m.applyHistorySettings(x.search)
-			m.notice = "Settings saved"
+			m.setNotice("Settings saved")
 			return m, m.loadStatus()
 		}
 	case presenceMsg:
 		m.err = errText(x.err)
 		if x.err == nil {
-			m.notice = "Status set to " + string(x.presence)
+			m.setNotice("Status set to " + string(x.presence))
 			return m, m.loadStatus()
 		}
 	case transferActionMsg:
@@ -687,7 +698,6 @@ func errText(e error) string {
 
 func (m *model) key(k tea.KeyPressMsg) tea.Cmd {
 	s := k.String()
-	m.notice = ""
 	if m.statusMenu {
 		return m.statusMenuKey(k)
 	}

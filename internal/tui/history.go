@@ -194,7 +194,7 @@ func (m *model) clearHistory(filter bool) {
 		return
 	}
 	m.historyErr = ""
-	m.notice = name + " history cleared"
+	m.setNotice(name + " history cleared")
 }
 
 func (m *model) applyHistorySettings(settings config.Search) {
