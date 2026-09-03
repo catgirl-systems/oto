@@ -48,3 +48,44 @@ func TestSaveLoadModesEnvAndRedaction(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(filepath.Dir(p), ".config.json.tmp-")); !os.IsNotExist(err) { /* random temp names are allowed; no fixed temp remains */
 	}
 }
+
+func TestSearchDefaultsCompatibilityAndValidation(t *testing.T) {
+	d := t.TempDir()
+	p := filepath.Join(d, "config.json")
+	raw := `{"soulseek":{"username":"u","password":"p","server":"server.slsknet.org:2242","listen_addr":"0.0.0.0:50300"},"download_dir":"/tmp","download_slots":1,"upload_slots":1}`
+	if err := os.WriteFile(p, []byte(raw), 0600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Load(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := (Search{RememberSearches: true, SearchHistoryLimit: 200, RememberFilters: true, FilterHistoryLimit: 50})
+	if got.Search != want || got.Redacted().Search != want {
+		t.Fatalf("search defaults or redaction: got %+v safe %+v", got.Search, got.Redacted().Search)
+	}
+	got.Search.SearchHistoryLimit, got.Search.FilterHistoryLimit = 0, 0
+	if err := got.Validate(); err != nil {
+		t.Fatalf("zero should mean unlimited: %v", err)
+	}
+	roundTripPath := filepath.Join(d, "round-trip.json")
+	if err := got.Save(roundTripPath); err != nil {
+		t.Fatal(err)
+	}
+	roundTrip, err := Load(roundTripPath)
+	if err != nil || roundTrip.Search != got.Search {
+		t.Fatalf("search round trip: %+v %v", roundTrip.Search, err)
+	}
+	got.Search.FilterHistoryLimit = -1
+	if err := got.Validate(); err == nil {
+		t.Fatal("negative history limit accepted")
+	}
+}
+
+func TestHistoryPathUsesXDGStateHome(t *testing.T) {
+	d := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", d)
+	if got, want := HistoryPath(), filepath.Join(d, "oto", "history.json"); got != want {
+		t.Fatalf("HistoryPath() = %q, want %q", got, want)
+	}
+}

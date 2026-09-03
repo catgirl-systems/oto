@@ -5,6 +5,12 @@
     "server": "server.slsknet.org:2242",
     "listen_addr": "0.0.0.0:50300"
   },
+  "search": {
+    "remember_searches": true,
+    "search_history_limit": 200,
+    "remember_filters": true,
+    "filter_history_limit": 50
+  },
   "download_dir": "/downloads",
   "shares": [
     {

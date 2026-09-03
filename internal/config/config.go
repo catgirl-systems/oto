@@ -32,8 +32,16 @@ type Share struct {
 	Path string `json:"path" validate:"required"`
 }
 
+type Search struct {
+	RememberSearches   bool `json:"remember_searches"`
+	SearchHistoryLimit int  `json:"search_history_limit" validate:"min=0"`
+	RememberFilters    bool `json:"remember_filters"`
+	FilterHistoryLimit int  `json:"filter_history_limit" validate:"min=0"`
+}
+
 type Config struct {
 	Soulseek      Soulseek `json:"soulseek"`
+	Search        Search   `json:"search"`
 	DownloadDir   string   `json:"download_dir" validate:"required"`
 	Shares        []Share  `json:"shares"`
 	DownloadSlots int      `json:"download_slots" validate:"min=1"`
@@ -47,6 +55,7 @@ type SafeConfig struct {
 		Server     string `json:"server"`
 		ListenAddr string `json:"listen_addr"`
 	} `json:"soulseek"`
+	Search        Search  `json:"search"`
 	DownloadDir   string  `json:"download_dir"`
 	Shares        []Share `json:"shares"`
 	DownloadSlots int     `json:"download_slots"`
@@ -55,13 +64,13 @@ type SafeConfig struct {
 
 func Default() Config {
 	home, _ := os.UserHomeDir()
-	return Config{Soulseek: Soulseek{Server: DefaultServer, ListenAddr: DefaultListenAddr}, DownloadDir: filepath.Join(home, DefaultDownloadDir), DownloadSlots: 4, UploadSlots: 2}
+	return Config{Soulseek: Soulseek{Server: DefaultServer, ListenAddr: DefaultListenAddr}, Search: Search{RememberSearches: true, SearchHistoryLimit: 200, RememberFilters: true, FilterHistoryLimit: 50}, DownloadDir: filepath.Join(home, DefaultDownloadDir), DownloadSlots: 4, UploadSlots: 2}
 }
 
 func (c Config) Redacted() SafeConfig {
 	var out SafeConfig
 	out.Soulseek.Username, out.Soulseek.Password, out.Soulseek.Server, out.Soulseek.ListenAddr = c.Soulseek.Username, "[redacted]", c.Soulseek.Server, c.Soulseek.ListenAddr
-	out.DownloadDir, out.Shares, out.DownloadSlots, out.UploadSlots = c.DownloadDir, append([]Share(nil), c.Shares...), c.DownloadSlots, c.UploadSlots
+	out.Search, out.DownloadDir, out.Shares, out.DownloadSlots, out.UploadSlots = c.Search, c.DownloadDir, append([]Share(nil), c.Shares...), c.DownloadSlots, c.UploadSlots
 	return out
 }
 
@@ -190,7 +199,8 @@ func ConfigPath() string {
 func DataDir() string {
 	return filepath.Join(xdg("XDG_STATE_HOME", filepath.Join(".local", "state")), "oto")
 }
-func StatePath() string { return filepath.Join(DataDir(), "downloads.json") }
+func StatePath() string   { return filepath.Join(DataDir(), "downloads.json") }
+func HistoryPath() string { return filepath.Join(DataDir(), "history.json") }
 func SocketPath() string {
 	if p := os.Getenv("XDG_RUNTIME_DIR"); p != "" {
 		return filepath.Join(p, "oto", "oto.sock")
