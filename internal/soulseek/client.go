@@ -53,6 +53,7 @@ type Client struct {
 	cfg         ClientConfig
 	mu          sync.Mutex
 	writeMu     sync.Mutex
+	browseSlot  chan struct{}
 	conn        net.Conn
 	listener    net.Listener
 	ctx         context.Context
@@ -78,7 +79,7 @@ func NewClient(cfg ClientConfig) *Client {
 	if cfg.Uploads == nil {
 		cfg.Uploads = NewUploadManager(1)
 	}
-	return &Client{cfg: cfg, events: make(chan Event, 32), pending: make(map[uint32]chan SearchResponse), addresses: make(map[string]*peerAddressLookup), pierce: make(map[uint32]chan net.Conn), requested: make(map[string]*pendingDownload), downloads: make(map[uint32]*pendingDownload), distributed: NewDistributedNode()}
+	return &Client{cfg: cfg, events: make(chan Event, 32), pending: make(map[uint32]chan SearchResponse), addresses: make(map[string]*peerAddressLookup), pierce: make(map[uint32]chan net.Conn), requested: make(map[string]*pendingDownload), downloads: make(map[uint32]*pendingDownload), distributed: NewDistributedNode(), browseSlot: make(chan struct{}, 1)}
 }
 
 // NewClientOnConn is useful for deterministic net.Pipe tests.
@@ -404,6 +405,12 @@ func (c *Client) Search(ctx context.Context, rawQuery string) ([]SearchResult, e
 }
 func (c *Client) Browse(ctx context.Context, peer net.Conn, path string) ([]ShareEntry, error) {
 	if path == "" {
+		select {
+		case c.browseSlot <- struct{}{}:
+			defer func() { <-c.browseSlot }()
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
 		if err := writeMessage(peer, SharedListRequest{}); err != nil {
 			return nil, err
 		}

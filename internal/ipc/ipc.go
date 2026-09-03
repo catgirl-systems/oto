@@ -23,7 +23,7 @@ import (
 const (
 	Version                 = "v1"
 	MaxBodySize       int64 = 1 << 20
-	MaxBrowseBodySize int64 = 64 << 20
+	MaxBrowseBodySize int64 = 128 << 20
 )
 
 type Server struct {

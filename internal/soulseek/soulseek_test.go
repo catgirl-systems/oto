@@ -352,6 +352,26 @@ func TestSharedListRoundTrip(t *testing.T) {
 	}
 }
 
+func TestSharedListAcceptsLargeLibraries(t *testing.T) {
+	const fileCount = 66_869 // Regression: real peers can exceed the old 50,000-entry cap.
+	entries := make([]ShareEntry, fileCount)
+	for i := range entries {
+		entries[i].Name = `Music\file.mp3`
+	}
+	wire, err := EncodeMessage(SharedListResponse{Entries: entries})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, payload, err := ReadFrame(bytes.NewReader(wire))
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := DecodeSharedListResponse(payload)
+	if err != nil || len(decoded.Entries) != fileCount+1 {
+		t.Fatalf("large shared list: entries=%d err=%v", len(decoded.Entries), err)
+	}
+}
+
 func TestFolderResponseAndShareSubtree(t *testing.T) {
 	root := t.TempDir()
 	for _, dir := range []string{"Album/Disc", "Album/Empty"} {
@@ -424,6 +444,17 @@ func TestBrowseRejectsMismatchedFolderResponse(t *testing.T) {
 	if _, err := client.Browse(ctx, clientConn, "Music"); !errors.Is(err, ErrMalformed) {
 		t.Fatalf("mismatched response accepted: %v", err)
 	}
+}
+
+func TestFullBrowseLimitHonorsCancellation(t *testing.T) {
+	client := NewClient(ClientConfig{})
+	client.browseSlot <- struct{}{}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := client.Browse(ctx, nil, ""); !errors.Is(err, context.Canceled) {
+		t.Fatalf("waiting full browse: %v", err)
+	}
+	<-client.browseSlot
 }
 
 func TestOptionalPrivateLists(t *testing.T) {

@@ -12,10 +12,10 @@ import (
 const (
 	ProtocolVersion     uint32 = 170
 	ProtocolMinor       uint32 = 2718
-	MaxFrameSize               = 16 << 20
+	MaxFrameSize               = 64 << 20
 	MaxStringSize              = 4 << 20
 	MaxBytesSize               = 16 << 20
-	MaxDecompressedSize        = 16 << 20
+	MaxDecompressedSize        = 256 << 20
 )
 
 var (

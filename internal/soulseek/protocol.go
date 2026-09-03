@@ -47,6 +47,8 @@ const (
 	DistributedBranchRootCommand  byte = 5
 )
 
+const maxShareEntries = 500_000
+
 // Message is a command payload that can be encoded on the wire.
 type Message interface {
 	command() uint32
@@ -670,7 +672,7 @@ func (m SharedListResponse) encode(e *Encoder) error {
 		entry.Name = file
 		groups[index][dir] = append(groups[index][dir], entry)
 	}
-	if len(groups[0])+len(groups[1]) > 50000 {
+	if len(groups[0])+len(groups[1]) > maxShareEntries {
 		return ErrTooLarge
 	}
 	var raw Encoder
@@ -721,7 +723,7 @@ func DecodeSharedListResponse(b []byte) (SharedListResponse, error) {
 	if err != nil {
 		return message, err
 	}
-	if count > 50000 {
+	if count > maxShareEntries {
 		return message, ErrTooLarge
 	}
 	for i := uint32(0); i < count; i++ {
@@ -734,7 +736,7 @@ func DecodeSharedListResponse(b []byte) (SharedListResponse, error) {
 		if err != nil {
 			return message, err
 		}
-		if files > 50000 || len(message.Entries)+int(files) > 50000 {
+		if files > maxShareEntries || len(message.Entries)+int(files) > maxShareEntries {
 			return message, ErrTooLarge
 		}
 		for j := uint32(0); j < files; j++ {
@@ -753,7 +755,7 @@ func DecodeSharedListResponse(b []byte) (SharedListResponse, error) {
 		if readErr != nil {
 			return message, readErr
 		}
-		if private > 50000 {
+		if private > maxShareEntries {
 			return message, ErrTooLarge
 		}
 		for i := uint32(0); i < private; i++ {
@@ -766,7 +768,7 @@ func DecodeSharedListResponse(b []byte) (SharedListResponse, error) {
 			if decodeErr != nil {
 				return message, decodeErr
 			}
-			if count > 50000 || len(message.Entries)+int(count) > 50000 {
+			if count > maxShareEntries || len(message.Entries)+int(count) > maxShareEntries {
 				return message, ErrTooLarge
 			}
 			for j := uint32(0); j < count; j++ {
@@ -834,7 +836,7 @@ func (m FolderResponse) encode(e *Encoder) error {
 		folders[dir] = append(folders[dir], entry)
 		total++
 	}
-	if len(folders) > 50000 || total+len(folders) > 50000 {
+	if len(folders) > maxShareEntries || total+len(folders) > maxShareEntries {
 		return ErrTooLarge
 	}
 	dirs := make([]string, 0, len(folders))
@@ -890,7 +892,7 @@ func DecodeFolderResponse(b []byte) (FolderResponse, error) {
 	if err != nil {
 		return message, err
 	}
-	if folders > 50000 {
+	if folders > maxShareEntries {
 		return message, ErrTooLarge
 	}
 	for i := uint32(0); i < folders; i++ {
@@ -903,7 +905,7 @@ func DecodeFolderResponse(b []byte) (FolderResponse, error) {
 		if err != nil {
 			return message, err
 		}
-		if count > 50000 || len(message.Entries)+int(count) > 50000 {
+		if count > maxShareEntries || len(message.Entries)+int(count) > maxShareEntries {
 			return message, ErrTooLarge
 		}
 		for j := uint32(0); j < count; j++ {
