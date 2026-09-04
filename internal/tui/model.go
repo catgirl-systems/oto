@@ -141,6 +141,8 @@ const (
 	settingNATPMPPortMapping
 	settingUPnPPortMapping
 	settingDownloadPath
+	settingAfterFileCommand
+	settingAfterFolderCommand
 	settingUploadProfile
 	settingUploadProfileName
 	settingUploadSpeedLimit

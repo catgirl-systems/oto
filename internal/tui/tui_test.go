@@ -259,7 +259,8 @@ func TestContextualFooterHints(t *testing.T) {
 		{"wishlist", model{workspace: workspaceWishlist}, []string{"/ add", "f filter", "enter open", "r rerun", "d remove"}, nil},
 		{"browse folder", model{workspace: workspaceBrowse, browseTabs: []browseTab{{}}, browseLoaded: true, browseTree: tree(treeFolder)}, []string{"f find", "enter expand", "d folder download", "s save list", "r refresh"}, []string{"i details"}},
 		{"browse file", model{workspace: workspaceBrowse, browseTabs: []browseTab{{}}, browseLoaded: true, browseTree: tree(treeFile)}, []string{"f find", "enter/d download", "space select", "i details", "s save list", "r refresh"}, []string{"folder download"}},
-		{"transfers", model{workspace: workspaceTransfers}, []string{"d cancel", "r retry", "c clear"}, nil},
+		{"downloads", model{workspace: workspaceTransfers}, []string{"p pause", "d cancel", "r resume/retry", "c clear"}, nil},
+		{"uploads", model{workspace: workspaceTransfers, transferTab: transferUploads}, []string{"d cancel", "r retry", "c clear"}, []string{"p pause"}},
 		{"share root", model{workspace: workspaceShares, shareTree: tree(treeShareRoot)}, []string{"enter expand", "/ add", "r rescan", "d remove"}, nil},
 		{"share folder", model{workspace: workspaceShares, shareTree: tree(treeFolder)}, []string{"enter expand", "/ add", "r rescan"}, []string{"d remove"}},
 		{"setting text", settings(settingsAccount, 0), []string{"enter edit", "s save"}, nil},
@@ -1570,5 +1571,36 @@ func TestSharesTreeIgnoresStaleBrowseResponses(t *testing.T) {
 	m = reset.(model)
 	if len(m.shareTree.nodes) != 1 || m.shareTree.expandedNode(m.shareTree.nodes[m.shareTree.roots[0]]) {
 		t.Fatal("rescan did not invalidate and collapse share children")
+	}
+}
+
+func TestDownloadSettingsCommandsAndStates(t *testing.T) {
+	cfg := config.Default()
+	cfg.Downloads.AfterFileCommand, cfg.Downloads.AfterFolderCommand = `echo "$1"`, `echo folder "$1"`
+	m := model{workspace: workspaceSettings, settingsSection: settingsDownloads, cfg: cfg}
+	fields := m.settingFields()
+	if len(fields) != 3 || fields[1].value != cfg.Downloads.AfterFileCommand || fields[2].value != cfg.Downloads.AfterFolderCommand {
+		t.Fatalf("download settings not rendered: %+v", fields)
+	}
+	m.cursor = 1
+	if err := m.setSettingValue("new-file-hook"); err != nil || m.cfg.Downloads.AfterFileCommand != "new-file-hook" {
+		t.Fatalf("file hook not editable: %v", err)
+	}
+	m.cursor = 2
+	if err := m.setSettingValue("new-folder-hook"); err != nil || m.cfg.Downloads.AfterFolderCommand != "new-folder-hook" {
+		t.Fatalf("folder hook not editable: %v", err)
+	}
+	m.workspace, m.transferTab = workspaceTransfers, transferDownloads
+	hints := strings.Join(m.footerHints(), " ")
+	if !strings.Contains(hints, "p pause") || !strings.Contains(hints, "r resume") {
+		t.Fatalf("download transfer hints missing: %q", hints)
+	}
+	m.transfers = []transfer{{direction: "download", state: "paused"}}
+	if m.active() {
+		t.Fatal("paused downloads must not trigger the active-transfer quit warning")
+	}
+	m.transfers[0].state = "retrying"
+	if !m.active() {
+		t.Fatal("retrying downloads should remain active")
 	}
 }

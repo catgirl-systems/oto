@@ -278,7 +278,8 @@ func (m model) helpView() string {
 			{"/ f r d (wishlist)", "add, edit filter, rerun, or remove a wishlist item"},
 			{"space", "select item or loaded folder contents"},
 			{"d", "download / choose folder mode and destination"},
-			{"r", "refresh browse / retry transfer / rescan shares"},
+			{"r", "refresh browse / resume or retry transfer / rescan shares"},
+			{"p", "pause download subtree"},
 			{"b (search)", "browse the selected user's folder"},
 			{"s", "save Browse list or Settings"},
 			{"o", "choose Online, Away, or Offline"},
@@ -572,7 +573,10 @@ func (m model) footerHints() []string {
 		}
 		return append([]string{"enter expand"}, hints...)
 	case workspaceTransfers:
-		return []string{"d cancel", "r retry", "c clear"}
+		if m.transferTab == transferDownloads {
+			return []string{"p pause", "r resume/retry", "d cancel", "c clear"}
+		}
+		return []string{"r retry", "d cancel", "c clear"}
 	case workspaceShares:
 		hints := []string{"/ add", "r rescan"}
 		_, node := m.shareTree.node(m.cursor)

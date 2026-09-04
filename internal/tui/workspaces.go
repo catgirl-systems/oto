@@ -419,7 +419,7 @@ func (m model) renderTransfers(width, height int) string {
 		for _, source := range node.leaves {
 			x := m.transfers[source]
 			done, total, speed = done+x.done, total+x.total, speed+x.speed
-			running = running || x.state == "running"
+			running = running || x.state == "running" || x.state == "finalizing" || x.state == "retrying"
 			failed = failed || x.state == "failed"
 		}
 		barWidth := 8
@@ -616,7 +616,11 @@ func (m model) settingFields() []settingField {
 			{settingUPnPPortMapping, "UPnP port forwarding", strconv.FormatBool(m.cfg.Soulseek.UPnPPortMapping), settingBool},
 		}
 	case settingsDownloads:
-		return []settingField{{settingDownloadPath, "Download path", m.cfg.DownloadDir, settingText}}
+		return []settingField{
+			{settingDownloadPath, "Download path", m.cfg.DownloadDir, settingText},
+			{settingAfterFileCommand, "After file command", m.cfg.Downloads.AfterFileCommand, settingText},
+			{settingAfterFolderCommand, "After folder command", m.cfg.Downloads.AfterFolderCommand, settingText},
+		}
 	case settingsUploads:
 		profile := m.cfg.Uploads.Profiles[m.activeUploadProfileIndex()]
 		return []settingField{
@@ -660,6 +664,10 @@ func (m *model) setSettingValue(value string) error {
 		m.cfg.Soulseek.NetworkInterface = value
 	case settingDownloadPath:
 		m.cfg.DownloadDir = value
+	case settingAfterFileCommand:
+		m.cfg.Downloads.AfterFileCommand = value
+	case settingAfterFolderCommand:
+		m.cfg.Downloads.AfterFolderCommand = value
 	case settingUploadProfile:
 		if !m.addingUploadProfile {
 			return nil
