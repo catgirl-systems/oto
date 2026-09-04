@@ -899,6 +899,43 @@ func TestFileConnectionReceive(t *testing.T) {
 	}
 }
 
+func TestFileConnectionCancellation(t *testing.T) {
+	left, right := net.Pipe()
+	defer right.Close()
+	file, err := os.OpenFile(filepath.Join(t.TempDir(), "part"), os.O_CREATE|os.O_RDWR, 0600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	pending := &pendingDownload{size: 32 << 10, writer: file, done: make(chan error, 1), ctx: ctx}
+	client := NewClient(ClientConfig{})
+	client.downloads[7] = pending
+	go client.serveFile(left)
+
+	var token [4]byte
+	binary.LittleEndian.PutUint32(token[:], 7)
+	if _, err := right.Write(token[:]); err != nil {
+		t.Fatal(err)
+	}
+	var offset [8]byte
+	if _, err := io.ReadFull(right, offset[:]); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := right.Write([]byte("partial")); err != nil {
+		t.Fatal(err)
+	}
+	cancel()
+	select {
+	case err := <-pending.done:
+		if err == nil {
+			t.Fatal("cancelled file connection completed")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("cancel did not interrupt file connection")
+	}
+}
+
 func TestConcurrentPeerAddressLookupsShareRequest(t *testing.T) {
 	clientConn, serverConn := net.Pipe()
 	defer clientConn.Close()
