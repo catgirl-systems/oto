@@ -526,6 +526,15 @@ func (c *Client) send(m Message) error {
 
 // Search collects token-matched responses for five seconds.
 func (c *Client) Search(ctx context.Context, rawQuery string) ([]SearchResult, error) {
+	return c.collectSearch(ctx, rawQuery, false)
+}
+
+// WishlistSearch uses the server's rate-limited automatic-search command.
+func (c *Client) WishlistSearch(ctx context.Context, rawQuery string) ([]SearchResult, error) {
+	return c.collectSearch(ctx, rawQuery, true)
+}
+
+func (c *Client) collectSearch(ctx context.Context, rawQuery string, wishlist bool) ([]SearchResult, error) {
 	query, err := parseSearchQuery(rawQuery)
 	if err != nil {
 		return nil, err
@@ -533,10 +542,15 @@ func (c *Client) Search(ctx context.Context, rawQuery string) ([]SearchResult, e
 	token := c.nextToken()
 	responses := make(chan SearchResponse, 64)
 	c.mu.Lock()
+	done := c.done
 	c.pending[token] = responses
 	c.mu.Unlock()
 	defer func() { c.mu.Lock(); delete(c.pending, token); c.mu.Unlock() }()
-	if err := c.send(SearchRequest{Token: token, Query: query.wire}); err != nil {
+	var request Message = SearchRequest{Token: token, Query: query.wire}
+	if wishlist {
+		request = WishlistSearchRequest{Token: token, Query: query.wire}
+	}
+	if err := c.send(request); err != nil {
 		return nil, err
 	}
 	timer := time.NewTimer(5 * time.Second)
@@ -546,6 +560,8 @@ func (c *Client) Search(ctx context.Context, rawQuery string) ([]SearchResult, e
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()
+		case <-done:
+			return nil, errors.New("soulseek: connection closed during search")
 		case response := <-responses:
 			for _, result := range response.Results {
 				if query.matches(result) {

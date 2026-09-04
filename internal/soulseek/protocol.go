@@ -23,6 +23,8 @@ const (
 	ServerEmbeddedMessage  uint32 = 93
 	ServerAcceptChildren   uint32 = 100
 	ServerPossibleParents  uint32 = 102
+	ServerWishlistSearch   uint32 = 103
+	ServerWishlistInterval uint32 = 104
 	ServerBranchLevel      uint32 = 126
 	ServerBranchRoot       uint32 = 127
 	ServerResetDistributed uint32 = 130
@@ -388,6 +390,25 @@ type SearchRequest struct {
 
 func (SearchRequest) command() uint32           { return ServerFileSearch }
 func (m SearchRequest) encode(e *Encoder) error { e.U32(m.Token); return e.String(m.Query) }
+
+type WishlistSearchRequest SearchRequest
+
+func (WishlistSearchRequest) command() uint32 { return ServerWishlistSearch }
+func (m WishlistSearchRequest) encode(e *Encoder) error {
+	e.U32(m.Token)
+	return e.String(m.Query)
+}
+
+type WishlistInterval struct{ Seconds uint32 }
+
+func DecodeWishlistInterval(b []byte) (WishlistInterval, error) {
+	d := NewDecoder(b)
+	seconds, err := d.U32()
+	if err != nil {
+		return WishlistInterval{}, err
+	}
+	return WishlistInterval{Seconds: seconds}, d.Done()
+}
 
 type IncomingSearch struct {
 	Username string
@@ -1050,6 +1071,8 @@ func DecodeMessage(command uint32, payload []byte) (any, error) {
 		return DecodeEmbeddedDistributed(payload)
 	case ServerPossibleParents:
 		return DecodePossibleParents(payload)
+	case ServerWishlistInterval:
+		return DecodeWishlistInterval(payload)
 	case PeerSearch:
 		return DecodeSearchResponse(payload)
 	case PeerSharedList:
