@@ -136,7 +136,7 @@ func TestModelRecordsAndRecallsIndependentHistories(t *testing.T) {
 	m := newModel(context.Background(), nil, "", false, cfg)
 	m.historyPath = filepath.Join(t.TempDir(), "history.json")
 	m.history = historyState{Searches: []string{"current", "newer", "older"}, Filters: []string{"type:audio", "free:true"}}
-	m.workspace, m.query = 0, "current"
+	m.workspace, m.query = workspaceSearch, "current"
 	m.beginEdit()
 	m.editKey(tea.KeyPressMsg(tea.Key{Code: tea.KeyUp}))
 	if m.input != "newer" {
@@ -219,7 +219,7 @@ func TestHistoryReloadsForNewTUI(t *testing.T) {
 	second := newModel(context.Background(), nil, "", false, cfg)
 	second.historyPath = path
 	second.initializeHistory()
-	second.workspace = 0
+	second.workspace = workspaceSearch
 	second.beginEdit()
 	second.editKey(tea.KeyPressMsg(tea.Key{Code: tea.KeyUp}))
 	if second.input != "restart search" {
@@ -242,7 +242,7 @@ func TestTypedSearchSettingsStageApplyTrimAndClear(t *testing.T) {
 	if err := config.SaveJSON(m.historyPath, m.history); err != nil {
 		t.Fatal(err)
 	}
-	m.workspace, m.settingsSection = 4, 3
+	m.workspace, m.settingsSection = workspaceSettings, settingsSearch
 	m.key(key("enter"))
 	if m.cfg.Search.RememberSearches || !m.activeSearch.RememberSearches {
 		t.Fatal("boolean setting did not remain staged")

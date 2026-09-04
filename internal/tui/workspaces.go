@@ -1,0 +1,540 @@
+package tui
+
+import (
+	"errors"
+	"fmt"
+	"strconv"
+	"strings"
+	"unicode/utf8"
+
+	"charm.land/lipgloss/v2"
+)
+
+func (m model) renderSearch(width, height int) string {
+	inputStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#F5E0DC"))
+	prompt := muted("/  Press / to search the network")
+	if m.editing && !m.filterEditing {
+		prompt = renderInput("/  ", m.input, m.inputCursor, false, inputStyle) + muted("   ↑↓ history  •  enter search  •  esc cancel")
+	} else if m.query != "" {
+		prompt = styled("/  "+m.query, inputStyle)
+	}
+	filterLine := muted("f  Press f to filter cached results")
+	if m.editing && m.filterEditing {
+		filterLine = renderInput("f  ", m.input, m.inputCursor, false, inputStyle) + muted("   ↑↓ history  •  enter apply  •  esc cancel")
+	} else if m.searchFilter != "" {
+		filterLine = styled("f  "+m.searchFilter, inputStyle)
+	}
+	count := countLabel(len(m.results), "result")
+	if m.searchFound > 0 || m.searchTotal > len(m.results) {
+		count = fmt.Sprintf("%d loaded / %d filtered / %d found", len(m.results), m.searchTotal, m.searchFound)
+	}
+	lines := []string{sectionHeader("SEARCH", count, width)}
+	if tabs := m.searchTabsLine(width); tabs != "" {
+		lines = append(lines, tabs)
+	}
+	lines = append(lines, trunc(prompt, width), trunc(filterLine, width))
+	if m.editing && m.filterEditing {
+		lines = append(lines, trunc(muted(filterCompletionHint(inputBeforeCursor(m.input, m.inputCursor))), width))
+	}
+	if m.loading && height > len(lines) {
+		return strings.Join(append(lines, muted("◌  Loading results…")), "\n")
+	}
+	if len(m.results) == 0 && height > len(lines) {
+		return strings.Join(append(lines, muted("No matching results. Press / to search or f to change filters.")), "\n")
+	}
+
+	_, selectedNode := m.searchTree.node(m.cursor)
+	source := "SOURCE"
+	if selectedNode != nil {
+		if selectedNode.user != "" {
+			source += "  " + selectedNode.user
+		}
+		if selectedNode.path != "" {
+			folder, _ := resultPath(selectedNode.path)
+			if selectedNode.kind != treeFile {
+				folder = selectedNode.path
+			}
+			if folder != "" {
+				source += "  •  " + folder
+			}
+		}
+	}
+	lines = append(lines, trunc(muted(source), width))
+	headings, _ := searchMetadata(result{}, width, true)
+	nameWidth := max(4, width-lipgloss.Width(headings)-8)
+	lines = append(lines, muted("      "+searchTextColumn("FILE", nameWidth)+"  "+headings))
+
+	limit := max(0, height-len(lines))
+	start, end := visibleRange(len(m.searchTree.visible), m.cursor, limit)
+	for rowIndex := start; rowIndex < end; rowIndex++ {
+		nodeIndex := m.searchTree.visible[rowIndex]
+		node := m.searchTree.nodes[nodeIndex]
+		mark := treeSelection(&m.searchTree, nodeIndex, m.selected)
+		metadata := fmt.Sprintf("%d files", len(node.leaves))
+		if node.kind == treeFile && node.source >= 0 {
+			_, metadata = searchMetadata(m.results[node.source], width, true)
+		}
+		row := fmt.Sprintf("%s %s %s  %s", mark, treeGlyph(&m.searchTree, node), searchTextColumn(treeLabel(&m.searchTree, nodeIndex), nameWidth), metadata)
+		selected := node.kind == treeFile && node.source >= 0 && m.selected[node.source]
+		lines = append(lines, searchResultRow(row, rowIndex == m.cursor, selected))
+	}
+	return strings.Join(lines, "\n")
+}
+
+func (m model) browseTabsLine(width int) string {
+	if len(m.browseTabs) == 0 {
+		return ""
+	}
+	labels := make([]string, len(m.browseTabs))
+	for i, tab := range m.browseTabs {
+		label := tab.user
+		if tab.cached {
+			label += " (cached)"
+		}
+		if tab.loading {
+			label += "…"
+		}
+		if i == m.browseTabIndex {
+			labels[i] = accent("[" + label + "]")
+		} else {
+			labels[i] = muted(label)
+		}
+	}
+	return trunc(muted("USERS  ")+strings.Join(labels, muted("  ")), width)
+}
+
+func (m model) renderBrowse(width, height int) string {
+	prompt := muted("/  Press / to enter a username")
+	inputStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#F5E0DC"))
+	if m.editing {
+		prompt = renderInput("/  ", m.input, m.inputCursor, false, inputStyle) + muted("   enter browse  •  esc cancel")
+	} else if m.browseUser != "" {
+		prompt = styled("/  "+m.browseUser, inputStyle)
+	}
+	count, singular := len(m.entries), "item"
+	if len(m.browseTabs) == 0 {
+		count, singular = len(m.savedBrowses), "saved user"
+	}
+	lines := []string{sectionHeader("BROWSE", countLabel(count, singular), width)}
+	if tabs := m.browseTabsLine(width); tabs != "" {
+		lines = append(lines, tabs)
+	}
+	lines = append(lines, trunc(prompt, width))
+
+	if len(m.browseTabs) == 0 {
+		if m.savedBrowseLoading && height > len(lines) {
+			return strings.Join(append(lines, muted("◌  Loading saved share lists…")), "\n")
+		}
+		if len(m.savedBrowses) == 0 && height > len(lines) {
+			return strings.Join(append(lines, "\n"+muted("No saved share lists. Enter a Soulseek username to browse.")), "\n")
+		}
+		lines = append(lines, muted("SAVED USER"))
+		limit := max(0, height-len(lines))
+		start, end := visibleRange(len(m.savedBrowses), m.cursor, limit)
+		for i := start; i < end; i++ {
+			saved := m.savedBrowses[i]
+			row := fmt.Sprintf("  %-24s  %s", saved.Username, saved.SavedAt.Local().Format("2006-01-02 15:04"))
+			lines = append(lines, selectedRow(trunc(row, width), i == m.cursor))
+		}
+		return strings.Join(lines, "\n")
+	}
+	if m.loading && height > len(lines) {
+		return strings.Join(append(lines, muted("◌  Loading shared files…")), "\n")
+	}
+	if m.browseLoaded && len(m.entries) == 0 && height > len(lines) {
+		return strings.Join(append(lines, muted("No shared files.")), "\n")
+	}
+	if len(m.entries) == 0 && height > len(lines) {
+		return strings.Join(append(lines, "\n"+muted("Enter a Soulseek username to browse their shared files.")), "\n")
+	}
+
+	_, selectedNode := m.browseTree.node(m.cursor)
+	folder := ""
+	if selectedNode != nil {
+		folder = selectedNode.path
+		if selectedNode.kind == treeFile {
+			folder, _ = resultPath(folder)
+		}
+	}
+	lines = append(lines, trunc(muted("FOLDER  "+folder), width))
+	headings, _ := searchMetadata(result{}, width, false)
+	nameWidth := max(4, width-lipgloss.Width(headings)-8)
+	lines = append(lines, muted("      "+searchTextColumn("FILE", nameWidth)+"  "+headings))
+
+	limit := max(0, height-len(lines))
+	start, end := visibleRange(len(m.browseTree.visible), m.cursor, limit)
+	for rowIndex := start; rowIndex < end; rowIndex++ {
+		nodeIndex := m.browseTree.visible[rowIndex]
+		node := m.browseTree.nodes[nodeIndex]
+		mark := treeSelection(&m.browseTree, nodeIndex, m.selected)
+		metadata := fmt.Sprintf("%d files", len(node.leaves))
+		if node.kind == treeFile && node.source >= 0 {
+			x := m.entries[node.source]
+			_, metadata = searchMetadata(result{size: x.size, extension: x.extension, bitrate: x.bitrate, duration: x.duration, vbr: x.vbr, sampleRate: x.sampleRate, bitDepth: x.bitDepth, public: !x.private}, width, false)
+		}
+		row := fmt.Sprintf("%s %s %s  %s", mark, treeGlyph(&m.browseTree, node), searchTextColumn(treeLabel(&m.browseTree, nodeIndex), nameWidth), metadata)
+		selected := node.kind == treeFile && node.source >= 0 && m.selected[node.source]
+		lines = append(lines, searchResultRow(row, rowIndex == m.cursor, selected))
+	}
+	return strings.Join(lines, "\n")
+}
+
+func (m model) transferIndexes() []int {
+	direction := transferDirections[m.transferTab]
+	indexes := make([]int, 0, len(m.transfers))
+	for i, transfer := range m.transfers {
+		if transfer.direction == direction {
+			indexes = append(indexes, i)
+		}
+	}
+	return indexes
+}
+
+func progressBar(done, total uint64, width int) (string, int) {
+	percent := 0
+	if total > 0 {
+		percent = min(100, int(float64(done)*100/float64(total)))
+	}
+	filled := percent * width / 100
+	return strings.Repeat("█", filled) + strings.Repeat("░", width-filled), percent
+}
+
+func pulseBar(frame, width int) string {
+	width = max(1, width)
+	position := frame % width
+	return strings.Repeat("░", position) + "█" + strings.Repeat("░", width-position-1)
+}
+
+func (m model) currentActivity() (activity, bool) {
+	if m.workspace == workspaceSearch && m.searchTabIndex >= 0 && m.searchTabIndex < len(m.searchTabs) {
+		tab := m.searchTabs[m.searchTabIndex]
+		if tab.searching {
+			return activity{kind: activitySearch, label: tab.query, request: tab.request}, true
+		}
+	}
+	if m.workspace == workspaceBrowse && m.browseTabIndex >= 0 && m.browseTabIndex < len(m.browseTabs) {
+		tab := m.browseTabs[m.browseTabIndex]
+		if tab.loading {
+			return activity{kind: activityBrowse, label: tab.user, request: tab.request, received: tab.received, total: tab.total}, true
+		}
+	}
+
+	browseIndex := -1
+	for i := range m.browseTabs {
+		tab := &m.browseTabs[i]
+		if tab.loading && tab.total > 0 && (browseIndex < 0 || tab.request < m.browseTabs[browseIndex].request) {
+			browseIndex = i
+		}
+	}
+	if browseIndex < 0 {
+		for i := range m.browseTabs {
+			tab := &m.browseTabs[i]
+			if tab.loading && (browseIndex < 0 || tab.request < m.browseTabs[browseIndex].request) {
+				browseIndex = i
+			}
+		}
+	}
+	if browseIndex >= 0 {
+		tab := m.browseTabs[browseIndex]
+		return activity{kind: activityBrowse, label: tab.user, request: tab.request, received: tab.received, total: tab.total}, true
+	}
+
+	searchIndex := -1
+	for i := range m.searchTabs {
+		tab := &m.searchTabs[i]
+		if tab.searching && (searchIndex < 0 || tab.request < m.searchTabs[searchIndex].request) {
+			searchIndex = i
+		}
+	}
+	if searchIndex >= 0 {
+		tab := m.searchTabs[searchIndex]
+		return activity{kind: activitySearch, label: tab.query, request: tab.request}, true
+	}
+	return activity{}, false
+}
+
+func (m model) activityView(width int) string {
+	operation, ok := m.currentActivity()
+	if !ok || width < 1 {
+		return ""
+	}
+	label := "Searching " + operation.label
+	if operation.kind == activityBrowse {
+		label = "Browsing @" + operation.label
+		if operation.total > 0 && operation.received >= operation.total {
+			label = "Finishing @" + operation.label
+		}
+	}
+	percentWidth := 0
+	if operation.total > 0 {
+		percentWidth = 5
+	}
+	barMin := max(3, min(16, width/3))
+	label = trunc(label, max(4, width-barMin-percentWidth-2))
+	barWidth := max(1, width-lipgloss.Width(label)-percentWidth-2)
+	if operation.total == 0 {
+		return muted(label+"  ") + accent(pulseBar(m.activityFrame, barWidth))
+	}
+	bar, percent := progressBar(operation.received, operation.total, barWidth)
+	return muted(label+"  ") + accent(bar) + fmt.Sprintf(" %3d%%", percent)
+}
+
+func transferResultRow(row string, current, upload, failed bool) string {
+	color := lipgloss.Color("#89B4FA")
+	if upload {
+		color = lipgloss.Color("#FAB387")
+	}
+	if failed {
+		color = lipgloss.Color("#F38BA8")
+	}
+	style := lipgloss.NewStyle().Foreground(color)
+	prefix := "  "
+	if current {
+		prefix = "› "
+		style = style.Bold(true).Background(lipgloss.Color("#313244"))
+	}
+	return styled(prefix+row, style)
+}
+
+func (m model) renderTransfers(width, height int) string {
+	downloads, uploads := 0, 0
+	for _, transfer := range m.transfers {
+		if transfer.direction == "upload" {
+			uploads++
+		} else {
+			downloads++
+		}
+	}
+	downloadTab := fmt.Sprintf("↓ DOWNLOADS %d", downloads)
+	uploadTab := fmt.Sprintf("↑ UPLOADS %d", uploads)
+	if m.transferTab == transferDownloads {
+		downloadTab = styled("["+downloadTab+"]", lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#89B4FA")))
+		uploadTab = muted(uploadTab)
+	} else {
+		downloadTab = muted(downloadTab)
+		uploadTab = styled("["+uploadTab+"]", lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FAB387")))
+	}
+	lines := []string{
+		sectionHeader("TRANSFERS", countLabel(len(m.transfers), "transfer"), width),
+		trunc(downloadTab+"  "+uploadTab, width),
+	}
+	indexes := m.transferIndexes()
+	limit := max(0, height-len(lines))
+	if len(indexes) == 0 && limit > 0 {
+		label := "No downloads. Choose a file in Search or Browse."
+		if m.transferTab == transferUploads {
+			label = "No uploads. Shared files requested by peers appear here."
+		}
+		return strings.Join(append(lines, "\n"+muted(label)), "\n")
+	}
+	tree := &m.transferTrees[m.transferTab]
+	start, end := visibleRange(len(tree.visible), m.cursor, limit)
+	frames := []rune("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏")
+	for rowIndex := start; rowIndex < end; rowIndex++ {
+		nodeIndex := tree.visible[rowIndex]
+		node := tree.nodes[nodeIndex]
+		var done, total, speed uint64
+		running, failed := false, false
+		for _, source := range node.leaves {
+			x := m.transfers[source]
+			done, total, speed = done+x.done, total+x.total, speed+x.speed
+			running = running || x.state == "running"
+			failed = failed || x.state == "failed"
+		}
+		barWidth := 8
+		if width >= 70 {
+			barWidth = 14
+		}
+		bar, percent := progressBar(done, total, barWidth)
+		state := fmt.Sprintf("%d transfers", len(node.leaves))
+		if node.kind == treeFile && node.source >= 0 {
+			x := m.transfers[node.source]
+			state = x.state
+			if x.err != "" {
+				state += ": " + x.err
+			}
+			if x.queue > 0 {
+				state += fmt.Sprintf(" q%d", x.queue)
+			}
+			if width >= 90 && x.user != "" {
+				state += "  @" + trunc(x.user, 16)
+			}
+		}
+		if speed > 0 {
+			state += "  " + formatBytes(speed) + "/s"
+			if running && total > done {
+				state += "  ETA " + formatDuration((total-done-1)/speed+1)
+			}
+		}
+		stateWidth := 16
+		if width >= 90 {
+			stateWidth = 40
+		}
+		status := fmt.Sprintf("%s %3d%%  %s", bar, percent, searchTextColumn(state, stateWidth))
+		spinner := " "
+		if running {
+			spinner = string(frames[m.spinner%len(frames)])
+		}
+		direction := "↓"
+		if m.transferTab == transferUploads {
+			direction = "↑"
+		}
+		nameWidth := max(4, width-lipgloss.Width(status)-10)
+		label := treeLabel(tree, nodeIndex)
+		row := fmt.Sprintf("%s %s %s %s  %s", spinner, direction, treeGlyph(tree, node), searchTextColumn(label, nameWidth), status)
+		lines = append(lines, transferResultRow(trunc(row, max(4, width-2)), rowIndex == m.cursor, m.transferTab == transferUploads, failed))
+	}
+	return strings.Join(lines, "\n")
+}
+
+func (m model) renderShares(width, height int) string {
+	lines := []string{sectionHeader("SHARES", countLabel(len(m.shares), "folder"), width)}
+	limit := max(0, height-1)
+	if m.editing && limit > 0 {
+		line := renderInput("/  ", m.input, m.inputCursor, false, lipgloss.NewStyle().Foreground(lipgloss.Color("#F5E0DC"))) + muted("   name:path  •  enter add  •  esc cancel")
+		lines = append(lines, trunc(line, width))
+		limit--
+	}
+	if len(m.shares) == 0 && limit > 0 {
+		return strings.Join(append(lines, "\n"+muted("No public folders. Press / to add one as name:path.")), "\n")
+	}
+	start, end := visibleRange(len(m.shareTree.visible), m.cursor, limit)
+	frames := []rune("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏")
+	for rowIndex := start; rowIndex < end; rowIndex++ {
+		nodeIndex := m.shareTree.visible[rowIndex]
+		node := m.shareTree.nodes[nodeIndex]
+		status := ""
+		if node.kind == treeShareRoot {
+			status = trunc(node.detail, max(4, width/2))
+		} else if node.kind == treeFile {
+			status = formatBytes(node.size)
+		}
+		spinner := " "
+		if node.loading {
+			spinner = string(frames[m.spinner%len(frames)])
+		}
+		nameWidth := max(4, width-lipgloss.Width(status)-8)
+		row := fmt.Sprintf("%s %s %s  %s", spinner, treeGlyph(&m.shareTree, node), searchTextColumn(treeLabel(&m.shareTree, nodeIndex), nameWidth), status)
+		lines = append(lines, selectedRow(trunc(row, max(4, width-2)), rowIndex == m.cursor))
+	}
+	return strings.Join(lines, "\n")
+}
+
+var settingsSectionNames = [settingsSectionCount]string{"Account", "Connection", "Downloads", "Search"}
+
+func (m model) renderSettings(width, height int) string {
+	sections := settingsSectionNames[:]
+	lines := []string{sectionHeader("SETTINGS", "Press s to save changes", width)}
+	sidebarWidth := max(14, min(20, width/4))
+	contentHeight := max(1, height-1)
+	start, end := visibleRange(len(sections), int(m.settingsSection), contentHeight)
+	var sidebar strings.Builder
+	for i := start; i < end; i++ {
+		section := sections[i]
+		if settingsSection(i) == m.settingsSection {
+			sidebar.WriteString(styled("› "+section, lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#F5E0DC"))))
+		} else {
+			sidebar.WriteString("  " + muted(section))
+		}
+		if i < end-1 {
+			sidebar.WriteByte('\n')
+		}
+	}
+	sideStyle := lipgloss.NewStyle().Width(sidebarWidth).Height(contentHeight).Border(lipgloss.NormalBorder(), false, true, false, false).PaddingRight(1)
+	if colorsEnabled() {
+		sideStyle = sideStyle.BorderForeground(lipgloss.Color("#45475A"))
+	}
+
+	fields := m.settingFields()
+	formLines := []string{strong(sections[m.settingsSection])}
+	fieldStart, fieldEnd := visibleRange(len(fields), m.cursor, max(1, contentHeight-1))
+	for i := fieldStart; i < fieldEnd; i++ {
+		field := fields[i]
+		value := field.value
+		if m.editing && i == m.cursor {
+			value = renderInput("", m.input, m.inputCursor, field.kind == settingSecret, lipgloss.NewStyle())
+		} else {
+			switch field.kind {
+			case settingSecret:
+				if value != "" {
+					value = strings.Repeat("•", utf8.RuneCountInString(value))
+				}
+			case settingBool:
+				if value == "true" {
+					value = "On"
+				} else {
+					value = "Off"
+				}
+			case settingInt:
+				if value == "0" {
+					value = "Unlimited"
+				}
+			}
+			if value == "" {
+				value = muted("Not set")
+			}
+		}
+		row := fmt.Sprintf("%-22s %s", field.label, value)
+		formLines = append(formLines, selectedRow(trunc(row, max(4, width-sidebarWidth-4)), i == m.cursor))
+	}
+	if fieldStart == 0 && fieldEnd == len(fields) && len(formLines)+2 <= contentHeight {
+		formLines = append(formLines, "", muted("enter edit/toggle/run  •  s save  •  ← → section"))
+	}
+	formWidth := max(12, width-sidebarWidth-2)
+	content := lipgloss.JoinHorizontal(lipgloss.Top, sideStyle.Render(sidebar.String()), lipgloss.NewStyle().Width(formWidth).PaddingLeft(2).Render(strings.Join(formLines, "\n")))
+	return strings.Join(append(lines, content), "\n")
+}
+
+func (m model) settingFields() []settingField {
+	switch m.settingsSection {
+	case settingsAccount:
+		return []settingField{
+			{settingUsername, "Username", m.cfg.Soulseek.Username, settingText},
+			{settingChangePassword, "Change Soulseek password", "Press Enter", settingAction},
+		}
+	case settingsConnection:
+		return []settingField{
+			{settingServer, "Server", m.cfg.Soulseek.Server, settingText},
+			{settingListenAddress, "Listen address", m.cfg.Soulseek.ListenAddr, settingText},
+			{settingConnectOnStartup, "Connect on startup", strconv.FormatBool(m.cfg.Soulseek.ConnectOnStartup), settingBool},
+			{settingNATPMPPortMapping, "NAT-PMP port forwarding", strconv.FormatBool(m.cfg.Soulseek.NATPMPPortMapping), settingBool},
+			{settingUPnPPortMapping, "UPnP port forwarding", strconv.FormatBool(m.cfg.Soulseek.UPnPPortMapping), settingBool},
+		}
+	case settingsDownloads:
+		return []settingField{{settingDownloadPath, "Download path", m.cfg.DownloadDir, settingText}}
+	default:
+		return []settingField{
+			{settingRememberSearches, "Remember searches", strconv.FormatBool(m.cfg.Search.RememberSearches), settingBool},
+			{settingSearchHistoryLimit, "Search history limit", strconv.Itoa(m.cfg.Search.SearchHistoryLimit), settingInt},
+			{settingRememberFilters, "Remember filters", strconv.FormatBool(m.cfg.Search.RememberFilters), settingBool},
+			{settingFilterHistoryLimit, "Filter history limit", strconv.Itoa(m.cfg.Search.FilterHistoryLimit), settingInt},
+			{settingClearSearchHistory, "Clear search history", "Press Enter", settingAction},
+			{settingClearFilterHistory, "Clear filter history", "Press Enter", settingAction},
+		}
+	}
+}
+
+func (m *model) setSettingValue(value string) error {
+	field := m.settingFields()[m.cursor]
+	switch field.id {
+	case settingUsername:
+		m.cfg.Soulseek.Username = value
+	case settingServer:
+		m.cfg.Soulseek.Server = value
+	case settingListenAddress:
+		m.cfg.Soulseek.ListenAddr = value
+	case settingDownloadPath:
+		m.cfg.DownloadDir = value
+	case settingSearchHistoryLimit, settingFilterHistoryLimit:
+		limit, err := strconv.Atoi(value)
+		if err != nil || limit < 0 {
+			return errors.New("history limit must be a nonnegative integer")
+		}
+		if field.id == settingSearchHistoryLimit {
+			m.cfg.Search.SearchHistoryLimit = limit
+		} else {
+			m.cfg.Search.FilterHistoryLimit = limit
+		}
+	}
+	return nil
+}

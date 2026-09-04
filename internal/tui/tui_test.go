@@ -25,13 +25,13 @@ func TestNavigationSelectionAndHelp(t *testing.T) {
 	m := model{selected: map[int]bool{}, width: 20}
 	x, _ := m.Update(key("tab"))
 	m = x.(model)
-	if m.workspace != 1 {
+	if m.workspace != workspaceBrowse {
 		t.Fatal("tab")
 	}
 	m.results = []result{{path: "a", size: 1}}
 	m.searchTree, m.cursor = buildSearchTree(m.results, treeState{}, 0)
 	m.cursor = m.searchTree.cursorForSource(0)
-	m.workspace = 0
+	m.workspace = workspaceSearch
 	x, _ = m.Update(key(" "))
 	m = x.(model)
 	if !m.selected[0] {
@@ -42,8 +42,9 @@ func TestNavigationSelectionAndHelp(t *testing.T) {
 	if !m.help {
 		t.Fatal("help")
 	}
-	if strings.Contains(m.View().Content, "panic") {
-		t.Fatal("view")
+	guide := m.View().Content
+	if !strings.Contains(guide, "Keyboard guide") || !strings.Contains(guide, "q") || !strings.Contains(guide, "quit") {
+		t.Fatalf("incomplete keyboard guide: %q", guide)
 	}
 }
 
@@ -94,7 +95,7 @@ func TestStatusMenuAndLabels(t *testing.T) {
 func TestOnDemandSearchAndBrowseActivityFooter(t *testing.T) {
 	t.Setenv("NO_COLOR", "1")
 	m := model{width: 80, height: 24, selected: map[int]bool{}}
-	if footer := m.footerView(); !strings.Contains(footer, "tab switch") || strings.Contains(footer, "Searching ") {
+	if footer := m.footerView(); !strings.Contains(footer, "? all controls") || strings.Contains(footer, "Searching ") || strings.Contains(footer, "q quit") {
 		t.Fatalf("idle footer: %q", footer)
 	}
 
@@ -102,7 +103,7 @@ func TestOnDemandSearchAndBrowseActivityFooter(t *testing.T) {
 		t.Fatal("search did not start")
 	}
 	searchRequest, searchOperation := m.searchTabs[0].request, m.searchTabs[0].operation
-	if footer := m.footerView(); !strings.Contains(footer, "Searching a long query") || strings.Contains(footer, "tab switch") {
+	if footer := m.footerView(); !strings.Contains(footer, "Searching a long query") || strings.Contains(footer, "? all controls") {
 		t.Fatalf("search footer: %q", footer)
 	}
 	if compact := m.compactView(); !strings.Contains(compact, "Searching a long query") {
@@ -115,7 +116,7 @@ func TestOnDemandSearchAndBrowseActivityFooter(t *testing.T) {
 	}
 	updated, _ := m.Update(searchMsg{request: searchRequest, operation: searchOperation})
 	m = updated.(model)
-	if footer := m.footerView(); !strings.Contains(footer, "tab switch") || strings.Contains(footer, "Searching ") {
+	if footer := m.footerView(); !strings.Contains(footer, "? all controls") || strings.Contains(footer, "Searching ") {
 		t.Fatalf("completed search footer: %q", footer)
 	}
 	stopped, cmd := m.Update(activityTickMsg{})
@@ -124,7 +125,7 @@ func TestOnDemandSearchAndBrowseActivityFooter(t *testing.T) {
 		t.Fatal("idle activity tick did not stop")
 	}
 
-	filtering := model{width: 80, workspace: 0, searchTabIndex: 0, searchTabs: []searchTab{{query: "cached", loading: true, loadingMore: true}}}
+	filtering := model{width: 80, workspace: workspaceSearch, searchTabIndex: 0, searchTabs: []searchTab{{query: "cached", loading: true, loadingMore: true}}}
 	if activity := filtering.activityView(78); activity != "" {
 		t.Fatalf("filtering activated footer: %q", activity)
 	}
@@ -154,21 +155,66 @@ func TestOnDemandSearchAndBrowseActivityFooter(t *testing.T) {
 	}
 	updated, _ = m.Update(browseMsg{user: "peer", request: request})
 	m = updated.(model)
-	if footer := m.footerView(); !strings.Contains(footer, "tab switch") || strings.Contains(footer, "Browsing @") {
+	if footer := m.footerView(); !strings.Contains(footer, "? all controls") || strings.Contains(footer, "Browsing @") {
 		t.Fatalf("completed browse footer: %q", footer)
 	}
 	m.openBrowse("peer", "", true)
 	request = m.browseTabs[0].request
 	updated, _ = m.Update(browseMsg{user: "peer", request: request, err: context.Canceled})
 	m = updated.(model)
-	if footer := m.footerView(); !strings.Contains(footer, "tab switch") {
+	if footer := m.footerView(); !strings.Contains(footer, "? all controls") {
 		t.Fatalf("failed browse footer: %q", footer)
+	}
+}
+
+func TestContextualFooterHints(t *testing.T) {
+	tree := func(kind treeNodeKind) treeState {
+		return treeState{nodes: []treeNode{{kind: kind}}, visible: []int{0}}
+	}
+	settings := func(section settingsSection, cursor int) model {
+		return model{workspace: workspaceSettings, settingsSection: section, cursor: cursor, cfg: config.Default()}
+	}
+	tests := []struct {
+		name string
+		m    model
+		want []string
+		not  []string
+	}{
+		{"search edit", model{workspace: workspaceSearch, editing: true}, []string{"enter search", "esc cancel"}, nil},
+		{"filter edit", model{workspace: workspaceSearch, editing: true, filterEditing: true}, []string{"enter apply filter", "esc cancel"}, nil},
+		{"saved browse", model{workspace: workspaceBrowse}, []string{"enter open", "r refresh"}, []string{"save list"}},
+		{"search folder", model{workspace: workspaceSearch, searchTree: tree(treeFolder)}, []string{"/ search", "f filter", "enter expand", "b browse", "d folder download"}, []string{"i details"}},
+		{"search file", model{workspace: workspaceSearch, searchTree: tree(treeFile)}, []string{"enter/d download", "space select", "b browse", "i details"}, []string{"folder download"}},
+		{"browse folder", model{workspace: workspaceBrowse, browseTabs: []browseTab{{}}, browseTree: tree(treeFolder)}, []string{"enter expand", "d folder download", "s save list", "r refresh"}, []string{"i details"}},
+		{"browse file", model{workspace: workspaceBrowse, browseTabs: []browseTab{{}}, browseTree: tree(treeFile)}, []string{"enter/d download", "space select", "i details", "s save list", "r refresh"}, []string{"folder download"}},
+		{"transfers", model{workspace: workspaceTransfers}, []string{"d cancel", "r retry", "c clear"}, nil},
+		{"share root", model{workspace: workspaceShares, shareTree: tree(treeShareRoot)}, []string{"enter expand", "/ add", "r rescan", "d remove"}, nil},
+		{"share folder", model{workspace: workspaceShares, shareTree: tree(treeFolder)}, []string{"enter expand", "/ add", "r rescan"}, []string{"d remove"}},
+		{"setting text", settings(settingsAccount, 0), []string{"enter edit", "s save"}, nil},
+		{"setting bool", settings(settingsConnection, 2), []string{"enter toggle", "s save"}, nil},
+		{"setting action", settings(settingsAccount, 1), []string{"enter change password", "s save"}, nil},
+		{"setting clear", settings(settingsSearch, 4), []string{"enter clear searches", "s save"}, nil},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			hints := strings.Join(test.m.footerHints(), " | ")
+			for _, want := range test.want {
+				if !strings.Contains(hints, want) {
+					t.Fatalf("footer %q missing %q", hints, want)
+				}
+			}
+			for _, not := range test.not {
+				if strings.Contains(hints, not) {
+					t.Fatalf("footer %q unexpectedly contains %q", hints, not)
+				}
+			}
+		})
 	}
 }
 
 func TestActivityPriority(t *testing.T) {
 	m := model{
-		workspace: 0, searchTabIndex: 0, browseTabIndex: 0,
+		workspace: workspaceSearch, searchTabIndex: 0, browseTabIndex: 0,
 		searchTabs: []searchTab{{query: "selected search", searching: true, request: 3}},
 		browseTabs: []browseTab{
 			{user: "older", loading: true, request: 1},
@@ -178,11 +224,11 @@ func TestActivityPriority(t *testing.T) {
 	if activity, _ := m.currentActivity(); activity.kind != activitySearch || activity.label != "selected search" {
 		t.Fatalf("selected activity: %+v", activity)
 	}
-	m.workspace = 2
+	m.workspace = workspaceTransfers
 	if activity, _ := m.currentActivity(); activity.kind != activityBrowse || activity.label != "bytes" {
 		t.Fatalf("byte browse priority: %+v", activity)
 	}
-	m.workspace, m.browseTabIndex = 1, 0
+	m.workspace, m.browseTabIndex = workspaceBrowse, 0
 	if activity, _ := m.currentActivity(); activity.label != "older" {
 		t.Fatalf("selected browse priority: %+v", activity)
 	}
@@ -212,34 +258,34 @@ func TestNoticeExpiresAfterMinimumDuration(t *testing.T) {
 }
 
 func TestPageAndBoundaryNavigationAcrossTrees(t *testing.T) {
-	for _, workspace := range []int{0, 1, 2, 3} {
-		m := model{workspace: workspace, height: 20, cursor: 50, selected: map[int]bool{}}
+	for _, current := range []workspace{workspaceSearch, workspaceBrowse, workspaceTransfers, workspaceShares} {
+		m := model{workspace: current, height: 20, cursor: 50, selected: map[int]bool{}}
 		tree := treeState{visible: make([]int, 100)}
-		switch workspace {
-		case 0:
+		switch current {
+		case workspaceSearch:
 			m.searchTree = tree
-		case 1:
+		case workspaceBrowse:
 			m.browseTree, m.browseTabs = tree, []browseTab{{user: "peer"}}
-		case 2:
-			m.transferTrees[0] = tree
-		case 3:
+		case workspaceTransfers:
+			m.transferTrees[transferDownloads] = tree
+		case workspaceShares:
 			m.shareTree = tree
 		}
 		m.key(tea.KeyPressMsg(tea.Key{Code: tea.KeyPgUp}))
 		if m.cursor != 38 {
-			t.Fatalf("workspace %d page up cursor = %d", workspace, m.cursor)
+			t.Fatalf("workspace %d page up cursor = %d", current, m.cursor)
 		}
 		m.key(tea.KeyPressMsg(tea.Key{Code: tea.KeyPgDown}))
 		if m.cursor != 50 {
-			t.Fatalf("workspace %d page down cursor = %d", workspace, m.cursor)
+			t.Fatalf("workspace %d page down cursor = %d", current, m.cursor)
 		}
 		m.key(tea.KeyPressMsg(tea.Key{Code: tea.KeyHome}))
 		if m.cursor != 0 {
-			t.Fatalf("workspace %d home cursor = %d", workspace, m.cursor)
+			t.Fatalf("workspace %d home cursor = %d", current, m.cursor)
 		}
 		m.key(tea.KeyPressMsg(tea.Key{Code: tea.KeyEnd}))
 		if m.cursor != 99 {
-			t.Fatalf("workspace %d end cursor = %d", workspace, m.cursor)
+			t.Fatalf("workspace %d end cursor = %d", current, m.cursor)
 		}
 	}
 }
@@ -278,7 +324,7 @@ func TestSetupMasksAndValidates(t *testing.T) {
 }
 func TestNarrowViewAndQuitConfirmation(t *testing.T) {
 	t.Setenv("NO_COLOR", "1")
-	m := model{width: 3, workspace: 0, selected: map[int]bool{}, transient: true, transfers: []transfer{{state: "running"}}}
+	m := model{width: 3, workspace: workspaceSearch, selected: map[int]bool{}, transient: true, transfers: []transfer{{state: "running"}}}
 	x, _ := m.Update(key("q"))
 	m = x.(model)
 	if !m.confirm {
@@ -291,7 +337,7 @@ func TestNarrowViewAndQuitConfirmation(t *testing.T) {
 
 func TestFullScreenLayoutAndEditing(t *testing.T) {
 	t.Setenv("NO_COLOR", "1")
-	m := model{width: 80, height: 14, workspace: 0, selected: map[int]bool{}}
+	m := model{width: 80, height: 14, workspace: workspaceSearch, selected: map[int]bool{}}
 	view := m.View()
 	if !view.AltScreen || !strings.Contains(view.Content, "SEARCH") || !strings.Contains(view.Content, "╭") {
 		t.Fatal("main view is not a full-screen workspace")
@@ -407,16 +453,16 @@ func TestSettingsSidebarEditsAccountWithoutLeakingPassword(t *testing.T) {
 	cfg := config.Default()
 	cfg.Soulseek.Username, cfg.Soulseek.Password = "alice", "secret"
 	m := newModel(context.Background(), nil, "", false, cfg)
-	m.width, m.height, m.workspace = 80, 16, 4
+	m.width, m.height, m.workspace = 80, 16, workspaceSettings
 
 	view := m.View().Content
 	if !strings.Contains(view, "Settings") || !strings.Contains(view, "Account") || strings.Contains(view, "secret") || strings.Contains(view, "••••••") || !strings.Contains(view, "Change Soulseek password") {
 		t.Fatal("settings account sidebar is missing the password action or exposed the password")
 	}
 	settingsLines := strings.Count(view, "\n")
-	m.workspace = 0
+	m.workspace = workspaceSearch
 	searchLines := strings.Count(m.View().Content, "\n")
-	m.workspace = 4
+	m.workspace = workspaceSettings
 	if settingsLines != searchLines {
 		t.Fatalf("settings shifted layout: search=%d settings=%d", searchLines, settingsLines)
 	}
@@ -428,7 +474,7 @@ func TestSettingsSidebarEditsAccountWithoutLeakingPassword(t *testing.T) {
 	}
 
 	m.key(tea.KeyPressMsg(tea.Key{Code: tea.KeyRight}))
-	if view := m.View().Content; m.settingsSection != 1 || !strings.Contains(view, "Listen address") || !strings.Contains(view, "Connect on startup") || !strings.Contains(view, "NAT-PMP port forwarding") || !strings.Contains(view, "UPnP port forwarding") {
+	if view := m.View().Content; m.settingsSection != settingsConnection || !strings.Contains(view, "Listen address") || !strings.Contains(view, "Connect on startup") || !strings.Contains(view, "NAT-PMP port forwarding") || !strings.Contains(view, "UPnP port forwarding") {
 		t.Fatal("settings sidebar did not navigate to connection settings")
 	}
 	m.cursor = 2
@@ -448,12 +494,16 @@ func TestSettingsSidebarEditsAccountWithoutLeakingPassword(t *testing.T) {
 	}
 	m.key(tea.KeyPressMsg(tea.Key{Code: tea.KeyRight}))
 	m.key(tea.KeyPressMsg(tea.Key{Code: tea.KeyRight}))
-	if m.settingsSection != 3 || !strings.Contains(m.View().Content, "Remember searches") {
+	if m.settingsSection != settingsSearch || !strings.Contains(m.View().Content, "Remember searches") {
 		t.Fatal("settings sidebar did not navigate to search settings")
 	}
 	m.key(key("tab"))
-	if m.workspace != 0 {
+	if m.workspace != workspaceSearch {
 		t.Fatal("settings tab did not wrap to search")
+	}
+	m.key(tea.KeyPressMsg(tea.Key{Code: tea.KeyTab, Mod: tea.ModShift}))
+	if m.workspace != workspaceSettings {
+		t.Fatal("search tab did not wrap backward to settings")
 	}
 }
 
@@ -462,7 +512,7 @@ func TestChangePasswordForm(t *testing.T) {
 	cfg := config.Default()
 	cfg.Soulseek.Username, cfg.Soulseek.Password = "alice", "old-secret"
 	m := newModel(context.Background(), nil, "", false, cfg)
-	m.width, m.height, m.workspace, m.cursor = 80, 20, 4, 1
+	m.width, m.height, m.workspace, m.cursor = 80, 20, workspaceSettings, 1
 
 	m.key(key("enter"))
 	if m.passwordForm || !strings.Contains(m.err, "Connect") {
@@ -519,7 +569,7 @@ func TestChangePasswordForm(t *testing.T) {
 
 func TestSearchFilterEditingAndMetadata(t *testing.T) {
 	t.Setenv("NO_COLOR", "1")
-	m := model{width: 100, height: 16, workspace: 0, selected: map[int]bool{}}
+	m := model{width: 100, height: 16, workspace: workspaceSearch, selected: map[int]bool{}}
 	m.key(key("f"))
 	if !m.editing || !m.filterEditing {
 		t.Fatal("f did not open filter editing")
@@ -528,7 +578,7 @@ func TestSearchFilterEditingAndMetadata(t *testing.T) {
 		t.Fatal("filter keywords were not shown")
 	}
 	m.editKey(key("tab"))
-	if m.input != "in:" || m.workspace != 0 {
+	if m.input != "in:" || m.workspace != workspaceSearch {
 		t.Fatal("tab did not complete the first filter field")
 	}
 	m.editKey(key("tab"))
@@ -623,7 +673,7 @@ func TestSearchFilterEditingAndMetadata(t *testing.T) {
 }
 
 func TestSearchResultTabs(t *testing.T) {
-	m := model{workspace: 0, searchFilter: "type:audio", selected: map[int]bool{}}
+	m := model{workspace: workspaceSearch, searchFilter: "type:audio", selected: map[int]bool{}}
 	if cmd := m.openSearch("first query"); cmd == nil {
 		t.Fatal("first search tab did not start")
 	}
@@ -676,7 +726,7 @@ func TestSearchResultTabs(t *testing.T) {
 
 func TestFilterEnteredDuringSearchAppliesAfterCompletion(t *testing.T) {
 	m := model{
-		workspace: 0, searchTabIndex: 0, searchOperation: 1,
+		workspace: workspaceSearch, searchTabIndex: 0, searchOperation: 1,
 		query: "avi8", searchFilter: "in:outta", loading: true, selected: map[int]bool{},
 		searchTabs: []searchTab{{query: "avi8", loading: true, selected: map[int]bool{}, request: 1, operation: 1}},
 	}
@@ -702,22 +752,22 @@ func TestFilterEnteredDuringSearchAppliesAfterCompletion(t *testing.T) {
 
 func TestTransferDirectionTabsProgressAndSpinner(t *testing.T) {
 	t.Setenv("NO_COLOR", "1")
-	m := model{workspace: 2, selected: map[int]bool{}, transfers: []transfer{
+	m := model{workspace: workspaceTransfers, selected: map[int]bool{}, transfers: []transfer{
 		{id: "d1", filename: "album.flac", direction: "download", state: "running", done: 25, total: 100, speed: 1536, user: "alice"},
 		{id: "d2", filename: `folder\queued.mp3`, direction: "download", state: "queued", total: 100, queue: 2, user: "alice"},
 		{id: "u1", filename: "shared.wav", direction: "upload", state: "completed", done: 100, total: 100, user: "bob"},
 	}}
-	if got := m.workspaceNames()[2]; got != "Transfers 1↓ 0↑" {
+	if got := m.workspaceNames()[workspaceTransfers]; got != "Transfers 1↓ 0↑" {
 		t.Fatalf("transfer activity tab = %q", got)
 	}
-	m.transferTrees[0], m.transferCursors[0] = buildTransferTree(m.transfers, "download", treeState{}, 0)
-	m.transferTrees[1], m.transferCursors[1] = buildTransferTree(m.transfers, "upload", treeState{}, 0)
+	m.transferTrees[transferDownloads], m.transferCursors[transferDownloads] = buildTransferTree(m.transfers, "download", treeState{}, 0)
+	m.transferTrees[transferUploads], m.transferCursors[transferUploads] = buildTransferTree(m.transfers, "upload", treeState{}, 0)
 	m.cursor = 0
 	ids := m.transferActionIDs()
 	if len(ids) != 2 || (ids[0] != "d1" && ids[1] != "d1") || (ids[0] != "d2" && ids[1] != "d2") {
 		t.Fatalf("recursive transfer action IDs = %v", ids)
 	}
-	m.cursor = m.transferTrees[0].cursorForSource(0)
+	m.cursor = m.transferTrees[transferDownloads].cursorForSource(0)
 
 	downloads := m.renderTransfers(100, 10)
 	if !strings.Contains(downloads, "[↓ DOWNLOADS 2]") || !strings.Contains(downloads, "███░░░░░░░░░░░  25%") || !strings.Contains(downloads, "1.5 KiB/s  ETA 0:01") || !strings.Contains(downloads, "⠋") || strings.Contains(downloads, "shared.wav") {
@@ -748,14 +798,14 @@ func TestTransferDirectionTabsProgressAndSpinner(t *testing.T) {
 		t.Fatalf("transfer error was not rendered: %q", failed)
 	}
 	m.transfers[1].state, m.transfers[1].err = "queued", ""
-	downloadCursor := m.transferTrees[0].cursorForSource(1)
+	downloadCursor := m.transferTrees[transferDownloads].cursorForSource(1)
 	m.cursor = downloadCursor
 	m.key(tea.KeyPressMsg(tea.Key{Code: tea.KeyPgDown, Mod: tea.ModCtrl}))
 	uploads := m.renderTransfers(100, 10)
 	if m.rows() != 2 || !strings.Contains(uploads, "[↑ UPLOADS 1]") || !strings.Contains(uploads, "shared.wav") || strings.Contains(uploads, "album.flac") {
 		t.Fatalf("upload tab did not isolate uploads: rows=%d view=%q", m.rows(), uploads)
 	}
-	if _, node := m.transferTrees[1].node(m.transferTrees[1].cursorForSource(2)); node == nil || node.source != 2 {
+	if _, node := m.transferTrees[transferUploads].node(m.transferTrees[transferUploads].cursorForSource(2)); node == nil || node.source != 2 {
 		t.Fatal("upload tree did not map to source transfer")
 	}
 	m.key(tea.KeyPressMsg(tea.Key{Code: tea.KeyPgUp, Mod: tea.ModCtrl}))
@@ -784,7 +834,7 @@ func TestTransferDirectionTabsProgressAndSpinner(t *testing.T) {
 
 func TestFileDetails(t *testing.T) {
 	t.Setenv("NO_COLOR", "1")
-	m := model{workspace: 0, width: 100, height: 30, selected: map[int]bool{}, results: []result{{
+	m := model{workspace: workspaceSearch, width: 100, height: 30, selected: map[int]bool{}, results: []result{{
 		user: "alice", path: `Music\song.flac`, extension: "flac", country: "US", size: 1536, free: true,
 		bitrate: 320, duration: 125, vbr: true, sampleRate: 44100, bitDepth: 24, public: true,
 	}}}
@@ -802,7 +852,7 @@ func TestFileDetails(t *testing.T) {
 		t.Fatal("escape did not close file details")
 	}
 
-	m.workspace, m.browseUser = 1, "bob"
+	m.workspace, m.browseUser = workspaceBrowse, "bob"
 	m.entries = []entry{{name: `Private\demo.wav`, extension: "wav", size: 42, private: true, bitrate: 1411}}
 	m.browseTree, m.cursor = buildBrowseTree(m.entries, treeState{}, 0)
 	m.cursor = m.browseTree.cursorForSource(0)
@@ -820,13 +870,13 @@ func TestFileDetails(t *testing.T) {
 
 func TestBrowseResultFolderAndUserTabs(t *testing.T) {
 	m := model{
-		workspace: 0,
+		workspace: workspaceSearch,
 		results:   []result{{user: "nss", path: `audio\Hardstyle_320\song.mp3`}},
 		selected:  map[int]bool{},
 	}
 	m.searchTree, m.cursor = buildSearchTree(m.results, treeState{}, 0)
 	m.cursor = m.searchTree.cursorForSource(0)
-	if cmd := m.key(key("b")); cmd == nil || m.workspace != 1 || m.browseUser != "nss" || len(m.browseTabs) != 1 {
+	if cmd := m.key(key("b")); cmd == nil || m.workspace != workspaceBrowse || m.browseUser != "nss" || len(m.browseTabs) != 1 {
 		t.Fatalf("browse result did not open user tab: workspace=%d user=%q tabs=%d", m.workspace, m.browseUser, len(m.browseTabs))
 	}
 	updated, _ := m.Update(browseMsg{user: "nss", request: m.browseTabs[0].request, entries: []entry{
@@ -882,7 +932,7 @@ func TestBrowseResultFolderAndUserTabs(t *testing.T) {
 func TestSavedBrowsePickerAndCacheActions(t *testing.T) {
 	savedAt := time.Date(2026, 3, 13, 12, 30, 0, 0, time.UTC)
 	m := model{
-		workspace:    1,
+		workspace:    workspaceBrowse,
 		width:        100,
 		height:       20,
 		selected:     map[int]bool{},
@@ -943,9 +993,9 @@ func TestFilterCompletionCyclesBackward(t *testing.T) {
 	if got := completeFilter("type:a", true); got != "type:archive" {
 		t.Fatalf("backward type completion = %q", got)
 	}
-	m := model{workspace: 0, editing: true, filterEditing: true}
+	m := model{workspace: workspaceSearch, editing: true, filterEditing: true}
 	m.editKey(tea.KeyPressMsg(tea.Key{Code: tea.KeyTab, Mod: tea.ModShift}))
-	if m.input != "public:" || m.workspace != 0 {
+	if m.input != "public:" || m.workspace != workspaceSearch {
 		t.Fatalf("shift+tab completion = %q in workspace %d", m.input, m.workspace)
 	}
 }
@@ -969,7 +1019,7 @@ func TestTreeNavigationGroupingAndRecursiveSelection(t *testing.T) {
 			albumCursor = i
 		}
 	}
-	m := model{workspace: 0, results: results, searchTree: tree, cursor: albumCursor, selected: map[int]bool{}}
+	m := model{workspace: workspaceSearch, results: results, searchTree: tree, cursor: albumCursor, selected: map[int]bool{}}
 	m.toggle()
 	if !m.selected[0] || !m.selected[1] || !m.selected[3] || m.selected[2] || treeSelection(&m.searchTree, albumIndex, m.selected) != "●" {
 		t.Fatalf("recursive folder selection = %v", m.selected)
@@ -980,7 +1030,7 @@ func TestTreeNavigationGroupingAndRecursiveSelection(t *testing.T) {
 	}
 	m.cursor = 0
 	m.key(tea.KeyPressMsg(tea.Key{Code: tea.KeyLeft}))
-	if m.workspace != 0 || len(m.searchTree.visible) >= len(tree.visible) {
+	if m.workspace != workspaceSearch || len(m.searchTree.visible) >= len(tree.visible) {
 		t.Fatal("left did not collapse the tree in place")
 	}
 	m.key(tea.KeyPressMsg(tea.Key{Code: tea.KeyRight}))
@@ -1016,7 +1066,7 @@ func TestFolderDownloadMenu(t *testing.T) {
 			break
 		}
 	}
-	m := model{workspace: 0, results: results, searchTree: tree, cursor: folderCursor, selected: map[int]bool{}, width: 80, height: 24}
+	m := model{workspace: workspaceSearch, results: results, searchTree: tree, cursor: folderCursor, selected: map[int]bool{}, width: 80, height: 24}
 	if cmd := m.key(key("d")); cmd != nil || !m.folderMenu || m.folderMenuUser != "peer" || m.folderMenuPath != `Music\Album` {
 		t.Fatalf("folder menu did not open: %+v", m)
 	}
@@ -1053,7 +1103,7 @@ func TestFolderDownloadMenu(t *testing.T) {
 
 	browseEntries := []entry{{name: `Music\Album`, directory: true}, {name: `Music\Album\song.flac`, size: 5}}
 	browseTree, _ := buildBrowseTree(browseEntries, treeState{}, 0)
-	m = model{workspace: 1, browseUser: "peer", entries: browseEntries, browseTree: browseTree, selected: map[int]bool{}}
+	m = model{workspace: workspaceBrowse, browseUser: "peer", entries: browseEntries, browseTree: browseTree, selected: map[int]bool{}}
 	m.cursor = 0
 	if cmd := m.key(key("d")); cmd != nil || !m.folderMenu || m.folderMenuUser != "peer" {
 		t.Fatalf("browse folder menu did not open: %+v", m)
@@ -1061,7 +1111,7 @@ func TestFolderDownloadMenu(t *testing.T) {
 }
 
 func TestSharesTreeIgnoresStaleBrowseResponses(t *testing.T) {
-	m := model{workspace: 3, selected: map[int]bool{}, shares: []share{{name: "Music", path: "/music"}}, shareGeneration: 2}
+	m := model{workspace: workspaceShares, selected: map[int]bool{}, shares: []share{{name: "Music", path: "/music"}}, shareGeneration: 2}
 	m.shareTree, m.cursor = buildShareRoots(m.shares, treeState{}, 0, true)
 	root := &m.shareTree.nodes[m.shareTree.roots[0]]
 	root.loading, root.request = true, 7

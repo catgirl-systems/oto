@@ -222,13 +222,13 @@ func (t *treeState) selection(index int, selected map[int]bool) (chosen, total i
 
 func (m *model) currentTree() *treeState {
 	switch m.workspace {
-	case 0:
+	case workspaceSearch:
 		return &m.searchTree
-	case 1:
+	case workspaceBrowse:
 		return &m.browseTree
-	case 2:
+	case workspaceTransfers:
 		return &m.transferTrees[m.transferTab]
-	case 3:
+	case workspaceShares:
 		return &m.shareTree
 	default:
 		return nil
