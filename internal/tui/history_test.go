@@ -274,7 +274,7 @@ func TestTypedSearchSettingsStageApplyTrimAndClear(t *testing.T) {
 		t.Fatal("negative history limit was accepted")
 	}
 
-	m.cursor = 4
+	m.cursor = 6
 	if !strings.Contains(m.renderSettings(80, 4), "Clear search history") {
 		t.Fatal("selected setting row was not scrolled into view")
 	}
@@ -286,7 +286,7 @@ func TestTypedSearchSettingsStageApplyTrimAndClear(t *testing.T) {
 	if len(m.history.Searches) != 0 || m.notice != "search history cleared" {
 		t.Fatal("search clear action failed")
 	}
-	m.cursor = 5
+	m.cursor = 7
 	m.key(key("enter"))
 	if len(m.history.Filters) != 0 || m.notice != "filter history cleared" {
 		t.Fatal("filter clear action failed")

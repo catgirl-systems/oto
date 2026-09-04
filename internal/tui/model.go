@@ -47,6 +47,7 @@ type workspace int
 
 const (
 	workspaceSearch workspace = iota
+	workspaceWishlist
 	workspaceBrowse
 	workspaceTransfers
 	workspaceShares
@@ -143,6 +144,8 @@ const (
 	settingSearchHistoryLimit
 	settingRememberFilters
 	settingFilterHistoryLimit
+	settingWishlistInterval
+	settingWishlistNotifications
 	settingClearSearchHistory
 	settingClearFilterHistory
 )
@@ -195,6 +198,9 @@ type model struct {
 	searchRequest                          uint64
 	searchOperation                        uint64
 	searchTree                             treeState
+	wishlist                               []daemon.WishlistItem
+	wishlistCursor                         int
+	wishlistNotified                       map[string]uint64
 	entries                                []entry
 	browseTabs                             []browseTab
 	browseTabIndex                         int
@@ -224,6 +230,8 @@ func (m model) rows() int {
 	switch m.workspace {
 	case workspaceSearch:
 		return len(m.searchTree.visible)
+	case workspaceWishlist:
+		return len(m.wishlist)
 	case workspaceBrowse:
 		if len(m.browseTabs) == 0 {
 			return len(m.savedBrowses)
@@ -241,7 +249,7 @@ func (m model) rows() int {
 func (m model) pageRows() int { return max(1, m.height-8) }
 
 func newModel(ctx context.Context, c *ipc.Client, path string, transient bool, cfg config.Config) model {
-	m := model{ctx: ctx, client: c, configPath: path, historyPath: config.HistoryPath(), cfg: cfg, activeSearch: cfg.Search, transient: transient, width: 80, height: 24, selected: map[int]bool{}, setupVals: [6]string{cfg.Soulseek.Username, cfg.Soulseek.Password, cfg.Soulseek.ListenAddr, cfg.Soulseek.NetworkInterface, cfg.DownloadDir, ""}, inputCursor: utf8.RuneCountInString(cfg.Soulseek.Username), savedBrowseLoading: c != nil}
+	m := model{ctx: ctx, client: c, configPath: path, historyPath: config.HistoryPath(), cfg: cfg, activeSearch: cfg.Search, transient: transient, width: 80, height: 24, selected: map[int]bool{}, wishlistNotified: map[string]uint64{}, setupVals: [6]string{cfg.Soulseek.Username, cfg.Soulseek.Password, cfg.Soulseek.ListenAddr, cfg.Soulseek.NetworkInterface, cfg.DownloadDir, ""}, inputCursor: utf8.RuneCountInString(cfg.Soulseek.Username), savedBrowseLoading: c != nil}
 	m.historyCursor.reset("")
 	return m
 }

@@ -142,6 +142,13 @@ func (m *model) key(k tea.KeyPressMsg) tea.Cmd {
 	case "space":
 		m.toggle()
 	case "enter":
+		if m.workspace == workspaceWishlist {
+			if m.cursor >= 0 && m.cursor < len(m.wishlist) {
+				m.wishlistCursor = m.cursor
+				return m.openWishlist(m.wishlist[m.cursor], false)
+			}
+			return nil
+		}
 		if m.workspace == workspaceBrowse && len(m.browseTabs) == 0 {
 			if m.cursor >= 0 && m.cursor < len(m.savedBrowses) {
 				return m.openBrowse(m.savedBrowses[m.cursor].Username, "", false)
@@ -177,6 +184,8 @@ func (m *model) key(k tea.KeyPressMsg) tea.Cmd {
 				m.cfg.Search.RememberSearches = !m.cfg.Search.RememberSearches
 			case settingRememberFilters:
 				m.cfg.Search.RememberFilters = !m.cfg.Search.RememberFilters
+			case settingWishlistNotifications:
+				m.cfg.Search.WishlistNotifications = !m.cfg.Search.WishlistNotifications
 			case settingChangePassword:
 				m.openPasswordForm()
 			case settingClearSearchHistory:
@@ -206,6 +215,10 @@ func (m *model) key(k tea.KeyPressMsg) tea.Cmd {
 			m.details = node != nil && node.kind == treeFile && node.source >= 0
 		}
 	case "d":
+		if m.workspace == workspaceWishlist && m.cursor >= 0 && m.cursor < len(m.wishlist) {
+			m.wishlistCursor = m.cursor
+			return m.removeWishlist(m.wishlist[m.cursor].ID)
+		}
 		if m.workspace == workspaceSearch {
 			if m.openFolderMenu() {
 				return nil
@@ -225,6 +238,10 @@ func (m *model) key(k tea.KeyPressMsg) tea.Cmd {
 			return m.removeShare()
 		}
 	case "r":
+		if m.workspace == workspaceWishlist && m.cursor >= 0 && m.cursor < len(m.wishlist) {
+			m.wishlistCursor = m.cursor
+			return m.openWishlist(m.wishlist[m.cursor], true)
+		}
 		if m.workspace == workspaceBrowse {
 			if m.browseUser != "" {
 				return m.openBrowse(m.browseUser, "", true)
@@ -262,11 +279,22 @@ func (m *model) key(k tea.KeyPressMsg) tea.Cmd {
 			return m.saveSettings()
 		}
 	case "f":
+		if m.workspace == workspaceWishlist && m.cursor >= 0 && m.cursor < len(m.wishlist) {
+			m.wishlistCursor = m.cursor
+			m.editing, m.filterEditing, m.input = true, true, m.wishlist[m.cursor].Filter
+			m.inputCursor = len([]rune(m.input))
+			m.historyCursor.reset(m.input)
+			return nil
+		}
 		if m.workspace == workspaceSearch {
 			m.editing, m.filterEditing, m.input = true, true, m.searchFilter
 			m.inputCursor = len([]rune(m.input))
 			m.historyCursor.reset(m.input)
 			return nil
+		}
+	case "w":
+		if m.workspace == workspaceSearch && strings.TrimSpace(m.query) != "" {
+			return m.putWishlist(m.query, m.searchFilter, "Saved search to Wishlist")
 		}
 	case "/":
 		m.beginEdit()
@@ -504,13 +532,13 @@ func (m *model) beginEdit() {
 		m.input = ""
 	}
 	m.inputCursor = len([]rune(m.input))
-	if m.workspace == workspaceSearch {
+	if m.workspace == workspaceSearch || m.workspace == workspaceWishlist {
 		m.historyCursor.reset(m.input)
 	}
 }
 func (m *model) editKey(k tea.KeyPressMsg) tea.Cmd {
 	s := k.String()
-	if m.workspace == workspaceSearch && (s == "up" || s == "down") {
+	if (m.workspace == workspaceSearch || m.workspace == workspaceWishlist) && (s == "up" || s == "down") {
 		m.recallHistory(s == "up")
 		return nil
 	}
@@ -538,6 +566,13 @@ func (m *model) editKey(k tea.KeyPressMsg) tea.Cmd {
 				return nil
 			}
 			m.recordHistory(filter, true)
+			if m.workspace == workspaceWishlist {
+				if m.wishlistCursor >= 0 && m.wishlistCursor < len(m.wishlist) {
+					item := m.wishlist[m.wishlistCursor]
+					return m.putWishlist(item.Query, filter, "Wishlist filter saved")
+				}
+				return nil
+			}
 			if m.searchID == "" {
 				m.searchFilter = filter
 				m.err = ""
@@ -548,6 +583,13 @@ func (m *model) editKey(k tea.KeyPressMsg) tea.Cmd {
 		}
 		if m.workspace == workspaceSearch {
 			return m.openSearch(m.input)
+		}
+		if m.workspace == workspaceWishlist {
+			query := strings.TrimSpace(m.input)
+			if query == "" {
+				return nil
+			}
+			return m.putWishlist(query, "", "Wishlist item added")
 		}
 		if m.workspace == workspaceBrowse {
 			return m.openBrowse(m.input, "", false)
@@ -569,7 +611,7 @@ func (m *model) editKey(k tea.KeyPressMsg) tea.Cmd {
 	}
 	before := m.input
 	m.input, m.inputCursor, _ = editText(m.input, m.inputCursor, k)
-	if m.workspace == workspaceSearch && m.input != before {
+	if (m.workspace == workspaceSearch || m.workspace == workspaceWishlist) && m.input != before {
 		m.historyCursor.reset(m.input)
 	}
 	return nil

@@ -71,6 +71,17 @@ type searchMsg struct {
 	filterChange bool
 	err          error
 }
+type wishlistMsg struct {
+	items []daemon.WishlistItem
+	err   error
+}
+type wishlistActionMsg struct {
+	items         []daemon.WishlistItem
+	page          *daemon.SearchPage
+	query, filter string
+	notice        string
+	err           error
+}
 type browseMsg struct {
 	user     string
 	request  uint64
@@ -161,6 +172,55 @@ func (m *model) setNotice(message string) {
 }
 func (m model) loadStatus() tea.Cmd {
 	return func() tea.Msg { s, e := m.client.Status(m.ctx); return statusMsg{s, e} }
+}
+
+func (m model) loadWishlist() tea.Cmd {
+	return func() tea.Msg { items, err := m.client.Wishlist(m.ctx); return wishlistMsg{items, err} }
+}
+
+func (m model) putWishlist(query, filter, notice string) tea.Cmd {
+	return func() tea.Msg {
+		_, err := m.client.PutWishlist(m.ctx, query, filter)
+		if err != nil {
+			return wishlistActionMsg{err: err}
+		}
+		items, err := m.client.Wishlist(m.ctx)
+		return wishlistActionMsg{items: items, notice: notice, err: err}
+	}
+}
+
+func (m model) removeWishlist(id string) tea.Cmd {
+	return func() tea.Msg {
+		if err := m.client.RemoveWishlist(m.ctx, id); err != nil {
+			return wishlistActionMsg{err: err}
+		}
+		items, err := m.client.Wishlist(m.ctx)
+		return wishlistActionMsg{items: items, notice: "Wishlist item removed", err: err}
+	}
+}
+
+func (m model) openWishlist(item daemon.WishlistItem, rerun bool) tea.Cmd {
+	return func() tea.Msg {
+		var page daemon.SearchPage
+		var err error
+		if rerun {
+			page, err = m.client.RunWishlist(m.ctx, item.ID)
+		} else {
+			page, err = m.client.OpenWishlist(m.ctx, item.ID)
+		}
+		if err != nil {
+			if !rerun && strings.Contains(err.Error(), "no cached results") {
+				return wishlistActionMsg{items: m.wishlist, notice: "No cached results; press r to run this item"}
+			}
+			return wishlistActionMsg{err: err}
+		}
+		items, err := m.client.Wishlist(m.ctx)
+		return wishlistActionMsg{items: items, page: &page, query: item.Query, filter: item.Filter, err: err}
+	}
+}
+
+func ringBell() tea.Cmd {
+	return func() tea.Msg { _, _ = os.Stderr.WriteString("\a"); return nil }
 }
 
 func (m model) checkListeningPort() tea.Cmd {
@@ -339,6 +399,19 @@ func (m *model) openSearch(query string) tea.Cmd {
 	return m.withActivity(m.search(tab.query, tab.filter, tab.request, tab.operation))
 }
 
+func (m *model) openSearchPage(query, filter string, page daemon.SearchPage) {
+	if m.workspace == workspaceSearch {
+		m.saveSearchTab()
+	}
+	m.searchRequest++
+	m.searchOperation++
+	tab := searchTab{query: query, filter: filter, selected: map[int]bool{}, request: m.searchRequest, operation: m.searchOperation}
+	applySearchMsg(&tab, searchMsg{page: page, request: tab.request, operation: tab.operation, filter: filter})
+	m.searchTabs = append(m.searchTabs, tab)
+	m.workspace = workspaceSearch
+	m.loadSearchTab(len(m.searchTabs) - 1)
+}
+
 func applySearchMsg(tab *searchTab, message searchMsg) {
 	tab.err = errText(message.err)
 	if message.append {
@@ -454,6 +527,8 @@ func (m *model) loadBrowseTab(index int) {
 func (m *model) switchWorkspace(next workspace) {
 	if m.workspace == workspaceSearch {
 		m.saveSearchTab()
+	} else if m.workspace == workspaceWishlist {
+		m.wishlistCursor = m.cursor
 	} else if m.workspace == workspaceBrowse {
 		if len(m.browseTabs) > 0 {
 			m.saveBrowseTab()
@@ -472,6 +547,11 @@ func (m *model) switchWorkspace(next workspace) {
 		} else {
 			m.cursor, m.selected, m.loading = 0, map[int]bool{}, false
 		}
+		return
+	}
+	if m.workspace == workspaceWishlist {
+		m.cursor = max(0, min(m.wishlistCursor, len(m.wishlist)-1))
+		m.selected, m.loading = map[int]bool{}, false
 		return
 	}
 	if m.workspace == workspaceBrowse {
@@ -601,7 +681,7 @@ func (m model) Init() tea.Cmd {
 	if m.setup {
 		return nil
 	}
-	return tea.Batch(m.loadStatus(), m.loadTransfers(), m.loadShares(), m.loadSavedBrowses(), tick())
+	return tea.Batch(m.loadStatus(), m.loadTransfers(), m.loadShares(), m.loadSavedBrowses(), m.loadWishlist(), tick())
 }
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch x := msg.(type) {
@@ -612,7 +692,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.notice != "" && !time.Time(x).Before(m.noticeUntil) {
 			m.notice = ""
 		}
-		return m, tea.Batch(m.loadStatus(), m.loadTransfers(), m.loadShares(), tick())
+		return m, tea.Batch(m.loadStatus(), m.loadTransfers(), m.loadShares(), m.loadWishlist(), tick())
 	case activityTickMsg:
 		if !m.activityRunning {
 			break
@@ -652,6 +732,45 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.networkInterfaces = x.names
 			m.err = ""
+		}
+	case wishlistMsg:
+		m.err = errText(x.err)
+		if x.err == nil {
+			if m.wishlistNotified == nil {
+				m.wishlistNotified = map[string]uint64{}
+			}
+			bell := false
+			for _, item := range x.items {
+				if item.Unread && item.NotificationSequence > m.wishlistNotified[item.ID] && m.cfg.Search.WishlistNotifications {
+					bell = true
+				}
+				m.wishlistNotified[item.ID] = item.NotificationSequence
+			}
+			if m.workspace == workspaceWishlist {
+				m.wishlistCursor = m.cursor
+			}
+			m.wishlist = x.items
+			m.wishlistCursor = max(0, min(m.wishlistCursor, len(m.wishlist)-1))
+			if m.workspace == workspaceWishlist {
+				m.cursor = m.wishlistCursor
+			}
+			if bell {
+				return m, ringBell()
+			}
+		}
+	case wishlistActionMsg:
+		m.err = errText(x.err)
+		if x.err == nil {
+			m.wishlist = x.items
+			m.wishlistCursor = max(0, min(m.wishlistCursor, len(m.wishlist)-1))
+			if x.notice != "" {
+				m.setNotice(x.notice)
+			}
+			if x.page != nil {
+				m.openSearchPage(x.query, x.filter, *x.page)
+			} else if m.workspace == workspaceWishlist {
+				m.cursor = m.wishlistCursor
+			}
 		}
 	case searchMsg:
 		if x.request != 0 {

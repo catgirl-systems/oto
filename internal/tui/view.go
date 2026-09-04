@@ -109,8 +109,13 @@ func (m model) passwordFormView() string {
 }
 
 func (m model) workspaceNames() []string {
-	names := []string{"Search", "Browse", "Transfers", "Shares", "Settings"}
-	downloads, uploads := 0, 0
+	names := []string{"Search", "Wishlist", "Browse", "Transfers", "Shares", "Settings"}
+	unread, downloads, uploads := 0, 0, 0
+	for _, item := range m.wishlist {
+		if item.Unread {
+			unread += item.ResultCount
+		}
+	}
 	for _, transfer := range m.transfers {
 		if transfer.state != "running" {
 			continue
@@ -120,6 +125,9 @@ func (m model) workspaceNames() []string {
 		} else {
 			downloads++
 		}
+	}
+	if unread > 0 {
+		names[workspaceWishlist] = fmt.Sprintf("Wishlist %d", unread)
 	}
 	names[workspaceTransfers] = fmt.Sprintf("Transfers %d↓ %d↑", downloads, uploads)
 	return names
@@ -158,6 +166,8 @@ func (m model) mainView() string {
 	switch m.workspace {
 	case workspaceSearch:
 		body = m.renderSearch(innerWidth, innerHeight)
+	case workspaceWishlist:
+		body = m.renderWishlist(innerWidth, innerHeight)
 	case workspaceBrowse:
 		body = m.renderBrowse(innerWidth, innerHeight)
 	case workspaceTransfers:
@@ -254,6 +264,8 @@ func (m model) helpView() string {
 			{"i", "show file details"},
 			{"f", "edit search filters"},
 			{"c", "clear / restore search filters"},
+			{"w (search)", "save the active query and filter to Wishlist"},
+			{"/ f r d (wishlist)", "add, edit filter, rerun, or remove a wishlist item"},
 			{"space", "select item or loaded folder contents"},
 			{"d", "download / choose folder mode"},
 			{"r", "refresh browse / retry transfer / rescan shares"},
@@ -513,7 +525,7 @@ func (m model) footerHints() []string {
 
 	switch m.workspace {
 	case workspaceSearch:
-		hints := []string{"/ search", "f filter"}
+		hints := []string{"/ search", "f filter", "w wishlist"}
 		_, node := m.searchTree.node(m.cursor)
 		if node == nil {
 			return hints
@@ -526,6 +538,8 @@ func (m model) footerHints() []string {
 			return append(hints, "d folder download")
 		}
 		return append(hints, "d download")
+	case workspaceWishlist:
+		return []string{"/ add", "f filter", "enter open", "r rerun", "d remove"}
 	case workspaceBrowse:
 		if len(m.browseTabs) == 0 {
 			return []string{"enter open", "r refresh"}

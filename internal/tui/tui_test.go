@@ -26,7 +26,7 @@ func TestNavigationSelectionAndHelp(t *testing.T) {
 	m := model{selected: map[int]bool{}, width: 20}
 	x, _ := m.Update(key("tab"))
 	m = x.(model)
-	if m.workspace != workspaceBrowse {
+	if m.workspace != workspaceWishlist {
 		t.Fatal("tab")
 	}
 	m.results = []result{{path: "a", size: 1}}
@@ -46,6 +46,73 @@ func TestNavigationSelectionAndHelp(t *testing.T) {
 	guide := m.View().Content
 	if !strings.Contains(guide, "Keyboard") || strings.Contains(guide, "Keyboard guide") || strings.Contains(guide, "Everything is reachable without a mouse.") || !strings.Contains(guide, "NAVIGATION") || !strings.Contains(guide, "q") || !strings.Contains(guide, "quit") {
 		t.Fatalf("incomplete keyboard guide: %q", guide)
+	}
+}
+
+func TestWishlistWorkspaceKeysBadgeAndBell(t *testing.T) {
+	t.Setenv("NO_COLOR", "1")
+	cfg := config.Default()
+	m := model{workspace: workspaceWishlist, width: 100, height: 24, cfg: cfg, activeSearch: cfg.Search, selected: map[int]bool{}, wishlistNotified: map[string]uint64{}, wishlist: []daemon.WishlistItem{{ID: "w-1", Query: "rare album", Filter: "type:flac", ResultCount: 2, Unread: true, NotificationSequence: 1}}}
+	if names := m.workspaceNames(); names[workspaceWishlist] != "Wishlist 2" {
+		t.Fatalf("wishlist badge: %v", names)
+	}
+	view := m.renderWishlist(90, 12)
+	for _, want := range []string{"rare album", "type:flac", "2 results"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("wishlist view %q missing %q", view, want)
+		}
+	}
+	if cmd := m.key(key("f")); cmd != nil || !m.editing || !m.filterEditing || m.input != "type:flac" {
+		t.Fatal("wishlist filter edit did not open")
+	}
+	m.editing, m.filterEditing = false, false
+	for _, action := range []string{"enter", "r", "d"} {
+		if cmd := m.key(key(action)); cmd == nil {
+			t.Fatalf("wishlist %s returned no command", action)
+		}
+	}
+	m.workspace, m.query, m.searchFilter = workspaceSearch, "rare album", "type:flac"
+	if cmd := m.key(key("w")); cmd == nil {
+		t.Fatal("search w returned no wishlist command")
+	}
+	m.workspace = workspaceWishlist
+	m.key(key("/"))
+	m.input = "another"
+	if cmd := m.editKey(key("enter")); cmd == nil {
+		t.Fatal("wishlist add returned no command")
+	}
+	cursorModel := model{workspace: workspaceWishlist, cursor: 1, cfg: cfg, wishlistNotified: map[string]uint64{}, wishlist: []daemon.WishlistItem{{ID: "w-1"}, {ID: "w-2"}}}
+	updated, _ := cursorModel.Update(wishlistMsg{items: cursorModel.wishlist})
+	if updated.(model).cursor != 1 {
+		t.Fatal("wishlist polling reset the cursor")
+	}
+
+	m = model{cfg: cfg, wishlistNotified: map[string]uint64{}}
+	updated, cmd := m.Update(wishlistMsg{items: []daemon.WishlistItem{{ID: "w-1", Unread: true, ResultCount: 2, NotificationSequence: 1}}})
+	m = updated.(model)
+	if cmd == nil {
+		t.Fatal("new wishlist notification did not ring")
+	}
+	_, cmd = m.Update(wishlistMsg{items: m.wishlist})
+	if cmd != nil {
+		t.Fatal("same wishlist notification rang twice")
+	}
+
+	m.workspace, m.settingsSection, m.cursor = workspaceSettings, settingsSearch, 4
+	m.cfg.Search.WishlistIntervalMinutes = 0
+	if !strings.Contains(m.renderSettings(80, 12), "Off") {
+		t.Fatal("zero wishlist interval was not shown as Off")
+	}
+	m.key(key("enter"))
+	m.input = "30"
+	m.editKey(key("enter"))
+	if m.cfg.Search.WishlistIntervalMinutes != 30 {
+		t.Fatal("wishlist interval setting was not edited")
+	}
+	m.cursor = 5
+	m.key(key("enter"))
+	if m.cfg.Search.WishlistNotifications {
+		t.Fatal("wishlist notification setting did not toggle")
 	}
 }
 
@@ -186,6 +253,7 @@ func TestContextualFooterHints(t *testing.T) {
 		{"saved browse", model{workspace: workspaceBrowse}, []string{"enter open", "r refresh"}, []string{"save list"}},
 		{"search folder", model{workspace: workspaceSearch, searchTree: tree(treeFolder)}, []string{"/ search", "f filter", "enter expand", "b browse", "d folder download"}, []string{"i details"}},
 		{"search file", model{workspace: workspaceSearch, searchTree: tree(treeFile)}, []string{"enter/d download", "space select", "b browse", "i details"}, []string{"folder download"}},
+		{"wishlist", model{workspace: workspaceWishlist}, []string{"/ add", "f filter", "enter open", "r rerun", "d remove"}, nil},
 		{"browse folder", model{workspace: workspaceBrowse, browseTabs: []browseTab{{}}, browseTree: tree(treeFolder)}, []string{"enter expand", "d folder download", "s save list", "r refresh"}, []string{"i details"}},
 		{"browse file", model{workspace: workspaceBrowse, browseTabs: []browseTab{{}}, browseTree: tree(treeFile)}, []string{"enter/d download", "space select", "i details", "s save list", "r refresh"}, []string{"folder download"}},
 		{"transfers", model{workspace: workspaceTransfers}, []string{"d cancel", "r retry", "c clear"}, nil},
@@ -194,7 +262,7 @@ func TestContextualFooterHints(t *testing.T) {
 		{"setting text", settings(settingsAccount, 0), []string{"enter edit", "s save"}, nil},
 		{"setting bool", settings(settingsConnection, 5), []string{"enter toggle", "s save"}, nil},
 		{"setting action", settings(settingsAccount, 1), []string{"enter change password", "s save"}, nil},
-		{"setting clear", settings(settingsSearch, 4), []string{"enter clear searches", "s save"}, nil},
+		{"setting clear", settings(settingsSearch, 6), []string{"enter clear searches", "s save"}, nil},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

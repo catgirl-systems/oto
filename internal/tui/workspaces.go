@@ -82,6 +82,64 @@ func (m model) renderSearch(width, height int) string {
 	return strings.Join(lines, "\n")
 }
 
+func (m model) renderWishlist(width, height int) string {
+	cadence := "automatic searches off"
+	if m.cfg.Search.WishlistIntervalMinutes > 0 {
+		cadence = "every " + formatDuration(uint64(m.cfg.Search.WishlistIntervalMinutes)*60)
+		if len(m.wishlist) > 0 && m.wishlist[0].AutomaticAvailable {
+			effective := uint64(m.wishlist[0].EffectiveIntervalSeconds)
+			configured := uint64(m.cfg.Search.WishlistIntervalMinutes) * 60
+			if effective > configured {
+				cadence += " (server minimum " + formatDuration(effective) + ")"
+			}
+		} else {
+			cadence += " (waiting for server)"
+		}
+	}
+	lines := []string{sectionHeader("WISHLIST", countLabel(len(m.wishlist), "item")+"  •  "+cadence, width)}
+	prompt := muted("/ add  •  f edit filter  •  enter open  •  r rerun  •  d remove")
+	if m.editing {
+		prefix, hint := "/  ", "enter add  •  esc cancel"
+		if m.filterEditing {
+			prefix, hint = "f  ", "tab complete  •  enter save  •  esc cancel"
+		}
+		prompt = renderInput(prefix, m.input, m.inputCursor, false, lipgloss.NewStyle().Foreground(lipgloss.Color("#F5E0DC"))) + muted("   "+hint)
+	}
+	lines = append(lines, trunc(prompt, width))
+	if m.editing && m.filterEditing {
+		lines = append(lines, trunc(muted(filterCompletionHint(inputBeforeCursor(m.input, m.inputCursor))), width))
+	}
+	if len(m.wishlist) == 0 && height > len(lines) {
+		return strings.Join(append(lines, muted("No wishlist items. Press / to add one, or w from Search.")), "\n")
+	}
+	limit := max(0, height-len(lines))
+	start, end := visibleRange(len(m.wishlist), m.cursor, limit)
+	for i := start; i < end; i++ {
+		item := m.wishlist[i]
+		marker := " "
+		if item.Unread {
+			marker = "●"
+		}
+		filter := ""
+		if item.Filter != "" {
+			filter = "  f:" + item.Filter
+		}
+		state := fmt.Sprintf("%d results", item.ResultCount)
+		if item.Running {
+			state = "searching…"
+		} else if item.Error != "" {
+			state = "error: " + item.Error
+		} else if !item.LastRunAt.IsZero() {
+			state += "  " + item.LastRunAt.Local().Format("Jan 02 15:04")
+		}
+		stateWidth := min(34, max(12, width/3))
+		queryWidth := max(4, width-stateWidth-7)
+		row := fmt.Sprintf("%s  %s  %s", marker, searchTextColumn(item.Query+filter, queryWidth), searchTextColumn(state, stateWidth))
+		lines = append(lines, selectedRow(trunc(row, width), i == m.cursor))
+	}
+	return strings.Join(lines, "\n")
+}
+
 func (m model) browseTabsLine(width int) string {
 	if len(m.browseTabs) == 0 {
 		return ""
@@ -474,7 +532,11 @@ func (m model) renderSettings(width, height int) string {
 				value = "‹ " + value + " ›"
 			case settingInt:
 				if value == "0" {
-					value = "Unlimited"
+					if field.id == settingWishlistInterval {
+						value = "Off"
+					} else {
+						value = "Unlimited"
+					}
 				}
 			}
 			if value == "" {
@@ -536,6 +598,8 @@ func (m model) settingFields() []settingField {
 			{settingSearchHistoryLimit, "Search history limit", strconv.Itoa(m.cfg.Search.SearchHistoryLimit), settingInt},
 			{settingRememberFilters, "Remember filters", strconv.FormatBool(m.cfg.Search.RememberFilters), settingBool},
 			{settingFilterHistoryLimit, "Filter history limit", strconv.Itoa(m.cfg.Search.FilterHistoryLimit), settingInt},
+			{settingWishlistInterval, "Wishlist interval (minutes)", strconv.Itoa(m.cfg.Search.WishlistIntervalMinutes), settingInt},
+			{settingWishlistNotifications, "Wishlist notifications", strconv.FormatBool(m.cfg.Search.WishlistNotifications), settingBool},
 			{settingClearSearchHistory, "Clear search history", "Press Enter", settingAction},
 			{settingClearFilterHistory, "Clear filter history", "Press Enter", settingAction},
 		}
@@ -558,15 +622,21 @@ func (m *model) setSettingValue(value string) error {
 		m.cfg.Soulseek.NetworkInterface = value
 	case settingDownloadPath:
 		m.cfg.DownloadDir = value
-	case settingSearchHistoryLimit, settingFilterHistoryLimit:
+	case settingSearchHistoryLimit, settingFilterHistoryLimit, settingWishlistInterval:
 		limit, err := strconv.Atoi(value)
 		if err != nil || limit < 0 {
-			return errors.New("history limit must be a nonnegative integer")
+			return errors.New("value must be a nonnegative integer")
 		}
-		if field.id == settingSearchHistoryLimit {
+		switch field.id {
+		case settingSearchHistoryLimit:
 			m.cfg.Search.SearchHistoryLimit = limit
-		} else {
+		case settingFilterHistoryLimit:
 			m.cfg.Search.FilterHistoryLimit = limit
+		default:
+			if limit > 525600 {
+				return errors.New("wishlist interval must be at most 525600 minutes")
+			}
+			m.cfg.Search.WishlistIntervalMinutes = limit
 		}
 	}
 	return nil
