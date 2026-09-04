@@ -26,8 +26,9 @@ type ShareFile struct {
 
 // ShareIndex is a deterministic, read-only snapshot of shared files.
 type ShareIndex struct {
-	roots map[string]string
-	files []ShareFile
+	roots       map[string]string
+	files       []ShareFile
+	searchPaths []string // Case-folded once, in the same order as files.
 }
 
 func NewShareIndex() *ShareIndex { return &ShareIndex{roots: make(map[string]string)} }
@@ -81,9 +82,8 @@ func RestoreShareIndex(roots []ShareRoot, files []ShareFile) (*ShareIndex, error
 			return nil, errors.New("share index contains an invalid path")
 		}
 	}
-	index.files = append([]ShareFile(nil), files...)
-	sortShareFiles(index.files)
-	return index, nil
+	err := index.setFiles(context.Background(), append([]ShareFile(nil), files...))
+	return index, err
 }
 func (s *ShareIndex) Roots() []ShareRoot {
 	out := make([]ShareRoot, 0, len(s.roots))
@@ -102,6 +102,23 @@ func sortShareFiles(files []ShareFile) {
 		}
 		return files[i].Path < files[j].Path
 	})
+}
+
+func (s *ShareIndex) setFiles(ctx context.Context, files []ShareFile) error {
+	sortShareFiles(files)
+	fold := cases.Fold()
+	paths := make([]string, len(files))
+	for i, file := range files {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		paths[i] = fold.String(file.Root + "/" + file.Path)
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	s.files, s.searchPaths = files, paths
+	return nil
 }
 
 // ScanContext builds a complete replacement snapshot and stops when ctx is cancelled.
@@ -149,9 +166,7 @@ func (s *ShareIndex) ScanContext(ctx context.Context) error {
 			return err
 		}
 	}
-	sortShareFiles(out)
-	s.files = out
-	return nil
+	return s.setFiles(ctx, out)
 }
 func (s *ShareIndex) Files() []ShareFile { return append([]ShareFile(nil), s.files...) }
 func cleanVirtual(p string) ([]string, error) {
@@ -287,8 +302,8 @@ func (s *ShareIndex) Search(query string, limit int) []ShareFile {
 		return nil
 	}
 	out := make([]ShareFile, 0, min(len(s.files), limit))
-	for _, f := range s.files {
-		v := fold.String(f.Root + "/" + f.Path)
+	// ponytail: still a linear scan; add a search index only if cached matching is too slow.
+	for i, v := range s.searchPaths {
 		ok := true
 		for _, x := range need {
 			if !strings.Contains(v, x) {
@@ -306,7 +321,7 @@ func (s *ShareIndex) Search(query string, limit int) []ShareFile {
 			}
 		}
 		if ok {
-			out = append(out, f)
+			out = append(out, s.files[i])
 			if len(out) == limit {
 				break
 			}

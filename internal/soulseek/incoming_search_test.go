@@ -19,6 +19,9 @@ func TestIncomingSearchPolicyAndServerExclusions(t *testing.T) {
 	for i := 0; i < 600; i++ {
 		index.files = append(index.files, ShareFile{Root: "Music", Path: fmt.Sprintf("song-%02d.mp3", i)})
 	}
+	if err := index.setFiles(context.Background(), index.files); err != nil {
+		t.Fatal(err)
+	}
 	policy := IncomingSearchPolicy{Respond: true, MinimumLength: 3, MaximumResults: 50}
 	client := NewClient(ClientConfig{Share: index, IncomingSearch: &policy})
 
