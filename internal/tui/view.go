@@ -230,35 +230,48 @@ func (m model) statusMenuView() string {
 
 func (m model) helpView() string {
 	var b strings.Builder
-	b.WriteString(styled("Keyboard guide", lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#CBA6F7"))))
-	b.WriteString("\n" + muted("Everything is reachable without a mouse.") + "\n\n")
-	rows := [][2]string{
-		{"tab / shift+tab", "switch workspace"},
-		{"↑ ↓  or  j k", "move items; ↑ ↓ recalls history while editing"},
-		{"page up/down", "move through items or fields by a page"},
-		{"← →", "collapse or expand trees; change Settings section"},
-		{"home end", "first/last row; line boundary while editing"},
-		{"ctrl+← → / ctrl+⌫", "move or delete by word while editing"},
-		{"ctrl+a e u k", "jump or delete to a line boundary"},
-		{"/", "edit a query, username, share, or setting"},
-		{"enter", "toggle a folder or download a Search/Browse file"},
-		{"i", "show Search/Browse file details"},
-		{"f", "edit cached search filters"},
-		{"c", "clear or restore search filters"},
-		{"tab (filter)", "complete fields and special values"},
-		{"space", "select a file or all loaded descendants"},
-		{"d", "download files or choose a folder download mode"},
-		{"r", "refresh browse, retry transfer, or rescan shares"},
-		{"b (search)", "browse the selected result's user and folder"},
-		{"ctrl+page up/down", "switch search, browse, or transfer tabs"},
-		{"ctrl+w (results)", "close the active search or user tab"},
-		{"s", "save the active Browse share list or Settings"},
-		{"o", "choose Online, Away, or Offline"},
-		{"? / esc", "open or close this guide"},
-		{"q", "quit"},
+	b.WriteString(accent("Keyboard"))
+	groups := []struct {
+		title string
+		rows  [][2]string
+	}{
+		{"Navigation", [][2]string{
+			{"tab / shift+tab", "switch workspace"},
+			{"↑ ↓  or  j k", "move selection / edit history"},
+			{"page up/down", "move by a page"},
+			{"← →", "expand / collapse; change Settings section"},
+			{"home / end", "first / last item; line boundary while editing"},
+			{"ctrl+page up/down", "switch search, browse, or transfer tabs"},
+		}},
+		{"Editing", [][2]string{
+			{"ctrl+← → / ctrl+⌫", "move / delete by word"},
+			{"ctrl+a e u k", "move / delete to a line boundary"},
+			{"/", "edit the current field"},
+			{"tab (filter)", "complete fields and special values"},
+		}},
+		{"Files & actions", [][2]string{
+			{"enter", "toggle folder / download Search or Browse file"},
+			{"i", "show file details"},
+			{"f", "edit search filters"},
+			{"c", "clear / restore search filters"},
+			{"space", "select item or loaded folder contents"},
+			{"d", "download / choose folder mode"},
+			{"r", "refresh browse / retry transfer / rescan shares"},
+			{"b (search)", "browse the selected user's folder"},
+			{"s", "save Browse list or Settings"},
+			{"o", "choose Online, Away, or Offline"},
+		}},
+		{"General", [][2]string{
+			{"ctrl+w (results)", "close the active search or user tab"},
+			{"? / esc", "open / close this guide"},
+			{"q", "quit"},
+		}},
 	}
-	for _, row := range rows {
-		fmt.Fprintf(&b, "%-20s %s\n", strong(row[0]), row[1])
+	for _, group := range groups {
+		b.WriteString("\n\n" + muted(strings.ToUpper(group.title)) + "\n")
+		for _, row := range group.rows {
+			fmt.Fprintf(&b, "%-20s %s\n", strong(row[0]), row[1])
+		}
 	}
 	cardWidth := max(34, min(72, m.width-4))
 	card := panelStyle().Width(cardWidth).Padding(1, 2).Render(b.String())

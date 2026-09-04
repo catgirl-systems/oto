@@ -43,7 +43,7 @@ func TestNavigationSelectionAndHelp(t *testing.T) {
 		t.Fatal("help")
 	}
 	guide := m.View().Content
-	if !strings.Contains(guide, "Keyboard guide") || !strings.Contains(guide, "q") || !strings.Contains(guide, "quit") {
+	if !strings.Contains(guide, "Keyboard") || strings.Contains(guide, "Keyboard guide") || strings.Contains(guide, "Everything is reachable without a mouse.") || !strings.Contains(guide, "NAVIGATION") || !strings.Contains(guide, "q") || !strings.Contains(guide, "quit") {
 		t.Fatalf("incomplete keyboard guide: %q", guide)
 	}
 }
