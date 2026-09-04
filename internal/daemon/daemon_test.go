@@ -146,6 +146,50 @@ func TestClearDownloadRemovesIncompleteFile(t *testing.T) {
 	}
 }
 
+func TestCloseRequeuesPartialDownload(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	cfg := testConfig(t)
+	cfg.Soulseek.ConnectOnStartup = false
+	journalPath := filepath.Join(t.TempDir(), "downloads.json")
+	service, err := New(cfg, journalPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := service.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	downloads, err := service.QueueDownloads([]DownloadRequest{{Username: "peer", Files: []DownloadItem{{Filename: "song.flac", Size: 20}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	part := incompletePath(downloads[0].ID)
+	if err := os.MkdirAll(filepath.Dir(part), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(part, []byte("partial"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.SetPresence(PresenceOnline); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool {
+		download := service.Downloads()[0]
+		return download.State == "running" && download.Offset == 7
+	})
+	if err := service.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	restarted, err := New(cfg, journalPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer restarted.Close()
+	if download := restarted.Downloads()[0]; download.State != "queued" || download.Offset != 7 {
+		t.Fatalf("download after shutdown: %+v", download)
+	}
+}
+
 func TestStartConnectionFailureDoesNotDeadlock(t *testing.T) {
 	cfg := testConfig(t)
 	cfg.Soulseek.Server, cfg.Soulseek.ListenAddr = closedAddress(t), closedAddress(t)
