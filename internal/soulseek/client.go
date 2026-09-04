@@ -81,6 +81,7 @@ type Client struct {
 	mu                    sync.Mutex
 	writeMu               sync.Mutex
 	browseSlot            chan struct{}
+	searchSlots           chan struct{}
 	conn                  net.Conn
 	listener              net.Listener
 	dialer                net.Dialer
@@ -119,7 +120,7 @@ func NewClient(cfg ClientConfig) *Client {
 		policy = *cfg.IncomingSearch
 	}
 	control := bindToDevice(cfg.NetworkInterface)
-	return &Client{cfg: cfg, dialer: net.Dialer{Control: control}, listenConfig: net.ListenConfig{Control: control}, events: make(chan Event, 32), pending: make(map[uint32]chan SearchResponse), addresses: make(map[string]*peerAddressLookup), pierce: make(map[uint32]chan net.Conn), requested: make(map[string]*pendingDownload), downloads: make(map[uint32]*pendingDownload), distributed: NewDistributedNode(), incomingSearch: policy, browseSlot: make(chan struct{}, 1)}
+	return &Client{cfg: cfg, dialer: net.Dialer{Control: control}, listenConfig: net.ListenConfig{Control: control}, events: make(chan Event, 32), pending: make(map[uint32]chan SearchResponse), addresses: make(map[string]*peerAddressLookup), pierce: make(map[uint32]chan net.Conn), requested: make(map[string]*pendingDownload), downloads: make(map[uint32]*pendingDownload), distributed: NewDistributedNode(), incomingSearch: policy, browseSlot: make(chan struct{}, 1), searchSlots: make(chan struct{}, 2)}
 }
 
 func bindToDevice(name string) func(string, string, syscall.RawConn) error {
@@ -525,7 +526,7 @@ func (c *Client) route(cmd uint32, m any) {
 	case ConnectPeerInstruction:
 		go c.answerConnectPeer(message)
 	case IncomingSearch:
-		go c.respondSearch(message)
+		c.respondSearch(message)
 	case ExcludedSearchPhrases:
 		fold := cases.Fold()
 		c.mu.Lock()
@@ -716,6 +717,8 @@ func (c *Client) connectAddress(ctx context.Context, addr, kind string) (net.Con
 	if err != nil {
 		return nil, err
 	}
+	stop := context.AfterFunc(ctx, func() { _ = peer.Close() })
+	defer stop()
 	if err = encodePeerHandshake(peer, PeerInitMessage{Username: c.cfg.Username, Type: kind, Token: 0}); err != nil {
 		peer.Close()
 		return nil, err
@@ -1005,19 +1008,30 @@ func (c *Client) incomingSearchResults(query string) []SearchResult {
 	return searchToResults(index.Search(query, policy.MaximumResults), excluded)
 }
 
+// respondSearch admits work before spawning: excess searches are best-effort and dropped.
 func (c *Client) respondSearch(search IncomingSearch) {
-	results := c.incomingSearchResults(search.Query)
-	if len(results) == 0 {
+	select {
+	case c.searchSlots <- struct{}{}:
+	default:
 		return
 	}
-	ctx, cancel := context.WithTimeout(c.baseContext(), 10*time.Second)
-	defer cancel()
-	peer, err := c.connectUser(ctx, search.Username)
-	if err != nil {
-		return
-	}
-	defer peer.Close()
-	_ = writeMessage(peer, SearchResponse{Username: c.cfg.Username, Token: search.Token, Results: results, SlotFree: true})
+	go func() {
+		defer func() { <-c.searchSlots }()
+		results := c.incomingSearchResults(search.Query)
+		if len(results) == 0 {
+			return
+		}
+		ctx, cancel := context.WithTimeout(c.baseContext(), 10*time.Second)
+		defer cancel()
+		peer, err := c.connectUser(ctx, search.Username)
+		if err != nil {
+			return
+		}
+		defer peer.Close()
+		stop := context.AfterFunc(ctx, func() { _ = peer.Close() })
+		defer stop()
+		_ = writeMessage(peer, SearchResponse{Username: c.cfg.Username, Token: search.Token, Results: results, SlotFree: true})
+	}()
 }
 
 func (c *Client) handleDistributedSearch(payload []byte) {
@@ -1025,7 +1039,7 @@ func (c *Client) handleDistributedSearch(payload []byte) {
 	if err != nil {
 		return
 	}
-	go c.respondSearch(IncomingSearch{Username: search.Username, Token: search.Token, Query: search.Query})
+	c.respondSearch(IncomingSearch{Username: search.Username, Token: search.Token, Query: search.Query})
 	c.distributed.Dispatch(DistributedMessage{Command: DistributedSearchCommand, Payload: append([]byte(nil), payload...)})
 }
 
