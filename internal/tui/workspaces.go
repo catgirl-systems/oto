@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"charm.land/lipgloss/v2"
@@ -470,7 +471,17 @@ func (m model) renderTransfers(width, height int) string {
 
 func (m model) renderShares(width, height int) string {
 	lines := []string{sectionHeader("SHARES", countLabel(len(m.shares), "folder"), width)}
-	limit := max(0, height-1)
+	if scan := m.status.shareScan; scan != nil {
+		detail := fmt.Sprintf("%s  root:%q  files:%d dirs:%d  %s", scan.State, scan.Root, scan.Files, scan.Directories, (time.Duration(scan.ElapsedMS) * time.Millisecond).Round(time.Second))
+		if scan.State == "scanning" || scan.State == "publishing" {
+			detail += "  " + pulseBar(m.spinner, max(3, min(12, width/4)))
+		}
+		if scan.Error != "" {
+			detail += "  error: " + strconv.Quote(scan.Error)
+		}
+		lines = append(lines, trunc(muted("SCAN  "+detail), width))
+	}
+	limit := max(0, height-len(lines))
 	if m.editing && limit > 0 {
 		line := renderInput("/  ", m.input, m.inputCursor, false, lipgloss.NewStyle().Foreground(lipgloss.Color("#F5E0DC"))) + muted("   name:path  •  enter add  •  esc cancel")
 		lines = append(lines, trunc(line, width))
@@ -620,6 +631,8 @@ func (m model) settingFields() []settingField {
 			{settingDownloadPath, "Download path", m.cfg.DownloadDir, settingText},
 			{settingAfterFileCommand, "After file command", m.cfg.Downloads.AfterFileCommand, settingText},
 			{settingAfterFolderCommand, "After folder command", m.cfg.Downloads.AfterFolderCommand, settingText},
+			{settingFileNotifications, "File notifications", strconv.FormatBool(m.cfg.Downloads.FileNotifications), settingBool},
+			{settingFolderNotifications, "Folder notifications", strconv.FormatBool(m.cfg.Downloads.FolderNotifications), settingBool},
 		}
 	case settingsUploads:
 		profile := m.cfg.Uploads.Profiles[m.activeUploadProfileIndex()]
@@ -644,6 +657,7 @@ func (m model) settingFields() []settingField {
 			{settingWishlistNotifications, "Wishlist notifications", strconv.FormatBool(m.cfg.Search.WishlistNotifications), settingBool},
 			{settingClearSearchHistory, "Clear search history", "Press Enter", settingAction},
 			{settingClearFilterHistory, "Clear filter history", "Press Enter", settingAction},
+			{settingDefaultFilter, "Default result filter", m.cfg.Search.DefaultFilter, settingText},
 		}
 	}
 }
@@ -668,6 +682,11 @@ func (m *model) setSettingValue(value string) error {
 		m.cfg.Downloads.AfterFileCommand = value
 	case settingAfterFolderCommand:
 		m.cfg.Downloads.AfterFolderCommand = value
+	case settingDefaultFilter:
+		if err := daemon.ValidateSearchFilter(value); err != nil {
+			return err
+		}
+		m.cfg.Search.DefaultFilter = value
 	case settingUploadProfile:
 		if !m.addingUploadProfile {
 			return nil

@@ -972,7 +972,7 @@ func TestSearchFilterEditingAndMetadata(t *testing.T) {
 }
 
 func TestSearchResultTabs(t *testing.T) {
-	m := model{workspace: workspaceSearch, searchFilter: "type:audio", selected: map[int]bool{}}
+	m := model{workspace: workspaceSearch, acceptedSearchDefault: "type:audio", selected: map[int]bool{}}
 	if cmd := m.openSearch("first query"); cmd == nil {
 		t.Fatal("first search tab did not start")
 	}
@@ -1579,7 +1579,7 @@ func TestDownloadSettingsCommandsAndStates(t *testing.T) {
 	cfg.Downloads.AfterFileCommand, cfg.Downloads.AfterFolderCommand = `echo "$1"`, `echo folder "$1"`
 	m := model{workspace: workspaceSettings, settingsSection: settingsDownloads, cfg: cfg}
 	fields := m.settingFields()
-	if len(fields) != 3 || fields[1].value != cfg.Downloads.AfterFileCommand || fields[2].value != cfg.Downloads.AfterFolderCommand {
+	if len(fields) != 5 || fields[1].value != cfg.Downloads.AfterFileCommand || fields[2].value != cfg.Downloads.AfterFolderCommand {
 		t.Fatalf("download settings not rendered: %+v", fields)
 	}
 	m.cursor = 1

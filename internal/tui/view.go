@@ -275,6 +275,7 @@ func (m model) helpView() string {
 			{"f", "edit Search filters / find in loaded Browse list"},
 			{"c", "clear / restore search filters"},
 			{"w (search)", "save the active query and filter to Wishlist"},
+			{"s / S (transfers)", "prepare file/folder or containing-folder search"},
 			{"/ f r d (wishlist)", "add, edit filter, rerun, or remove a wishlist item"},
 			{"space", "select item or loaded folder contents"},
 			{"d", "download / choose folder mode and destination"},
@@ -285,6 +286,7 @@ func (m model) helpView() string {
 			{"o", "choose Online, Away, or Offline"},
 		}},
 		{"General", [][2]string{
+			{"share scan", "Shares shows live counts, root, pulse, and last result"},
 			{"ctrl+w (results)", "close the active search or user tab"},
 			{"? / esc", "open / close this guide"},
 			{"q", "quit"},
@@ -573,10 +575,11 @@ func (m model) footerHints() []string {
 		}
 		return append([]string{"enter expand"}, hints...)
 	case workspaceTransfers:
+		hints := []string{"s search", "S folder search"}
 		if m.transferTab == transferDownloads {
-			return []string{"p pause", "r resume/retry", "d cancel", "c clear"}
+			return append(hints, "p pause", "r resume/retry", "d cancel", "c clear")
 		}
-		return []string{"r retry", "d cancel", "c clear"}
+		return append(hints, "r retry", "d cancel", "c clear")
 	case workspaceShares:
 		hints := []string{"/ add", "r rescan"}
 		_, node := m.shareTree.node(m.cursor)
@@ -632,6 +635,9 @@ func (m model) footerView() string {
 	}
 	if activity := m.activityView(m.width - 2); activity != "" {
 		return style.Render(activity)
+	}
+	if scan := m.status.shareScan; !m.editing && scan != nil && (scan.State == "scanning" || scan.State == "publishing") {
+		return style.Render(muted(trunc(fmt.Sprintf("%s Scanning shares %q: %d files, %d folders, %ds", pulseBar(m.spinner, 6), scan.Root, scan.Files, scan.Directories, scan.ElapsedMS/1000), m.width-2)))
 	}
 	actions := strings.Join(m.footerHints(), "  •  ")
 	return style.Render(muted(spread(actions, "•  ? all controls", m.width-2)))

@@ -386,13 +386,20 @@ func (m *model) openSearch(query string) tea.Cmd {
 	if query == "" {
 		return nil
 	}
+	filter := m.acceptedSearchDefault
+	if len(m.searchTabs) == 0 {
+		if m.searchPreFilterSet {
+			filter = m.searchFilter
+		}
+	}
+	m.searchPreFilterSet = false
 	m.recordHistory(query, false)
 	if m.workspace == workspaceSearch {
 		m.saveSearchTab()
 	}
 	m.searchRequest++
 	m.searchOperation++
-	tab := searchTab{query: query, filter: m.searchFilter, selected: map[int]bool{}, loading: true, searching: true, request: m.searchRequest, operation: m.searchOperation}
+	tab := searchTab{query: query, filter: filter, selected: map[int]bool{}, loading: true, searching: true, request: m.searchRequest, operation: m.searchOperation}
 	m.searchTabs = append(m.searchTabs, tab)
 	m.workspace = workspaceSearch
 	m.loadSearchTab(len(m.searchTabs) - 1)
@@ -717,7 +724,30 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if x.err != nil {
 			m.status.err = x.err.Error()
 		} else {
-			m.status = snapshot{status: x.snapshot.Status, presence: x.snapshot.Presence, user: x.snapshot.Config.Soulseek.Username, publicIP: x.snapshot.PublicIP, publicPort: x.snapshot.PublicPort, err: x.snapshot.Error}
+			m.acceptedSearchDefault = x.snapshot.Config.Search.DefaultFilter
+			if x.snapshot.ShareIndexRevision != m.status.shareIndexRevision || x.snapshot.DownloadNotification.SessionID != m.downloadNotification.SessionID {
+				m.shares = toShares(x.snapshot.Shares)
+				m.shareGeneration++
+				m.shareTree, m.shareCursor = buildShareRoots(m.shares, m.shareTree, m.shareCursor, true)
+				if m.workspace == workspaceShares {
+					m.cursor = m.shareCursor
+				}
+			}
+			var scan *daemon.ShareScan
+			if x.snapshot.ShareScan != nil {
+				copy := *x.snapshot.ShareScan
+				scan = &copy
+			}
+			m.status = snapshot{status: x.snapshot.Status, presence: x.snapshot.Presence, user: x.snapshot.Config.Soulseek.Username, publicIP: x.snapshot.PublicIP, publicPort: x.snapshot.PublicPort, err: x.snapshot.Error, shareScan: scan, shareIndexRevision: x.snapshot.ShareIndexRevision}
+			notification := x.snapshot.DownloadNotification
+			bell := notification.SessionID != "" && notification.SessionID == m.downloadNotification.SessionID && notification.Sequence > m.downloadNotification.Sequence
+			if notification.SessionID != m.downloadNotification.SessionID || notification.Sequence >= m.downloadNotification.Sequence {
+				m.downloadNotification = notification
+			}
+			if bell {
+				m.setNotice(notification.Message)
+				return m, ringBell()
+			}
 		}
 	case portCheckMsg:
 		m.portChecking, m.portCheckPort, m.err = false, x.port, errText(x.err)
