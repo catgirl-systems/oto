@@ -197,6 +197,10 @@ func (m *model) key(k tea.KeyPressMsg) tea.Cmd {
 				m.cfg.Search.RememberFilters = !m.cfg.Search.RememberFilters
 			case settingWishlistNotifications:
 				m.cfg.Search.WishlistNotifications = !m.cfg.Search.WishlistNotifications
+			case settingFileNotifications:
+				m.cfg.Downloads.FileNotifications = !m.cfg.Downloads.FileNotifications
+			case settingFolderNotifications:
+				m.cfg.Downloads.FolderNotifications = !m.cfg.Downloads.FolderNotifications
 			case settingChangePassword:
 				m.openPasswordForm()
 			case settingClearSearchHistory:
@@ -281,6 +285,11 @@ func (m *model) key(k tea.KeyPressMsg) tea.Cmd {
 			}
 			if m.searchID == "" {
 				m.searchFilter, m.searchFilterUndo = filter, m.searchFilter
+				if len(m.searchTabs) == 0 {
+					m.searchPreFilterSet = true
+				} else if m.searchTabIndex >= 0 && m.searchTabIndex < len(m.searchTabs) {
+					m.searchTabs[m.searchTabIndex].filter = filter
+				}
 				return nil
 			}
 			m.loading = true
@@ -289,7 +298,14 @@ func (m *model) key(k tea.KeyPressMsg) tea.Cmd {
 		if m.workspace == workspaceTransfers {
 			return m.action("clear")
 		}
+	case "S":
+		if m.workspace == workspaceTransfers {
+			return m.prepareTransferSearch(true)
+		}
 	case "s":
+		if m.workspace == workspaceTransfers {
+			return m.prepareTransferSearch(false)
+		}
 		if m.workspace == workspaceBrowse && m.browseLoaded && !m.loading && m.browseRevision != 0 {
 			return m.saveBrowse()
 		}
@@ -324,6 +340,48 @@ func (m *model) key(k tea.KeyPressMsg) tea.Cmd {
 		m.beginEdit()
 		return nil
 	}
+	return nil
+}
+
+func (m *model) prepareTransferSearch(folder bool) tea.Cmd {
+	_, node := m.transferTrees[m.transferTab].node(m.cursor)
+	if node == nil || (node.kind != treeFile && node.kind != treeFolder) {
+		m.setNotice("Select a transfer file or folder first")
+		return nil
+	}
+	parts := treeParts(node.path)
+	if folder && node.kind == treeFile && len(parts) > 0 {
+		parts = parts[:len(parts)-1]
+	}
+	if len(parts) == 0 {
+		m.setNotice("Selected transfer has no containing folder")
+		return nil
+	}
+	query := strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return ' '
+		}
+		return r
+	}, parts[len(parts)-1])
+	if node.kind == treeFile && !folder {
+		if i := strings.LastIndexByte(query, '.'); i > 0 {
+			query = query[:i]
+		}
+	}
+	if strings.TrimSpace(query) == "" {
+		m.setNotice("Selected transfer has no search name")
+		return nil
+	}
+	m.workspace = workspaceSearch
+	if len(m.searchTabs) > 0 {
+		m.loadSearchTab(m.searchTabIndex)
+	} else {
+		m.searchFilter, m.searchFilterUndo, m.searchPreFilterSet = "", "", false
+		m.cursor = 0
+	}
+	m.beginEdit()
+	m.input, m.inputCursor = query, len([]rune(query))
+	m.historyCursor.reset(query)
 	return nil
 }
 
@@ -596,6 +654,7 @@ func (m *model) beginEdit() {
 		fields := m.settingFields()
 		if m.cursor < len(fields) {
 			m.input = fields[m.cursor].value
+			m.filterEditing = fields[m.cursor].id == settingDefaultFilter
 		}
 	default:
 		m.input = ""
@@ -644,6 +703,14 @@ func (m *model) editKey(k tea.KeyPressMsg) tea.Cmd {
 				m.err = err.Error()
 				return nil
 			}
+			if m.workspace == workspaceSettings {
+				if err := m.setSettingValue(filter); err != nil {
+					m.err = err.Error()
+					return nil
+				}
+				m.editing, m.filterEditing, m.input, m.err = false, false, "", ""
+				return nil
+			}
 			m.recordHistory(filter, true)
 			if m.workspace == workspaceWishlist {
 				if m.wishlistCursor >= 0 && m.wishlistCursor < len(m.wishlist) {
@@ -654,6 +721,11 @@ func (m *model) editKey(k tea.KeyPressMsg) tea.Cmd {
 			}
 			if m.searchID == "" {
 				m.searchFilter = filter
+				if len(m.searchTabs) == 0 {
+					m.searchPreFilterSet = true
+				} else if m.searchTabIndex >= 0 && m.searchTabIndex < len(m.searchTabs) {
+					m.searchTabs[m.searchTabIndex].filter = filter
+				}
 				m.err = ""
 				return nil
 			}

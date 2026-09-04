@@ -199,6 +199,7 @@ func (m *model) clearHistory(filter bool) {
 
 func (m *model) applyHistorySettings(settings config.Search) {
 	m.activeSearch = settings
+	m.acceptedSearchDefault = settings.DefaultFilter
 	if err := m.history.applyLimits(m.historyPath, settings); err != nil {
 		m.historyErr = err.Error()
 		return
