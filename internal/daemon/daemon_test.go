@@ -375,9 +375,15 @@ func TestUpdateConfigHotAppliesSearchAndDownload(t *testing.T) {
 	next.DownloadDir = t.TempDir()
 	next.Search.RememberFilters = false
 	next.Search.SearchHistoryLimit = 0
+	next.Search.WishlistIntervalMinutes = 30
 	next.Soulseek.ConnectOnStartup = false
 	if err := s.UpdateConfig(next); err != nil {
 		t.Fatalf("hot update: %v", err)
+	}
+	select {
+	case <-s.wishlistWake:
+	default:
+		t.Fatal("wishlist scheduler was not woken by interval change")
 	}
 	if builderCalled || s.cfg.DownloadDir != next.DownloadDir || s.cfg.Search != next.Search || s.cfg.Soulseek.ConnectOnStartup {
 		t.Fatalf("hot update rebuilt or was not adopted: called=%v cfg=%+v", builderCalled, s.cfg)

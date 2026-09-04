@@ -106,6 +106,11 @@ func (s *Server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/searches", s.searches)
 	mux.HandleFunc("POST /v1/search", s.search)
 	mux.HandleFunc("GET /v1/browse", s.browse)
+	mux.HandleFunc("GET /v1/wishlist", s.wishlist)
+	mux.HandleFunc("PUT /v1/wishlist", s.wishlist)
+	mux.HandleFunc("DELETE /v1/wishlist/{id}", s.wishlist)
+	mux.HandleFunc("POST /v1/wishlist/{id}/run", s.wishlist)
+	mux.HandleFunc("POST /v1/wishlist/{id}/open", s.wishlist)
 	mux.HandleFunc("GET /v1/browse/progress", s.browseProgress)
 	mux.HandleFunc("GET /v1/browse/saved", s.savedBrowses)
 	mux.HandleFunc("POST /v1/browse/save", s.saveBrowse)
@@ -250,6 +255,59 @@ func (s *Server) search(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, 200, out)
+}
+
+func wishlistStatus(err error) int {
+	switch {
+	case errors.Is(err, daemon.ErrWishlistNotFound), errors.Is(err, daemon.ErrWishlistNoResults):
+		return http.StatusNotFound
+	case errors.Is(err, daemon.ErrNotStarted):
+		return http.StatusServiceUnavailable
+	default:
+		return http.StatusBadRequest
+	}
+}
+
+func (s *Server) wishlist(w http.ResponseWriter, r *http.Request) {
+	switch {
+	case r.Method == http.MethodGet:
+		writeJSON(w, http.StatusOK, s.service.Wishlist())
+	case r.Method == http.MethodPut:
+		var req struct {
+			Query  string `json:"query"`
+			Filter string `json:"filter"`
+		}
+		if err := decode(w, r, &req); err != nil {
+			writeErr(w, http.StatusBadRequest, err)
+			return
+		}
+		item, err := s.service.PutWishlist(req.Query, req.Filter)
+		if err != nil {
+			writeErr(w, wishlistStatus(err), err)
+			return
+		}
+		writeJSON(w, http.StatusOK, item)
+	case r.Method == http.MethodDelete:
+		if err := s.service.RemoveWishlist(r.PathValue("id")); err != nil {
+			writeErr(w, wishlistStatus(err), err)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	case strings.HasSuffix(r.URL.Path, "/run"):
+		page, err := s.service.RunWishlist(r.Context(), r.PathValue("id"))
+		if err != nil {
+			writeErr(w, wishlistStatus(err), err)
+			return
+		}
+		writeJSON(w, http.StatusOK, page)
+	case strings.HasSuffix(r.URL.Path, "/open"):
+		page, err := s.service.OpenWishlist(r.PathValue("id"))
+		if err != nil {
+			writeErr(w, wishlistStatus(err), err)
+			return
+		}
+		writeJSON(w, http.StatusOK, page)
+	}
 }
 func (s *Server) browse(w http.ResponseWriter, r *http.Request) {
 	out, err := s.service.BrowseComplete(r.Context(), r.URL.Query().Get("user"))
@@ -464,6 +522,34 @@ func (c *Client) SearchPage(ctx context.Context, id string, cursor int, filter s
 	var page daemon.SearchPage
 	path := fmt.Sprintf("/v1/searches?id=%s&cursor=%d&filter=%s", url.QueryEscape(id), cursor, url.QueryEscape(filter))
 	err := c.Do(ctx, "GET", path, nil, &page)
+	return page, err
+}
+
+func (c *Client) Wishlist(ctx context.Context) ([]daemon.WishlistItem, error) {
+	var items []daemon.WishlistItem
+	err := c.Do(ctx, http.MethodGet, "/v1/wishlist", nil, &items)
+	return items, err
+}
+
+func (c *Client) PutWishlist(ctx context.Context, query, filter string) (daemon.WishlistItem, error) {
+	var item daemon.WishlistItem
+	err := c.Do(ctx, http.MethodPut, "/v1/wishlist", map[string]string{"query": query, "filter": filter}, &item)
+	return item, err
+}
+
+func (c *Client) RemoveWishlist(ctx context.Context, id string) error {
+	return c.Do(ctx, http.MethodDelete, "/v1/wishlist/"+url.PathEscape(id), nil, nil)
+}
+
+func (c *Client) RunWishlist(ctx context.Context, id string) (daemon.SearchPage, error) {
+	var page daemon.SearchPage
+	err := c.Do(ctx, http.MethodPost, "/v1/wishlist/"+url.PathEscape(id)+"/run", nil, &page)
+	return page, err
+}
+
+func (c *Client) OpenWishlist(ctx context.Context, id string) (daemon.SearchPage, error) {
+	var page daemon.SearchPage
+	err := c.Do(ctx, http.MethodPost, "/v1/wishlist/"+url.PathEscape(id)+"/open", nil, &page)
 	return page, err
 }
 func (c *Client) Browse(ctx context.Context, username string) (daemon.BrowseResult, error) {

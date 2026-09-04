@@ -153,63 +153,82 @@ type portMapping interface {
 type portMappingOpener func(context.Context, uint16, bool, bool, func(uint16)) (portMapping, error)
 
 type Service struct {
-	mu                   sync.RWMutex
-	lifecycleMu          sync.Mutex
-	cfg                  config.Config
-	configPath           string
-	runCtx               context.Context
-	runCancel            context.CancelFunc
-	shares               *soulseek.ShareIndex
-	client               *soulseek.Client
-	mapping              portMapping
-	portMapOpen          portMappingOpener
-	portCheck            listeningPortChecker
-	journal              Journal
-	searches             map[string]Search
-	browses              map[string]loadedBrowse
-	browseProgress       map[string]trackedBrowse
-	fullBrowse           fullBrowseFunc
-	browseSeq            uint64
-	browseProgressSeq    uint64
-	remoteSharesDir      string
-	transfers            map[string]Transfer
-	downloadSlots        chan struct{}
-	downloadCancels      map[string]context.CancelFunc
-	downloadPeers        map[string]chan struct{}
-	ctx                  context.Context
-	cancel               context.CancelFunc
-	shareWatchCancel     context.CancelFunc
-	shareIndexBuilder    func(context.Context, []config.Share) (*soulseek.ShareIndex, error)
-	shareIndexPath       string
-	shareRescanDelay     time.Duration
-	shareWatchGeneration uint64
-	listenPortFile       string
-	listenPortInterval   time.Duration
-	listenPort           uint16
-	reconnectWake        chan struct{}
-	closed               bool
-	requeueDownloads     bool
-	status               Status
-	presence             Presence
-	lastErr              string
-	seq                  uint64
-	journalPath          string
-	wg                   sync.WaitGroup
-	sessionWG            sync.WaitGroup
-	downloadWG           sync.WaitGroup
+	mu                     sync.RWMutex
+	lifecycleMu            sync.Mutex
+	cfg                    config.Config
+	configPath             string
+	runCtx                 context.Context
+	runCancel              context.CancelFunc
+	shares                 *soulseek.ShareIndex
+	client                 *soulseek.Client
+	mapping                portMapping
+	portMapOpen            portMappingOpener
+	portCheck              listeningPortChecker
+	journal                Journal
+	searches               map[string]Search
+	wishlist               []wishlistEntry
+	wishlistPath           string
+	wishlistNextID         uint64
+	wishlistCursor         int
+	wishlistServerInterval time.Duration
+	wishlistWake           chan struct{}
+	wishlistSearch         func(context.Context, *soulseek.Client, string, bool) ([]soulseek.SearchResult, error)
+	wishlistNotify         func(context.Context, string, int) error
+	browses                map[string]loadedBrowse
+	browseProgress         map[string]trackedBrowse
+	fullBrowse             fullBrowseFunc
+	browseSeq              uint64
+	browseProgressSeq      uint64
+	remoteSharesDir        string
+	transfers              map[string]Transfer
+	downloadSlots          chan struct{}
+	downloadCancels        map[string]context.CancelFunc
+	downloadPeers          map[string]chan struct{}
+	ctx                    context.Context
+	cancel                 context.CancelFunc
+	shareWatchCancel       context.CancelFunc
+	shareIndexBuilder      func(context.Context, []config.Share) (*soulseek.ShareIndex, error)
+	shareIndexPath         string
+	shareRescanDelay       time.Duration
+	shareWatchGeneration   uint64
+	listenPortFile         string
+	listenPortInterval     time.Duration
+	listenPort             uint16
+	reconnectWake          chan struct{}
+	closed                 bool
+	requeueDownloads       bool
+	status                 Status
+	presence               Presence
+	lastErr                string
+	seq                    uint64
+	journalPath            string
+	wg                     sync.WaitGroup
+	sessionWG              sync.WaitGroup
+	downloadWG             sync.WaitGroup
 }
 
 func New(cfg config.Config, path string) (*Service, error) {
 	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
-	s := &Service{cfg: cfg, configPath: config.ConfigPath(), shares: soulseek.NewShareIndex(), searches: make(map[string]Search), browses: make(map[string]loadedBrowse), browseProgress: make(map[string]trackedBrowse), fullBrowse: func(ctx context.Context, client *soulseek.Client, username string, progress func(received, total uint64)) ([]soulseek.ShareEntry, error) {
+	s := &Service{cfg: cfg, configPath: config.ConfigPath(), shares: soulseek.NewShareIndex(), searches: make(map[string]Search), wishlistWake: make(chan struct{}, 1), wishlistSearch: func(ctx context.Context, client *soulseek.Client, query string, automatic bool) ([]soulseek.SearchResult, error) {
+		if automatic {
+			return client.WishlistSearch(ctx, query)
+		}
+		return client.Search(ctx, query)
+	}, wishlistNotify: notifyWishlist, browses: make(map[string]loadedBrowse), browseProgress: make(map[string]trackedBrowse), fullBrowse: func(ctx context.Context, client *soulseek.Client, username string, progress func(received, total uint64)) ([]soulseek.ShareEntry, error) {
 		return client.BrowseUserWithProgress(ctx, username, "", progress)
 	}, transfers: make(map[string]Transfer), downloadSlots: make(chan struct{}, cfg.DownloadSlots), downloadCancels: make(map[string]context.CancelFunc), downloadPeers: make(map[string]chan struct{}), shareIndexBuilder: buildShareIndex, shareRescanDelay: DefaultShareRescanDelay, listenPortInterval: DefaultListenPortReconcileInterval, portMapOpen: func(ctx context.Context, port uint16, natPMP, upnp bool, changed func(uint16)) (portMapping, error) {
 		return portmap.Open(ctx, port, natPMP, upnp, changed)
 	}, portCheck: defaultListeningPortCheck, reconnectWake: make(chan struct{}, 1), status: StatusStopped, presence: PresenceOffline, journalPath: path}
 	s.shareIndexPath = filepath.Join(filepath.Dir(path), "shares.json")
 	s.remoteSharesDir = filepath.Join(filepath.Dir(path), "usershares")
+	s.wishlistPath = filepath.Join(filepath.Dir(path), "wishlist.json")
+	wishlist, err := loadWishlist(s.wishlistPath)
+	if err != nil {
+		return nil, fmt.Errorf("daemon: load wishlist: %w", err)
+	}
+	s.wishlist, s.wishlistNextID = wishlist.Items, wishlist.NextID
 	if b, err := os.ReadFile(path); err == nil {
 		if err := json.Unmarshal(b, &s.journal); err != nil {
 			return nil, fmt.Errorf("daemon: load journal: %w", err)
@@ -290,6 +309,8 @@ func (s *Service) Start(ctx context.Context) error {
 	}
 	s.restartShareWatcherLocked()
 	s.startListenPortWatcherLocked()
+	s.wg.Add(1)
+	go s.wishlistLoop(s.runCtx)
 	connect := s.cfg.Soulseek.ConnectOnStartup
 	s.mu.Unlock()
 	if connect {
@@ -421,12 +442,14 @@ func (s *Service) stopSessionLocked(offline bool) {
 	s.mu.Lock()
 	cancel, client, mapping := s.cancel, s.client, s.mapping
 	s.ctx, s.cancel, s.client, s.mapping = nil, nil, nil, nil
+	s.wishlistServerInterval = 0
 	s.requeueDownloads = cancel != nil
 	s.status, s.lastErr = StatusStopped, ""
 	if offline {
 		s.presence = PresenceOffline
 	}
 	s.mu.Unlock()
+	s.wakeWishlist()
 	if cancel != nil {
 		cancel()
 	}
@@ -591,8 +614,10 @@ func (s *Service) reconnectLoop(ctx context.Context) {
 			s.mu.Lock()
 			if s.client == client {
 				s.client, s.mapping = nil, nil
+				s.wishlistServerInterval = 0
 			}
 			s.mu.Unlock()
+			s.wakeWishlist()
 		}
 		if err == nil {
 			backoff = time.Second
@@ -694,10 +719,7 @@ func (s *Service) Search(ctx context.Context, query, expression string) (SearchP
 	if err != nil {
 		return SearchPage{}, err
 	}
-	out := make([]SearchResult, 0, len(r))
-	for _, x := range r {
-		out = append(out, SearchResult{Username: x.Username, Path: x.Path, Extension: x.Extension, CountryCode: x.CountryCode, Size: x.Size, Directory: x.IsDirectory, SlotFree: x.SlotFree, Speed: x.Speed, Queue: x.QueueLength, Bitrate: x.Bitrate, Duration: x.Duration, VBR: x.VBR, SampleRate: x.SampleRate, BitDepth: x.BitDepth, Public: x.Public})
-	}
+	out := fromSoulseekResults(r)
 	sortSearchResults(out)
 	search := Search{ID: fmt.Sprintf("%d", time.Now().UnixNano()), Query: query, Results: out}
 	s.mu.Lock()
@@ -1115,11 +1137,15 @@ func (s *Service) UpdateConfig(c config.Config) error {
 		return ErrClosed
 	}
 	if hotConfigUpdate(s.cfg, c) {
+		oldInterval := s.cfg.Search.WishlistIntervalMinutes
 		err := c.Save(s.configPath)
 		if err == nil {
 			s.cfg = c
 		}
 		s.mu.Unlock()
+		if err == nil && oldInterval != c.Search.WishlistIntervalMinutes {
+			s.wakeWishlist()
+		}
 		return err
 	}
 	builder, configPath := s.shareIndexBuilder, s.configPath
@@ -1145,6 +1171,7 @@ func (s *Service) UpdateConfig(c config.Config) error {
 	s.downloadSlots = make(chan struct{}, c.DownloadSlots)
 	s.restartShareWatcherLocked()
 	s.mu.Unlock()
+	s.wakeWishlist()
 	s.persistShareIndex(idx)
 	if active {
 		return s.startSessionLocked()

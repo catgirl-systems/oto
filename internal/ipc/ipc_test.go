@@ -108,6 +108,29 @@ func TestStatusMethodsBodyAndSocketMode(t *testing.T) {
 		t.Fatalf("malformed presence status %d", malformedResp.StatusCode)
 	}
 	malformedResp.Body.Close()
+	wish, err := cl.PutWishlist(context.Background(), "rare album", "type:audio")
+	if err != nil || wish.ID == "" || wish.Filter != "type:audio" {
+		t.Fatalf("put wishlist: %+v %v", wish, err)
+	}
+	wishes, err := cl.Wishlist(context.Background())
+	if err != nil || len(wishes) != 1 || wishes[0].ID != wish.ID {
+		t.Fatalf("list wishlist: %+v %v", wishes, err)
+	}
+	if _, err := cl.PutWishlist(context.Background(), "bad", "unknown:value"); err == nil {
+		t.Fatal("invalid wishlist filter accepted")
+	}
+	if _, err := cl.OpenWishlist(context.Background(), wish.ID); err == nil || !strings.Contains(err.Error(), "no cached results") {
+		t.Fatalf("open empty wishlist: %v", err)
+	}
+	if _, err := cl.RunWishlist(context.Background(), wish.ID); err == nil || !strings.Contains(err.Error(), daemon.ErrNotStarted.Error()) {
+		t.Fatalf("offline wishlist run: %v", err)
+	}
+	if err := cl.RemoveWishlist(context.Background(), wish.ID); err != nil {
+		t.Fatalf("remove wishlist: %v", err)
+	}
+	if err := cl.RemoveWishlist(context.Background(), wish.ID); err == nil {
+		t.Fatal("unknown wishlist item removed")
+	}
 	if err := cl.TransferAction(context.Background(), "d-1", "cancel"); err != nil || svc.Downloads()[0].State != "cancelled" {
 		t.Fatalf("cancel transfer route: %v %+v", err, svc.Downloads())
 	}
