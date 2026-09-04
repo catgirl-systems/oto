@@ -14,6 +14,7 @@
     "search_history_limit": 200,
     "remember_filters": true,
     "filter_history_limit": 50,
+    "default_filter": "",
     "wishlist_interval_minutes": 15,
     "wishlist_notifications": true,
     "respond_to_incoming_searches": true,
@@ -33,7 +34,9 @@
   },
   "downloads": {
     "after_file_command": "",
-    "after_folder_command": ""
+    "after_folder_command": "",
+    "file_notifications": false,
+    "folder_notifications": true
   },
   "download_dir": "/downloads",
   "shares": [
