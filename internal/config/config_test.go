@@ -63,9 +63,13 @@ func TestSearchDefaultsCompatibilityAndValidation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := (Search{RememberSearches: true, SearchHistoryLimit: 200, RememberFilters: true, FilterHistoryLimit: 50})
+	want := (Search{RememberSearches: true, SearchHistoryLimit: 200, RememberFilters: true, FilterHistoryLimit: 50, WishlistIntervalMinutes: 15, WishlistNotifications: true})
 	if got.Search != want || got.Redacted().Search != want {
 		t.Fatalf("search defaults or redaction: got %+v safe %+v", got.Search, got.Redacted().Search)
+	}
+	encoded, _ := json.Marshal(got.Redacted())
+	if !strings.Contains(string(encoded), `"wishlist_interval_minutes":15`) || !strings.Contains(string(encoded), `"wishlist_notifications":true`) {
+		t.Fatalf("safe config omitted wishlist settings: %s", encoded)
 	}
 	if !got.Soulseek.ConnectOnStartup || !got.Soulseek.NATPMPPortMapping || !got.Soulseek.UPnPPortMapping {
 		t.Fatal("older config did not retain connection defaults")
@@ -99,6 +103,11 @@ func TestSearchDefaultsCompatibilityAndValidation(t *testing.T) {
 	got.Search.FilterHistoryLimit = -1
 	if err := got.Validate(); err == nil {
 		t.Fatal("negative history limit accepted")
+	}
+	got = Default()
+	got.Search.WishlistIntervalMinutes = 525601
+	if err := got.Validate(); err == nil {
+		t.Fatal("oversized wishlist interval accepted")
 	}
 }
 

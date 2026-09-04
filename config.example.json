@@ -13,7 +13,9 @@
     "remember_searches": true,
     "search_history_limit": 200,
     "remember_filters": true,
-    "filter_history_limit": 50
+    "filter_history_limit": 50,
+    "wishlist_interval_minutes": 15,
+    "wishlist_notifications": true
   },
   "download_dir": "/downloads",
   "shares": [
