@@ -34,8 +34,8 @@ func (m *model) key(k tea.KeyPressMsg) tea.Cmd {
 	if m.folderMenu {
 		return m.folderMenuKey(k)
 	}
-	if m.interfaceChoosing {
-		return m.interfaceChoiceKey(k)
+	if m.choiceChoosing {
+		return m.settingChoiceKey(k)
 	}
 	if m.setup {
 		return m.setupKey(k)
@@ -161,9 +161,18 @@ func (m *model) key(k tea.KeyPressMsg) tea.Cmd {
 				return nil
 			}
 			switch fields[m.cursor].id {
-			case settingNetworkInterface:
-				m.interfaceChoosing = true
-				m.interfaceChoice = m.configuredInterfaceChoice()
+			case settingNetworkInterface, settingUploadProfile, settingUploadLimitScope, settingUploadScheduling:
+				m.choiceChoosing = true
+				m.choiceSetting = fields[m.cursor].id
+				m.choiceIndex = m.configuredChoice(m.choiceSetting)
+			case settingDeleteUploadProfile:
+				if len(m.cfg.Uploads.Profiles) == 1 {
+					m.setNotice("At least one upload profile is required")
+					break
+				}
+				i := m.activeUploadProfileIndex()
+				m.cfg.Uploads.Profiles = append(m.cfg.Uploads.Profiles[:i], m.cfg.Uploads.Profiles[i+1:]...)
+				m.cfg.Uploads.ActiveProfile = m.cfg.Uploads.Profiles[min(i, len(m.cfg.Uploads.Profiles)-1)].Name
 			case settingListeningPortStatus:
 				if m.status.status != daemon.StatusConnected || m.status.publicPort == 0 {
 					m.setNotice("Connect to check listening port")
@@ -510,29 +519,52 @@ func (m *model) folderMenuKey(k tea.KeyPressMsg) tea.Cmd {
 	return nil
 }
 
-func (m *model) interfaceChoiceKey(k tea.KeyPressMsg) tea.Cmd {
-	count := len(m.networkInterfaces) + 2
+func (m *model) settingChoiceKey(k tea.KeyPressMsg) tea.Cmd {
+	options := m.choiceOptions(m.choiceSetting)
+	count := len(options)
+	if count == 0 {
+		m.choiceChoosing = false
+		return nil
+	}
 	switch k.String() {
 	case "left":
-		m.interfaceChoice = (m.interfaceChoice + count - 1) % count
+		m.choiceIndex = (m.choiceIndex + count - 1) % count
 	case "right":
-		m.interfaceChoice = (m.interfaceChoice + 1) % count
+		m.choiceIndex = (m.choiceIndex + 1) % count
 	case "esc":
-		m.interfaceChoosing = false
+		m.choiceChoosing = false
 	case "enter":
-		choice := m.interfaceChoice
-		m.interfaceChoosing = false
-		if choice == 0 {
-			m.cfg.Soulseek.NetworkInterface = ""
-		} else if choice <= len(m.networkInterfaces) {
-			m.cfg.Soulseek.NetworkInterface = m.networkInterfaces[choice-1]
-		} else {
-			m.editing = true
-			m.input = ""
-			if m.configuredInterfaceChoice() == len(m.networkInterfaces)+1 {
-				m.input = m.cfg.Soulseek.NetworkInterface
+		id, choice := m.choiceSetting, m.choiceIndex
+		m.choiceChoosing = false
+		switch id {
+		case settingNetworkInterface:
+			if choice == 0 {
+				m.cfg.Soulseek.NetworkInterface = ""
+			} else if choice <= len(m.networkInterfaces) {
+				m.cfg.Soulseek.NetworkInterface = m.networkInterfaces[choice-1]
+			} else {
+				m.editing = true
+				m.input = ""
+				if m.configuredChoice(settingNetworkInterface) == len(m.networkInterfaces)+1 {
+					m.input = m.cfg.Soulseek.NetworkInterface
+				}
+				m.inputCursor = len([]rune(m.input))
 			}
-			m.inputCursor = len([]rune(m.input))
+		case settingUploadProfile:
+			if choice == len(m.cfg.Uploads.Profiles) {
+				m.editing, m.addingUploadProfile = true, true
+				m.input, m.inputCursor = "", 0
+			} else {
+				m.cfg.Uploads.ActiveProfile = m.cfg.Uploads.Profiles[choice].Name
+			}
+		case settingUploadLimitScope:
+			if choice == 0 {
+				m.cfg.Uploads.LimitScope = config.UploadLimitTotal
+			} else {
+				m.cfg.Uploads.LimitScope = config.UploadLimitPerTransfer
+			}
+		case settingUploadScheduling:
+			m.cfg.Uploads.Scheduling = []config.UploadScheduling{config.UploadSchedulingFIFO, config.UploadSchedulingRoundRobin, config.UploadSchedulingRandom, config.UploadSchedulingSmallestFirst}[choice]
 		}
 	}
 	return nil
@@ -580,7 +612,7 @@ func (m *model) editKey(k tea.KeyPressMsg) tea.Cmd {
 		return nil
 	}
 	if s == "esc" {
-		m.editing, m.filterEditing, m.browseFindEditing = false, false, false
+		m.editing, m.filterEditing, m.browseFindEditing, m.addingUploadProfile = false, false, false, false
 		m.input = ""
 		return nil
 	}
@@ -639,6 +671,7 @@ func (m *model) editKey(k tea.KeyPressMsg) tea.Cmd {
 			value := strings.TrimSpace(m.input)
 			if err := m.setSettingValue(value); err != nil {
 				m.err = err.Error()
+				m.addingUploadProfile = false
 				m.editing = m.settingFields()[m.cursor].id == settingNetworkInterface
 			} else {
 				m.err = ""

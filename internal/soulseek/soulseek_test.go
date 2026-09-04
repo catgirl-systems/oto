@@ -538,6 +538,138 @@ func TestUploadFIFO(t *testing.T) {
 	m.Done("b")
 }
 
+func uploadReady(job *UploadJob) bool {
+	select {
+	case <-job.Ready:
+		return true
+	default:
+		return false
+	}
+}
+
+func TestUploadFIFOUsesEligibleSlots(t *testing.T) {
+	m := NewUploadManager(2)
+	first := m.Enqueue("a", TransferRequest{})
+	blocked := m.Enqueue("a", TransferRequest{})
+	other := m.Enqueue("b", TransferRequest{})
+	if !uploadReady(first) || uploadReady(blocked) || !uploadReady(other) {
+		t.Fatalf("eligible FIFO jobs: first=%v blocked=%v other=%v", uploadReady(first), uploadReady(blocked), uploadReady(other))
+	}
+	m.Done("a")
+	if !uploadReady(blocked) {
+		t.Fatal("blocked user was not promoted when its prior upload finished")
+	}
+	m.Done("b")
+	m.Done("a")
+}
+
+func TestUploadRoundRobinUsers(t *testing.T) {
+	m := NewUploadManager(1)
+	m.Configure(UploadPolicy{Scheduling: UploadScheduleRoundRobin})
+	a1 := m.Enqueue("a", TransferRequest{})
+	a2 := m.Enqueue("a", TransferRequest{})
+	b1 := m.Enqueue("b", TransferRequest{})
+	b2 := m.Enqueue("b", TransferRequest{})
+	c1 := m.Enqueue("c", TransferRequest{})
+	for _, job := range []*UploadJob{a1, b1, c1, a2, b2} {
+		if !uploadReady(job) {
+			t.Fatalf("round-robin did not promote %q", job.User)
+		}
+		m.Done(job.User)
+	}
+}
+
+func TestUploadRandomChoosesEligibleUser(t *testing.T) {
+	m := NewUploadManager(1)
+	m.Configure(UploadPolicy{Scheduling: UploadScheduleRandom})
+	m.chooseRandom = func(n int) int { return n - 1 }
+	blocker := m.Enqueue("blocker", TransferRequest{})
+	a := m.Enqueue("a", TransferRequest{Filename: "a"})
+	b1 := m.Enqueue("b", TransferRequest{Filename: "first"})
+	b2 := m.Enqueue("b", TransferRequest{Filename: "second"})
+	m.Done(blocker.User)
+	if !uploadReady(b1) || uploadReady(a) || uploadReady(b2) {
+		t.Fatalf("random scheduler did not choose the selected user's oldest file")
+	}
+	m.Done("b")
+}
+
+func TestUploadSmallestFirstAndArrivalTie(t *testing.T) {
+	m := NewUploadManager(1)
+	m.Configure(UploadPolicy{Scheduling: UploadScheduleSmallestFirst})
+	blocker := m.Enqueue("blocker", TransferRequest{})
+	large := m.Enqueue("large", TransferRequest{Size: 100})
+	firstSmall := m.Enqueue("small-a", TransferRequest{Size: 10})
+	secondSmall := m.Enqueue("small-b", TransferRequest{Size: 10})
+	m.Done(blocker.User)
+	if !uploadReady(firstSmall) || uploadReady(large) || uploadReady(secondSmall) {
+		t.Fatal("smallest-first order or arrival tie-break was not preserved")
+	}
+	m.Done(firstSmall.User)
+	if !uploadReady(secondSmall) {
+		t.Fatal("second equal-sized upload was not next")
+	}
+	m.Done(secondSmall.User)
+	m.Done(large.User)
+}
+
+func TestUploadLimiterReservationsAndCancellation(t *testing.T) {
+	m := NewUploadManager(1)
+	one, two := &UploadJob{}, &UploadJob{}
+	now := time.Unix(100, 0)
+	reserve := func(job *UploadJob, bytes int) time.Duration {
+		delay, _ := m.reserve(job, bytes, now)
+		return delay
+	}
+	m.Configure(UploadPolicy{Scheduling: UploadScheduleFIFO, BytesPerSecond: 1024})
+	if got := reserve(one, 1024); got != 0 {
+		t.Fatalf("first shared reservation = %v", got)
+	}
+	if got := reserve(two, 1024); got != time.Second {
+		t.Fatalf("second shared reservation = %v", got)
+	}
+
+	_, changed := m.reserve(one, 1, now)
+	m.Configure(UploadPolicy{Scheduling: UploadScheduleFIFO, BytesPerSecond: 1024, PerTransfer: true})
+	select {
+	case <-changed:
+	default:
+		t.Fatal("hot reconfiguration did not wake paced writers")
+	}
+	if got := reserve(one, 1024); got != 0 {
+		t.Fatalf("first per-transfer reservation = %v", got)
+	}
+	if got := reserve(two, 1024); got != 0 {
+		t.Fatalf("independent per-transfer reservation = %v", got)
+	}
+	if got := reserve(one, 1024); got != time.Second {
+		t.Fatalf("second reservation for one transfer = %v", got)
+	}
+
+	m.Configure(UploadPolicy{Scheduling: UploadScheduleFIFO, BytesPerSecond: 2048})
+	if got := reserve(one, 1024); got != 0 {
+		t.Fatalf("hot reconfiguration kept pacing debt: %v", got)
+	}
+	if got := reserve(two, 1024); got != 500*time.Millisecond {
+		t.Fatalf("reconfigured shared reservation = %v", got)
+	}
+	m.Configure(UploadPolicy{Scheduling: UploadScheduleFIFO})
+	if got := reserve(one, 1024); got != 0 {
+		t.Fatalf("unlimited reservation = %v", got)
+	}
+
+	m.Configure(UploadPolicy{Scheduling: UploadScheduleFIFO, BytesPerSecond: 1024})
+	var dst bytes.Buffer
+	if _, err := m.LimitWriter(context.Background(), one, &dst).Write(make([]byte, 1024)); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := m.LimitWriter(ctx, one, &dst).Write([]byte{1}); !errors.Is(err, ErrTransferCancelled) {
+		t.Fatalf("cancelled limiter write = %v", err)
+	}
+}
+
 func TestWireFramingAndDistributedFixtures(t *testing.T) {
 	var frame bytes.Buffer
 	err := WriteFrame(&frame, 0x01020304, nil)

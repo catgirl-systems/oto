@@ -5,10 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math/rand/v2"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 )
 
 var ErrTransferCancelled = errors.New("soulseek: transfer cancelled")
@@ -150,26 +152,78 @@ func SendFile(ctx context.Context, root, name string, dst io.Writer, expected, o
 	return copyAtMost(ctx, dst, f, expected, offset, progress)
 }
 
+type paceState struct {
+	version uint64
+	next    time.Time
+}
+
 type UploadJob struct {
 	User    string
 	Request TransferRequest
 	Ready   chan struct{}
+	active  bool
+	pace    paceState
 }
 
-// UploadManager schedules passive uploads FIFO with global slots and one slot per user.
+const (
+	UploadScheduleFIFO          = "fifo"
+	UploadScheduleRoundRobin    = "round_robin"
+	UploadScheduleRandom        = "random"
+	UploadScheduleSmallestFirst = "smallest_first"
+)
+
+type UploadPolicy struct {
+	Scheduling     string
+	BytesPerSecond int64
+	PerTransfer    bool
+}
+
+// UploadManager schedules passive uploads with global slots and one slot per user.
 type UploadManager struct {
-	mu          sync.Mutex
-	max, active int
-	byUser      map[string]int
-	q           []*UploadJob
+	mu                    sync.Mutex
+	max, active           int
+	byUser                map[string]int
+	q                     []*UploadJob
+	policy                UploadPolicy
+	sequence, paceVersion uint64
+	served                map[string]uint64
+	totalPace             paceState
+	paceChanged           chan struct{}
+	chooseRandom          func(int) int
 }
 
 func NewUploadManager(maxSlots int) *UploadManager {
 	if maxSlots < 1 {
 		maxSlots = 1
 	}
-	return &UploadManager{max: maxSlots, byUser: make(map[string]int)}
+	return &UploadManager{max: maxSlots, byUser: make(map[string]int), policy: UploadPolicy{Scheduling: UploadScheduleFIFO}, served: make(map[string]uint64), paceChanged: make(chan struct{}), chooseRandom: rand.IntN}
 }
+
+func (m *UploadManager) Configure(policy UploadPolicy) {
+	switch policy.Scheduling {
+	case UploadScheduleFIFO, UploadScheduleRoundRobin, UploadScheduleRandom, UploadScheduleSmallestFirst:
+	default:
+		policy.Scheduling = UploadScheduleFIFO
+	}
+	if policy.BytesPerSecond < 0 {
+		policy.BytesPerSecond = 0
+	}
+	m.mu.Lock()
+	m.policy = policy
+	m.paceVersion++
+	m.totalPace = paceState{}
+	close(m.paceChanged)
+	m.paceChanged = make(chan struct{})
+	m.promote()
+	m.mu.Unlock()
+}
+
+func (m *UploadManager) Policy() UploadPolicy {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.policy
+}
+
 func (m *UploadManager) Enqueue(user string, r TransferRequest) *UploadJob {
 	j := &UploadJob{User: user, Request: r, Ready: make(chan struct{})}
 	m.mu.Lock()
@@ -179,18 +233,71 @@ func (m *UploadManager) Enqueue(user string, r TransferRequest) *UploadJob {
 	return j
 }
 
+func (m *UploadManager) nextIndex() int {
+	eligible := func(job *UploadJob) bool { return m.byUser[job.User] == 0 }
+	switch m.policy.Scheduling {
+	case UploadScheduleSmallestFirst:
+		best := -1
+		for i, job := range m.q {
+			if eligible(job) && (best < 0 || job.Request.Size < m.q[best].Request.Size) {
+				best = i
+			}
+		}
+		return best
+	case UploadScheduleRoundRobin, UploadScheduleRandom:
+		users := make([]string, 0, len(m.q))
+		seen := make(map[string]bool, len(m.q))
+		for _, job := range m.q {
+			if eligible(job) && !seen[job.User] {
+				seen[job.User] = true
+				users = append(users, job.User)
+			}
+		}
+		if len(users) == 0 {
+			return -1
+		}
+		target := users[0]
+		if m.policy.Scheduling == UploadScheduleRandom {
+			target = users[m.chooseRandom(len(users))]
+		} else {
+			for _, user := range users[1:] {
+				if m.served[user] < m.served[target] {
+					target = user
+				}
+			}
+		}
+		for i, job := range m.q {
+			if job.User == target {
+				return i
+			}
+		}
+	default:
+		for i, job := range m.q {
+			if eligible(job) {
+				return i
+			}
+		}
+	}
+	return -1
+}
+
 func (m *UploadManager) promote() {
 	for len(m.q) > 0 && m.active < m.max {
-		j := m.q[0]
-		if m.byUser[j.User] > 0 {
-			break
+		i := m.nextIndex()
+		if i < 0 {
+			return
 		}
-		m.q = m.q[1:]
+		job := m.q[i]
+		m.q = append(m.q[:i], m.q[i+1:]...)
 		m.active++
-		m.byUser[j.User]++
-		close(j.Ready)
+		m.byUser[job.User]++
+		m.sequence++
+		m.served[job.User] = m.sequence
+		job.active = true
+		close(job.Ready)
 	}
 }
+
 func (m *UploadManager) Done(user string) {
 	m.mu.Lock()
 	if m.active > 0 {
@@ -202,11 +309,119 @@ func (m *UploadManager) Done(user string) {
 	m.promote()
 	m.mu.Unlock()
 }
+
 func (m *UploadManager) Wait(ctx context.Context, j *UploadJob) error {
 	select {
 	case <-j.Ready:
 		return nil
 	case <-ctx.Done():
-		return ErrTransferCancelled
+		m.mu.Lock()
+		if !j.active {
+			for i, queued := range m.q {
+				if queued == j {
+					m.q = append(m.q[:i], m.q[i+1:]...)
+					break
+				}
+			}
+			m.mu.Unlock()
+			return ErrTransferCancelled
+		}
+		m.mu.Unlock()
+		return nil
 	}
+}
+
+func (m *UploadManager) reserve(job *UploadJob, bytes int, now time.Time) (time.Duration, <-chan struct{}) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	changed := m.paceChanged
+	if bytes <= 0 || m.policy.BytesPerSecond == 0 {
+		return 0, changed
+	}
+	state := &m.totalPace
+	if m.policy.PerTransfer {
+		state = &job.pace
+	}
+	if state.version != m.paceVersion {
+		*state = paceState{version: m.paceVersion}
+	}
+	nanos := (int64(bytes)*int64(time.Second) + m.policy.BytesPerSecond - 1) / m.policy.BytesPerSecond
+	step := time.Duration(nanos)
+	if state.next.Before(now) {
+		state.next = now.Add(step)
+		return 0, changed
+	}
+	delay := state.next.Sub(now)
+	state.next = state.next.Add(step)
+	return delay, changed
+}
+
+func (m *UploadManager) chunkSize() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.policy.BytesPerSecond == 0 {
+		return 32 << 10
+	}
+	return int(min(max(m.policy.BytesPerSecond/10, 1024), 32<<10))
+}
+
+type uploadWriter struct {
+	ctx     context.Context
+	manager *UploadManager
+	job     *UploadJob
+	dst     io.Writer
+}
+
+func (w uploadWriter) Write(p []byte) (int, error) {
+	written := 0
+	for len(p) > 0 {
+		select {
+		case <-w.ctx.Done():
+			return written, ErrTransferCancelled
+		default:
+		}
+		n := min(len(p), w.manager.chunkSize())
+		for {
+			delay, changed := w.manager.reserve(w.job, n, time.Now())
+			if delay <= 0 {
+				break
+			}
+			timer := time.NewTimer(delay)
+			select {
+			case <-timer.C:
+				break
+			case <-changed:
+				if !timer.Stop() {
+					select {
+					case <-timer.C:
+					default:
+					}
+				}
+				continue
+			case <-w.ctx.Done():
+				if !timer.Stop() {
+					select {
+					case <-timer.C:
+					default:
+					}
+				}
+				return written, ErrTransferCancelled
+			}
+			break
+		}
+		nn, err := w.dst.Write(p[:n])
+		written += nn
+		p = p[nn:]
+		if err != nil {
+			return written, err
+		}
+		if nn != n {
+			return written, io.ErrShortWrite
+		}
+	}
+	return written, nil
+}
+
+func (m *UploadManager) LimitWriter(ctx context.Context, job *UploadJob, dst io.Writer) io.Writer {
+	return uploadWriter{ctx: ctx, manager: m, job: job, dst: dst}
 }

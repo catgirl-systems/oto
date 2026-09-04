@@ -515,7 +515,7 @@ func (m model) statusView() string {
 }
 
 func (m model) footerHints() []string {
-	if m.interfaceChoosing {
+	if m.choiceChoosing {
 		return []string{"← → choose", "enter accept", "esc cancel"}
 	}
 	if m.editing {

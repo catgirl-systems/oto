@@ -86,6 +86,8 @@ Settings → Connection shows the public IPv4 address reported by the Soulseek s
 
 The network-interface picker cycles through **Automatic**, interfaces visible in the daemon's network namespace, and **Custom…** for a name that is currently unavailable. Saving a changed interface reconnects the Soulseek session. A selected interface binds every Soulseek TCP socket with Linux `SO_BINDTODEVICE`; binding is fail-closed, so a missing interface or permission error leaves the session reconnecting instead of allowing traffic over another route. Automatic NAT-PMP/UPnP is skipped without changing its saved switches while interface binding is active; use `--listen-port-file` for a VPN-assigned forwarded port.
 
+Settings → Uploads manages ordered named speed-limit profiles. `uploads.active_profile` selects a profile; `speed_limit_kib` is KiB/s and `0` means unlimited. `limit_scope` accepts `total` or `per_transfer`; `scheduling` accepts `fifo`, `round_robin`, `random`, or `smallest_first`. Limits can apply once across all active uploads or independently to each transfer. FIFO, user-fair round-robin, user-uniform random, and smallest-file-first scheduling affect queued uploads only. Profile, scope, and scheduler changes are staged until `s`, then hot-applied without reconnecting; active transfers keep running.
+
 Settings → Account can change the currently connected Soulseek account password. Select **Change Soulseek password**, press Enter, and enter the new password twice. The change is sent and saved immediately; it cannot be used while disconnected, while a username change is staged, or when `OTO_PASSWORD` supplies the credential.
 
 ## Files and environment
@@ -102,7 +104,7 @@ Default locations follow XDG:
 
 `OTO_USERNAME`, `OTO_PASSWORD`, `OTO_SERVER`, `OTO_LISTEN_ADDR`, `OTO_NETWORK_INTERFACE`, and `OTO_DOWNLOAD_DIR` override JSON values. The daemon never returns or logs the password.
 
-History and wishlist settings are user choices in `config.json`; mutable history and wishlist entries live in private state files so searches do not continually rewrite daemon configuration.
+History, wishlist, and upload settings are user choices in `config.json`; mutable history and wishlist entries live in private state files so searches do not continually rewrite daemon configuration.
 
 Incoming TCP port `50300` must be reachable for best peer connectivity. Automatic NAT-PMP/UPnP forwarding can make it reachable when supported by the IPv4 router and no network interface is selected; otherwise configure the router or use `--listen-port-file` for a VPN-assigned port. Direct connections are attempted first and server-mediated firewall piercing is used as fallback. The Soulseek protocol itself is not encrypted; do not treat usernames, searches, or transferred data as private.
 
@@ -244,11 +246,14 @@ This tracks user-visible Soulseek functionality and meaningful operational quali
 | Automatically clear finished or cancelled uploads | :x: | :white_check_mark: |
 | Manually send a file to another user | :x: | :white_check_mark: |
 | Manually send a folder to another user | :x: | :white_check_mark: |
-| Global upload speed limit | :x: | :white_check_mark: |
-| Alternate upload speed-limit preset | :x: | :white_check_mark: |
-| Limit upload speed per transfer or across all transfers | :x: | :white_check_mark: |
+| Global upload speed limit | :white_check_mark: | :white_check_mark: |
+| Named upload speed-limit profiles | :white_check_mark: | :x: |
+| Alternate upload speed-limit preset | :white_check_mark: | :white_check_mark: |
+| Limit upload speed per transfer or across all transfers | :white_check_mark: | :white_check_mark: |
 | FIFO upload scheduling | :white_check_mark: | :white_check_mark: |
-| Round-robin upload scheduling | :x: | :white_check_mark: |
+| Round-robin upload scheduling | :white_check_mark: | :white_check_mark: |
+| Random upload scheduling | :white_check_mark: | :x: |
+| Smallest-file-first upload scheduling | :white_check_mark: | :x: |
 | Allocate upload slots until a bandwidth threshold is reached | :x: | :white_check_mark: |
 | Prioritize buddies in the upload queue | :x: | :white_check_mark: |
 | Prioritize Soulseek privileged users | :x: | :white_check_mark: |

@@ -61,6 +61,7 @@ const (
 	settingsAccount settingsSection = iota
 	settingsConnection
 	settingsDownloads
+	settingsUploads
 	settingsSearch
 	settingsSectionCount
 )
@@ -140,6 +141,12 @@ const (
 	settingNATPMPPortMapping
 	settingUPnPPortMapping
 	settingDownloadPath
+	settingUploadProfile
+	settingUploadProfileName
+	settingUploadSpeedLimit
+	settingDeleteUploadProfile
+	settingUploadLimitScope
+	settingUploadScheduling
 	settingRememberSearches
 	settingSearchHistoryLimit
 	settingRememberFilters
@@ -166,7 +173,7 @@ type model struct {
 	historyCursor                          historyCursor
 	transient                              bool
 	setup, help, confirm, editing, loading bool
-	interfaceChoosing                      bool
+	choiceChoosing, addingUploadProfile    bool
 	details, folderMenu, statusMenu        bool
 	folderMenuEditing                      bool
 	loadingMore, filterEditing             bool
@@ -186,7 +193,8 @@ type model struct {
 	folderMenuSubfolders                   []string
 	folderMenuFiles                        [2][]download
 	folderMenuChoice, inputCursor          int
-	interfaceChoice                        int
+	choiceIndex                            int
+	choiceSetting                          settingID
 	networkInterfaces                      []string
 	setupField, passwordField              int
 	setupVals                              [6]string

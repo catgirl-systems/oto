@@ -17,6 +17,17 @@
     "wishlist_interval_minutes": 15,
     "wishlist_notifications": true
   },
+  "uploads": {
+    "profiles": [
+      {
+        "name": "Unlimited",
+        "speed_limit_kib": 0
+      }
+    ],
+    "active_profile": "Unlimited",
+    "limit_scope": "total",
+    "scheduling": "fifo"
+  },
   "download_dir": "/downloads",
   "shares": [
     {

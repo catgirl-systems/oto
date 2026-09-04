@@ -481,6 +481,16 @@ func (s *Service) configureSharesLocked() error {
 	s.persistShareIndex(idx)
 	return nil
 }
+
+func uploadPolicy(c config.Config) soulseek.UploadPolicy {
+	return soulseek.UploadPolicy{Scheduling: string(c.Uploads.Scheduling), BytesPerSecond: int64(c.Uploads.ActiveSpeedLimitKiB()) * 1024, PerTransfer: c.Uploads.LimitScope == config.UploadLimitPerTransfer}
+}
+
+func newUploadManager(c config.Config) *soulseek.UploadManager {
+	uploads := soulseek.NewUploadManager(c.UploadSlots)
+	uploads.Configure(uploadPolicy(c))
+	return uploads
+}
 func (s *Service) connectOnce(ctx context.Context) error {
 	s.mu.RLock()
 	if s.ctx != ctx {
@@ -500,7 +510,7 @@ func (s *Service) connectOnce(ctx context.Context) error {
 			return err
 		}
 	}
-	client := soulseek.NewClient(soulseek.ClientConfig{Address: cfg.Soulseek.Server, Username: cfg.Soulseek.Username, Password: cfg.Soulseek.Password, ListenAddr: cfg.Soulseek.ListenAddr, NetworkInterface: cfg.Soulseek.NetworkInterface, Share: idx, Uploads: soulseek.NewUploadManager(cfg.UploadSlots)})
+	client := soulseek.NewClient(soulseek.ClientConfig{Address: cfg.Soulseek.Server, Username: cfg.Soulseek.Username, Password: cfg.Soulseek.Password, ListenAddr: cfg.Soulseek.ListenAddr, NetworkInterface: cfg.Soulseek.NetworkInterface, Share: idx, Uploads: newUploadManager(cfg)})
 	if err := client.Connect(ctx); err != nil {
 		return err
 	}
@@ -1139,6 +1149,10 @@ func hotConfigUpdate(old, next config.Config) bool {
 		old.UploadSlots == next.UploadSlots
 }
 
+func sameUploadConfig(a, b config.Uploads) bool {
+	return a.ActiveProfile == b.ActiveProfile && a.LimitScope == b.LimitScope && a.Scheduling == b.Scheduling && slices.Equal(a.Profiles, b.Profiles)
+}
+
 func (s *Service) UpdateConfig(c config.Config) error {
 	if err := c.Validate(); err != nil {
 		return err
@@ -1153,11 +1167,16 @@ func (s *Service) UpdateConfig(c config.Config) error {
 	}
 	if hotConfigUpdate(s.cfg, c) {
 		oldInterval := s.cfg.Search.WishlistIntervalMinutes
+		uploadsChanged := !sameUploadConfig(s.cfg.Uploads, c.Uploads)
+		client := s.client
 		err := c.Save(s.configPath)
 		if err == nil {
 			s.cfg = c
 		}
 		s.mu.Unlock()
+		if err == nil && uploadsChanged && client != nil {
+			client.ConfigureUploads(uploadPolicy(c))
+		}
 		if err == nil && oldInterval != c.Search.WishlistIntervalMinutes {
 			s.wakeWishlist()
 		}

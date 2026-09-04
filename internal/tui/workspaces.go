@@ -8,6 +8,7 @@ import (
 	"unicode/utf8"
 
 	"charm.land/lipgloss/v2"
+	"github.com/catgirl-systems/oto/internal/config"
 	"github.com/catgirl-systems/oto/internal/daemon"
 )
 
@@ -500,7 +501,7 @@ func (m model) renderShares(width, height int) string {
 	return strings.Join(lines, "\n")
 }
 
-var settingsSectionNames = [settingsSectionCount]string{"Account", "Connection", "Downloads", "Search"}
+var settingsSectionNames = [settingsSectionCount]string{"Account", "Connection", "Downloads", "Uploads", "Search"}
 
 func (m model) renderSettings(width, height int) string {
 	sections := settingsSectionNames[:]
@@ -613,6 +614,16 @@ func (m model) settingFields() []settingField {
 		}
 	case settingsDownloads:
 		return []settingField{{settingDownloadPath, "Download path", m.cfg.DownloadDir, settingText}}
+	case settingsUploads:
+		profile := m.cfg.Uploads.Profiles[m.activeUploadProfileIndex()]
+		return []settingField{
+			{settingUploadProfile, "Active profile", m.choiceValue(settingUploadProfile, profile.Name), settingChoice},
+			{settingUploadProfileName, "Profile name", profile.Name, settingText},
+			{settingUploadSpeedLimit, "Speed limit (KiB/s)", strconv.Itoa(profile.SpeedLimitKiB), settingInt},
+			{settingDeleteUploadProfile, "Delete profile", "Press Enter", settingAction},
+			{settingUploadLimitScope, "Limit applies to", m.choiceValue(settingUploadLimitScope, uploadScopeLabel(m.cfg.Uploads.LimitScope)), settingChoice},
+			{settingUploadScheduling, "Scheduling", m.choiceValue(settingUploadScheduling, uploadSchedulingLabel(m.cfg.Uploads.Scheduling)), settingChoice},
+		}
 	default:
 		return []settingField{
 			{settingRememberSearches, "Remember searches", strconv.FormatBool(m.cfg.Search.RememberSearches), settingBool},
@@ -643,12 +654,34 @@ func (m *model) setSettingValue(value string) error {
 		m.cfg.Soulseek.NetworkInterface = value
 	case settingDownloadPath:
 		m.cfg.DownloadDir = value
-	case settingSearchHistoryLimit, settingFilterHistoryLimit, settingWishlistInterval:
+	case settingUploadProfile:
+		if !m.addingUploadProfile {
+			return nil
+		}
+		if err := m.validateUploadProfileName(value, -1); err != nil {
+			return err
+		}
+		m.cfg.Uploads.Profiles = append(m.cfg.Uploads.Profiles, config.UploadProfile{Name: value})
+		m.cfg.Uploads.ActiveProfile = value
+		m.addingUploadProfile = false
+	case settingUploadProfileName:
+		i := m.activeUploadProfileIndex()
+		if err := m.validateUploadProfileName(value, i); err != nil {
+			return err
+		}
+		m.cfg.Uploads.Profiles[i].Name = value
+		m.cfg.Uploads.ActiveProfile = value
+	case settingUploadSpeedLimit, settingSearchHistoryLimit, settingFilterHistoryLimit, settingWishlistInterval:
 		limit, err := strconv.Atoi(value)
 		if err != nil || limit < 0 {
 			return errors.New("value must be a nonnegative integer")
 		}
 		switch field.id {
+		case settingUploadSpeedLimit:
+			if limit > 1000000 {
+				return errors.New("upload speed limit must be at most 1000000 KiB/s")
+			}
+			m.cfg.Uploads.Profiles[m.activeUploadProfileIndex()].SpeedLimitKiB = limit
 		case settingSearchHistoryLimit:
 			m.cfg.Search.SearchHistoryLimit = limit
 		case settingFilterHistoryLimit:
@@ -663,9 +696,104 @@ func (m *model) setSettingValue(value string) error {
 	return nil
 }
 
+func (m model) activeUploadProfileIndex() int {
+	for i, profile := range m.cfg.Uploads.Profiles {
+		if profile.Name == m.cfg.Uploads.ActiveProfile {
+			return i
+		}
+	}
+	return 0
+}
+
+func (m model) validateUploadProfileName(name string, except int) error {
+	if err := config.ValidateUploadProfileName(name); err != nil {
+		return err
+	}
+	for i, profile := range m.cfg.Uploads.Profiles {
+		if i != except && strings.EqualFold(profile.Name, name) {
+			return fmt.Errorf("upload profile %q already exists", name)
+		}
+	}
+	return nil
+}
+
+func uploadScopeLabel(scope config.UploadLimitScope) string {
+	if scope == config.UploadLimitPerTransfer {
+		return "Each transfer"
+	}
+	return "All transfers"
+}
+
+func uploadSchedulingLabel(scheduling config.UploadScheduling) string {
+	switch scheduling {
+	case config.UploadSchedulingRoundRobin:
+		return "Round-robin"
+	case config.UploadSchedulingRandom:
+		return "Random"
+	case config.UploadSchedulingSmallestFirst:
+		return "Smallest first"
+	default:
+		return "FIFO"
+	}
+}
+
+func (m model) choiceOptions(id settingID) []string {
+	switch id {
+	case settingNetworkInterface:
+		return append(append([]string{"Automatic"}, m.networkInterfaces...), "Custom…")
+	case settingUploadProfile:
+		options := make([]string, 0, len(m.cfg.Uploads.Profiles)+1)
+		for _, profile := range m.cfg.Uploads.Profiles {
+			options = append(options, profile.Name)
+		}
+		return append(options, "New…")
+	case settingUploadLimitScope:
+		return []string{"All transfers", "Each transfer"}
+	case settingUploadScheduling:
+		return []string{"FIFO", "Round-robin", "Random", "Smallest first"}
+	default:
+		return nil
+	}
+}
+
+func (m model) choiceValue(id settingID, current string) string {
+	if m.choiceChoosing && m.choiceSetting == id {
+		options := m.choiceOptions(id)
+		if m.choiceIndex >= 0 && m.choiceIndex < len(options) {
+			return options[m.choiceIndex]
+		}
+	}
+	return current
+}
+
+func (m model) configuredChoice(id settingID) int {
+	options := m.choiceOptions(id)
+	current := ""
+	switch id {
+	case settingNetworkInterface:
+		if m.cfg.Soulseek.NetworkInterface == "" {
+			current = "Automatic"
+		} else {
+			current = m.cfg.Soulseek.NetworkInterface
+		}
+	case settingUploadProfile:
+		current = m.cfg.Uploads.ActiveProfile
+	case settingUploadLimitScope:
+		current = uploadScopeLabel(m.cfg.Uploads.LimitScope)
+	case settingUploadScheduling:
+		current = uploadSchedulingLabel(m.cfg.Uploads.Scheduling)
+	}
+	for i, option := range options {
+		if option == current {
+			return i
+		}
+	}
+	return len(options) - 1
+}
+
 func (m model) networkInterfaceValue() string {
-	if m.interfaceChoosing {
-		return m.networkInterfaceChoice(m.interfaceChoice)
+	if m.choiceChoosing && m.choiceSetting == settingNetworkInterface {
+		return m.choiceValue(settingNetworkInterface, "")
 	}
 	if m.cfg.Soulseek.NetworkInterface == "" {
 		return "Automatic"
@@ -676,26 +804,4 @@ func (m model) networkInterfaceValue() string {
 		}
 	}
 	return "Custom: " + m.cfg.Soulseek.NetworkInterface
-}
-
-func (m model) networkInterfaceChoice(choice int) string {
-	if choice == 0 {
-		return "Automatic"
-	}
-	if choice <= len(m.networkInterfaces) {
-		return m.networkInterfaces[choice-1]
-	}
-	return "Custom…"
-}
-
-func (m model) configuredInterfaceChoice() int {
-	if m.cfg.Soulseek.NetworkInterface == "" {
-		return 0
-	}
-	for i, name := range m.networkInterfaces {
-		if name == m.cfg.Soulseek.NetworkInterface {
-			return i + 1
-		}
-	}
-	return len(m.networkInterfaces) + 1
 }

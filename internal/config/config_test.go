@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -67,6 +68,10 @@ func TestSearchDefaultsCompatibilityAndValidation(t *testing.T) {
 	if got.Search != want || got.Redacted().Search != want {
 		t.Fatalf("search defaults or redaction: got %+v safe %+v", got.Search, got.Redacted().Search)
 	}
+	wantUploads := Uploads{Profiles: []UploadProfile{{Name: "Unlimited"}}, ActiveProfile: "Unlimited", LimitScope: UploadLimitTotal, Scheduling: UploadSchedulingFIFO}
+	if !reflect.DeepEqual(got.Uploads, wantUploads) || !reflect.DeepEqual(got.Redacted().Uploads, wantUploads) {
+		t.Fatalf("upload defaults or safe config: got %+v safe %+v", got.Uploads, got.Redacted().Uploads)
+	}
 	encoded, _ := json.Marshal(got.Redacted())
 	if !strings.Contains(string(encoded), `"wishlist_interval_minutes":15`) || !strings.Contains(string(encoded), `"wishlist_notifications":true`) {
 		t.Fatalf("safe config omitted wishlist settings: %s", encoded)
@@ -108,6 +113,48 @@ func TestSearchDefaultsCompatibilityAndValidation(t *testing.T) {
 	got.Search.WishlistIntervalMinutes = 525601
 	if err := got.Validate(); err == nil {
 		t.Fatal("oversized wishlist interval accepted")
+	}
+}
+
+func TestUploadConfigRoundTripAndValidation(t *testing.T) {
+	cfg := Default()
+	cfg.Soulseek.Username, cfg.Soulseek.Password = "u", "p"
+	cfg.Uploads = Uploads{
+		Profiles:      []UploadProfile{{Name: "Fast", SpeedLimitKiB: 1000}, {Name: "Night", SpeedLimitKiB: 25}},
+		ActiveProfile: "Night", LimitScope: UploadLimitPerTransfer, Scheduling: UploadSchedulingSmallestFirst,
+	}
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := cfg.Save(path); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Load(path)
+	if err != nil || !reflect.DeepEqual(got.Uploads, cfg.Uploads) || !reflect.DeepEqual(got.Redacted().Uploads, cfg.Uploads) {
+		t.Fatalf("upload round trip: got %+v safe %+v err %v", got.Uploads, got.Redacted().Uploads, err)
+	}
+
+	tests := []struct {
+		name    string
+		uploads Uploads
+	}{
+		{"no profiles", Uploads{ActiveProfile: "x", LimitScope: UploadLimitTotal, Scheduling: UploadSchedulingFIFO}},
+		{"missing active", Uploads{Profiles: []UploadProfile{{Name: "x"}}, ActiveProfile: "y", LimitScope: UploadLimitTotal, Scheduling: UploadSchedulingFIFO}},
+		{"blank name", Uploads{Profiles: []UploadProfile{{Name: " "}}, ActiveProfile: " ", LimitScope: UploadLimitTotal, Scheduling: UploadSchedulingFIFO}},
+		{"long name", Uploads{Profiles: []UploadProfile{{Name: strings.Repeat("x", 65)}}, ActiveProfile: strings.Repeat("x", 65), LimitScope: UploadLimitTotal, Scheduling: UploadSchedulingFIFO}},
+		{"control name", Uploads{Profiles: []UploadProfile{{Name: "bad\nname"}}, ActiveProfile: "bad\nname", LimitScope: UploadLimitTotal, Scheduling: UploadSchedulingFIFO}},
+		{"duplicate name", Uploads{Profiles: []UploadProfile{{Name: "Fast"}, {Name: "fast"}}, ActiveProfile: "Fast", LimitScope: UploadLimitTotal, Scheduling: UploadSchedulingFIFO}},
+		{"negative limit", Uploads{Profiles: []UploadProfile{{Name: "x", SpeedLimitKiB: -1}}, ActiveProfile: "x", LimitScope: UploadLimitTotal, Scheduling: UploadSchedulingFIFO}},
+		{"large limit", Uploads{Profiles: []UploadProfile{{Name: "x", SpeedLimitKiB: 1000001}}, ActiveProfile: "x", LimitScope: UploadLimitTotal, Scheduling: UploadSchedulingFIFO}},
+		{"bad scope", Uploads{Profiles: []UploadProfile{{Name: "x"}}, ActiveProfile: "x", LimitScope: "one", Scheduling: UploadSchedulingFIFO}},
+		{"bad scheduler", Uploads{Profiles: []UploadProfile{{Name: "x"}}, ActiveProfile: "x", LimitScope: UploadLimitTotal, Scheduling: "priority"}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			invalid := cfg
+			invalid.Uploads = test.uploads
+			if err := invalid.Validate(); err == nil {
+				t.Fatal("invalid upload config accepted")
+			}
+		})
 	}
 }
 

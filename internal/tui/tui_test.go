@@ -3,6 +3,8 @@ package tui
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -603,6 +605,7 @@ func TestSettingsSidebarEditsAccountWithoutLeakingPassword(t *testing.T) {
 	}
 	m.key(tea.KeyPressMsg(tea.Key{Code: tea.KeyRight}))
 	m.key(tea.KeyPressMsg(tea.Key{Code: tea.KeyRight}))
+	m.key(tea.KeyPressMsg(tea.Key{Code: tea.KeyRight}))
 	if m.settingsSection != settingsSearch || !strings.Contains(m.View().Content, "Remember searches") {
 		t.Fatal("settings sidebar did not navigate to search settings")
 	}
@@ -675,11 +678,11 @@ func TestNetworkInterfaceChoiceAndCustomEntry(t *testing.T) {
 	m.settingsSection, m.cursor = settingsConnection, 2
 	m.key(key("enter"))
 	m.key(key("left"))
-	if !m.interfaceChoosing || m.interfaceChoice != 3 || !strings.Contains(m.View().Content, "‹ Custom… ›") {
+	if !m.choiceChoosing || m.choiceIndex != 3 || !strings.Contains(m.View().Content, "‹ Custom… ›") {
 		t.Fatal("left arrow did not wrap to Custom")
 	}
 	m.key(key("esc"))
-	if m.interfaceChoosing || m.cfg.Soulseek.NetworkInterface != "" {
+	if m.choiceChoosing || m.cfg.Soulseek.NetworkInterface != "" {
 		t.Fatal("escape changed the staged interface")
 	}
 
@@ -687,7 +690,7 @@ func TestNetworkInterfaceChoiceAndCustomEntry(t *testing.T) {
 	m.key(key("right"))
 	m.key(key("right"))
 	m.key(key("enter"))
-	if m.cfg.Soulseek.NetworkInterface != "wg0" || m.interfaceChoosing {
+	if m.cfg.Soulseek.NetworkInterface != "wg0" || m.choiceChoosing {
 		t.Fatal("discovered interface was not staged")
 	}
 
@@ -718,6 +721,87 @@ func TestNetworkInterfaceChoiceAndCustomEntry(t *testing.T) {
 	m = updated.(model)
 	if !strings.Contains(m.err, "interface lookup failed") || m.cfg.Soulseek.NetworkInterface != "tun42" {
 		t.Fatal("interface lookup error was not exposed or custom value was lost")
+	}
+}
+
+func TestUploadSettingsProfilesAndChoices(t *testing.T) {
+	t.Setenv("NO_COLOR", "1")
+	m := newModel(context.Background(), nil, filepath.Join(t.TempDir(), "config.json"), false, config.Default())
+	m.width, m.height, m.workspace, m.settingsSection = 90, 18, workspaceSettings, settingsUploads
+	view := m.View().Content
+	for _, want := range []string{"Uploads", "Active profile", "Unlimited", "Profile name", "Speed limit (KiB/s)", "Limit applies to", "Scheduling", "FIFO"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("upload settings missing %q: %s", want, view)
+		}
+	}
+
+	m.key(key("enter"))
+	m.key(key("right"))
+	if !m.choiceChoosing || !strings.Contains(m.View().Content, "New…") {
+		t.Fatal("profile picker did not include New")
+	}
+	m.key(key("esc"))
+	if m.choiceChoosing || len(m.cfg.Uploads.Profiles) != 1 {
+		t.Fatal("escape changed upload profiles")
+	}
+
+	m.key(key("enter"))
+	m.key(key("right"))
+	m.key(key("enter"))
+	if !m.editing || !m.addingUploadProfile {
+		t.Fatal("New did not open inline profile-name editing")
+	}
+	m.input = "Night"
+	m.editKey(key("enter"))
+	if len(m.cfg.Uploads.Profiles) != 2 || m.cfg.Uploads.ActiveProfile != "Night" {
+		t.Fatalf("new profile was not staged: %+v", m.cfg.Uploads)
+	}
+
+	m.cursor = 1
+	m.key(key("enter"))
+	m.input = "Unlimited"
+	m.editKey(key("enter"))
+	if m.err == "" || m.cfg.Uploads.ActiveProfile != "Night" {
+		t.Fatal("duplicate profile rename was accepted")
+	}
+	m.key(key("enter"))
+	m.input = "Night cap"
+	m.editKey(key("enter"))
+	if m.cfg.Uploads.ActiveProfile != "Night cap" {
+		t.Fatal("active profile rename did not update selection")
+	}
+
+	m.cursor = 2
+	m.key(key("enter"))
+	m.input = "64"
+	m.editKey(key("enter"))
+	if m.cfg.Uploads.Profiles[m.activeUploadProfileIndex()].SpeedLimitKiB != 64 {
+		t.Fatal("profile speed limit was not staged")
+	}
+
+	m.cursor = 4
+	m.key(key("enter"))
+	m.key(key("right"))
+	m.key(key("enter"))
+	m.cursor = 5
+	m.key(key("enter"))
+	m.key(key("left"))
+	m.key(key("enter"))
+	if m.cfg.Uploads.LimitScope != config.UploadLimitPerTransfer || m.cfg.Uploads.Scheduling != config.UploadSchedulingSmallestFirst {
+		t.Fatalf("upload choices were not staged: %+v", m.cfg.Uploads)
+	}
+
+	m.cursor = 3
+	m.key(key("enter"))
+	if len(m.cfg.Uploads.Profiles) != 1 || m.cfg.Uploads.ActiveProfile != "Unlimited" {
+		t.Fatalf("profile deletion did not select adjacent profile: %+v", m.cfg.Uploads)
+	}
+	m.key(key("enter"))
+	if len(m.cfg.Uploads.Profiles) != 1 || m.notice == "" {
+		t.Fatal("last upload profile deletion was not blocked")
+	}
+	if _, err := os.Stat(m.configPath); !os.IsNotExist(err) {
+		t.Fatal("staged upload settings were persisted before save")
 	}
 }
 

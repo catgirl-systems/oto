@@ -405,6 +405,56 @@ func TestUpdateConfigHotAppliesSearchAndDownload(t *testing.T) {
 	}
 }
 
+func TestUpdateConfigHotAppliesUploadsAfterSave(t *testing.T) {
+	cfg := testConfig(t)
+	s, err := New(cfg, filepath.Join(t.TempDir(), "downloads.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	s.SetConfigPath(configPath)
+
+	client := soulseek.NewClient(soulseek.ClientConfig{Uploads: newUploadManager(cfg)})
+	s.mu.Lock()
+	s.client = client
+	s.mu.Unlock()
+	builderCalled := false
+	s.shareIndexBuilder = func(context.Context, []config.Share) (*soulseek.ShareIndex, error) {
+		builderCalled = true
+		return nil, errors.New("share builder called")
+	}
+
+	next := cfg
+	next.Uploads.Profiles = []config.UploadProfile{{Name: "Limited", SpeedLimitKiB: 64}}
+	next.Uploads.ActiveProfile = "Limited"
+	next.Uploads.LimitScope = config.UploadLimitPerTransfer
+	next.Uploads.Scheduling = config.UploadSchedulingRoundRobin
+	if err := s.UpdateConfig(next); err != nil {
+		t.Fatal(err)
+	}
+	want := soulseek.UploadPolicy{Scheduling: soulseek.UploadScheduleRoundRobin, BytesPerSecond: 64 * 1024, PerTransfer: true}
+	if builderCalled || s.client != client || client.UploadPolicy() != want {
+		t.Fatalf("upload update rebuilt or reconnected: builder=%v sameClient=%v policy=%+v", builderCalled, s.client == client, client.UploadPolicy())
+	}
+	loaded, err := config.Load(configPath)
+	if err != nil || !sameUploadConfig(loaded.Uploads, next.Uploads) {
+		t.Fatalf("saved upload config: %+v %v", loaded.Uploads, err)
+	}
+
+	before := client.UploadPolicy()
+	failed := next
+	failed.Uploads.Profiles = append([]config.UploadProfile(nil), next.Uploads.Profiles...)
+	failed.Uploads.Profiles[0].SpeedLimitKiB = 32
+	s.SetConfigPath(t.TempDir())
+	if err := s.UpdateConfig(failed); err == nil {
+		t.Fatal("upload update unexpectedly saved to a directory")
+	}
+	if client.UploadPolicy() != before || !sameUploadConfig(s.cfg.Uploads, next.Uploads) {
+		t.Fatalf("failed save altered runtime: policy=%+v config=%+v", client.UploadPolicy(), s.cfg.Uploads)
+	}
+}
+
 func TestChangePasswordPersistenceAndOwnership(t *testing.T) {
 	cfg := testConfig(t)
 	service, err := New(cfg, filepath.Join(t.TempDir(), "downloads.json"))

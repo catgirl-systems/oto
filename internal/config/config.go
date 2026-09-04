@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/go-playground/validator/v10"
 )
@@ -45,9 +47,52 @@ type Search struct {
 	WishlistNotifications   bool `json:"wishlist_notifications"`
 }
 
+type UploadLimitScope string
+
+type UploadScheduling string
+
+const (
+	UploadLimitTotal       UploadLimitScope = "total"
+	UploadLimitPerTransfer UploadLimitScope = "per_transfer"
+
+	UploadSchedulingFIFO          UploadScheduling = "fifo"
+	UploadSchedulingRoundRobin    UploadScheduling = "round_robin"
+	UploadSchedulingRandom        UploadScheduling = "random"
+	UploadSchedulingSmallestFirst UploadScheduling = "smallest_first"
+)
+
+type UploadProfile struct {
+	Name          string `json:"name"`
+	SpeedLimitKiB int    `json:"speed_limit_kib"`
+}
+
+type Uploads struct {
+	Profiles      []UploadProfile  `json:"profiles"`
+	ActiveProfile string           `json:"active_profile"`
+	LimitScope    UploadLimitScope `json:"limit_scope"`
+	Scheduling    UploadScheduling `json:"scheduling"`
+}
+
+func (u Uploads) ActiveSpeedLimitKiB() int {
+	for _, profile := range u.Profiles {
+		if profile.Name == u.ActiveProfile {
+			return profile.SpeedLimitKiB
+		}
+	}
+	return 0
+}
+
+func ValidateUploadProfileName(name string) error {
+	if name == "" || strings.TrimSpace(name) != name || utf8.RuneCountInString(name) > 64 || strings.IndexFunc(name, unicode.IsControl) >= 0 {
+		return fmt.Errorf("invalid upload profile name %q", name)
+	}
+	return nil
+}
+
 type Config struct {
 	Soulseek      Soulseek `json:"soulseek"`
 	Search        Search   `json:"search"`
+	Uploads       Uploads  `json:"uploads"`
 	DownloadDir   string   `json:"download_dir" validate:"required"`
 	Shares        []Share  `json:"shares"`
 	DownloadSlots int      `json:"download_slots" validate:"min=1"`
@@ -66,6 +111,7 @@ type SafeConfig struct {
 		UPnPPortMapping   bool   `json:"upnp_port_mapping"`
 	} `json:"soulseek"`
 	Search        Search  `json:"search"`
+	Uploads       Uploads `json:"uploads"`
 	DownloadDir   string  `json:"download_dir"`
 	Shares        []Share `json:"shares"`
 	DownloadSlots int     `json:"download_slots"`
@@ -74,13 +120,14 @@ type SafeConfig struct {
 
 func Default() Config {
 	home, _ := os.UserHomeDir()
-	return Config{Soulseek: Soulseek{Server: DefaultServer, ListenAddr: DefaultListenAddr, ConnectOnStartup: true, NATPMPPortMapping: true, UPnPPortMapping: true}, Search: Search{RememberSearches: true, SearchHistoryLimit: 200, RememberFilters: true, FilterHistoryLimit: 50, WishlistIntervalMinutes: 15, WishlistNotifications: true}, DownloadDir: filepath.Join(home, DefaultDownloadDir), DownloadSlots: 4, UploadSlots: 2}
+	return Config{Soulseek: Soulseek{Server: DefaultServer, ListenAddr: DefaultListenAddr, ConnectOnStartup: true, NATPMPPortMapping: true, UPnPPortMapping: true}, Search: Search{RememberSearches: true, SearchHistoryLimit: 200, RememberFilters: true, FilterHistoryLimit: 50, WishlistIntervalMinutes: 15, WishlistNotifications: true}, Uploads: Uploads{Profiles: []UploadProfile{{Name: "Unlimited"}}, ActiveProfile: "Unlimited", LimitScope: UploadLimitTotal, Scheduling: UploadSchedulingFIFO}, DownloadDir: filepath.Join(home, DefaultDownloadDir), DownloadSlots: 4, UploadSlots: 2}
 }
 
 func (c Config) Redacted() SafeConfig {
 	var out SafeConfig
 	out.Soulseek.Username, out.Soulseek.Password, out.Soulseek.Server, out.Soulseek.ListenAddr, out.Soulseek.NetworkInterface, out.Soulseek.ConnectOnStartup, out.Soulseek.NATPMPPortMapping, out.Soulseek.UPnPPortMapping = c.Soulseek.Username, "[redacted]", c.Soulseek.Server, c.Soulseek.ListenAddr, c.Soulseek.NetworkInterface, c.Soulseek.ConnectOnStartup, c.Soulseek.NATPMPPortMapping, c.Soulseek.UPnPPortMapping
-	out.Search, out.DownloadDir, out.Shares, out.DownloadSlots, out.UploadSlots = c.Search, c.DownloadDir, append([]Share(nil), c.Shares...), c.DownloadSlots, c.UploadSlots
+	out.Search, out.Uploads, out.DownloadDir, out.Shares, out.DownloadSlots, out.UploadSlots = c.Search, c.Uploads, c.DownloadDir, append([]Share(nil), c.Shares...), c.DownloadSlots, c.UploadSlots
+	out.Uploads.Profiles = append([]UploadProfile(nil), c.Uploads.Profiles...)
 	return out
 }
 
@@ -97,6 +144,36 @@ func (c Config) Validate() error {
 		if err != nil || port < 1 || port > 65535 || label == "listen address" && port < 1024 {
 			return fmt.Errorf("config: invalid %s port", label)
 		}
+	}
+	if c.Uploads.LimitScope != UploadLimitTotal && c.Uploads.LimitScope != UploadLimitPerTransfer {
+		return fmt.Errorf("config: invalid upload limit scope %q", c.Uploads.LimitScope)
+	}
+	switch c.Uploads.Scheduling {
+	case UploadSchedulingFIFO, UploadSchedulingRoundRobin, UploadSchedulingRandom, UploadSchedulingSmallestFirst:
+	default:
+		return fmt.Errorf("config: invalid upload scheduling %q", c.Uploads.Scheduling)
+	}
+	if len(c.Uploads.Profiles) == 0 {
+		return errors.New("config: at least one upload profile is required")
+	}
+	active, names := false, make([]string, 0, len(c.Uploads.Profiles))
+	for _, profile := range c.Uploads.Profiles {
+		if err := ValidateUploadProfileName(profile.Name); err != nil {
+			return fmt.Errorf("config: %w", err)
+		}
+		for _, name := range names {
+			if strings.EqualFold(name, profile.Name) {
+				return fmt.Errorf("config: duplicate upload profile name %q", profile.Name)
+			}
+		}
+		names = append(names, profile.Name)
+		if profile.SpeedLimitKiB < 0 || profile.SpeedLimitKiB > 1000000 {
+			return fmt.Errorf("config: invalid speed limit for upload profile %q", profile.Name)
+		}
+		active = active || profile.Name == c.Uploads.ActiveProfile
+	}
+	if !active {
+		return fmt.Errorf("config: active upload profile %q does not exist", c.Uploads.ActiveProfile)
 	}
 	seen := map[string]bool{}
 	for _, sh := range c.Shares {

@@ -164,6 +164,14 @@ func (c *Client) SetShareIndex(index *ShareIndex) {
 	_ = c.send(sharedCounts(index))
 }
 
+func (c *Client) ConfigureUploads(policy UploadPolicy) {
+	c.cfg.Uploads.Configure(policy)
+}
+
+func (c *Client) UploadPolicy() UploadPolicy {
+	return c.cfg.Uploads.Policy()
+}
+
 func (c *Client) Connect(ctx context.Context) error {
 	c.mu.Lock()
 	if c.conn != nil {
@@ -1177,9 +1185,10 @@ func (c *Client) enqueueUpload(username, filename string) (string, *UploadJob) {
 }
 
 func (c *Client) upload(messagePeer net.Conn, username, localPath string, job *UploadJob) (result error) {
-	ctx, cancel := context.WithTimeout(c.baseContext(), 30*time.Minute)
+	streamCtx := c.baseContext()
+	setupCtx, cancel := context.WithTimeout(streamCtx, 30*time.Minute)
 	defer cancel()
-	if err := c.cfg.Uploads.Wait(ctx, job); err != nil {
+	if err := c.cfg.Uploads.Wait(setupCtx, job); err != nil {
 		return err
 	}
 	defer c.cfg.Uploads.Done(username)
@@ -1195,7 +1204,7 @@ func (c *Client) upload(messagePeer net.Conn, username, localPath string, job *U
 	if err := writeMessage(messagePeer, request); err != nil {
 		return err
 	}
-	command, payload, err := readFrameContext(ctx, messagePeer)
+	command, payload, err := readFrameContext(setupCtx, messagePeer)
 	if err != nil {
 		return err
 	}
@@ -1212,11 +1221,16 @@ func (c *Client) upload(messagePeer net.Conn, username, localPath string, job *U
 		}
 		return errors.New(response.Reason)
 	}
-	filePeer, err := c.connectUserType(ctx, username, "F")
+	filePeer, err := c.connectUserType(setupCtx, username, "F")
 	if err != nil {
 		return err
 	}
 	defer filePeer.Close()
+	if deadline, ok := setupCtx.Deadline(); ok {
+		if err := filePeer.SetDeadline(deadline); err != nil {
+			return err
+		}
+	}
 	var token [4]byte
 	binary.LittleEndian.PutUint32(token[:], request.Token)
 	if _, err := filePeer.Write(token[:]); err != nil {
@@ -1227,7 +1241,12 @@ func (c *Client) upload(messagePeer net.Conn, username, localPath string, job *U
 		return err
 	}
 	offset := binary.LittleEndian.Uint64(offsetBytes[:])
-	return SendFile(ctx, filepath.Dir(localPath), filepath.Base(localPath), filePeer, request.Size, offset, func(progress Progress) {
+	cancel()
+	if err := filePeer.SetDeadline(time.Time{}); err != nil {
+		return err
+	}
+	writer := c.cfg.Uploads.LimitWriter(streamCtx, job, filePeer)
+	return SendFile(streamCtx, filepath.Dir(localPath), filepath.Base(localPath), writer, request.Size, offset, func(progress Progress) {
 		c.emit(Event{Command: PeerTransferRequest, Message: TransferEvent{Direction: "upload", Username: username, Filename: request.Filename, State: "running", Done: progress.Done, Total: progress.Total}})
 	})
 }
