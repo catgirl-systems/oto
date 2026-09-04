@@ -710,6 +710,7 @@ func (s *Service) Close() error {
 		return nil
 	}
 	s.closed = true
+	s.requeueDownloads = s.cancel != nil
 	runCancel, cancel, client, mapping := s.runCancel, s.cancel, s.client, s.mapping
 	s.runCtx, s.runCancel, s.ctx, s.cancel, s.client, s.mapping = nil, nil, nil, nil, nil, nil
 	s.status, s.presence = StatusStopped, PresenceOffline
