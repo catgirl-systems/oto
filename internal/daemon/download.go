@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -35,20 +36,41 @@ func incompletePath(id string) string {
 
 func (s *Service) startDownload(id string) {
 	s.mu.Lock()
-	if s.closed || s.requeueDownloads || s.ctx == nil {
-		s.mu.Unlock()
+	defer s.mu.Unlock()
+	if s.closed || s.requeueDownloads || s.ctx == nil || s.ctx.Err() != nil || s.downloadCancels[id] != nil {
 		return
 	}
-	s.downloadWG.Add(1)
-	s.mu.Unlock()
-	go func() { defer s.downloadWG.Done(); s.runDownload(id) }()
+	for _, download := range s.journal.Downloads {
+		if download.ID != id || (download.State != "queued" && download.State != "incomplete" &&
+			!(download.State == "retrying" && !download.RetryAt.After(time.Now()))) {
+			continue
+		}
+		ctx, cancel := context.WithCancel(s.ctx)
+		done := make(chan struct{})
+		s.downloadCancels[id], s.downloadDone[id] = cancel, done
+		slots := s.downloadSlots
+		s.downloadWG.Add(1)
+		go func() {
+			defer s.downloadWG.Done()
+			defer func() {
+				cancel()
+				s.mu.Lock()
+				delete(s.downloadCancels, id)
+				delete(s.downloadDone, id)
+				close(done)
+				s.mu.Unlock()
+			}()
+			s.runDownload(ctx, download, slots)
+		}()
+		return
+	}
 }
 
 func (s *Service) resumeDownloads() {
 	s.mu.Lock()
 	var ids []string
 	for i := range s.journal.Downloads {
-		if state := s.journal.Downloads[i].State; state == "queued" || state == "incomplete" || state == "running" {
+		if state := s.journal.Downloads[i].State; state == "queued" || state == "incomplete" || state == "running" || state == "finalizing" {
 			s.journal.Downloads[i].State = "queued"
 			ids = append(ids, s.journal.Downloads[i].ID)
 		}
@@ -72,27 +94,8 @@ func (s *Service) downloadPeerSlot(username string) chan struct{} {
 	return peerSlot
 }
 
-func (s *Service) runDownload(id string) {
-	s.mu.Lock()
-	if _, running := s.downloadCancels[id]; running || s.ctx == nil {
-		s.mu.Unlock()
-		return
-	}
-	ctx, cancel := context.WithCancel(s.ctx)
-	slots := s.downloadSlots
-	s.downloadCancels[id] = cancel
-	s.mu.Unlock()
-	defer func() {
-		cancel()
-		s.mu.Lock()
-		delete(s.downloadCancels, id)
-		s.mu.Unlock()
-	}()
-
-	download, ok := s.downloadByID(id)
-	if !ok {
-		return
-	}
+func (s *Service) runDownload(ctx context.Context, download Download, slots chan struct{}) {
+	id := download.ID
 	peerSlot := s.downloadPeerSlot(download.Username)
 	select {
 	case peerSlot <- struct{}{}:
@@ -106,6 +109,9 @@ func (s *Service) runDownload(id string) {
 	case <-ctx.Done():
 		return
 	}
+	if ctx.Err() != nil {
+		return
+	}
 	downloadRoot := download.DownloadDir
 	if downloadRoot == "" {
 		s.mu.RLock()
@@ -114,91 +120,66 @@ func (s *Service) runDownload(id string) {
 	}
 	partPath := incompletePath(id)
 	if err := os.MkdirAll(filepath.Dir(partPath), 0700); err != nil {
-		s.finishDownload(id, "failed", 0, err)
+		s.finishDownload(id, "failed", download.Offset, err)
 		return
 	}
 	file, err := os.OpenFile(partPath, os.O_CREATE|os.O_RDWR, 0600)
 	if err != nil {
-		s.finishDownload(id, "failed", 0, err)
+		s.finishDownload(id, "failed", download.Offset, err)
 		return
 	}
-	defer file.Close()
+	offset := download.Offset
+	defer func() {
+		if ctx.Err() != nil {
+			if stat, err := file.Stat(); err == nil && stat.Size() >= 0 {
+				offset = uint64(stat.Size())
+			}
+			// Explicit pause/cancel takes precedence over shutdown requeueing.
+			s.updateDownload(id, "queued", offset, nil)
+		}
+		_ = file.Close()
+	}()
 	stat, err := file.Stat()
 	if err != nil || stat.Size() < 0 || uint64(stat.Size()) > download.Size {
 		if err == nil {
 			err = errors.New("partial file exceeds expected size")
 		}
-		s.finishDownload(id, "failed", 0, err)
+		s.finishDownload(id, "failed", offset, err)
 		return
 	}
-	offset := uint64(stat.Size())
+	offset = uint64(stat.Size())
 	s.updateDownload(id, "running", offset, nil)
 
-	var lastErr error
-	for attempt := 0; attempt < 3; attempt++ {
+	// A previous attempt may have downloaded everything but failed to move it.
+	if offset < download.Size {
 		client, err := s.waitClient(ctx)
-		if err != nil {
-			lastErr = err
-			break
+		if err == nil {
+			err = client.Download(ctx, download.Username, strings.ReplaceAll(download.Filename, "/", "\\"), download.Size, offset, file, func(progress soulseek.Progress) {
+				s.updateTransferProgress(id, progress)
+			})
 		}
-		lastErr = client.Download(ctx, download.Username, strings.ReplaceAll(download.Filename, "/", "\\"), download.Size, offset, file, func(progress soulseek.Progress) {
-			s.updateTransferProgress(id, progress)
-		})
-		if lastErr == nil {
-			break
+		if current, statErr := file.Stat(); statErr == nil && current.Size() >= 0 {
+			offset = uint64(current.Size())
 		}
 		if ctx.Err() != nil {
-			break
+			return
 		}
-		if current, err := file.Stat(); err == nil && current.Size() >= 0 {
-			offset = uint64(current.Size())
+		if err != nil {
+			s.finishDownload(id, "failed", offset, err)
+			return
 		}
-		timer := time.NewTimer(time.Duration(1<<attempt) * time.Second)
-		select {
-		case <-ctx.Done():
-			timer.Stop()
-			break
-		case <-timer.C:
-		}
-	}
-	if ctx.Err() != nil {
-		if current, err := file.Stat(); err == nil && current.Size() >= 0 {
-			offset = uint64(current.Size())
-		}
-		s.mu.RLock()
-		requeue := s.requeueDownloads
-		s.mu.RUnlock()
-		if requeue {
-			s.updateDownload(id, "queued", offset, nil)
-		} else {
-			s.updateDownload(id, "cancelled", offset, ctx.Err())
-		}
-		return
-	}
-	if lastErr != nil {
-		s.finishDownload(id, "failed", offset, lastErr)
-		return
 	}
 	if err := file.Sync(); err != nil {
 		s.finishDownload(id, "failed", offset, err)
 		return
 	}
-	_ = file.Close()
-	target, err := s.finalizePart(downloadRoot, partPath, download.Destination, id)
-	if err != nil {
-		s.finishDownload(id, "failed", download.Size, err)
+	if err := file.Close(); err != nil {
+		s.finishDownload(id, "failed", offset, err)
 		return
 	}
-	s.mu.Lock()
-	for i := range s.journal.Downloads {
-		if s.journal.Downloads[i].ID == id {
-			rel, _ := filepath.Rel(downloadRoot, target)
-			s.journal.Downloads[i].Destination = rel
-			break
-		}
+	if ctx.Err() == nil {
+		s.completeDownload(id, downloadRoot, partPath)
 	}
-	s.mu.Unlock()
-	s.finishDownload(id, "completed", download.Size, nil)
 }
 
 func (s *Service) waitClient(ctx context.Context) (*soulseek.Client, error) {
@@ -236,7 +217,7 @@ func (s *Service) updateTransferProgress(id string, progress soulseek.Progress) 
 		state = "running"
 	}
 	s.mu.Lock()
-	if transfer := s.transfers[id]; transfer.ID != "" {
+	if transfer := s.transfers[id]; transfer.ID != "" && (transfer.State == "running" || transfer.State == "queued") {
 		transfer.Done, transfer.Total, transfer.State, transfer.Queue = progress.Done, progress.Total, state, progress.Queue
 		s.transfers[id] = transfer
 	}
@@ -245,21 +226,31 @@ func (s *Service) updateTransferProgress(id string, progress soulseek.Progress) 
 
 func (s *Service) updateDownload(id, state string, offset uint64, failure error) {
 	s.mu.Lock()
+	defer s.mu.Unlock()
 	for i := range s.journal.Downloads {
-		if s.journal.Downloads[i].ID == id {
-			s.journal.Downloads[i].State = state
-			s.journal.Downloads[i].Offset = offset
-			s.journal.Downloads[i].Error = errString(failure)
-			s.journal.Downloads[i].UpdatedAt = time.Now().UTC()
-			break
+		d := &s.journal.Downloads[i]
+		if d.ID != id || d.State == "completed" {
+			continue
 		}
+		if d.State == "paused" || d.State == "cancelled" {
+			state, failure = d.State, nil
+		}
+		d.State, d.Offset, d.Error, d.UpdatedAt = state, offset, errString(failure), time.Now().UTC()
+		d.RetryAt = time.Time{}
+		if state == "failed" {
+			if delay := downloadRetryDelay(failure); delay > 0 {
+				d.State, d.RetryAt = "retrying", d.UpdatedAt.Add(delay)
+			}
+		}
+		if transfer := s.transfers[id]; transfer.ID != "" {
+			transfer.State, transfer.Done, transfer.Error, transfer.Queue = d.State, d.Offset, d.Error, 0
+			s.transfers[id] = transfer
+		}
+		if err := s.saveJournalLocked(); err != nil {
+			log.Printf("save download state: %v", err)
+		}
+		return
 	}
-	if transfer := s.transfers[id]; transfer.ID != "" {
-		transfer.State, transfer.Done, transfer.Error = state, offset, errString(failure)
-		s.transfers[id] = transfer
-	}
-	_ = s.saveJournalLocked()
-	s.mu.Unlock()
 }
 
 func (s *Service) finishDownload(id, state string, offset uint64, failure error) {

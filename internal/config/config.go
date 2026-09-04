@@ -76,6 +76,11 @@ type Uploads struct {
 	Scheduling    UploadScheduling `json:"scheduling"`
 }
 
+type Downloads struct {
+	AfterFileCommand   string `json:"after_file_command"`
+	AfterFolderCommand string `json:"after_folder_command"`
+}
+
 func (u Uploads) ActiveSpeedLimitKiB() int {
 	for _, profile := range u.Profiles {
 		if profile.Name == u.ActiveProfile {
@@ -93,13 +98,14 @@ func ValidateUploadProfileName(name string) error {
 }
 
 type Config struct {
-	Soulseek      Soulseek `json:"soulseek"`
-	Search        Search   `json:"search"`
-	Uploads       Uploads  `json:"uploads"`
-	DownloadDir   string   `json:"download_dir" validate:"required"`
-	Shares        []Share  `json:"shares"`
-	DownloadSlots int      `json:"download_slots" validate:"min=1"`
-	UploadSlots   int      `json:"upload_slots" validate:"min=1"`
+	Soulseek      Soulseek  `json:"soulseek"`
+	Search        Search    `json:"search"`
+	Uploads       Uploads   `json:"uploads"`
+	Downloads     Downloads `json:"downloads"`
+	DownloadDir   string    `json:"download_dir" validate:"required"`
+	Shares        []Share   `json:"shares"`
+	DownloadSlots int       `json:"download_slots" validate:"min=1"`
+	UploadSlots   int       `json:"upload_slots" validate:"min=1"`
 }
 
 type SafeConfig struct {
@@ -113,12 +119,13 @@ type SafeConfig struct {
 		NATPMPPortMapping bool   `json:"nat_pmp_port_mapping"`
 		UPnPPortMapping   bool   `json:"upnp_port_mapping"`
 	} `json:"soulseek"`
-	Search        Search  `json:"search"`
-	Uploads       Uploads `json:"uploads"`
-	DownloadDir   string  `json:"download_dir"`
-	Shares        []Share `json:"shares"`
-	DownloadSlots int     `json:"download_slots"`
-	UploadSlots   int     `json:"upload_slots"`
+	Search        Search    `json:"search"`
+	Uploads       Uploads   `json:"uploads"`
+	Downloads     Downloads `json:"downloads"`
+	DownloadDir   string    `json:"download_dir"`
+	Shares        []Share   `json:"shares"`
+	DownloadSlots int       `json:"download_slots"`
+	UploadSlots   int       `json:"upload_slots"`
 }
 
 func Default() Config {
@@ -129,12 +136,15 @@ func Default() Config {
 func (c Config) Redacted() SafeConfig {
 	var out SafeConfig
 	out.Soulseek.Username, out.Soulseek.Password, out.Soulseek.Server, out.Soulseek.ListenAddr, out.Soulseek.NetworkInterface, out.Soulseek.ConnectOnStartup, out.Soulseek.NATPMPPortMapping, out.Soulseek.UPnPPortMapping = c.Soulseek.Username, "[redacted]", c.Soulseek.Server, c.Soulseek.ListenAddr, c.Soulseek.NetworkInterface, c.Soulseek.ConnectOnStartup, c.Soulseek.NATPMPPortMapping, c.Soulseek.UPnPPortMapping
-	out.Search, out.Uploads, out.DownloadDir, out.Shares, out.DownloadSlots, out.UploadSlots = c.Search, c.Uploads, c.DownloadDir, append([]Share(nil), c.Shares...), c.DownloadSlots, c.UploadSlots
+	out.Search, out.Uploads, out.Downloads, out.DownloadDir, out.Shares, out.DownloadSlots, out.UploadSlots = c.Search, c.Uploads, c.Downloads, c.DownloadDir, append([]Share(nil), c.Shares...), c.DownloadSlots, c.UploadSlots
 	out.Uploads.Profiles = append([]UploadProfile(nil), c.Uploads.Profiles...)
 	return out
 }
 
 func (c Config) Validate() error {
+	if strings.IndexByte(c.Downloads.AfterFileCommand, 0) >= 0 || strings.IndexByte(c.Downloads.AfterFolderCommand, 0) >= 0 {
+		return errors.New("config: download commands must not contain NUL bytes")
+	}
 	if err := validator.New().Struct(c); err != nil {
 		return fmt.Errorf("config: %w", err)
 	}

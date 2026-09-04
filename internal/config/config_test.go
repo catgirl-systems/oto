@@ -176,6 +176,27 @@ func TestUploadConfigRoundTripAndValidation(t *testing.T) {
 	}
 }
 
+func TestDownloadCommandsRoundTripAndRejectNUL(t *testing.T) {
+	cfg := Default()
+	cfg.Soulseek.Username, cfg.Soulseek.Password = "u", "p"
+	cfg.Downloads = Downloads{AfterFileCommand: `echo "$1"`, AfterFolderCommand: `echo folder "$1"`}
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := cfg.Save(path); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Load(path)
+	if err != nil || !reflect.DeepEqual(got.Downloads, cfg.Downloads) || !reflect.DeepEqual(got.Redacted().Downloads, cfg.Downloads) {
+		t.Fatalf("download commands round trip: got %+v safe %+v err %v", got.Downloads, got.Redacted().Downloads, err)
+	}
+	for _, command := range []string{"bad" + string(rune(0)), "ok" + string(rune(0))} {
+		invalid := cfg
+		invalid.Downloads.AfterFileCommand = command
+		if err := invalid.Validate(); err == nil {
+			t.Fatalf("NUL command accepted: %q", command)
+		}
+	}
+}
+
 func TestHistoryPathUsesXDGStateHome(t *testing.T) {
 	d := t.TempDir()
 	t.Setenv("XDG_STATE_HOME", d)
