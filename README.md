@@ -106,7 +106,8 @@ For dynamically forwarded incoming ports, `--listen-port-file` watches the file'
 | `ctrl+page up` / `ctrl+page down` in Search, Browse, or Transfers | switch result tabs or Downloads/Uploads |
 | `ctrl+w` in Search or Browse | close the active result tab |
 | `d` | download selected files; choose a folder download mode and destination; remove a wishlist/share item; or cancel a transfer subtree |
-| `r` | rerun a wishlist item, refresh a user browse or saved-user list, retry a transfer subtree, or rescan shares |
+| `r` | rerun a wishlist item, refresh a user browse or saved-user list, resume/retry a transfer subtree, or rescan shares |
+| `p` in Downloads | pause the selected transfer subtree without deleting partial data |
 | `o` | choose Online, Away, or Offline without quitting |
 | `s` | explicitly save the active remote share list, or save Settings |
 | `?` | keyboard guide |
@@ -142,6 +143,27 @@ The network-interface picker cycles through **Automatic**, interfaces visible in
 Settings → Uploads manages ordered named speed-limit profiles. `uploads.active_profile` selects a profile; `speed_limit_kib` is KiB/s and `0` means unlimited. `limit_scope` accepts `total` or `per_transfer`; `scheduling` accepts `fifo`, `round_robin`, `random`, or `smallest_first`. Limits can apply once across all active uploads or independently to each transfer. FIFO, user-fair round-robin, user-uniform random, and smallest-file-first scheduling affect queued uploads only. Profile, scope, and scheduler changes are staged until `s`, then hot-applied without reconnecting; active transfers keep running.
 
 Settings → Account can change the currently connected Soulseek account password. Select **Change Soulseek password**, press Enter, and enter the new password twice. The change is sent and saved immediately; it cannot be used while disconnected, while a username change is staged, or when `OTO_PASSWORD` supplies the credential.
+
+## Download controls and completion commands
+
+Downloads have a persistent **paused** state. `p` stops selected downloads, including ones waiting for a slot; `r` resumes them from the actual partial-file length. Resume is an action that returns a download to the queue, not a separate state. Paused and cancelled downloads stay stopped across reconnects and restarts. `d` still cancels; `c` clears inactive entries and removes their partial data.
+
+Once all bytes arrive, a download briefly enters **finalizing** while moving to its destination. Pause, cancel, and clear cannot interrupt that move; status and other transfers remain responsive, including during cross-filesystem copies.
+
+Transient connection failures automatically enter **retrying**, with another attempt due in **3 minutes**. Local file I/O failures and remote file-read failures retry after **15 minutes**. Retry deadlines survive restarts; attempts wait until connected and respect download slots. There is no retry limit. Unknown errors, malformed protocol messages, changed file sizes, and permanent rejections require manual intervention; `r` also retries immediately instead of waiting for a deadline.
+
+**Settings → Downloads** provides **After file command** and **After folder command**, saved as `downloads.after_file_command` and `downloads.after_folder_command`. Both default to empty (disabled) and hot-apply when saved. For example:
+
+```json
+"downloads": {
+  "after_file_command": "/usr/local/bin/process-file \"$1\"",
+  "after_folder_command": "/usr/local/bin/process-folder \"$1\""
+}
+```
+
+Commands are trusted local POSIX shell snippets, run with `/bin/sh -c` as the daemon user. Use **`"$1"`** for the final file/folder path (not Nicotine+'s bare `$` placeholder). Paths are passed separately as an argument, never substituted into shell source. Scripts must be installed in the daemon's environment, including inside the container when using Docker. Commands launch asynchronously, with output discarded unless redirected; failures are logged without failing the download or retrying the command. The folder command does not wait for file commands. Running command process groups are cancelled when the daemon stops.
+
+Hooks run only after a successful final move and journal save, not on restoring completed downloads. Folder completion covers all currently known files from the same user in the **exact destination directory**, excluding the download root itself. Paused, cancelled, failed, and retrying entries block it until completed or cleared. Subfolders finish independently; this is not a recursive folder-job hook. Adding more files later can trigger it again. Hooks are best effort, not a crash-safe exactly-once job queue.
 
 ## Files and environment
 
@@ -261,8 +283,8 @@ This tracks user-visible Soulseek functionality and meaningful operational quali
 | Retry failed downloads | :white_check_mark: | :white_check_mark: |
 | Cancel downloads | :white_check_mark: | :white_check_mark: |
 | Clear inactive downloads | :white_check_mark: | :white_check_mark: |
-| Explicit pause and resume states | :x: | :white_check_mark: |
-| Automatically retry transient download failures | :x: | :white_check_mark: |
+| Explicit pause and resume controls | :white_check_mark: | :white_check_mark: |
+| Automatically retry transient download failures | :white_check_mark: | :white_check_mark: |
 | Configurable maximum concurrent downloads | :white_check_mark: | :x: |
 | Keep incomplete files separate from completed downloads | :white_check_mark: | :white_check_mark: |
 | Store downloads in per-user subfolders | :white_check_mark: | :white_check_mark: |
@@ -273,8 +295,8 @@ This tracks user-visible Soulseek functionality and meaningful operational quali
 | Force a filtered download to bypass filters | :x: | :white_check_mark: |
 | Global download speed limit | :x: | :white_check_mark: |
 | Alternate download speed-limit preset | :x: | :white_check_mark: |
-| Run a command after a file finishes | :x: | :white_check_mark: |
-| Run a command after a folder finishes | :x: | :white_check_mark: |
+| Run a command after a file finishes | :white_check_mark: | :white_check_mark: |
+| Run a command after a folder finishes | :white_check_mark: | :white_check_mark: |
 | Automatically clear finished or filtered downloads | :x: | :white_check_mark: |
 | Allow selected users to send unsolicited files | :x: | :white_check_mark: |
 | Request and track remote queue position | :white_check_mark: | :white_check_mark: |

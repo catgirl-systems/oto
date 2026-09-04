@@ -31,6 +31,10 @@
     "limit_scope": "total",
     "scheduling": "fifo"
   },
+  "downloads": {
+    "after_file_command": "",
+    "after_folder_command": ""
+  },
   "download_dir": "/downloads",
   "shares": [
     {
