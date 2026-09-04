@@ -15,6 +15,14 @@ import (
 
 var ErrTransferCancelled = errors.New("soulseek: transfer cancelled")
 
+var ErrNotConnected = errors.New("soulseek: not connected")
+var ErrUploadFailed = errors.New("remote upload failed")
+
+// DownloadRejectedError keeps a peer's rejection distinct from local/network errors.
+type DownloadRejectedError struct{ Reason string }
+
+func (e *DownloadRejectedError) Error() string { return e.Reason }
+
 // NormalizePath accepts only a relative, slash-separated shared path.
 func NormalizePath(name string) (string, error) {
 	name = strings.ReplaceAll(name, "\\", "/")
@@ -99,7 +107,7 @@ func copyAtMost(ctx context.Context, dst io.Writer, src io.Reader, expected, off
 			}
 		}
 		if err != nil {
-			return fmt.Errorf("%w: expected %d bytes, got %d", ErrMalformed, expected, done-offset)
+			return fmt.Errorf("%w: %w: expected %d bytes, got %d", ErrMalformed, err, expected, done-offset)
 		}
 	}
 	return nil
