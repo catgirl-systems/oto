@@ -67,6 +67,7 @@ type Client struct {
 	conn           net.Conn
 	listener       net.Listener
 	advertisedPort uint16
+	publicIP       string
 	loggedIn       bool
 	ctx            context.Context
 	cancel         context.CancelFunc
@@ -98,6 +99,7 @@ func NewClient(cfg ClientConfig) *Client {
 // NewClientOnConn is useful for deterministic net.Pipe tests.
 func NewClientOnConn(cfg ClientConfig, c net.Conn) *Client { x := NewClient(cfg); x.conn = c; return x }
 func (c *Client) Events() <-chan Event                     { return c.events }
+func (c *Client) PublicIP() string                         { c.mu.Lock(); defer c.mu.Unlock(); return c.publicIP }
 func (c *Client) shareIndex() *ShareIndex                  { c.mu.Lock(); defer c.mu.Unlock(); return c.cfg.Share }
 func sharedCounts(index *ShareIndex) (counts SharedCounts) {
 	for _, file := range index.Files() {
@@ -286,6 +288,7 @@ func (c *Client) Login(ctx context.Context) error {
 		c.mu.Lock()
 		ln, port := c.listener, c.advertisedPort
 		c.loggedIn = true
+		c.publicIP = net.IPv4(byte(r.IP>>24), byte(r.IP>>16), byte(r.IP>>8), byte(r.IP)).String()
 		c.mu.Unlock()
 		if port == 0 && ln != nil {
 			port = uint16(ln.Addr().(*net.TCPAddr).Port)
@@ -1201,7 +1204,7 @@ func (c *Client) Close() error {
 	c.listener = nil
 	c.conn = nil
 	c.cancel = nil
-	c.loggedIn, c.advertisedPort = false, 0
+	c.loggedIn, c.advertisedPort, c.publicIP = false, 0, ""
 	c.mu.Unlock()
 	if cancel != nil {
 		cancel()

@@ -446,6 +446,10 @@ func (m model) renderSettings(width, height int) string {
 	}
 
 	fields := m.settingFields()
+	labelWidth := 0
+	for _, field := range fields {
+		labelWidth = max(labelWidth, utf8.RuneCountInString(field.label))
+	}
 	formLines := []string{strong(sections[m.settingsSection])}
 	fieldStart, fieldEnd := visibleRange(len(fields), m.cursor, max(1, contentHeight-1))
 	for i := fieldStart; i < fieldEnd; i++ {
@@ -474,7 +478,7 @@ func (m model) renderSettings(width, height int) string {
 				value = muted("Not set")
 			}
 		}
-		row := fmt.Sprintf("%-22s %s", field.label, value)
+		row := fmt.Sprintf("%-*s %s", labelWidth, field.label, value)
 		formLines = append(formLines, selectedRow(trunc(row, max(4, width-sidebarWidth-4)), i == m.cursor))
 	}
 	if fieldStart == 0 && fieldEnd == len(fields) && len(formLines)+2 <= contentHeight {
@@ -493,9 +497,14 @@ func (m model) settingFields() []settingField {
 			{settingChangePassword, "Change Soulseek password", "Press Enter", settingAction},
 		}
 	case settingsConnection:
+		publicIP := m.status.publicIP
+		if publicIP == "" {
+			publicIP = "Unknown"
+		}
 		return []settingField{
 			{settingServer, "Server", m.cfg.Soulseek.Server, settingText},
 			{settingListenAddress, "Listen address", m.cfg.Soulseek.ListenAddr, settingText},
+			{settingPublicIPAddress, "Public IP address", publicIP, settingInfo},
 			{settingConnectOnStartup, "Connect on startup", strconv.FormatBool(m.cfg.Soulseek.ConnectOnStartup), settingBool},
 			{settingNATPMPPortMapping, "NAT-PMP port forwarding", strconv.FormatBool(m.cfg.Soulseek.NATPMPPortMapping), settingBool},
 			{settingUPnPPortMapping, "UPnP port forwarding", strconv.FormatBool(m.cfg.Soulseek.UPnPPortMapping), settingBool},

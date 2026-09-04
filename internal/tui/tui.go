@@ -605,7 +605,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if x.err != nil {
 			m.status.err = x.err.Error()
 		} else {
-			m.status = snapshot{status: x.snapshot.Status, presence: x.snapshot.Presence, user: x.snapshot.Config.Soulseek.Username, err: x.snapshot.Error}
+			m.status = snapshot{status: x.snapshot.Status, presence: x.snapshot.Presence, user: x.snapshot.Config.Soulseek.Username, publicIP: x.snapshot.PublicIP, err: x.snapshot.Error}
 		}
 	case searchMsg:
 		if x.request != 0 {

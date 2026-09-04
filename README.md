@@ -79,7 +79,7 @@ in:"live|radio session" out:remix type:audio,!mp3 size:>=20MiB bitrate:>=320 dur
 `country` accepts case-insensitive, comma-separated two-letter codes. Positive codes are alternatives (`country:US,CA`); prefix exclusions with `!` (`country:!GB,!DE`). Unknown locations match exclusion-only filters but not positive codes.
 Search queries and complete filter expressions are kept as separate most-recent-first histories. Press up/down while editing to recall entries. The Settings → Search section independently enables each history, sets its retention limit (`0` means unlimited), and clears it immediately.
 
-Settings → Connection controls **Connect on startup** (`soulseek.connect_on_startup`), **NAT-PMP port forwarding** (`soulseek.nat_pmp_port_mapping`), and **UPnP port forwarding** (`soulseek.upnp_port_mapping`). All default to On and the forwarding protocols can be enabled independently. With both enabled, oto tries NAT-PMP before UPnP. It maps only the incoming TCP listener through an IPv4 router, requests a 12-hour lease, and renews it every two hours. Discovery and mapping are best effort: failures do not prevent Soulseek login or its server-mediated firewall-piercing fallback.
+Settings → Connection shows the public IPv4 address reported by the Soulseek server at login and controls **Connect on startup** (`soulseek.connect_on_startup`), **NAT-PMP port forwarding** (`soulseek.nat_pmp_port_mapping`), and **UPnP port forwarding** (`soulseek.upnp_port_mapping`). No third-party service is contacted for the address. All three settings default to On and the forwarding protocols can be enabled independently. With both enabled, oto tries NAT-PMP before UPnP. It maps only the incoming TCP listener through an IPv4 router, requests a 12-hour lease, and renews it every two hours. Discovery and mapping are best effort: failures do not prevent Soulseek login or its server-mediated firewall-piercing fallback.
 
 Settings → Account can change the currently connected Soulseek account password. Select **Change Soulseek password**, press Enter, and enter the new password twice. The change is sent and saved immediately; it cannot be used while disconnected, while a username change is staged, or when `OTO_PASSWORD` supplies the credential.
 
@@ -125,7 +125,7 @@ This tracks user-visible Soulseek functionality and meaningful operational quali
 | Automatic UPnP port forwarding | :white_check_mark: | :white_check_mark: |
 | Automatic NAT-PMP port forwarding | :white_check_mark: | :white_check_mark: |
 | External listening-port check | :x: | :white_check_mark: |
-| Public IP address lookup | :x: | :white_check_mark: |
+| Public IP address lookup | :white_check_mark: | :white_check_mark: |
 | Change Soulseek password from the client | :white_check_mark: | :white_check_mark: |
 | Online, away, and offline status controls | :white_check_mark: | :white_check_mark: |
 | Automatic away status after inactivity | :x: | :white_check_mark: |

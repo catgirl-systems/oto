@@ -12,10 +12,9 @@ import (
 )
 
 type snapshot struct {
-	status   daemon.Status
-	presence daemon.Presence
-	user     string
-	err      string
+	status              daemon.Status
+	presence            daemon.Presence
+	user, publicIP, err string
 }
 type result struct {
 	user, path, extension, country string
@@ -123,6 +122,7 @@ const (
 	settingBool
 	settingInt
 	settingAction
+	settingInfo
 )
 
 const (
@@ -130,6 +130,7 @@ const (
 	settingChangePassword
 	settingServer
 	settingListenAddress
+	settingPublicIPAddress
 	settingConnectOnStartup
 	settingNATPMPPortMapping
 	settingUPnPPortMapping

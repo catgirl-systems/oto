@@ -191,7 +191,7 @@ func TestContextualFooterHints(t *testing.T) {
 		{"share root", model{workspace: workspaceShares, shareTree: tree(treeShareRoot)}, []string{"enter expand", "/ add", "r rescan", "d remove"}, nil},
 		{"share folder", model{workspace: workspaceShares, shareTree: tree(treeFolder)}, []string{"enter expand", "/ add", "r rescan"}, []string{"d remove"}},
 		{"setting text", settings(settingsAccount, 0), []string{"enter edit", "s save"}, nil},
-		{"setting bool", settings(settingsConnection, 2), []string{"enter toggle", "s save"}, nil},
+		{"setting bool", settings(settingsConnection, 3), []string{"enter toggle", "s save"}, nil},
 		{"setting action", settings(settingsAccount, 1), []string{"enter change password", "s save"}, nil},
 		{"setting clear", settings(settingsSearch, 4), []string{"enter clear searches", "s save"}, nil},
 	}
@@ -474,20 +474,39 @@ func TestSettingsSidebarEditsAccountWithoutLeakingPassword(t *testing.T) {
 	}
 
 	m.key(tea.KeyPressMsg(tea.Key{Code: tea.KeyRight}))
-	if view := m.View().Content; m.settingsSection != settingsConnection || !strings.Contains(view, "Listen address") || !strings.Contains(view, "Connect on startup") || !strings.Contains(view, "NAT-PMP port forwarding") || !strings.Contains(view, "UPnP port forwarding") {
+	if view := m.View().Content; m.settingsSection != settingsConnection || !strings.Contains(view, "Listen address") || !strings.Contains(view, "Public IP address") || !strings.Contains(view, "Unknown") || !strings.Contains(view, "Connect on startup") || !strings.Contains(view, "NAT-PMP port forwarding") || !strings.Contains(view, "UPnP port forwarding") {
 		t.Fatal("settings sidebar did not navigate to connection settings")
 	}
+	m.status.publicIP = "1.2.3.4"
 	m.cursor = 2
+	view = m.View().Content
+	for _, want := range []string{
+		"Server                  server.slsknet.org:2242",
+		"Listen address          0.0.0.0:50300",
+		"Public IP address       1.2.3.4",
+		"Connect on startup      On",
+		"NAT-PMP port forwarding On",
+		"UPnP port forwarding    On",
+	} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("connection settings missing aligned row %q", want)
+		}
+	}
+	m.key(key("enter"))
+	if m.editing || strings.Contains(strings.Join(m.footerHints(), " | "), "enter") {
+		t.Fatal("public IP address row was editable")
+	}
+	m.cursor = 3
 	m.key(key("enter"))
 	if m.cfg.Soulseek.ConnectOnStartup {
 		t.Fatal("connect-on-startup setting was not staged")
 	}
-	m.cursor = 3
+	m.cursor = 4
 	m.key(key("enter"))
 	if m.editing || m.cfg.Soulseek.NATPMPPortMapping || !m.cfg.Soulseek.UPnPPortMapping {
 		t.Fatal("NAT-PMP setting did not toggle independently")
 	}
-	m.cursor = 4
+	m.cursor = 5
 	m.key(key("enter"))
 	if m.editing || m.cfg.Soulseek.NATPMPPortMapping || m.cfg.Soulseek.UPnPPortMapping {
 		t.Fatal("UPnP setting did not toggle independently")

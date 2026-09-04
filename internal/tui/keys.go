@@ -429,7 +429,7 @@ func (m *model) folderMenuKey(k tea.KeyPressMsg) tea.Cmd {
 func (m *model) beginEdit() {
 	if m.workspace == workspaceSettings {
 		fields := m.settingFields()
-		if m.cursor >= len(fields) || fields[m.cursor].kind == settingBool || fields[m.cursor].kind == settingAction {
+		if m.cursor >= len(fields) || fields[m.cursor].kind == settingBool || fields[m.cursor].kind == settingAction || fields[m.cursor].kind == settingInfo {
 			return
 		}
 	}

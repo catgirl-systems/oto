@@ -53,6 +53,7 @@ type Snapshot struct {
 	Status    Status            `json:"status"`
 	Presence  Presence          `json:"presence"`
 	Error     string            `json:"error,omitempty"`
+	PublicIP  string            `json:"public_ip,omitempty"`
 	Config    config.SafeConfig `json:"config"`
 	Shares    []config.Share    `json:"shares"`
 	Downloads []Download        `json:"downloads"`
@@ -245,7 +246,11 @@ func (s *Service) Config() config.SafeConfig {
 func (s *Service) Snapshot() Snapshot {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return Snapshot{Status: s.status, Presence: s.presence, Error: s.lastErr, Config: s.cfg.Redacted(), Shares: append([]config.Share(nil), s.cfg.Shares...), Downloads: append([]Download(nil), s.journal.Downloads...), Transfers: transferValues(s.transfers)}
+	publicIP := ""
+	if s.status == StatusConnected && s.client != nil {
+		publicIP = s.client.PublicIP()
+	}
+	return Snapshot{Status: s.status, Presence: s.presence, Error: s.lastErr, PublicIP: publicIP, Config: s.cfg.Redacted(), Shares: append([]config.Share(nil), s.cfg.Shares...), Downloads: append([]Download(nil), s.journal.Downloads...), Transfers: transferValues(s.transfers)}
 }
 func transferValues(m map[string]Transfer) []Transfer {
 	out := make([]Transfer, 0, len(m))

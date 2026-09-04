@@ -563,6 +563,8 @@ func (m model) footerHints() []string {
 		field := fields[m.cursor]
 		action := "edit"
 		switch field.kind {
+		case settingInfo:
+			return hints
 		case settingBool:
 			action = "toggle"
 		case settingAction:

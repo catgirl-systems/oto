@@ -333,7 +333,7 @@ func TestPipeLogin(t *testing.T) {
 			var x Encoder
 			x.Bool(true)
 			_ = x.String("ok")
-			x.U32(0)
+			x.U32(0x01020304)
 			_ = x.String("hash")
 			x.Bool(false)
 			e = WriteFrame(b, ServerLogin, x.Payload())
@@ -357,6 +357,9 @@ func TestPipeLogin(t *testing.T) {
 	if err := c.Login(ctx); err != nil {
 		t.Fatal(err)
 	}
+	if got := c.PublicIP(); got != "1.2.3.4" {
+		t.Fatalf("public IP = %q, want 1.2.3.4", got)
+	}
 	if err := c.SetStatus(UserStatusAway); err != nil {
 		t.Fatal(err)
 	}
@@ -368,6 +371,12 @@ func TestPipeLogin(t *testing.T) {
 	}
 	if err := <-server; err != nil {
 		t.Fatal(err)
+	}
+	if err := c.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if got := c.PublicIP(); got != "" {
+		t.Fatalf("public IP after close = %q, want empty", got)
 	}
 }
 
