@@ -949,6 +949,8 @@ func (c *Client) serveFile(peer net.Conn) {
 		pending.done <- err
 		return
 	}
+	stop := context.AfterFunc(pending.ctx, func() { _ = peer.Close() })
+	defer stop()
 	err := CopyAtMost(pending.ctx, pending.writer, peer, pending.size, pending.offset, pending.progress)
 	pending.done <- err
 }
