@@ -59,6 +59,8 @@ type TransferEvent struct {
 }
 
 type pendingDownload struct {
+	fileMu             sync.Mutex // Download waits for the file writer before returning.
+	accepted           bool
 	username, filename string
 	size, offset       uint64
 	writer             io.WriterAt
@@ -324,7 +326,7 @@ func (c *Client) Login(ctx context.Context) error {
 	conn := c.conn
 	c.mu.Unlock()
 	if conn == nil {
-		return errors.New("soulseek: not connected")
+		return ErrNotConnected
 	}
 	hash := fmt.Sprintf("%x", md5.Sum([]byte(c.cfg.Username+c.cfg.Password)))
 	m := LoginRequest{Username: c.cfg.Username, Password: c.cfg.Password, Version: ProtocolVersion, MinorVersion: ProtocolMinor, Hash: hash}
@@ -455,7 +457,7 @@ func (c *Client) Run(ctx context.Context) error {
 	}
 	c.mu.Unlock()
 	if conn == nil {
-		return errors.New("soulseek: not connected")
+		return ErrNotConnected
 	}
 	defer close(c.done)
 	defer func() {
@@ -566,7 +568,7 @@ func (c *Client) send(m Message) error {
 	conn := c.conn
 	c.mu.Unlock()
 	if conn == nil {
-		return errors.New("soulseek: not connected")
+		return ErrNotConnected
 	}
 	b, e := EncodeMessage(m)
 	if e != nil {
@@ -840,6 +842,8 @@ func (c *Client) Download(ctx context.Context, username, filename string, size, 
 	if dst == nil || offset > size {
 		return ErrMalformed
 	}
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	pending := &pendingDownload{username: username, filename: filename, size: size, offset: offset, writer: dst, progress: progress, done: make(chan error, 1), ctx: ctx}
 	key := downloadKey(username, filename)
 	c.mu.Lock()
@@ -849,13 +853,29 @@ func (c *Client) Download(ctx context.Context, username, filename string, size, 
 	}
 	c.requested[key] = pending
 	c.mu.Unlock()
-	defer func() { c.mu.Lock(); delete(c.requested, key); c.mu.Unlock() }()
+	defer func() {
+		cancel()
+		c.mu.Lock()
+		delete(c.requested, key)
+		for token, download := range c.downloads {
+			if download == pending {
+				delete(c.downloads, token)
+			}
+		}
+		c.mu.Unlock()
+		pending.fileMu.Lock()
+		pending.fileMu.Unlock()
+	}()
 
-	peer, err := c.connectUser(ctx, username)
+	setupCtx, stopSetup := context.WithTimeout(ctx, 45*time.Second)
+	peer, err := c.connectUser(setupCtx, username)
+	stopSetup()
 	if err != nil {
 		return err
 	}
 	defer peer.Close()
+	stopPeer := context.AfterFunc(ctx, func() { _ = peer.Close() })
+	defer stopPeer()
 	if err := writeMessage(peer, QueueRequest{Filename: filename}); err != nil {
 		return err
 	}
@@ -868,7 +888,11 @@ func (c *Client) Download(ctx context.Context, username, filename string, size, 
 	go func() {
 		for {
 			command, payload, err := ReadFrame(peer)
-			frames <- frame{command, payload, err}
+			select {
+			case frames <- frame{command, payload, err}:
+			case <-ctx.Done():
+				return
+			}
 			if err != nil {
 				return
 			}
@@ -890,7 +914,7 @@ func (c *Client) Download(ctx context.Context, username, filename string, size, 
 				_, err := d.String()
 				place, placeErr := d.U32()
 				if err == nil && placeErr == nil && pending.progress != nil {
-					pending.progress(Progress{Done: pending.offset, Total: pending.size, State: "queued", Queue: place})
+					pending.progress(Progress{Done: offset, Total: size, State: "queued", Queue: place})
 				}
 				continue
 			case PeerUploadDenied:
@@ -900,9 +924,9 @@ func (c *Client) Download(ctx context.Context, username, filename string, size, 
 				if reason == "" {
 					reason = "upload denied"
 				}
-				return errors.New(reason)
+				return &DownloadRejectedError{Reason: reason}
 			case PeerUploadFailed:
-				return errors.New("remote upload failed")
+				return ErrUploadFailed
 			case PeerTransferRequest:
 				request, err := DecodeTransferRequest(message.payload)
 				if err != nil {
@@ -920,11 +944,20 @@ func (c *Client) Download(ctx context.Context, username, filename string, size, 
 }
 
 func (c *Client) acceptDownload(peer net.Conn, pending *pendingDownload, request TransferRequest) error {
+	c.mu.Lock()
+	if err := pending.ctx.Err(); err != nil {
+		c.mu.Unlock()
+		return err
+	}
+	if pending.accepted {
+		c.mu.Unlock()
+		return nil
+	}
 	if pending.size != 0 && request.Size != pending.size {
+		c.mu.Unlock()
 		return errors.New("soulseek: remote file size changed")
 	}
-	pending.size = request.Size
-	c.mu.Lock()
+	pending.size, pending.accepted = request.Size, true
 	c.downloads[request.Token] = pending
 	c.mu.Unlock()
 	return writeMessage(peer, TransferResponse{Token: request.Token, Accepted: true})
@@ -943,14 +976,20 @@ func (c *Client) serveFile(peer net.Conn) {
 	if pending == nil {
 		return
 	}
+	pending.fileMu.Lock()
+	defer pending.fileMu.Unlock()
+	if pending.ctx.Err() != nil {
+		pending.done <- pending.ctx.Err()
+		return
+	}
+	stop := context.AfterFunc(pending.ctx, func() { _ = peer.Close() })
+	defer stop()
 	var offsetBytes [8]byte
 	binary.LittleEndian.PutUint64(offsetBytes[:], pending.offset)
 	if _, err := peer.Write(offsetBytes[:]); err != nil {
 		pending.done <- err
 		return
 	}
-	stop := context.AfterFunc(pending.ctx, func() { _ = peer.Close() })
-	defer stop()
 	err := CopyAtMost(pending.ctx, pending.writer, peer, pending.size, pending.offset, pending.progress)
 	pending.done <- err
 }
