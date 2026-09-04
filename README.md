@@ -19,6 +19,11 @@ The first launch asks for the Soulseek credentials, listening address, optional 
 ./oto daemon --listen-port-file /run/oto/forwarded-port --listen-port-reconcile-interval 30s
 ./oto status
 ./oto status --json
+./oto transfers
+./oto transfers --json
+./oto pause DOWNLOAD_ID
+./oto resume DOWNLOAD_ID
+./oto rescan
 ```
 
 ## Docker
@@ -78,9 +83,11 @@ Soulseek permits one login per username. Keeping the session in the daemon preve
 
 Press `o` to choose Online, Away, or Offline without stopping the daemon. Offline stops reconnect attempts and requeues active downloads without deleting partial data; choosing Online or Away resumes them. Away survives automatic reconnects for the current daemon run.
 
-The daemon watches every non-hidden, non-symlink directory under each share root using `fsnotify` (one recursive watch per directory). After filesystem changes stop for five minutes by default, it builds a complete shadow index and atomically publishes it; a fixed 30-minute maximum delay prevents continuous activity from postponing scans forever. Events during a scan discard that result and schedule another scan. Startup and manual rescans remain immediate, and watcher or scan failures keep the last good index available.
+The daemon watches every non-hidden, non-symlink directory under each share root using `fsnotify` (one recursive watch per directory). After filesystem changes stop for five minutes by default, it builds a complete shadow index and atomically publishes it; a fixed 30-minute maximum delay prevents continuous activity from postponing scans forever. Events during a scan discard that result and schedule another scan. Startup and manual rescans remain immediate, and watcher or scan failures keep the last good index available. `/v1/state` reports the current share scan (`scanning`, `publishing`, `completed`, `failed`, `cancelled`, or `discarded`) with root, accepted file/directory counts, and timing; the Shares view displays the same live progress.
 
 For dynamically forwarded incoming ports, `--listen-port-file` watches the file's parent directory and hot-swaps the listener whenever the file contains a new port. `--listen-port-reconcile-interval` provides a periodic fallback (default `30s`; `0` disables it). Missing or empty files mark the port unavailable until a valid value appears. This interface is provider-neutral; for example, a VPN container can write its current forwarded port into a shared volume. When configured, it takes precedence over and skips automatic NAT-PMP/UPnP forwarding without changing the saved settings.
+
+The headless controls attach only to the daemon's XDG Unix socket; they never launch a daemon or log in themselves. `transfers` lists both directions with full stable IDs, quoted text fields, or `--json` output. `pause ID` and `resume ID` operate on one download and preserve the TUI's partial-file and finalization protections. `rescan` works offline and waits for index publication without the ordinary request timeout. A concurrent manual scan fails with “share scan already in progress” (HTTP 409). Ctrl+C stops waiting, not the daemon-owned scan. Invalid commands, a missing daemon, and service errors exit nonzero.
 
 ## TUI
 
@@ -109,7 +116,8 @@ For dynamically forwarded incoming ports, `--listen-port-file` watches the file'
 | `r` | rerun a wishlist item, refresh a user browse or saved-user list, resume/retry a transfer subtree, or rescan shares |
 | `p` in Downloads | pause the selected transfer subtree without deleting partial data |
 | `o` | choose Online, Away, or Offline without quitting |
-| `s` | explicitly save the active remote share list, or save Settings |
+| `s` in Browse or Settings | explicitly save the active remote share list, or save Settings |
+| `s` / `S` in Transfers | prepare a file/folder-name search / containing-folder search; Enter submits |
 | `?` | keyboard guide |
 | `q` | quit |
 
@@ -131,6 +139,10 @@ in:"live|radio session" out:remix type:audio,!mp3 size:>=20MiB bitrate:>=320 dur
 
 `country` accepts case-insensitive, comma-separated two-letter codes. Positive codes are alternatives (`country:US,CA`); prefix exclusions with `!` (`country:!GB,!DE`). Unknown locations match exclusion-only filters but not positive codes.
 Search queries and complete filter expressions are kept as separate most-recent-first histories. Press up/down while editing to recall entries. The Settings → Search section independently enables each history, sets its retention limit (`0` means unlimited), and clears it immediately.
+
+**Settings → Search → Default result filter** (`search.default_filter`, empty by default) initializes every new ordinary search with the last successfully saved expression. Existing result tabs keep their filters; unsaved Settings edits do not apply. A filter explicitly entered in an empty Search workspace overrides the default for the next search only. Wishlist filters remain independent, including an empty stored filter; `w` saves the current tab's actual filter. Explicit empty IPC filters still mean unfiltered.
+
+In either transfer direction, `s` fills the Search editor from the focused file (minus its final extension) or folder name. `S` uses a file's containing folder instead. Enter starts the search; Escape cancels the draft without creating a result tab or contacting the network. User-only rows do not select an arbitrary descendant.
 
 Settings → Search also controls incoming search responses with `search.respond_to_incoming_searches`, `search.minimum_incoming_search_length` (`0` means no minimum), and `search.maximum_incoming_search_results`. Defaults match Nicotine+: On, 3 characters, and 300 results; the editable ranges are 0–50 characters and 50–10000 results. Saved changes hot-apply without reconnecting. Paths containing case-insensitive phrases prohibited by Soulseek server message 160 are always omitted from responses; this does not affect local browsing or exact-path uploads.
 
@@ -164,6 +176,14 @@ Transient connection failures automatically enter **retrying**, with another att
 Commands are trusted local POSIX shell snippets, run with `/bin/sh -c` as the daemon user. Use **`"$1"`** for the final file/folder path (not Nicotine+'s bare `$` placeholder). Paths are passed separately as an argument, never substituted into shell source. Scripts must be installed in the daemon's environment, including inside the container when using Docker. Commands launch asynchronously, with output discarded unless redirected; failures are logged without failing the download or retrying the command. The folder command does not wait for file commands. Running command process groups are cancelled when the daemon stops.
 
 Hooks run only after a successful final move and journal save, not on restoring completed downloads. Folder completion covers all currently known files from the same user in the **exact destination directory**, excluding the download root itself. Paused, cancelled, failed, and retrying entries block it until completed or cleared. Subfolders finish independently; this is not a recursive folder-job hook. Adding more files later can trigger it again. Hooks are best effort, not a crash-safe exactly-once job queue.
+
+### Completion notifications
+
+Settings → Downloads has independent **File notifications** (`downloads.file_notifications`, Off) and **Folder notifications** (`downloads.folder_notifications`, On) switches. Saved changes hot-apply. Notifications use the same successful move-and-journal-save boundary and exact-directory grouping as completion commands. Clearing entries alone does not send a notification; restoring completed downloads does not replay them.
+
+The daemon calls `notify-send` asynchronously when available. Delivery has a two-second timeout; failure is logged without failing or retrying the download. Attached TUIs display the latest message and ring once per poll containing new enabled completions. Initial attachment and daemon restart do not replay old bells. These signals are session-local and best effort, not a durable notification queue. When both switches are enabled, the final file can produce both file and folder desktop notifications.
+
+Desktop delivery requires `notify-send` and a usable desktop session in the daemon's environment, including inside Docker. No D-Bus forwarding is provided. Existing completion commands still run independently; disable overlapping notification scripts if using the built-in delivery.
 
 ## Files and environment
 
@@ -242,7 +262,7 @@ This tracks user-visible Soulseek functionality and meaningful operational quali
 | Country-code result filter | :white_check_mark: | :white_check_mark: |
 | Persistent search history | :white_check_mark: | :white_check_mark: |
 | Persistent filter history | :white_check_mark: | :white_check_mark: |
-| Configurable default result filters | :x: | :white_check_mark: |
+| Configurable default result filters | :white_check_mark: | :white_check_mark: |
 | Persistent wishlist searches | :white_check_mark: | :white_check_mark: |
 | Periodically rerun wishlist searches | :white_check_mark: | :white_check_mark: |
 | Store filters per wishlist item | :white_check_mark: | :white_check_mark: |
@@ -297,12 +317,13 @@ This tracks user-visible Soulseek functionality and meaningful operational quali
 | Alternate download speed-limit preset | :x: | :white_check_mark: |
 | Run a command after a file finishes | :white_check_mark: | :white_check_mark: |
 | Run a command after a folder finishes | :white_check_mark: | :white_check_mark: |
+| Notify when a file or folder finishes | :white_check_mark: | :white_check_mark: |
 | Automatically clear finished or filtered downloads | :x: | :white_check_mark: |
 | Allow selected users to send unsolicited files | :x: | :white_check_mark: |
 | Request and track remote queue position | :white_check_mark: | :white_check_mark: |
 | Show transfer speed and progress | :white_check_mark: | :white_check_mark: |
 | Estimate elapsed and remaining transfer time | :x: | :white_check_mark: |
-| Search the network for a transfer's file or folder name | :x: | :white_check_mark: |
+| Search the network for a transfer's file or folder name | :white_check_mark: | :white_check_mark: |
 | Remove the associated incomplete file when deleting a transfer | :white_check_mark: | :white_check_mark: |
 
 ### Uploads
@@ -353,7 +374,7 @@ This tracks user-visible Soulseek functionality and meaningful operational quali
 | Scheduled daily share rescans | :fast_forward: | :white_check_mark: |
 | Force a full share rebuild | :x: | :white_check_mark: |
 | Stop an in-progress share scan | :x: | :white_check_mark: |
-| Report share-scan progress | :x: | :white_check_mark: |
+| Report share-scan progress | :white_check_mark: | :white_check_mark: |
 | Extract audio metadata while indexing local shares | :x: | :white_check_mark: |
 | Publish shared folder and file counts | :white_check_mark: | :white_check_mark: |
 | Public shares | :white_check_mark: | :white_check_mark: |
@@ -414,6 +435,7 @@ This tracks user-visible Soulseek functionality and meaningful operational quali
 | --- | --- | --- |
 | Run the Soulseek client headlessly | :white_check_mark: | :white_check_mark: |
 | Interactive command console in headless mode | :x: | :white_check_mark: |
+| Scriptable transfer and rescan commands through a daemon socket | :white_check_mark: | :x: |
 | Run the network session as a standalone background service | :white_check_mark: | :x: |
 | Detach and later attach a frontend to the same live session | :white_check_mark: | :x: |
 | Keep transfers running after the attached frontend exits | :white_check_mark: | :x: |
