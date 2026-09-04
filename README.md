@@ -35,7 +35,7 @@ For dynamically forwarded incoming ports, `--listen-port-file` watches the file'
 
 | Key | Action |
 | --- | --- |
-| `tab` / `shift+tab` | Search, Browse, Transfers, Shares, Settings |
+| `tab` / `shift+tab` | Search, Wishlist, Browse, Transfers, Shares, Settings |
 | up/down or `j` / `k` | move through visible rows; up/down recalls search or filter history while editing |
 | `page up` / `page down` | move through visible rows by one screen |
 | left/right | collapse/expand a tree node; switch Settings sections; cycle an active choice |
@@ -43,9 +43,10 @@ For dynamically forwarded incoming ports, `--listen-port-file` watches the file'
 | `ctrl+left` / `ctrl+right` | move by word in any text field (`alt` also works) |
 | `ctrl+backspace` / `ctrl+delete` | delete by word (`ctrl+w`, `alt+backspace`, and `alt+delete` also work) |
 | `ctrl+a` / `ctrl+e`, `ctrl+u` / `ctrl+k` | jump to start/end; delete before/after the caret |
-| `/` | edit search, username, `name:path` share, or setting |
-| `enter` | open a saved Browse user; toggle a folder; download a Search/Browse file |
-| `f` | edit cached search filters |
+| `/` | edit search, add a wishlist item, enter a username or `name:path` share, or edit a setting |
+| `enter` | open wishlist or saved Browse results; toggle a folder; download a Search/Browse file |
+| `f` | edit cached Search filters or a wishlist item's stored filter |
+| `w` in Search | save or update the active query and filter as a wishlist item |
 | `tab` / `shift+tab` while filtering | complete fields, types, booleans, and comparison operators |
 | `c` | clear/restore search filters or clear the selected transfer subtree |
 | `space` | select a file or every loaded file below a user/folder node |
@@ -53,8 +54,8 @@ For dynamically forwarded incoming ports, `--listen-port-file` watches the file'
 | `i` in Search or Browse | show the selected file's properties and media metadata |
 | `ctrl+page up` / `ctrl+page down` in Search, Browse, or Transfers | switch result tabs or Downloads/Uploads |
 | `ctrl+w` in Search or Browse | close the active result tab |
-| `d` | download selected files; choose folder-only or recursive download on a folder; cancel a transfer subtree; or remove a share root |
-| `r` | refresh a user browse or saved-user list, retry a transfer subtree, or rescan shares |
+| `d` | download selected files; choose folder download mode; remove a wishlist/share item; or cancel a transfer subtree |
+| `r` | rerun a wishlist item, refresh a user browse or saved-user list, retry a transfer subtree, or rescan shares |
 | `o` | choose Online, Away, or Offline without quitting |
 | `s` | explicitly save the active remote share list, or save Settings |
 | `?` | keyboard guide |
@@ -79,6 +80,8 @@ in:"live|radio session" out:remix type:audio,!mp3 size:>=20MiB bitrate:>=320 dur
 `country` accepts case-insensitive, comma-separated two-letter codes. Positive codes are alternatives (`country:US,CA`); prefix exclusions with `!` (`country:!GB,!DE`). Unknown locations match exclusion-only filters but not positive codes.
 Search queries and complete filter expressions are kept as separate most-recent-first histories. Press up/down while editing to recall entries. The Settings → Search section independently enables each history, sets its retention limit (`0` means unlimited), and clears it immediately.
 
+Wishlist searches are daemon-owned and survive TUI and daemon restarts in `wishlist.json`. Press `w` in Search to save the active query and filter. The Wishlist workspace uses `/` to add, `f` to edit the selected item's stored filter, Enter to open its latest cached results, `r` to rerun it immediately, and `d` to remove it. Automatic searches rotate one item at a time, so each item repeats after roughly item count × effective interval; **Settings → Search → Wishlist interval** (`search.wishlist_interval_minutes`) controls the delay between requests (`0` is Off), clamped to the minimum interval advertised by the Soulseek server. `search.wishlist_notifications` controls bells and desktop notifications. With notifications enabled, changed nonempty filtered results mark the item unread, ring an attached TUI once, and invoke `notify-send` when available. The unread badge remains available when notifications are disabled or desktop delivery fails. Result payloads stay in daemon memory, so after a daemon restart an item must run again before it can be opened.
+
 Settings → Connection shows the public IPv4 address reported by the Soulseek server at login and controls **Connect on startup** (`soulseek.connect_on_startup`), **Network interface** (`soulseek.network_interface`), **NAT-PMP port forwarding** (`soulseek.nat_pmp_port_mapping`), and **UPnP port forwarding** (`soulseek.upnp_port_mapping`). The displayed address itself does not use a third-party lookup. Selecting **Listening port status** and pressing Enter explicitly sends one HTTPS request to the Soulseek website at `www.slsknet.org/porttest.php`; the daemon checks its current advertised TCP port, including a mapped or `--listen-port-file` port, and reports open, closed, or unknown after a maximum of five seconds. No check runs at startup or in the background. All three switches default to On and the forwarding protocols can be enabled independently. With both forwarding protocols enabled, oto tries NAT-PMP before UPnP. It maps only the incoming TCP listener through an IPv4 router, requests a 12-hour lease, and renews it every two hours. Discovery and mapping are best effort: failures do not prevent Soulseek login or its server-mediated firewall-piercing fallback.
 
 The network-interface picker cycles through **Automatic**, interfaces visible in the daemon's network namespace, and **Custom…** for a name that is currently unavailable. Saving a changed interface reconnects the Soulseek session. A selected interface binds every Soulseek TCP socket with Linux `SO_BINDTODEVICE`; binding is fail-closed, so a missing interface or permission error leaves the session reconnecting instead of allowing traffic over another route. Automatic NAT-PMP/UPnP is skipped without changing its saved switches while interface binding is active; use `--listen-port-file` for a VPN-assigned forwarded port.
@@ -92,13 +95,14 @@ Default locations follow XDG:
 - config: `${XDG_CONFIG_HOME:-~/.config}/oto/config.json`;
 - state and incomplete downloads: `${XDG_STATE_HOME:-~/.local/state}/oto/`;
 - search and filter history: `${XDG_STATE_HOME:-~/.local/state}/oto/history.json`;
+- wishlist definitions and unread metadata: `${XDG_STATE_HOME:-~/.local/state}/oto/wishlist.json`;
 - explicitly saved remote share lists: `${XDG_STATE_HOME:-~/.local/state}/oto/usershares/`;
 - socket: `${XDG_RUNTIME_DIR:-/tmp/oto-$UID}/oto/oto.sock`;
 - downloads: `~/Downloads/oto`.
 
 `OTO_USERNAME`, `OTO_PASSWORD`, `OTO_SERVER`, `OTO_LISTEN_ADDR`, `OTO_NETWORK_INTERFACE`, and `OTO_DOWNLOAD_DIR` override JSON values. The daemon never returns or logs the password.
 
-History enablement and limits are user choices in `config.json`; the mutable entries live in `history.json` so searches do not continually rewrite daemon configuration. Both files are private.
+History and wishlist settings are user choices in `config.json`; mutable history and wishlist entries live in private state files so searches do not continually rewrite daemon configuration.
 
 Incoming TCP port `50300` must be reachable for best peer connectivity. Automatic NAT-PMP/UPnP forwarding can make it reachable when supported by the IPv4 router and no network interface is selected; otherwise configure the router or use `--listen-port-file` for a VPN-assigned port. Direct connections are attempted first and server-mediated firewall piercing is used as fallback. The Soulseek protocol itself is not encrypted; do not treat usernames, searches, or transferred data as private.
 
@@ -162,11 +166,11 @@ This tracks user-visible Soulseek functionality and meaningful operational quali
 | Persistent search history | :white_check_mark: | :white_check_mark: |
 | Persistent filter history | :white_check_mark: | :white_check_mark: |
 | Configurable default result filters | :x: | :white_check_mark: |
-| Persistent wishlist searches | :x: | :white_check_mark: |
-| Periodically rerun wishlist searches | :x: | :white_check_mark: |
-| Store filters per wishlist item | :x: | :white_check_mark: |
-| Manually rerun a wishlist item | :x: | :white_check_mark: |
-| Notify when a wishlist finds results | :x: | :white_check_mark: |
+| Persistent wishlist searches | :white_check_mark: | :white_check_mark: |
+| Periodically rerun wishlist searches | :white_check_mark: | :white_check_mark: |
+| Store filters per wishlist item | :white_check_mark: | :white_check_mark: |
+| Manually rerun a wishlist item | :white_check_mark: | :white_check_mark: |
+| Notify when a wishlist finds results | :white_check_mark: | :white_check_mark: |
 | Disable responses to incoming searches | :x: | :white_check_mark: |
 | Configure minimum incoming search length | :x: | :white_check_mark: |
 | Configure maximum results returned to peers | :x: | :white_check_mark: |
