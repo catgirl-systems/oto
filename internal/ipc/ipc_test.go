@@ -374,3 +374,41 @@ func TestNetworkInterfacesSortedUniqueAndErrors(t *testing.T) {
 		t.Fatalf("interface lookup error = %v", err)
 	}
 }
+
+func TestDownloadPauseResumeAndHookConfigRoutes(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	cfg := config.Default()
+	cfg.Soulseek.Username, cfg.Soulseek.Password = "u", "p"
+	svc, err := daemon.New(cfg, filepath.Join(t.TempDir(), "downloads.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer svc.Close()
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	svc.SetConfigPath(configPath)
+	downloads, err := svc.QueueDownloads([]daemon.DownloadRequest{{Username: "peer", Files: []daemon.DownloadItem{{Filename: "Album/song", Size: 4}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := NewServer(svc, "").handler()
+	for _, step := range []struct{ action, state string }{{"pause", "paused"}, {"resume", "queued"}, {"cancel", "cancelled"}} {
+		w := httptest.NewRecorder()
+		r := httptest.NewRequest(http.MethodPost, "/v1/transfers/"+downloads[0].ID, strings.NewReader(`{"action":"`+step.action+`"}`))
+		handler.ServeHTTP(w, r)
+		if w.Code != http.StatusOK || svc.Transfers()[0].State != step.state {
+			t.Fatalf("%s: HTTP %d %s; transfers %+v", step.action, w.Code, w.Body, svc.Transfers())
+		}
+	}
+	cfg.Downloads.AfterFileCommand = `process-file "$1"`
+	cfg.Downloads.AfterFolderCommand = `process-folder "$1"`
+	body, _ := json.Marshal(cfg)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, httptest.NewRequest(http.MethodPut, "/v1/config", strings.NewReader(string(body))))
+	if w.Code != http.StatusOK || svc.Config().Downloads != cfg.Downloads {
+		t.Fatalf("hook config: HTTP %d %s", w.Code, w.Body)
+	}
+	loaded, err := config.Load(configPath)
+	if err != nil || loaded.Downloads != cfg.Downloads {
+		t.Fatalf("hook config not saved: %+v %v", loaded.Downloads, err)
+	}
+}

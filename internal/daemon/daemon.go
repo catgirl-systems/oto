@@ -119,7 +119,8 @@ type Download struct {
 	Offset      uint64    `json:"offset"`
 	DownloadDir string    `json:"download_dir,omitempty"`
 	Destination string    `json:"destination"`
-	State       string    `json:"state"` // queued, incomplete, completed, cancelled, failed
+	State       string    `json:"state"` // queued, incomplete, running, finalizing, paused, retrying, completed, cancelled, failed
+	RetryAt     time.Time `json:"retry_at,omitempty"`
 	Error       string    `json:"error,omitempty"`
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
@@ -186,6 +187,7 @@ type Service struct {
 	transfers              map[string]Transfer
 	downloadSlots          chan struct{}
 	downloadCancels        map[string]context.CancelFunc
+	downloadDone           map[string]chan struct{}
 	downloadPeers          map[string]chan struct{}
 	ctx                    context.Context
 	cancel                 context.CancelFunc
@@ -221,7 +223,7 @@ func New(cfg config.Config, path string) (*Service, error) {
 		return client.Search(ctx, query)
 	}, wishlistNotify: notifyWishlist, browses: make(map[string]loadedBrowse), browseProgress: make(map[string]trackedBrowse), fullBrowse: func(ctx context.Context, client *soulseek.Client, username string, progress func(received, total uint64)) ([]soulseek.ShareEntry, error) {
 		return client.BrowseUserWithProgress(ctx, username, "", progress)
-	}, transfers: make(map[string]Transfer), downloadSlots: make(chan struct{}, cfg.DownloadSlots), downloadCancels: make(map[string]context.CancelFunc), downloadPeers: make(map[string]chan struct{}), shareIndexBuilder: buildShareIndex, shareRescanDelay: DefaultShareRescanDelay, listenPortInterval: DefaultListenPortReconcileInterval, portMapOpen: func(ctx context.Context, port uint16, natPMP, upnp bool, changed func(uint16)) (portMapping, error) {
+	}, transfers: make(map[string]Transfer), downloadSlots: make(chan struct{}, cfg.DownloadSlots), downloadCancels: make(map[string]context.CancelFunc), downloadDone: make(map[string]chan struct{}), downloadPeers: make(map[string]chan struct{}), shareIndexBuilder: buildShareIndex, shareRescanDelay: DefaultShareRescanDelay, listenPortInterval: DefaultListenPortReconcileInterval, portMapOpen: func(ctx context.Context, port uint16, natPMP, upnp bool, changed func(uint16)) (portMapping, error) {
 		return portmap.Open(ctx, port, natPMP, upnp, changed)
 	}, portCheck: defaultListeningPortCheck, reconnectWake: make(chan struct{}, 1), status: StatusStopped, presence: PresenceOffline, journalPath: path}
 	s.shareIndexPath = filepath.Join(filepath.Dir(path), "shares.json")
@@ -437,6 +439,8 @@ func (s *Service) startSessionLocked() error {
 
 	s.resumeDownloads()
 	go s.reconnectLoop(ctx)
+	s.sessionWG.Add(1)
+	go s.retryDownloadsLoop(ctx)
 	return nil
 }
 
@@ -1025,58 +1029,88 @@ func (s *Service) Transfers() []Transfer {
 	return transferValues(s.transfers)
 }
 func (s *Service) TransferAction(id, action string) error {
+	// Serialize stop/resume with each other and session shutdown. A stopped
+	// worker must release its file before it can be resumed or cleared.
+	s.lifecycleMu.Lock()
+	defer s.lifecycleMu.Unlock()
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	if s.closed {
+		s.mu.Unlock()
+		return ErrClosed
+	}
 	for i := range s.journal.Downloads {
 		d := &s.journal.Downloads[i]
 		if d.ID != id {
 			continue
 		}
+		start := false
 		switch strings.ToLower(action) {
-		case "cancel":
+		case "pause", "cancel":
+			if d.State == "finalizing" {
+				s.mu.Unlock()
+				return errors.New("daemon: download is finishing")
+			}
 			if d.State == "completed" {
+				s.mu.Unlock()
+				if strings.EqualFold(action, "pause") {
+					return nil
+				}
 				return errors.New("daemon: download already completed")
 			}
-			d.State = "cancelled"
-			if cancel := s.downloadCancels[d.ID]; cancel != nil {
+			d.State = "paused"
+			if strings.EqualFold(action, "cancel") {
+				d.State = "cancelled"
+			}
+			d.Error, d.RetryAt = "", time.Time{}
+			if cancel := s.downloadCancels[id]; cancel != nil {
 				cancel()
 			}
-			d.UpdatedAt = time.Now().UTC()
-			if tr := s.transfers[d.ID]; tr.ID != "" {
-				tr.State, tr.Error = d.State, d.Error
-				s.transfers[d.ID] = tr
-			}
-			return s.saveJournalLocked()
 		case "retry", "resume":
-			if d.State == "cancelled" || d.State == "failed" {
-				d.State = "queued"
-				d.Error = ""
-				d.UpdatedAt = time.Now().UTC()
-				if tr := s.transfers[d.ID]; tr.ID != "" {
-					tr.State, tr.Error = d.State, d.Error
-					s.transfers[d.ID] = tr
-				}
-				err := s.saveJournalLocked()
-				if err == nil {
-					go s.startDownload(d.ID)
-				}
-				return err
+			if s.downloadCancels[id] != nil {
+				s.mu.Unlock()
+				return nil
 			}
-			return nil
+			if d.State != "paused" && d.State != "cancelled" && d.State != "failed" && d.State != "retrying" {
+				s.mu.Unlock()
+				return nil
+			}
+			d.State, d.Error, d.RetryAt = "queued", "", time.Time{}
+			start = true
 		case "clear":
-			if d.State == "running" || d.State == "queued" || d.State == "incomplete" {
+			if d.State == "running" || d.State == "finalizing" || d.State == "queued" || d.State == "incomplete" || s.downloadCancels[id] != nil {
+				s.mu.Unlock()
 				return errors.New("daemon: active download cannot be cleared")
 			}
 			if err := os.Remove(incompletePath(id)); err != nil && !errors.Is(err, os.ErrNotExist) {
+				s.mu.Unlock()
 				return err
 			}
 			s.journal.Downloads = append(s.journal.Downloads[:i], s.journal.Downloads[i+1:]...)
 			delete(s.transfers, id)
-			return s.saveJournalLocked()
+			err := s.saveJournalLocked()
+			s.mu.Unlock()
+			return err
 		default:
+			s.mu.Unlock()
 			return fmt.Errorf("daemon: unsupported transfer action %q", action)
 		}
+		d.UpdatedAt = time.Now().UTC()
+		if tr := s.transfers[id]; tr.ID != "" {
+			tr.State, tr.Error, tr.Queue = d.State, d.Error, 0
+			s.transfers[id] = tr
+		}
+		done := s.downloadDone[id]
+		err := s.saveJournalLocked()
+		s.mu.Unlock()
+		if done != nil {
+			<-done
+		}
+		if start && err == nil {
+			s.startDownload(id)
+		}
+		return err
 	}
+	defer s.mu.Unlock()
 	if transfer, ok := s.transfers[id]; ok && transfer.Direction == "upload" {
 		if strings.ToLower(action) == "clear" && (transfer.State == "completed" || transfer.State == "failed") {
 			delete(s.transfers, id)
