@@ -168,6 +168,7 @@ type model struct {
 	setup, help, confirm, editing, loading bool
 	interfaceChoosing                      bool
 	details, folderMenu, statusMenu        bool
+	folderMenuEditing                      bool
 	loadingMore, filterEditing             bool
 	passwordForm, passwordChanging         bool
 	width, height                          int
@@ -179,6 +180,7 @@ type model struct {
 	input, query, browseUser, searchID     string
 	searchFilter, searchFilterUndo         string
 	folderMenuUser, folderMenuPath         string
+	folderMenuDownloadDir                  string
 	folderMenuSubfolders                   []string
 	folderMenuFiles                        [2][]download
 	folderMenuChoice, inputCursor          int

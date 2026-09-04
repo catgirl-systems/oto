@@ -211,7 +211,17 @@ func (m model) folderMenuView() string {
 		}
 		b.WriteString(marker + option + "\n")
 	}
-	b.WriteString("\n" + muted("↑↓ / j k choose  •  enter download  •  esc cancel"))
+	b.WriteString("\n" + strong("Download root") + "\n  ")
+	if m.folderMenuEditing {
+		b.WriteString(renderInput("", m.folderMenuDownloadDir, m.inputCursor, false, lipgloss.NewStyle()))
+	} else {
+		b.WriteString(m.folderMenuDownloadDir)
+	}
+	if m.folderMenuEditing {
+		b.WriteString("\n\n" + muted("←→ move caret  •  enter / esc finish editing"))
+	} else {
+		b.WriteString("\n\n" + muted("↑↓ / j k choose  •  / edit path  •  enter download  •  esc cancel"))
+	}
 	cardWidth := max(38, min(64, m.width-4))
 	card := panelStyle().Width(cardWidth).Padding(1, 2).Render(b.String())
 	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, card)
@@ -267,7 +277,7 @@ func (m model) helpView() string {
 			{"w (search)", "save the active query and filter to Wishlist"},
 			{"/ f r d (wishlist)", "add, edit filter, rerun, or remove a wishlist item"},
 			{"space", "select item or loaded folder contents"},
-			{"d", "download / choose folder mode"},
+			{"d", "download / choose folder mode and destination"},
 			{"r", "refresh browse / retry transfer / rescan shares"},
 			{"b (search)", "browse the selected user's folder"},
 			{"s", "save Browse list or Settings"},

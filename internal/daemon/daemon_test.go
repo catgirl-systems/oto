@@ -92,7 +92,7 @@ func TestFolderDownloadItems(t *testing.T) {
 	if err != nil || len(recursive) != 2 || recursive[1].Filename != "Music/Album/Disc/song.flac" {
 		t.Fatalf("recursive folder items: %+v %v", recursive, err)
 	}
-	remaining := withoutExistingFolderDownloads(append([]DownloadItem(nil), recursive...), []Download{{Username: "peer", Filename: `Music\Album\cover.jpg`}}, "peer")
+	remaining := withoutExistingFolderDownloads(append([]DownloadItem(nil), recursive...), []Download{{Username: "peer", Filename: `Music\Album\cover.jpg`}}, "peer", "/downloads", "/downloads")
 	if len(remaining) != 1 || remaining[0].Filename != "Music/Album/Disc/song.flac" {
 		t.Fatalf("existing folder download was not skipped: %+v", remaining)
 	}
@@ -111,6 +111,11 @@ func TestFolderDownloadItems(t *testing.T) {
 	queued, err := s.QueueDownloads([]DownloadRequest{{Username: "peer", Files: recursive}})
 	if err != nil || len(queued) != 2 || queued[0].Destination != "peer/Music/Album/cover.jpg" || queued[1].Destination != "peer/Music/Album/Disc/song.flac" {
 		t.Fatalf("folder destinations: %+v %v", queued, err)
+	}
+	customRoot := t.TempDir()
+	custom, err := s.QueueFolder(context.Background(), FolderDownloadRequest{Username: "peer", DownloadDir: customRoot, Folder: `Music\Album`, Files: []DownloadItem{{Filename: `Music\Album\cover.jpg`, Size: 3}}})
+	if err != nil || len(custom) != 1 || custom[0].DownloadDir != customRoot {
+		t.Fatalf("custom folder destination: %+v %v", custom, err)
 	}
 }
 

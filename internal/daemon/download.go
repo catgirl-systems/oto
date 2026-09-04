@@ -106,9 +106,12 @@ func (s *Service) runDownload(id string) {
 	case <-ctx.Done():
 		return
 	}
-	s.mu.RLock()
-	downloadRoot := s.cfg.DownloadDir
-	s.mu.RUnlock()
+	downloadRoot := download.DownloadDir
+	if downloadRoot == "" {
+		s.mu.RLock()
+		downloadRoot = s.cfg.DownloadDir
+		s.mu.RUnlock()
+	}
 	partPath := incompletePath(id)
 	if err := os.MkdirAll(filepath.Dir(partPath), 0700); err != nil {
 		s.finishDownload(id, "failed", 0, err)

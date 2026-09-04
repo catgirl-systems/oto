@@ -117,6 +117,7 @@ type Download struct {
 	Filename    string    `json:"filename"`
 	Size        uint64    `json:"size"`
 	Offset      uint64    `json:"offset"`
+	DownloadDir string    `json:"download_dir,omitempty"`
 	Destination string    `json:"destination"`
 	State       string    `json:"state"` // queued, incomplete, completed, cancelled, failed
 	Error       string    `json:"error,omitempty"`
@@ -134,16 +135,18 @@ type DownloadItem struct {
 	Destination string `json:"destination,omitempty"`
 }
 type DownloadRequest struct {
-	Username string         `json:"username"`
-	Files    []DownloadItem `json:"files"`
+	Username    string         `json:"username"`
+	DownloadDir string         `json:"download_dir,omitempty"`
+	Files       []DownloadItem `json:"files"`
 }
 
 type FolderDownloadRequest struct {
-	Username   string         `json:"username"`
-	Folder     string         `json:"folder"`
-	Subfolders []string       `json:"subfolders,omitempty"`
-	Files      []DownloadItem `json:"files,omitempty"`
-	Recursive  bool           `json:"recursive"`
+	Username    string         `json:"username"`
+	DownloadDir string         `json:"download_dir,omitempty"`
+	Folder      string         `json:"folder"`
+	Subfolders  []string       `json:"subfolders,omitempty"`
+	Files       []DownloadItem `json:"files,omitempty"`
+	Recursive   bool           `json:"recursive"`
 }
 
 type portMapping interface {
@@ -830,10 +833,14 @@ func folderDownloadItems(req FolderDownloadRequest, entries []soulseek.ShareEntr
 	return items, nil
 }
 
-func withoutExistingFolderDownloads(items []DownloadItem, downloads []Download, username string) []DownloadItem {
+func withoutExistingFolderDownloads(items []DownloadItem, downloads []Download, username, downloadDir, defaultDownloadDir string) []DownloadItem {
 	existing := make(map[string]bool)
 	for _, download := range downloads {
-		if strings.EqualFold(download.Username, username) {
+		root := download.DownloadDir
+		if root == "" {
+			root = defaultDownloadDir
+		}
+		if strings.EqualFold(download.Username, username) && filepath.Clean(root) == filepath.Clean(downloadDir) {
 			if name, err := soulseek.NormalizePath(download.Filename); err == nil {
 				existing[name] = true
 			}
@@ -913,12 +920,16 @@ func (s *Service) QueueFolder(ctx context.Context, req FolderDownloadRequest) ([
 	}
 	sort.Slice(items, func(i, j int) bool { return items[i].Filename < items[j].Filename })
 	s.mu.RLock()
-	items = withoutExistingFolderDownloads(items, s.journal.Downloads, req.Username)
+	downloadDir := strings.TrimSpace(req.DownloadDir)
+	if downloadDir == "" {
+		downloadDir = s.cfg.DownloadDir
+	}
+	items = withoutExistingFolderDownloads(items, s.journal.Downloads, req.Username, downloadDir, s.cfg.DownloadDir)
 	s.mu.RUnlock()
 	if len(items) == 0 {
 		return nil, nil
 	}
-	return s.QueueDownloads([]DownloadRequest{{Username: req.Username, Files: items}})
+	return s.QueueDownloads([]DownloadRequest{{Username: req.Username, DownloadDir: req.DownloadDir, Files: items}})
 }
 
 func (s *Service) QueueDownloads(reqs []DownloadRequest) ([]Download, error) {
@@ -933,6 +944,10 @@ func (s *Service) QueueDownloads(reqs []DownloadRequest) ([]Download, error) {
 		if strings.TrimSpace(req.Username) == "" {
 			s.mu.Unlock()
 			return nil, errors.New("daemon: download username is required")
+		}
+		downloadDir := strings.TrimSpace(req.DownloadDir)
+		if downloadDir == "" {
+			downloadDir = s.cfg.DownloadDir
 		}
 		for _, item := range req.Files {
 			safeName, err := soulseek.NormalizePath(item.Filename)
@@ -949,7 +964,7 @@ func (s *Service) QueueDownloads(reqs []DownloadRequest) ([]Download, error) {
 			if dest == "" {
 				dest = safeSegment(req.Username) + "/" + safeName
 			}
-			if _, err = soulseek.SafeJoin(s.cfg.DownloadDir, dest); err != nil {
+			if _, err = soulseek.SafeJoin(downloadDir, dest); err != nil {
 				s.mu.Unlock()
 				return nil, err
 			}
@@ -958,7 +973,7 @@ func (s *Service) QueueDownloads(reqs []DownloadRequest) ([]Download, error) {
 				state = "incomplete"
 			}
 			s.seq++
-			d := Download{ID: fmt.Sprintf("d-%d", s.seq), Username: req.Username, Filename: name, Size: item.Size, Offset: item.Offset, Destination: dest, State: state, CreatedAt: now, UpdatedAt: now}
+			d := Download{ID: fmt.Sprintf("d-%d", s.seq), Username: req.Username, Filename: name, Size: item.Size, Offset: item.Offset, DownloadDir: downloadDir, Destination: dest, State: state, CreatedAt: now, UpdatedAt: now}
 			s.journal.Downloads = append(s.journal.Downloads, d)
 			s.transfers[d.ID] = Transfer{ID: d.ID, Username: d.Username, Filename: d.Filename, Direction: "download", State: d.State, Done: d.Offset, Total: d.Size}
 			out = append(out, d)

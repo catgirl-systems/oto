@@ -54,7 +54,7 @@ For dynamically forwarded incoming ports, `--listen-port-file` watches the file'
 | `i` in Search or Browse | show the selected file's properties and media metadata |
 | `ctrl+page up` / `ctrl+page down` in Search, Browse, or Transfers | switch result tabs or Downloads/Uploads |
 | `ctrl+w` in Search or Browse | close the active result tab |
-| `d` | download selected files; choose folder download mode; remove a wishlist/share item; or cancel a transfer subtree |
+| `d` | download selected files; choose a folder download mode and destination; remove a wishlist/share item; or cancel a transfer subtree |
 | `r` | rerun a wishlist item, refresh a user browse or saved-user list, retry a transfer subtree, or rescan shares |
 | `o` | choose Online, Away, or Offline without quitting |
 | `s` | explicitly save the active remote share list, or save Settings |
@@ -63,7 +63,7 @@ For dynamically forwarded incoming ports, `--listen-port-file` watches the file'
 
 Set `NO_COLOR=1` to suppress terminal styling.
 
-Search groups results as user → folders → files; Browse shows remote folders; Transfers groups each direction as user → folders → files; Shares lazily shows the daemon's scanned public-share index. Expansion and selection are session-local. Selection-based Search/Browse actions include only currently loaded files; using `d` on a folder can request that complete remote folder recursively without fetching the user's full share list.
+Search groups results as user → folders → files; Browse shows remote folders; Transfers groups each direction as user → folders → files; Shares lazily shows the daemon's scanned public-share index. Expansion and selection are session-local. Selection-based Search/Browse actions include only currently loaded files; using `d` on a folder can request that complete remote folder recursively without fetching the user's full share list. In the folder download dialog, press `/` to override the configured download root for that folder; the user and remote folder hierarchy is preserved below it.
 
 Pending network searches and remote share-list requests temporarily replace the bottom keyboard hints with an activity bar. Share-list requests switch to byte and percentage progress once the peer's response size is known; the normal footer returns immediately when the operation finishes.
 
@@ -189,7 +189,7 @@ This tracks user-visible Soulseek functionality and meaningful operational quali
 | Download selected files | :white_check_mark: | :white_check_mark: |
 | Download a loaded folder subtree | :white_check_mark: | :white_check_mark: |
 | Request and download a complete remote folder recursively | :white_check_mark: | :white_check_mark: |
-| Choose a different download destination interactively | :x: | :white_check_mark: |
+| Choose a different download destination interactively | :white_check_mark: | :white_check_mark: |
 | Save a remote share list to disk | :white_check_mark: | :white_check_mark: |
 | Reopen a saved share list, including while offline | :white_check_mark: | :white_check_mark: |
 | Show progress while retrieving large share lists | :white_check_mark: | :white_check_mark: |

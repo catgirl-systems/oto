@@ -1279,12 +1279,18 @@ func TestFolderDownloadMenu(t *testing.T) {
 			break
 		}
 	}
-	m := model{workspace: workspaceSearch, results: results, searchTree: tree, cursor: folderCursor, selected: map[int]bool{}, width: 80, height: 24}
+	m := model{workspace: workspaceSearch, cfg: config.Config{DownloadDir: "/downloads"}, results: results, searchTree: tree, cursor: folderCursor, selected: map[int]bool{}, width: 80, height: 24}
 	if cmd := m.key(key("d")); cmd != nil || !m.folderMenu || m.folderMenuUser != "peer" || m.folderMenuPath != `Music\Album` {
 		t.Fatalf("folder menu did not open: %+v", m)
 	}
-	if !strings.Contains(m.View().Content, "Download folder + subfolders") {
+	if view := m.View().Content; !strings.Contains(view, "Download folder + subfolders") || !strings.Contains(view, "/downloads") {
 		t.Fatal("folder menu was not rendered")
+	}
+	m.folderMenuKey(key("/"))
+	m.folderMenuKey(key("x"))
+	m.folderMenuKey(key("enter"))
+	if req := m.folderMenuRequest(); m.folderMenuEditing || req.DownloadDir != "/downloadsx" {
+		t.Fatalf("download path was not edited: %+v", req)
 	}
 	m.folderMenuKey(tea.KeyPressMsg(tea.Key{Code: tea.KeyDown}))
 	if req := m.folderMenuRequest(); !req.Recursive || len(req.Subfolders) != 1 || req.Subfolders[0] != `Music\Album\Disc` || len(req.Files) != 2 {
@@ -1316,7 +1322,7 @@ func TestFolderDownloadMenu(t *testing.T) {
 
 	browseEntries := []entry{{name: `Music\Album`, directory: true}, {name: `Music\Album\song.flac`, size: 5}}
 	browseTree, _ := buildBrowseTree(browseEntries, treeState{}, 0)
-	m = model{workspace: workspaceBrowse, browseUser: "peer", entries: browseEntries, browseTree: browseTree, selected: map[int]bool{}}
+	m = model{workspace: workspaceBrowse, cfg: config.Config{DownloadDir: "/downloads"}, browseUser: "peer", entries: browseEntries, browseTree: browseTree, selected: map[int]bool{}}
 	m.cursor = 0
 	if cmd := m.key(key("d")); cmd != nil || !m.folderMenu || m.folderMenuUser != "peer" {
 		t.Fatalf("browse folder menu did not open: %+v", m)

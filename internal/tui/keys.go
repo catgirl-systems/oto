@@ -448,15 +448,16 @@ func (m *model) openFolderMenu() bool {
 		}
 	}
 	visit(index)
-	m.folderMenu, m.folderMenuChoice = true, 0
+	m.folderMenu, m.folderMenuEditing, m.folderMenuChoice = true, false, 0
 	m.folderMenuUser, m.folderMenuPath = user, normalizeBrowsePath(node.path)
+	m.folderMenuDownloadDir = m.cfg.DownloadDir
 	m.folderMenuSubfolders, m.folderMenuFiles = subfolders, [2][]download{directFiles, allFiles}
 	return true
 }
 
 func (m *model) folderMenuRequest() daemon.FolderDownloadRequest {
 	recursive := m.folderMenuChoice == 1
-	req := daemon.FolderDownloadRequest{Username: m.folderMenuUser, Folder: m.folderMenuPath, Recursive: recursive}
+	req := daemon.FolderDownloadRequest{Username: m.folderMenuUser, DownloadDir: strings.TrimSpace(m.folderMenuDownloadDir), Folder: m.folderMenuPath, Recursive: recursive}
 	if recursive {
 		req.Subfolders = append([]string(nil), m.folderMenuSubfolders...)
 	}
@@ -467,6 +468,15 @@ func (m *model) folderMenuRequest() daemon.FolderDownloadRequest {
 }
 
 func (m *model) folderMenuKey(k tea.KeyPressMsg) tea.Cmd {
+	if m.folderMenuEditing {
+		switch k.String() {
+		case "esc", "enter":
+			m.folderMenuEditing = false
+			return nil
+		}
+		m.folderMenuDownloadDir, m.inputCursor, _ = editText(m.folderMenuDownloadDir, m.inputCursor, k)
+		return nil
+	}
 	switch k.String() {
 	case "esc":
 		m.folderMenu = false
@@ -474,6 +484,9 @@ func (m *model) folderMenuKey(k tea.KeyPressMsg) tea.Cmd {
 		m.folderMenuChoice = max(0, m.folderMenuChoice-1)
 	case "down", "j":
 		m.folderMenuChoice = min(1, m.folderMenuChoice+1)
+	case "/":
+		m.folderMenuEditing = true
+		m.inputCursor = len([]rune(m.folderMenuDownloadDir))
 	case "enter":
 		req := m.folderMenuRequest()
 		m.folderMenu = false
