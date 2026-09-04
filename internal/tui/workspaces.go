@@ -8,6 +8,7 @@ import (
 	"unicode/utf8"
 
 	"charm.land/lipgloss/v2"
+	"github.com/catgirl-systems/oto/internal/daemon"
 )
 
 func (m model) renderSearch(width, height int) string {
@@ -503,11 +504,26 @@ func (m model) settingFields() []settingField {
 		if publicIP == "" {
 			publicIP = "Unknown"
 		}
+		portStatus := "Unavailable while offline"
+		if m.status.status == daemon.StatusConnected && m.status.publicPort != 0 {
+			portStatus = "Press Enter"
+			if m.portChecking {
+				portStatus = fmt.Sprintf("Checking %d/tcp…", m.portCheckPort)
+			} else if m.portCheckPort == m.status.publicPort {
+				switch m.portCheckStatus {
+				case "unknown":
+					portStatus = "Status unknown"
+				case "open", "closed":
+					portStatus = fmt.Sprintf("%d/tcp %s", m.status.publicPort, m.portCheckStatus)
+				}
+			}
+		}
 		return []settingField{
 			{settingServer, "Server", m.cfg.Soulseek.Server, settingText},
 			{settingListenAddress, "Listen address", m.cfg.Soulseek.ListenAddr, settingText},
 			{settingNetworkInterface, "Network interface", m.networkInterfaceValue(), settingChoice},
 			{settingPublicIPAddress, "Public IP address", publicIP, settingInfo},
+			{settingListeningPortStatus, "Listening port status", portStatus, settingAction},
 			{settingConnectOnStartup, "Connect on startup", strconv.FormatBool(m.cfg.Soulseek.ConnectOnStartup), settingBool},
 			{settingNATPMPPortMapping, "NAT-PMP port forwarding", strconv.FormatBool(m.cfg.Soulseek.NATPMPPortMapping), settingBool},
 			{settingUPnPPortMapping, "UPnP port forwarding", strconv.FormatBool(m.cfg.Soulseek.UPnPPortMapping), settingBool},

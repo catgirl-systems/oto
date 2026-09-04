@@ -576,6 +576,8 @@ func (m model) footerHints() []string {
 			switch field.id {
 			case settingChangePassword:
 				action = "change password"
+			case settingListeningPortStatus:
+				action = "check port"
 			case settingClearSearchHistory:
 				action = "clear searches"
 			case settingClearFilterHistory:

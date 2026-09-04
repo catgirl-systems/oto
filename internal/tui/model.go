@@ -15,6 +15,7 @@ type snapshot struct {
 	status              daemon.Status
 	presence            daemon.Presence
 	user, publicIP, err string
+	publicPort          uint16
 }
 type result struct {
 	user, path, extension, country string
@@ -133,6 +134,7 @@ const (
 	settingListenAddress
 	settingNetworkInterface
 	settingPublicIPAddress
+	settingListeningPortStatus
 	settingConnectOnStartup
 	settingNATPMPPortMapping
 	settingUPnPPortMapping
@@ -183,6 +185,9 @@ type model struct {
 	setupVals                              [6]string
 	passwordVals                           [2]string
 	setupErr, passwordUser, passwordErr    string
+	portCheckStatus                        string
+	portCheckPort                          uint16
+	portChecking                           bool
 	status                                 snapshot
 	results                                []result
 	searchTabs                             []searchTab

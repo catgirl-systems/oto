@@ -157,6 +157,16 @@ func (m *model) key(k tea.KeyPressMsg) tea.Cmd {
 			case settingNetworkInterface:
 				m.interfaceChoosing = true
 				m.interfaceChoice = m.configuredInterfaceChoice()
+			case settingListeningPortStatus:
+				if m.status.status != daemon.StatusConnected || m.status.publicPort == 0 {
+					m.setNotice("Connect to check listening port")
+					break
+				}
+				if m.portChecking {
+					break
+				}
+				m.portCheckPort, m.portCheckStatus, m.portChecking, m.err = m.status.publicPort, "", true, ""
+				return m.checkListeningPort()
 			case settingConnectOnStartup:
 				m.cfg.Soulseek.ConnectOnStartup = !m.cfg.Soulseek.ConnectOnStartup
 			case settingNATPMPPortMapping:

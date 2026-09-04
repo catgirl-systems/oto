@@ -50,14 +50,15 @@ const (
 const searchPageSize = 100
 
 type Snapshot struct {
-	Status    Status            `json:"status"`
-	Presence  Presence          `json:"presence"`
-	Error     string            `json:"error,omitempty"`
-	PublicIP  string            `json:"public_ip,omitempty"`
-	Config    config.SafeConfig `json:"config"`
-	Shares    []config.Share    `json:"shares"`
-	Downloads []Download        `json:"downloads"`
-	Transfers []Transfer        `json:"transfers"`
+	Status     Status            `json:"status"`
+	Presence   Presence          `json:"presence"`
+	Error      string            `json:"error,omitempty"`
+	PublicIP   string            `json:"public_ip,omitempty"`
+	PublicPort uint16            `json:"public_port,omitempty"`
+	Config     config.SafeConfig `json:"config"`
+	Shares     []config.Share    `json:"shares"`
+	Downloads  []Download        `json:"downloads"`
+	Transfers  []Transfer        `json:"transfers"`
 }
 
 type PasswordChangeResult struct {
@@ -162,6 +163,7 @@ type Service struct {
 	client               *soulseek.Client
 	mapping              portMapping
 	portMapOpen          portMappingOpener
+	portCheck            listeningPortChecker
 	journal              Journal
 	searches             map[string]Search
 	browses              map[string]loadedBrowse
@@ -205,7 +207,7 @@ func New(cfg config.Config, path string) (*Service, error) {
 		return client.BrowseUserWithProgress(ctx, username, "", progress)
 	}, transfers: make(map[string]Transfer), downloadSlots: make(chan struct{}, cfg.DownloadSlots), downloadCancels: make(map[string]context.CancelFunc), downloadPeers: make(map[string]chan struct{}), shareIndexBuilder: buildShareIndex, shareRescanDelay: DefaultShareRescanDelay, listenPortInterval: DefaultListenPortReconcileInterval, portMapOpen: func(ctx context.Context, port uint16, natPMP, upnp bool, changed func(uint16)) (portMapping, error) {
 		return portmap.Open(ctx, port, natPMP, upnp, changed)
-	}, reconnectWake: make(chan struct{}, 1), status: StatusStopped, presence: PresenceOffline, journalPath: path}
+	}, portCheck: defaultListeningPortCheck, reconnectWake: make(chan struct{}, 1), status: StatusStopped, presence: PresenceOffline, journalPath: path}
 	s.shareIndexPath = filepath.Join(filepath.Dir(path), "shares.json")
 	s.remoteSharesDir = filepath.Join(filepath.Dir(path), "usershares")
 	if b, err := os.ReadFile(path); err == nil {
@@ -246,11 +248,11 @@ func (s *Service) Config() config.SafeConfig {
 func (s *Service) Snapshot() Snapshot {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	publicIP := ""
+	publicIP, publicPort := "", uint16(0)
 	if s.status == StatusConnected && s.client != nil {
-		publicIP = s.client.PublicIP()
+		publicIP, publicPort = s.client.PublicIP(), s.client.PublicPort()
 	}
-	return Snapshot{Status: s.status, Presence: s.presence, Error: s.lastErr, PublicIP: publicIP, Config: s.cfg.Redacted(), Shares: append([]config.Share(nil), s.cfg.Shares...), Downloads: append([]Download(nil), s.journal.Downloads...), Transfers: transferValues(s.transfers)}
+	return Snapshot{Status: s.status, Presence: s.presence, Error: s.lastErr, PublicIP: publicIP, PublicPort: publicPort, Config: s.cfg.Redacted(), Shares: append([]config.Share(nil), s.cfg.Shares...), Downloads: append([]Download(nil), s.journal.Downloads...), Transfers: transferValues(s.transfers)}
 }
 func transferValues(m map[string]Transfer) []Transfer {
 	out := make([]Transfer, 0, len(m))

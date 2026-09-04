@@ -192,7 +192,7 @@ func TestContextualFooterHints(t *testing.T) {
 		{"share root", model{workspace: workspaceShares, shareTree: tree(treeShareRoot)}, []string{"enter expand", "/ add", "r rescan", "d remove"}, nil},
 		{"share folder", model{workspace: workspaceShares, shareTree: tree(treeFolder)}, []string{"enter expand", "/ add", "r rescan"}, []string{"d remove"}},
 		{"setting text", settings(settingsAccount, 0), []string{"enter edit", "s save"}, nil},
-		{"setting bool", settings(settingsConnection, 4), []string{"enter toggle", "s save"}, nil},
+		{"setting bool", settings(settingsConnection, 5), []string{"enter toggle", "s save"}, nil},
 		{"setting action", settings(settingsAccount, 1), []string{"enter change password", "s save"}, nil},
 		{"setting clear", settings(settingsSearch, 4), []string{"enter clear searches", "s save"}, nil},
 	}
@@ -496,7 +496,7 @@ func TestSettingsSidebarEditsAccountWithoutLeakingPassword(t *testing.T) {
 	if view := m.View().Content; m.settingsSection != settingsConnection || !strings.Contains(view, "Listen address") || !strings.Contains(view, "Network interface") || !strings.Contains(view, "Public IP address") || !strings.Contains(view, "Unknown") || !strings.Contains(view, "Connect on startup") || !strings.Contains(view, "NAT-PMP port forwarding") || !strings.Contains(view, "UPnP port forwarding") {
 		t.Fatal("settings sidebar did not navigate to connection settings")
 	}
-	m.status.publicIP = "1.2.3.4"
+	m.status = snapshot{status: daemon.StatusConnected, publicIP: "1.2.3.4", publicPort: 61000}
 	m.cursor = 3
 	view = m.View().Content
 	for _, want := range []string{
@@ -504,6 +504,7 @@ func TestSettingsSidebarEditsAccountWithoutLeakingPassword(t *testing.T) {
 		"Listen address          0.0.0.0:50300",
 		"Network interface       ‹ Automatic ›",
 		"Public IP address       1.2.3.4",
+		"Listening port status   Press Enter",
 		"Connect on startup      On",
 		"NAT-PMP port forwarding On",
 		"UPnP port forwarding    On",
@@ -516,17 +517,17 @@ func TestSettingsSidebarEditsAccountWithoutLeakingPassword(t *testing.T) {
 	if m.editing || strings.Contains(strings.Join(m.footerHints(), " | "), "enter") {
 		t.Fatal("public IP address row was editable")
 	}
-	m.cursor = 4
+	m.cursor = 5
 	m.key(key("enter"))
 	if m.cfg.Soulseek.ConnectOnStartup {
 		t.Fatal("connect-on-startup setting was not staged")
 	}
-	m.cursor = 5
+	m.cursor = 6
 	m.key(key("enter"))
 	if m.editing || m.cfg.Soulseek.NATPMPPortMapping || !m.cfg.Soulseek.UPnPPortMapping {
 		t.Fatal("NAT-PMP setting did not toggle independently")
 	}
-	m.cursor = 6
+	m.cursor = 7
 	m.key(key("enter"))
 	if m.editing || m.cfg.Soulseek.NATPMPPortMapping || m.cfg.Soulseek.UPnPPortMapping {
 		t.Fatal("UPnP setting did not toggle independently")
@@ -543,6 +544,49 @@ func TestSettingsSidebarEditsAccountWithoutLeakingPassword(t *testing.T) {
 	m.key(tea.KeyPressMsg(tea.Key{Code: tea.KeyTab, Mod: tea.ModShift}))
 	if m.workspace != workspaceSettings {
 		t.Fatal("search tab did not wrap backward to settings")
+	}
+}
+
+func TestListeningPortCheck(t *testing.T) {
+	t.Setenv("NO_COLOR", "1")
+	m := newModel(context.Background(), nil, "", false, config.Default())
+	m.width, m.height, m.workspace, m.settingsSection, m.cursor = 80, 16, workspaceSettings, settingsConnection, 4
+
+	if cmd := m.key(key("enter")); cmd != nil || !strings.Contains(m.notice, "Connect") {
+		t.Fatalf("offline check command=%v notice=%q", cmd, m.notice)
+	}
+	m.status = snapshot{status: daemon.StatusConnected, publicPort: 61000}
+	if !strings.Contains(m.View().Content, "Listening port status   Press Enter") || !strings.Contains(strings.Join(m.footerHints(), " | "), "enter check port") {
+		t.Fatal("connected port check action missing")
+	}
+	if cmd := m.key(key("enter")); cmd == nil || !m.portChecking || m.portCheckPort != 61000 {
+		t.Fatal("port check did not start")
+	}
+	if cmd := m.key(key("enter")); cmd != nil {
+		t.Fatal("duplicate port check was not suppressed")
+	}
+	if !strings.Contains(m.View().Content, "Checking 61000/tcp…") {
+		t.Fatal("checking state missing")
+	}
+
+	updated, _ := m.Update(portCheckMsg{port: 61000, result: daemon.ListeningPortCheck{Port: 61000, Open: true}})
+	m = updated.(model)
+	if !strings.Contains(m.View().Content, "61000/tcp open") {
+		t.Fatal("open result missing")
+	}
+	updated, _ = m.Update(portCheckMsg{port: 61000, result: daemon.ListeningPortCheck{Port: 61000}})
+	m = updated.(model)
+	if !strings.Contains(m.View().Content, "61000/tcp closed") {
+		t.Fatal("closed result missing")
+	}
+	updated, _ = m.Update(portCheckMsg{port: 61000, err: errors.New("checker unavailable")})
+	m = updated.(model)
+	if !strings.Contains(m.View().Content, "Status unknown") || !strings.Contains(m.err, "checker unavailable") {
+		t.Fatal("unknown result or error missing")
+	}
+	m.status.publicPort = 61001
+	if !strings.Contains(m.View().Content, "Listening port status   Press Enter") || strings.Contains(m.View().Content, "Status unknown") {
+		t.Fatal("stale port result remained visible")
 	}
 }
 

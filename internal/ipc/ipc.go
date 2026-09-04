@@ -100,6 +100,7 @@ func (s *Server) handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/state", s.state)
 	mux.HandleFunc("GET /v1/network/interfaces", s.networkInterfaces)
+	mux.HandleFunc("POST /v1/network/port-check", s.checkListeningPort)
 	mux.HandleFunc("PUT /v1/presence", s.presence)
 	mux.HandleFunc("PUT /v1/account/password", s.accountPassword)
 	mux.HandleFunc("GET /v1/searches", s.searches)
@@ -143,6 +144,22 @@ func decode(w http.ResponseWriter, r *http.Request, v any) error {
 }
 func (s *Server) state(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, 200, s.service.Snapshot())
+}
+
+func portCheckStatus(err error) int {
+	if errors.Is(err, daemon.ErrNotStarted) || errors.Is(err, daemon.ErrListenPortUnavailable) {
+		return http.StatusServiceUnavailable
+	}
+	return http.StatusBadGateway
+}
+
+func (s *Server) checkListeningPort(w http.ResponseWriter, r *http.Request) {
+	result, err := s.service.CheckListeningPort(r.Context())
+	if err != nil {
+		writeErr(w, portCheckStatus(err), err)
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
 }
 
 func (s *Server) networkInterfaces(w http.ResponseWriter, _ *http.Request) {
@@ -421,6 +438,12 @@ func (c *Client) Status(ctx context.Context) (daemon.Snapshot, error) {
 	var x daemon.Snapshot
 	err := c.Do(ctx, "GET", "/v1/state", nil, &x)
 	return x, err
+}
+
+func (c *Client) CheckListeningPort(ctx context.Context) (daemon.ListeningPortCheck, error) {
+	var result daemon.ListeningPortCheck
+	err := c.Do(ctx, http.MethodPost, "/v1/network/port-check", nil, &result)
+	return result, err
 }
 
 func (c *Client) SetPresence(ctx context.Context, presence daemon.Presence) error {

@@ -121,7 +121,21 @@ func bindToDevice(name string) func(string, string, syscall.RawConn) error {
 func NewClientOnConn(cfg ClientConfig, c net.Conn) *Client { x := NewClient(cfg); x.conn = c; return x }
 func (c *Client) Events() <-chan Event                     { return c.events }
 func (c *Client) PublicIP() string                         { c.mu.Lock(); defer c.mu.Unlock(); return c.publicIP }
-func (c *Client) shareIndex() *ShareIndex                  { c.mu.Lock(); defer c.mu.Unlock(); return c.cfg.Share }
+func (c *Client) PublicPort() uint16 {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.advertisedPort != 0 {
+		return c.advertisedPort
+	}
+	if c.listener == nil {
+		return 0
+	}
+	return uint16(c.listener.Addr().(*net.TCPAddr).Port)
+}
+func (c *Client) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
+	return c.dialer.DialContext(ctx, network, address)
+}
+func (c *Client) shareIndex() *ShareIndex { c.mu.Lock(); defer c.mu.Unlock(); return c.cfg.Share }
 func sharedCounts(index *ShareIndex) (counts SharedCounts) {
 	for _, file := range index.Files() {
 		if file.Directory {

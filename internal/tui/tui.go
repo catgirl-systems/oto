@@ -57,6 +57,11 @@ type statusMsg struct {
 	snapshot daemon.Snapshot
 	err      error
 }
+type portCheckMsg struct {
+	port   uint16
+	result daemon.ListeningPortCheck
+	err    error
+}
 type searchMsg struct {
 	page         daemon.SearchPage
 	request      uint64
@@ -156,6 +161,14 @@ func (m *model) setNotice(message string) {
 }
 func (m model) loadStatus() tea.Cmd {
 	return func() tea.Msg { s, e := m.client.Status(m.ctx); return statusMsg{s, e} }
+}
+
+func (m model) checkListeningPort() tea.Cmd {
+	port := m.status.publicPort
+	return func() tea.Msg {
+		result, err := m.client.CheckListeningPort(m.ctx)
+		return portCheckMsg{port: port, result: result, err: err}
+	}
 }
 func (m model) loadNetworkInterfaces() tea.Cmd {
 	if m.client == nil {
@@ -618,7 +631,19 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if x.err != nil {
 			m.status.err = x.err.Error()
 		} else {
-			m.status = snapshot{status: x.snapshot.Status, presence: x.snapshot.Presence, user: x.snapshot.Config.Soulseek.Username, publicIP: x.snapshot.PublicIP, err: x.snapshot.Error}
+			m.status = snapshot{status: x.snapshot.Status, presence: x.snapshot.Presence, user: x.snapshot.Config.Soulseek.Username, publicIP: x.snapshot.PublicIP, publicPort: x.snapshot.PublicPort, err: x.snapshot.Error}
+		}
+	case portCheckMsg:
+		m.portChecking, m.portCheckPort, m.err = false, x.port, errText(x.err)
+		if x.err != nil {
+			m.portCheckStatus = "unknown"
+		} else {
+			m.portCheckPort = x.result.Port
+			if x.result.Open {
+				m.portCheckStatus = "open"
+			} else {
+				m.portCheckStatus = "closed"
+			}
 		}
 	case networkInterfacesMsg:
 		if x.err != nil {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -68,6 +69,25 @@ func TestStatusMethodsBodyAndSocketMode(t *testing.T) {
 	if err := cl.SetPresence(context.Background(), daemon.Presence("busy")); err == nil {
 		t.Fatal("invalid presence accepted")
 	}
+	if _, err := cl.CheckListeningPort(context.Background()); err == nil || !strings.Contains(err.Error(), daemon.ErrNotStarted.Error()) {
+		t.Fatalf("offline port check error: %v", err)
+	}
+	portResp, err := cl.http.Do(mustRequest(http.MethodPost, "http://oto.local/v1/network/port-check", nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if portResp.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("offline port check status %d", portResp.StatusCode)
+	}
+	portResp.Body.Close()
+	methodResp, err := cl.http.Do(mustRequest(http.MethodGet, "http://oto.local/v1/network/port-check", nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if methodResp.StatusCode != http.StatusMethodNotAllowed {
+		t.Fatalf("port check method status %d", methodResp.StatusCode)
+	}
+	methodResp.Body.Close()
 	passwordResp, err := cl.http.Do(mustRequest("PUT", "http://oto.local/v1/account/password", strings.NewReader(`{"password":"   "}`)))
 	if err != nil {
 		t.Fatal(err)
@@ -217,6 +237,25 @@ func TestStaleSocketIsRemovedAfterFailedDial(t *testing.T) {
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (fn roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) { return fn(request) }
+
+func TestPortCheckClientAndStatusMapping(t *testing.T) {
+	client := &Client{http: &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if r.Method != http.MethodPost || r.URL.Path != "/v1/network/port-check" {
+			t.Fatalf("request = %s %s", r.Method, r.URL.Path)
+		}
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{"port":61000,"open":true}`)), Header: make(http.Header)}, nil
+	})}}
+	result, err := client.CheckListeningPort(context.Background())
+	if err != nil || result.Port != 61000 || !result.Open {
+		t.Fatalf("result=%+v err=%v", result, err)
+	}
+	if got := portCheckStatus(daemon.ErrNotStarted); got != http.StatusServiceUnavailable {
+		t.Fatalf("offline status = %d", got)
+	}
+	if got := portCheckStatus(fmt.Errorf("%w: upstream", daemon.ErrPortCheckFailed)); got != http.StatusBadGateway {
+		t.Fatalf("upstream status = %d", got)
+	}
+}
 
 func TestSearchClientSendsFilters(t *testing.T) {
 	calls := 0

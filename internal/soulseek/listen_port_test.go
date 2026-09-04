@@ -67,8 +67,14 @@ func TestAdvertisedPortDoesNotRebindAndUpdatesAfterLogin(t *testing.T) {
 		t.Fatal(err)
 	}
 	boundPort := client.ListenPort()
+	if got := client.PublicPort(); got != boundPort {
+		t.Fatalf("public port = %d, want listener port %d", got, boundPort)
+	}
 	if err := client.SetAdvertisedPort(61000); err != nil {
 		t.Fatal(err)
+	}
+	if got := client.PublicPort(); got != 61000 {
+		t.Fatalf("public port = %d, want advertised port 61000", got)
 	}
 
 	serverDone := make(chan error, 1)
@@ -111,6 +117,9 @@ func TestAdvertisedPortDoesNotRebindAndUpdatesAfterLogin(t *testing.T) {
 	}
 	if err := client.SetAdvertisedPort(61001); err != nil {
 		t.Fatal(err)
+	}
+	if got := client.PublicPort(); got != 61001 {
+		t.Fatalf("public port = %d, want renewed advertised port 61001", got)
 	}
 	if err := <-serverDone; err != nil {
 		t.Fatal(err)
