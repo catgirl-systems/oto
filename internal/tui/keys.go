@@ -261,10 +261,17 @@ func (m *model) key(k tea.KeyPressMsg) tea.Cmd {
 			return m.loadSavedBrowses()
 		}
 		if m.workspace == workspaceTransfers {
+			if m.transferTab == transferDownloads {
+				return m.action("resume")
+			}
 			return m.action("retry")
 		}
 		if m.workspace == workspaceShares {
 			return m.rescanShares()
+		}
+	case "p":
+		if m.workspace == workspaceTransfers && m.transferTab == transferDownloads {
+			return m.action("pause")
 		}
 	case "c":
 		if m.workspace == workspaceSearch {
@@ -945,7 +952,7 @@ func (m model) action(action string) tea.Cmd {
 }
 func (m model) active() bool {
 	for _, x := range m.transfers {
-		if x.state == "queued" || x.state == "incomplete" || x.state == "running" {
+		if x.state == "queued" || x.state == "incomplete" || x.state == "running" || x.state == "finalizing" || x.state == "retrying" {
 			return true
 		}
 	}
