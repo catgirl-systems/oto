@@ -42,19 +42,31 @@ func run(args []string) error {
 			return daemonCommand(args[1:])
 		case "status":
 			return statusCommand(args[1:])
+		case "transfers":
+			return transfersCommand(args[1:])
+		case "pause":
+			return transferControlCommand("pause", args[1:])
+		case "resume":
+			return transferControlCommand("resume", args[1:])
+		case "rescan":
+			return rescanCommand(args[1:])
 		case "help", "--help", "-h":
 			usage()
 			return nil
 		case "version", "--version":
 			fmt.Println("oto", version, sourceURL, "AGPL-3.0-only; no warranty")
 			return nil
+		default:
+			if args[0] == "" || args[0][0] != '-' {
+				return fmt.Errorf("unknown command %q (try 'oto help')", args[0])
+			}
 		}
 	}
 	return tuiCommand(args)
 }
 
 func usage() {
-	fmt.Printf("oto — Soulseek search, browse, shares, and transfers\n\nUsage:\n  oto [--config PATH]\n  oto daemon [--config PATH] [--share-rescan-delay DURATION] [--listen-port-file PATH] [--listen-port-reconcile-interval DURATION]\n  oto status\n\nSource: %s\nLicense: AGPL-3.0-only; no warranty.\n", sourceURL)
+	fmt.Printf("oto — Soulseek search, browse, shares, and transfers\n\nUsage:\n  oto [--config PATH]\n  oto daemon [--config PATH] [--share-rescan-delay DURATION] [--listen-port-file PATH] [--listen-port-reconcile-interval DURATION]\n  oto status [--json]\n  oto transfers [--json]\n  oto pause DOWNLOAD_ID\n  oto resume DOWNLOAD_ID\n  oto rescan\n\nSource: %s\nLicense: AGPL-3.0-only; no warranty.\n", sourceURL)
 }
 
 func configFlag(fs *flag.FlagSet) *string {
@@ -66,6 +78,9 @@ func tuiCommand(args []string) error {
 	path := configFlag(fs)
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	if fs.NArg() != 0 {
+		return errors.New("oto: unexpected arguments")
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -189,6 +204,9 @@ func parseDaemonOptions(args []string) (daemonOptions, error) {
 	if err := fs.Parse(args); err != nil {
 		return daemonOptions{}, err
 	}
+	if fs.NArg() != 0 {
+		return daemonOptions{}, errors.New("daemon: unexpected arguments")
+	}
 	if *delay < 0 {
 		return daemonOptions{}, errors.New("share rescan delay cannot be negative")
 	}
@@ -245,11 +263,65 @@ func daemonCommand(args []string) error {
 	return nil
 }
 
+func transfersCommand(args []string) error {
+	fs := flag.NewFlagSet("transfers", flag.ContinueOnError)
+	jsonOut := fs.Bool("json", false, "print JSON")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if len(fs.Args()) != 0 {
+		return errors.New("transfers: unexpected arguments")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	transfers, err := ipc.NewClient(config.SocketPath()).Transfers(ctx)
+	if err != nil {
+		return fmt.Errorf("daemon unavailable: %w", err)
+	}
+	if *jsonOut {
+		return json.NewEncoder(os.Stdout).Encode(transfers)
+	}
+	for _, transfer := range transfers {
+		fmt.Printf("%q direction=%q user=%q state=%q progress=%d/%d queue=%d error=%q filename=%q\n", transfer.ID, transfer.Direction, transfer.Username, transfer.State, transfer.Done, transfer.Total, transfer.Queue, transfer.Error, transfer.Filename)
+	}
+	return nil
+}
+
+func transferControlCommand(action string, args []string) error {
+	if len(args) != 1 || args[0] == "" || args[0][0] == '-' {
+		return fmt.Errorf("%s requires exactly one download ID", action)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	if err := ipc.NewClient(config.SocketPath()).TransferAction(ctx, args[0], action); err != nil {
+		return fmt.Errorf("%s %q: %w", action, args[0], err)
+	}
+	return nil
+}
+
+func rescanCommand(args []string) error {
+	if len(args) != 0 {
+		return errors.New("rescan: unexpected arguments")
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	if _, err := ipc.NewClient(config.SocketPath()).Rescan(ctx); err != nil {
+		if ctx.Err() != nil {
+			return fmt.Errorf("stopped waiting; the daemon's share scan may still be running: %w", ctx.Err())
+		}
+		return fmt.Errorf("rescan: %w", err)
+	}
+	return nil
+}
+
 func statusCommand(args []string) error {
 	fs := flag.NewFlagSet("status", flag.ContinueOnError)
 	jsonOut := fs.Bool("json", false, "print JSON")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	if fs.NArg() != 0 {
+		return errors.New("status: unexpected arguments")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
@@ -261,6 +333,9 @@ func statusCommand(args []string) error {
 		return json.NewEncoder(os.Stdout).Encode(s)
 	}
 	fmt.Printf("%s presence=%s user=%s shares=%d transfers=%d", s.Status, s.Presence, s.Config.Soulseek.Username, len(s.Shares), len(s.Transfers))
+	if s.ShareScan != nil && (s.ShareScan.State == "scanning" || s.ShareScan.State == "publishing") {
+		fmt.Printf(" scan=%s root=%q files=%d dirs=%d elapsed=%dms", s.ShareScan.State, s.ShareScan.Root, s.ShareScan.Files, s.ShareScan.Directories, s.ShareScan.ElapsedMS)
+	}
 	if s.Error != "" {
 		fmt.Printf(" error=%q", s.Error)
 	}
