@@ -164,8 +164,10 @@ type Service struct {
 	journal              Journal
 	searches             map[string]Search
 	browses              map[string]loadedBrowse
+	browseProgress       map[string]trackedBrowse
 	fullBrowse           fullBrowseFunc
 	browseSeq            uint64
+	browseProgressSeq    uint64
 	remoteSharesDir      string
 	transfers            map[string]Transfer
 	downloadSlots        chan struct{}
@@ -198,8 +200,8 @@ func New(cfg config.Config, path string) (*Service, error) {
 	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
-	s := &Service{cfg: cfg, configPath: config.ConfigPath(), shares: soulseek.NewShareIndex(), searches: make(map[string]Search), browses: make(map[string]loadedBrowse), fullBrowse: func(ctx context.Context, client *soulseek.Client, username string) ([]soulseek.ShareEntry, error) {
-		return client.BrowseUser(ctx, username, "")
+	s := &Service{cfg: cfg, configPath: config.ConfigPath(), shares: soulseek.NewShareIndex(), searches: make(map[string]Search), browses: make(map[string]loadedBrowse), browseProgress: make(map[string]trackedBrowse), fullBrowse: func(ctx context.Context, client *soulseek.Client, username string, progress func(received, total uint64)) ([]soulseek.ShareEntry, error) {
+		return client.BrowseUserWithProgress(ctx, username, "", progress)
 	}, transfers: make(map[string]Transfer), downloadSlots: make(chan struct{}, cfg.DownloadSlots), downloadCancels: make(map[string]context.CancelFunc), downloadPeers: make(map[string]chan struct{}), shareIndexBuilder: buildShareIndex, shareRescanDelay: DefaultShareRescanDelay, listenPortInterval: DefaultListenPortReconcileInterval, portMapOpen: func(ctx context.Context, port uint16, natPMP, upnp bool, changed func(uint16)) (portMapping, error) {
 		return portmap.Open(ctx, port, natPMP, upnp, changed)
 	}, reconnectWake: make(chan struct{}, 1), status: StatusStopped, presence: PresenceOffline, journalPath: path}

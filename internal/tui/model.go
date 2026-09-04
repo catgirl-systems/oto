@@ -45,12 +45,25 @@ type entry struct {
 	sampleRate, bitDepth uint32
 }
 
+type activityKind uint8
+
+const (
+	activitySearch activityKind = iota + 1
+	activityBrowse
+)
+
+type activity struct {
+	kind                     activityKind
+	label                    string
+	request, received, total uint64
+}
+
 type searchTab struct {
 	query, id, filter, filterUndo, err string
 	results                            []result
 	total, found, next, cursor         int
 	selected                           map[int]bool
-	loading, loadingMore               bool
+	loading, loadingMore, searching    bool
 	request, operation                 uint64
 	tree                               treeState
 }
@@ -63,6 +76,7 @@ type browseTab struct {
 	loading, loaded   bool
 	cached            bool
 	request, revision uint64
+	received, total   uint64
 	savedAt           time.Time
 	tree              treeState
 }
@@ -141,7 +155,8 @@ type model struct {
 	noticeUntil                            time.Time
 	transferTab                            int
 	transferCursors                        [2]int
-	spinner                                int
+	spinner, activityFrame                 int
+	activityRunning                        bool
 	transferTrees                          [2]treeState
 	shares                                 []share
 	shareTree                              treeState
@@ -339,11 +354,15 @@ func (m model) mainView() string {
 
 func (m model) compactView() string {
 	names := m.workspaceNames()
+	footer := "tab switch  o status  ? help  q quit"
+	if activity := m.activityView(m.width); activity != "" {
+		footer = activity
+	}
 	lines := []string{
 		trunc("oto  "+m.statusText(), m.width),
 		trunc("["+names[m.workspace]+"]", m.width),
 		trunc(m.errorText(), m.width),
-		trunc("tab switch  o status  ? help  q quit", m.width),
+		trunc(footer, m.width),
 	}
 	return strings.Join(lines, "\n")
 }
@@ -803,6 +822,86 @@ func progressBar(done, total uint64, width int) (string, int) {
 	return strings.Repeat("█", filled) + strings.Repeat("░", width-filled), percent
 }
 
+func pulseBar(frame, width int) string {
+	width = max(1, width)
+	position := frame % width
+	return strings.Repeat("░", position) + "█" + strings.Repeat("░", width-position-1)
+}
+
+func (m model) currentActivity() (activity, bool) {
+	if m.workspace == 0 && m.searchTabIndex >= 0 && m.searchTabIndex < len(m.searchTabs) {
+		tab := m.searchTabs[m.searchTabIndex]
+		if tab.searching {
+			return activity{kind: activitySearch, label: tab.query, request: tab.request}, true
+		}
+	}
+	if m.workspace == 1 && m.browseTabIndex >= 0 && m.browseTabIndex < len(m.browseTabs) {
+		tab := m.browseTabs[m.browseTabIndex]
+		if tab.loading {
+			return activity{kind: activityBrowse, label: tab.user, request: tab.request, received: tab.received, total: tab.total}, true
+		}
+	}
+
+	browseIndex := -1
+	for i := range m.browseTabs {
+		tab := &m.browseTabs[i]
+		if tab.loading && tab.total > 0 && (browseIndex < 0 || tab.request < m.browseTabs[browseIndex].request) {
+			browseIndex = i
+		}
+	}
+	if browseIndex < 0 {
+		for i := range m.browseTabs {
+			tab := &m.browseTabs[i]
+			if tab.loading && (browseIndex < 0 || tab.request < m.browseTabs[browseIndex].request) {
+				browseIndex = i
+			}
+		}
+	}
+	if browseIndex >= 0 {
+		tab := m.browseTabs[browseIndex]
+		return activity{kind: activityBrowse, label: tab.user, request: tab.request, received: tab.received, total: tab.total}, true
+	}
+
+	searchIndex := -1
+	for i := range m.searchTabs {
+		tab := &m.searchTabs[i]
+		if tab.searching && (searchIndex < 0 || tab.request < m.searchTabs[searchIndex].request) {
+			searchIndex = i
+		}
+	}
+	if searchIndex >= 0 {
+		tab := m.searchTabs[searchIndex]
+		return activity{kind: activitySearch, label: tab.query, request: tab.request}, true
+	}
+	return activity{}, false
+}
+
+func (m model) activityView(width int) string {
+	operation, ok := m.currentActivity()
+	if !ok || width < 1 {
+		return ""
+	}
+	label := "Searching " + operation.label
+	if operation.kind == activityBrowse {
+		label = "Browsing @" + operation.label
+		if operation.total > 0 && operation.received >= operation.total {
+			label = "Finishing @" + operation.label
+		}
+	}
+	percentWidth := 0
+	if operation.total > 0 {
+		percentWidth = 5
+	}
+	barMin := max(3, min(16, width/3))
+	label = trunc(label, max(4, width-barMin-percentWidth-2))
+	barWidth := max(1, width-lipgloss.Width(label)-percentWidth-2)
+	if operation.total == 0 {
+		return muted(label+"  ") + accent(pulseBar(m.activityFrame, barWidth))
+	}
+	bar, percent := progressBar(operation.received, operation.total, barWidth)
+	return muted(label+"  ") + accent(bar) + fmt.Sprintf(" %3d%%", percent)
+}
+
 func transferResultRow(row string, current, upload, failed bool) string {
 	color := lipgloss.Color("#89B4FA")
 	if upload {
@@ -1082,8 +1181,12 @@ func (m model) statusView() string {
 }
 
 func (m model) footerView() string {
+	style := lipgloss.NewStyle().Width(m.width).Padding(0, 1)
 	if m.confirm {
-		return lipgloss.NewStyle().Width(m.width).Padding(0, 1).Render(danger("Quit and interrupt active transfers?  y confirm  •  esc cancel"))
+		return style.Render(danger("Quit and interrupt active transfers?  y confirm  •  esc cancel"))
+	}
+	if activity := m.activityView(m.width - 2); activity != "" {
+		return style.Render(activity)
 	}
 	hints := []string{"tab switch", "↑↓/page/home/end move"}
 	switch m.workspace {
@@ -1099,7 +1202,7 @@ func (m model) footerView() string {
 		hints = append(hints, "←→ section", "enter edit/toggle/run", "s save")
 	}
 	hints = append(hints, "o status", "? help", "q quit")
-	return lipgloss.NewStyle().Width(m.width).Padding(0, 1).Render(muted(trunc(strings.Join(hints, "  •  "), m.width-2)))
+	return style.Render(muted(trunc(strings.Join(hints, "  •  "), m.width-2)))
 }
 
 func panelStyle() lipgloss.Style {

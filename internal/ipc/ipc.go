@@ -102,6 +102,7 @@ func (s *Server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/searches", s.searches)
 	mux.HandleFunc("POST /v1/search", s.search)
 	mux.HandleFunc("GET /v1/browse", s.browse)
+	mux.HandleFunc("GET /v1/browse/progress", s.browseProgress)
 	mux.HandleFunc("GET /v1/browse/saved", s.savedBrowses)
 	mux.HandleFunc("POST /v1/browse/save", s.saveBrowse)
 	mux.HandleFunc("POST /v1/downloads", s.downloads)
@@ -220,6 +221,10 @@ func (s *Server) browse(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, 200, out)
+}
+
+func (s *Server) browseProgress(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, 200, s.service.BrowseProgress(r.URL.Query().Get("user")))
 }
 
 func (s *Server) savedBrowses(w http.ResponseWriter, _ *http.Request) {
@@ -422,6 +427,12 @@ func (c *Client) Browse(ctx context.Context, username string) (daemon.BrowseResu
 	var result daemon.BrowseResult
 	err := c.do(ctx, "GET", "/v1/browse?user="+url.QueryEscape(username), nil, &result, MaxBrowseBodySize)
 	return result, err
+}
+
+func (c *Client) BrowseProgress(ctx context.Context, username string) (*daemon.BrowseProgress, error) {
+	var progress *daemon.BrowseProgress
+	err := c.Do(ctx, "GET", "/v1/browse/progress?user="+url.QueryEscape(username), nil, &progress)
+	return progress, err
 }
 
 func (c *Client) SavedBrowses(ctx context.Context) ([]daemon.SavedBrowse, error) {

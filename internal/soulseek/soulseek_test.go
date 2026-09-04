@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"testing/iotest"
 	"time"
 )
 
@@ -55,6 +56,28 @@ func TestCodecMalformedAndCompressionLimit(t *testing.T) {
 	}
 	if _, err := DecompressZlib([]byte("not zlib")); err == nil {
 		t.Fatal("invalid zlib accepted")
+	}
+}
+
+func TestReadFrameWithProgress(t *testing.T) {
+	var wire bytes.Buffer
+	if err := WriteFrame(&wire, PeerSharedList, []byte("abc")); err != nil {
+		t.Fatal(err)
+	}
+	var updates [][2]uint64
+	command, payload, err := ReadFrameWithProgress(iotest.OneByteReader(bytes.NewReader(wire.Bytes())), func(received, total uint64) {
+		updates = append(updates, [2]uint64{received, total})
+	})
+	if err != nil || command != PeerSharedList || string(payload) != "abc" {
+		t.Fatalf("frame: command=%d payload=%q err=%v", command, payload, err)
+	}
+	if len(updates) < 3 || updates[0] != [2]uint64{0, 7} || updates[len(updates)-1] != [2]uint64{7, 7} {
+		t.Fatalf("progress updates: %v", updates)
+	}
+	for i := 1; i < len(updates); i++ {
+		if updates[i][0] <= updates[i-1][0] || updates[i][1] != 7 {
+			t.Fatalf("non-monotonic progress: %v", updates)
+		}
 	}
 }
 

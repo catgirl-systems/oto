@@ -25,6 +25,63 @@ func remoteShareService(t *testing.T) (*Service, string) {
 	return service, dir
 }
 
+func TestBrowseProgressIgnoresStaleOperations(t *testing.T) {
+	service, _ := remoteShareService(t)
+	firstKey, firstGeneration, firstUpdate := service.beginBrowseProgress("Peer")
+	if progress := service.BrowseProgress("peer"); progress == nil || progress.Username != "Peer" || progress.Total != 0 {
+		t.Fatalf("initial progress: %+v", progress)
+	}
+	firstUpdate(25, 100)
+	if progress := service.BrowseProgress("PEER"); progress == nil || progress.Received != 25 || progress.Total != 100 {
+		t.Fatalf("updated progress: %+v", progress)
+	}
+
+	secondKey, secondGeneration, secondUpdate := service.beginBrowseProgress("peer")
+	firstUpdate(100, 100)
+	service.finishBrowseProgress(firstKey, firstGeneration, false)
+	if progress := service.BrowseProgress("peer"); progress == nil || progress.Received != 0 || progress.Total != 0 {
+		t.Fatalf("stale operation changed replacement: %+v", progress)
+	}
+	secondUpdate(200, 200)
+	service.finishBrowseProgress(secondKey, secondGeneration, true)
+	if progress := service.BrowseProgress("peer"); progress == nil || progress.Received != 200 || progress.Total != 200 {
+		t.Fatalf("completed progress: %+v", progress)
+	}
+}
+
+func TestBrowseCompletePublishesProgress(t *testing.T) {
+	service, _ := remoteShareService(t)
+	service.client = &soulseek.Client{}
+	started := make(chan func(uint64, uint64), 1)
+	release := make(chan struct{})
+	service.fullBrowse = func(_ context.Context, _ *soulseek.Client, _ string, progress func(uint64, uint64)) ([]soulseek.ShareEntry, error) {
+		started <- progress
+		<-release
+		progress(100, 100)
+		return nil, nil
+	}
+	done := make(chan error, 1)
+	go func() {
+		_, err := service.BrowseComplete(context.Background(), "peer")
+		done <- err
+	}()
+	progressUpdate := <-started
+	if progress := service.BrowseProgress("peer"); progress == nil || progress.Total != 0 {
+		t.Fatalf("pending progress: %+v", progress)
+	}
+	progressUpdate(50, 100)
+	if progress := service.BrowseProgress("peer"); progress == nil || progress.Received != 50 {
+		t.Fatalf("receiving progress: %+v", progress)
+	}
+	close(release)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if progress := service.BrowseProgress("peer"); progress == nil || progress.Received != 100 {
+		t.Fatalf("retained completion: %+v", progress)
+	}
+}
+
 func TestRemoteShareCacheIsExplicitAndRoundTrips(t *testing.T) {
 	service, dir := remoteShareService(t)
 	entries := []soulseek.ShareEntry{
@@ -32,7 +89,9 @@ func TestRemoteShareCacheIsExplicitAndRoundTrips(t *testing.T) {
 		{Name: `Music\song.flac`, Size: 42, Private: true, Extension: "flac", Bitrate: 320, Duration: 125, VBR: true, SampleRate: 44100, BitDepth: 24},
 	}
 	service.client = &soulseek.Client{}
-	service.fullBrowse = func(context.Context, *soulseek.Client, string) ([]soulseek.ShareEntry, error) { return entries, nil }
+	service.fullBrowse = func(context.Context, *soulseek.Client, string, func(uint64, uint64)) ([]soulseek.ShareEntry, error) {
+		return entries, nil
+	}
 
 	live, err := service.BrowseComplete(context.Background(), "Alice")
 	if err != nil || live.Cached || live.Revision == 0 || !reflect.DeepEqual(live.Entries, entries) {
@@ -82,14 +141,18 @@ func TestRemoteShareCacheFallbackAndOverwrite(t *testing.T) {
 
 	service.client = &soulseek.Client{}
 	remoteErr := errors.New("peer unavailable")
-	service.fullBrowse = func(context.Context, *soulseek.Client, string) ([]soulseek.ShareEntry, error) { return nil, remoteErr }
+	service.fullBrowse = func(context.Context, *soulseek.Client, string, func(uint64, uint64)) ([]soulseek.ShareEntry, error) {
+		return nil, remoteErr
+	}
 	fallback, err := service.BrowseComplete(context.Background(), "peer")
 	if err != nil || !fallback.Cached || !reflect.DeepEqual(fallback.Entries, oldEntries) {
 		t.Fatalf("fallback: %+v %v", fallback, err)
 	}
 
 	newEntries := []soulseek.ShareEntry{{Name: `New\song.mp3`, Size: 2}}
-	service.fullBrowse = func(context.Context, *soulseek.Client, string) ([]soulseek.ShareEntry, error) { return newEntries, nil }
+	service.fullBrowse = func(context.Context, *soulseek.Client, string, func(uint64, uint64)) ([]soulseek.ShareEntry, error) {
+		return newEntries, nil
+	}
 	live, err := service.BrowseComplete(context.Background(), "peer")
 	if err != nil || live.Cached || !reflect.DeepEqual(live.Entries, newEntries) {
 		t.Fatalf("refresh: %+v %v", live, err)

@@ -64,6 +64,8 @@ Set `NO_COLOR=1` to suppress terminal styling.
 
 Search groups results as user → folders → files; Browse shows remote folders; Transfers groups each direction as user → folders → files; Shares lazily shows the daemon's scanned public-share index. Expansion and selection are session-local. Selection-based Search/Browse actions include only currently loaded files; using `d` on a folder can request that complete remote folder recursively without fetching the user's full share list.
 
+Pending network searches and remote share-list requests temporarily replace the bottom keyboard hints with an activity bar. Share-list requests switch to byte and percentage progress once the peer's response size is known; the normal footer returns immediately when the operation finishes.
+
 Press `s` in a loaded Browse tab to save that user's complete share list. With no Browse tabs open, saved users are listed for selection with the arrow keys and Enter. Opening remains network-first while connected, but falls back to the saved list when offline or when the peer cannot be reached; cached tabs are labeled `(cached)`, and `r` retries the live list.
 
 Searches support quoted phrases, excluded words (`-remix`), and partial terms (`*radio`). Filter cached results without another network search using fields such as:
@@ -184,7 +186,7 @@ This tracks user-visible Soulseek functionality and meaningful operational quali
 | Choose a different download destination interactively | :x: | :white_check_mark: |
 | Save a remote share list to disk | :white_check_mark: | :white_check_mark: |
 | Reopen a saved share list, including while offline | :white_check_mark: | :white_check_mark: |
-| Show progress while retrieving large share lists | :x: | :white_check_mark: |
+| Show progress while retrieving large share lists | :white_check_mark: | :white_check_mark: |
 | View detailed file properties and media metadata | :white_check_mark: | :white_check_mark: |
 
 ### Downloads

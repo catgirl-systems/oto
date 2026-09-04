@@ -16,7 +16,10 @@ import (
 	"github.com/catgirl-systems/oto/internal/soulseek"
 )
 
-const remoteShareCacheVersion = 1
+const (
+	remoteShareCacheVersion = 1
+	browseProgressRetention = 5 * time.Second
+)
 
 var (
 	ErrBrowseNotLoaded = errors.New("daemon: share list is not loaded")
@@ -35,6 +38,17 @@ type SavedBrowse struct {
 	SavedAt  time.Time `json:"saved_at"`
 }
 
+type BrowseProgress struct {
+	Username string `json:"username"`
+	Received uint64 `json:"received"`
+	Total    uint64 `json:"total"`
+}
+
+type trackedBrowse struct {
+	generation uint64
+	progress   BrowseProgress
+}
+
 type remoteShareCache struct {
 	Version  int                   `json:"version"`
 	Username string                `json:"username"`
@@ -47,7 +61,7 @@ type loadedBrowse struct {
 	result   BrowseResult
 }
 
-type fullBrowseFunc func(context.Context, *soulseek.Client, string) ([]soulseek.ShareEntry, error)
+type fullBrowseFunc func(context.Context, *soulseek.Client, string, func(received, total uint64)) ([]soulseek.ShareEntry, error)
 
 func browseUsername(username string) (string, error) {
 	username = strings.TrimSpace(username)
@@ -55,6 +69,54 @@ func browseUsername(username string) (string, error) {
 		return "", errors.New("daemon: browse username is required")
 	}
 	return strings.ToLower(username), nil
+}
+
+func (s *Service) beginBrowseProgress(username string) (string, uint64, func(received, total uint64)) {
+	key, _ := browseUsername(username)
+	s.mu.Lock()
+	s.browseProgressSeq++
+	generation := s.browseProgressSeq
+	s.browseProgress[key] = trackedBrowse{generation: generation, progress: BrowseProgress{Username: strings.TrimSpace(username)}}
+	s.mu.Unlock()
+	return key, generation, func(received, total uint64) {
+		s.mu.Lock()
+		tracked, ok := s.browseProgress[key]
+		if ok && tracked.generation == generation {
+			tracked.progress.Received, tracked.progress.Total = received, total
+			s.browseProgress[key] = tracked
+		}
+		s.mu.Unlock()
+	}
+}
+
+func (s *Service) finishBrowseProgress(key string, generation uint64, keep bool) {
+	remove := func() {
+		s.mu.Lock()
+		if tracked, ok := s.browseProgress[key]; ok && tracked.generation == generation {
+			delete(s.browseProgress, key)
+		}
+		s.mu.Unlock()
+	}
+	if keep {
+		time.AfterFunc(browseProgressRetention, remove)
+		return
+	}
+	remove()
+}
+
+func (s *Service) BrowseProgress(username string) *BrowseProgress {
+	key, err := browseUsername(username)
+	if err != nil {
+		return nil
+	}
+	s.mu.RLock()
+	tracked, ok := s.browseProgress[key]
+	s.mu.RUnlock()
+	if !ok {
+		return nil
+	}
+	progress := tracked.progress
+	return &progress
 }
 
 func remoteShareCachePath(dir, username string) (string, error) {
@@ -150,7 +212,9 @@ func (s *Service) BrowseComplete(ctx context.Context, username string) (BrowseRe
 
 	var remoteErr error
 	if client != nil {
-		entries, err := browse(ctx, client, strings.TrimSpace(username))
+		key, generation, progress := s.beginBrowseProgress(username)
+		entries, err := browse(ctx, client, strings.TrimSpace(username), progress)
+		s.finishBrowseProgress(key, generation, err == nil)
 		if err == nil {
 			return s.rememberBrowse(username, entries, false, time.Time{}), nil
 		}

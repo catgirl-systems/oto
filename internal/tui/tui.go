@@ -47,8 +47,12 @@ func RunWithTransient(ctx context.Context, client *ipc.Client, configPath string
 }
 
 type tickMsg time.Time
+type activityTickMsg time.Time
 
-const noticeDuration = 2500 * time.Millisecond
+const (
+	noticeDuration   = 2500 * time.Millisecond
+	activityInterval = 100 * time.Millisecond
+)
 
 type statusMsg struct {
 	snapshot daemon.Snapshot
@@ -70,6 +74,12 @@ type browseMsg struct {
 	cached   bool
 	savedAt  time.Time
 	revision uint64
+	err      error
+}
+type browseProgressMsg struct {
+	user     string
+	request  uint64
+	progress *daemon.BrowseProgress
 	err      error
 }
 type savedBrowsesMsg struct {
@@ -118,6 +128,24 @@ type transferActionMsg struct {
 }
 
 func tick() tea.Cmd { return tea.Tick(time.Second, func(t time.Time) tea.Msg { return tickMsg(t) }) }
+func activityTick() tea.Cmd {
+	return tea.Tick(activityInterval, func(t time.Time) tea.Msg { return activityTickMsg(t) })
+}
+
+func (m *model) withActivity(cmd tea.Cmd) tea.Cmd {
+	if m.activityRunning {
+		return cmd
+	}
+	m.activityRunning = true
+	return tea.Batch(cmd, activityTick())
+}
+
+func (m model) loadBrowseProgress(operation activity) tea.Cmd {
+	return func() tea.Msg {
+		progress, err := m.client.BrowseProgress(m.ctx, operation.label)
+		return browseProgressMsg{user: operation.label, request: operation.request, progress: progress, err: err}
+	}
+}
 
 func (m *model) setNotice(message string) {
 	m.notice = message
@@ -279,11 +307,11 @@ func (m *model) openSearch(query string) tea.Cmd {
 	}
 	m.searchRequest++
 	m.searchOperation++
-	tab := searchTab{query: query, filter: m.searchFilter, selected: map[int]bool{}, loading: true, request: m.searchRequest, operation: m.searchOperation}
+	tab := searchTab{query: query, filter: m.searchFilter, selected: map[int]bool{}, loading: true, searching: true, request: m.searchRequest, operation: m.searchOperation}
 	m.searchTabs = append(m.searchTabs, tab)
 	m.workspace = 0
 	m.loadSearchTab(len(m.searchTabs) - 1)
-	return m.search(tab.query, tab.filter, tab.request, tab.operation)
+	return m.withActivity(m.search(tab.query, tab.filter, tab.request, tab.operation))
 }
 
 func applySearchMsg(tab *searchTab, message searchMsg) {
@@ -291,7 +319,7 @@ func applySearchMsg(tab *searchTab, message searchMsg) {
 	if message.append {
 		tab.loadingMore = false
 	} else {
-		tab.loading = false
+		tab.loading, tab.searching = false, false
 	}
 	if message.err != nil {
 		return
@@ -516,6 +544,7 @@ func (m *model) openBrowse(user, target string, refresh bool) tea.Cmd {
 	if request {
 		m.browseRequest++
 		tab.request, tab.loading = m.browseRequest, true
+		tab.received, tab.total = 0, 0
 	} else if tab.target != "" {
 		tab.cursor = browseTargetCursor(tab.entries, tab.target)
 		tab.target = ""
@@ -523,7 +552,7 @@ func (m *model) openBrowse(user, target string, refresh bool) tea.Cmd {
 	m.workspace = 1
 	m.loadBrowseTab(index)
 	if request {
-		return m.browse(tab.user, tab.request)
+		return m.withActivity(m.browse(tab.user, tab.request))
 	}
 	return nil
 }
@@ -559,6 +588,20 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.notice = ""
 		}
 		return m, tea.Batch(m.loadStatus(), m.loadTransfers(), m.loadShares(), tick())
+	case activityTickMsg:
+		if !m.activityRunning {
+			break
+		}
+		operation, ok := m.currentActivity()
+		if !ok {
+			m.activityRunning = false
+			break
+		}
+		m.activityFrame++
+		if operation.kind == activityBrowse {
+			return m, m.loadBrowseProgress(operation)
+		}
+		return m, activityTick()
 	case statusMsg:
 		if x.err != nil {
 			m.status.err = x.err.Error()
@@ -648,6 +691,26 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			break
 		}
+	case browseProgressMsg:
+		for i := range m.browseTabs {
+			tab := &m.browseTabs[i]
+			if !tab.loading || tab.request != x.request || !strings.EqualFold(tab.user, x.user) {
+				continue
+			}
+			if x.err == nil {
+				if x.progress == nil {
+					tab.received, tab.total = 0, 0
+				} else {
+					tab.received, tab.total = x.progress.Received, x.progress.Total
+				}
+			}
+			break
+		}
+		if _, ok := m.currentActivity(); !ok {
+			m.activityRunning = false
+			break
+		}
+		return m, activityTick()
 	case savedBrowsesMsg:
 		m.savedBrowseLoading = false
 		m.err = errText(x.err)

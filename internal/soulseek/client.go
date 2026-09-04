@@ -521,6 +521,15 @@ func (c *Client) Search(ctx context.Context, rawQuery string) ([]SearchResult, e
 	}
 }
 func (c *Client) Browse(ctx context.Context, peer net.Conn, path string) ([]ShareEntry, error) {
+	return c.browse(ctx, peer, path, nil)
+}
+
+// BrowseWithProgress reports compressed frame bytes for complete share lists.
+func (c *Client) BrowseWithProgress(ctx context.Context, peer net.Conn, path string, progress func(received, total uint64)) ([]ShareEntry, error) {
+	return c.browse(ctx, peer, path, progress)
+}
+
+func (c *Client) browse(ctx context.Context, peer net.Conn, path string, progress func(received, total uint64)) ([]ShareEntry, error) {
 	if path == "" {
 		select {
 		case c.browseSlot <- struct{}{}:
@@ -531,7 +540,7 @@ func (c *Client) Browse(ctx context.Context, peer net.Conn, path string) ([]Shar
 		if err := writeMessage(peer, SharedListRequest{}); err != nil {
 			return nil, err
 		}
-		command, payload, err := readFrameContext(ctx, peer)
+		command, payload, err := readFrameContextProgress(ctx, peer, progress)
 		if err != nil {
 			return nil, err
 		}
@@ -575,13 +584,17 @@ func writeMessage(w net.Conn, m Message) error {
 	return writeAll(w, b)
 }
 func readFrameContext(ctx context.Context, c net.Conn) (uint32, []byte, error) {
+	return readFrameContextProgress(ctx, c, nil)
+}
+
+func readFrameContextProgress(ctx context.Context, c net.Conn, progress func(received, total uint64)) (uint32, []byte, error) {
 	type rr struct {
 		cmd uint32
 		p   []byte
 		e   error
 	}
 	ch := make(chan rr, 1)
-	go func() { a, b, e := ReadFrame(c); ch <- rr{a, b, e} }()
+	go func() { a, b, e := ReadFrameWithProgress(c, progress); ch <- rr{a, b, e} }()
 	select {
 	case <-ctx.Done():
 		return 0, nil, ctx.Err()
@@ -701,12 +714,17 @@ func (c *Client) answerConnectPeer(instruction ConnectPeerInstruction) {
 }
 
 func (c *Client) BrowseUser(ctx context.Context, username, path string) ([]ShareEntry, error) {
+	return c.BrowseUserWithProgress(ctx, username, path, nil)
+}
+
+// BrowseUserWithProgress reports compressed frame bytes for complete share lists.
+func (c *Client) BrowseUserWithProgress(ctx context.Context, username, path string, progress func(received, total uint64)) ([]ShareEntry, error) {
 	peer, err := c.connectUser(ctx, username)
 	if err != nil {
 		return nil, err
 	}
 	defer peer.Close()
-	return c.Browse(ctx, peer, path)
+	return c.BrowseWithProgress(ctx, peer, path, progress)
 }
 
 func downloadKey(username, filename string) string { return username + "\x00" + filename }

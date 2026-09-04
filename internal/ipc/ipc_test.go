@@ -52,6 +52,9 @@ func TestStatusMethodsBodyAndSocketMode(t *testing.T) {
 	}
 	if snap.Config.Soulseek.Username != "u" || snap.Presence != daemon.PresenceOffline {
 		t.Fatalf("snapshot: %+v", snap)
+		if progress, err := cl.BrowseProgress(context.Background(), "peer"); err != nil || progress != nil {
+			t.Fatalf("idle browse progress: %+v %v", progress, err)
+		}
 	}
 	if st, err := os.Stat(path); err != nil || st.Mode().Perm() != 0600 {
 		t.Fatalf("socket mode: %v %v", st, err)
@@ -231,6 +234,29 @@ func TestSearchClientSendsFilters(t *testing.T) {
 	}
 	if _, err := client.SearchPage(context.Background(), "s", 100, `in:"live session"`); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestBrowseProgressClient(t *testing.T) {
+	calls := 0
+	client := &Client{http: &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		if request.URL.Path != "/v1/browse/progress" || request.URL.Query().Get("user") != "peer name" {
+			t.Fatalf("progress request: %s", request.URL.String())
+		}
+		calls++
+		body := `{"username":"peer name","received":25,"total":100}`
+		if calls == 2 {
+			body = `null`
+		}
+		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header)}, nil
+	})}}
+	progress, err := client.BrowseProgress(context.Background(), "peer name")
+	if err != nil || progress == nil || progress.Received != 25 || progress.Total != 100 {
+		t.Fatalf("active progress: %+v %v", progress, err)
+	}
+	progress, err = client.BrowseProgress(context.Background(), "peer name")
+	if err != nil || progress != nil {
+		t.Fatalf("missing progress: %+v %v", progress, err)
 	}
 }
 

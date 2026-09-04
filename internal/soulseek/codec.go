@@ -145,7 +145,16 @@ func (d *Decoder) Done() error {
 
 // ReadFrame reads a server/peer frame: uint32 length, uint32 command, payload.
 func ReadFrame(r io.Reader) (uint32, []byte, error) {
-	body, err := readBody(r, 4)
+	return readFrame(r, nil)
+}
+
+// ReadFrameWithProgress reports received body bytes once the frame size is known.
+func ReadFrameWithProgress(r io.Reader, progress func(received, total uint64)) (uint32, []byte, error) {
+	return readFrame(r, progress)
+}
+
+func readFrame(r io.Reader, progress func(received, total uint64)) (uint32, []byte, error) {
+	body, err := readBody(r, 4, progress)
 	if err != nil {
 		return 0, nil, err
 	}
@@ -160,7 +169,7 @@ func WriteFrame(w io.Writer, command uint32, payload []byte) error {
 
 // ReadInitFrame reads peer-init/distributed framing, whose command is one byte.
 func ReadInitFrame(r io.Reader) (byte, []byte, error) {
-	body, err := readBody(r, 1)
+	body, err := readBody(r, 1, nil)
 	if err != nil {
 		return 0, nil, err
 	}
@@ -171,7 +180,7 @@ func WriteInitFrame(w io.Writer, command byte, payload []byte) error {
 	return writeBody(w, []byte{command}, payload)
 }
 
-func readBody(r io.Reader, header int) ([]byte, error) {
+func readBody(r io.Reader, header int, progress func(received, total uint64)) ([]byte, error) {
 	var n uint32
 	if err := binary.Read(r, binary.LittleEndian, &n); err != nil {
 		if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
@@ -186,11 +195,26 @@ func readBody(r io.Reader, header int) ([]byte, error) {
 		return nil, ErrTooLarge
 	}
 	body := make([]byte, n)
-	if _, err := io.ReadFull(r, body); err != nil {
+	reader := r
+	if progress != nil {
+		var received uint64
+		total := uint64(n)
+		progress(0, total)
+		reader = io.TeeReader(r, writerFunc(func(p []byte) (int, error) {
+			received += uint64(len(p))
+			progress(received, total)
+			return len(p), nil
+		}))
+	}
+	if _, err := io.ReadFull(reader, body); err != nil {
 		return nil, ErrTruncated
 	}
 	return body, nil
 }
+
+type writerFunc func([]byte) (int, error)
+
+func (fn writerFunc) Write(p []byte) (int, error) { return fn(p) }
 
 func writeBody(w io.Writer, header, payload []byte) error {
 	if len(header)+len(payload) > MaxFrameSize {

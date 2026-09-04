@@ -91,6 +91,103 @@ func TestStatusMenuAndLabels(t *testing.T) {
 	}
 }
 
+func TestOnDemandSearchAndBrowseActivityFooter(t *testing.T) {
+	t.Setenv("NO_COLOR", "1")
+	m := model{width: 80, height: 24, selected: map[int]bool{}}
+	if footer := m.footerView(); !strings.Contains(footer, "tab switch") || strings.Contains(footer, "Searching ") {
+		t.Fatalf("idle footer: %q", footer)
+	}
+
+	if cmd := m.openSearch("a long query"); cmd == nil {
+		t.Fatal("search did not start")
+	}
+	searchRequest, searchOperation := m.searchTabs[0].request, m.searchTabs[0].operation
+	if footer := m.footerView(); !strings.Contains(footer, "Searching a long query") || strings.Contains(footer, "tab switch") {
+		t.Fatalf("search footer: %q", footer)
+	}
+	if compact := m.compactView(); !strings.Contains(compact, "Searching a long query") {
+		t.Fatalf("compact activity: %q", compact)
+	}
+	if animated, cmd := m.Update(activityTickMsg{}); cmd == nil || animated.(model).activityFrame != 1 {
+		t.Fatal("search activity tick did not continue")
+	} else {
+		m = animated.(model)
+	}
+	updated, _ := m.Update(searchMsg{request: searchRequest, operation: searchOperation})
+	m = updated.(model)
+	if footer := m.footerView(); !strings.Contains(footer, "tab switch") || strings.Contains(footer, "Searching ") {
+		t.Fatalf("completed search footer: %q", footer)
+	}
+	stopped, cmd := m.Update(activityTickMsg{})
+	m = stopped.(model)
+	if cmd != nil || m.activityRunning {
+		t.Fatal("idle activity tick did not stop")
+	}
+
+	filtering := model{width: 80, workspace: 0, searchTabIndex: 0, searchTabs: []searchTab{{query: "cached", loading: true, loadingMore: true}}}
+	if activity := filtering.activityView(78); activity != "" {
+		t.Fatalf("filtering activated footer: %q", activity)
+	}
+
+	m = model{width: 80, height: 24, selected: map[int]bool{}}
+	if cmd := m.openBrowse("peer", "", false); cmd == nil {
+		t.Fatal("browse did not start")
+	}
+	request := m.browseTabs[0].request
+	if footer := m.footerView(); !strings.Contains(footer, "Browsing @peer") || strings.Contains(footer, "%") {
+		t.Fatalf("initial browse footer: %q", footer)
+	}
+	updated, _ = m.Update(browseProgressMsg{user: "peer", request: request + 1, progress: &daemon.BrowseProgress{Received: 75, Total: 100}})
+	m = updated.(model)
+	if m.browseTabs[0].total != 0 {
+		t.Fatal("stale browse progress was applied")
+	}
+	updated, _ = m.Update(browseProgressMsg{user: "peer", request: request, progress: &daemon.BrowseProgress{Received: 25, Total: 100}})
+	m = updated.(model)
+	if footer := m.footerView(); !strings.Contains(footer, " 25%") {
+		t.Fatalf("determinate browse footer: %q", footer)
+	}
+	updated, _ = m.Update(browseProgressMsg{user: "peer", request: request, progress: &daemon.BrowseProgress{Received: 100, Total: 100}})
+	m = updated.(model)
+	if footer := m.footerView(); !strings.Contains(footer, "Finishing @peer") || !strings.Contains(footer, "100%") {
+		t.Fatalf("finishing browse footer: %q", footer)
+	}
+	updated, _ = m.Update(browseMsg{user: "peer", request: request})
+	m = updated.(model)
+	if footer := m.footerView(); !strings.Contains(footer, "tab switch") || strings.Contains(footer, "Browsing @") {
+		t.Fatalf("completed browse footer: %q", footer)
+	}
+	m.openBrowse("peer", "", true)
+	request = m.browseTabs[0].request
+	updated, _ = m.Update(browseMsg{user: "peer", request: request, err: context.Canceled})
+	m = updated.(model)
+	if footer := m.footerView(); !strings.Contains(footer, "tab switch") {
+		t.Fatalf("failed browse footer: %q", footer)
+	}
+}
+
+func TestActivityPriority(t *testing.T) {
+	m := model{
+		workspace: 0, searchTabIndex: 0, browseTabIndex: 0,
+		searchTabs: []searchTab{{query: "selected search", searching: true, request: 3}},
+		browseTabs: []browseTab{
+			{user: "older", loading: true, request: 1},
+			{user: "bytes", loading: true, request: 2, received: 50, total: 100},
+		},
+	}
+	if activity, _ := m.currentActivity(); activity.kind != activitySearch || activity.label != "selected search" {
+		t.Fatalf("selected activity: %+v", activity)
+	}
+	m.workspace = 2
+	if activity, _ := m.currentActivity(); activity.kind != activityBrowse || activity.label != "bytes" {
+		t.Fatalf("byte browse priority: %+v", activity)
+	}
+	m.workspace, m.browseTabIndex = 1, 0
+	if activity, _ := m.currentActivity(); activity.label != "older" {
+		t.Fatalf("selected browse priority: %+v", activity)
+	}
+}
+
 func TestNoticeExpiresAfterMinimumDuration(t *testing.T) {
 	m := model{selected: map[int]bool{}}
 	m.setNotice("saved")
