@@ -3,8 +3,11 @@ package ipc
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
+	"net"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -286,5 +289,26 @@ func TestBrowseClientAcceptsLargeShareLists(t *testing.T) {
 	result, err := client.Browse(context.Background(), "peer")
 	if err != nil || len(result.Entries) != 1 || result.Entries[0].Name != name {
 		t.Fatalf("large browse response: entries=%d err=%v", len(result.Entries), err)
+	}
+}
+
+func TestNetworkInterfacesSortedUniqueAndErrors(t *testing.T) {
+	srv := NewServer(nil, "")
+	srv.listInterfaces = func() ([]net.Interface, error) {
+		return []net.Interface{{Name: "wg0"}, {Name: "eth0"}, {Name: "wg0"}, {}}, nil
+	}
+	client := &Client{http: &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		recorder := httptest.NewRecorder()
+		srv.handler().ServeHTTP(recorder, request)
+		return recorder.Result(), nil
+	})}}
+	names, err := client.NetworkInterfaces(context.Background())
+	if err != nil || strings.Join(names, ",") != "eth0,wg0" {
+		t.Fatalf("interfaces = %v, %v", names, err)
+	}
+
+	srv.listInterfaces = func() ([]net.Interface, error) { return nil, errors.New("lookup failed") }
+	if _, err := client.NetworkInterfaces(context.Background()); err == nil || !strings.Contains(err.Error(), "lookup failed") {
+		t.Fatalf("interface lookup error = %v", err)
 	}
 }

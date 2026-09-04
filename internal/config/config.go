@@ -25,6 +25,7 @@ type Soulseek struct {
 	Password          string `json:"password" validate:"required"`
 	Server            string `json:"server" validate:"required"`
 	ListenAddr        string `json:"listen_addr" validate:"required"`
+	NetworkInterface  string `json:"network_interface"`
 	ConnectOnStartup  bool   `json:"connect_on_startup"`
 	NATPMPPortMapping bool   `json:"nat_pmp_port_mapping"`
 	UPnPPortMapping   bool   `json:"upnp_port_mapping"`
@@ -57,6 +58,7 @@ type SafeConfig struct {
 		Password          string `json:"-"`
 		Server            string `json:"server"`
 		ListenAddr        string `json:"listen_addr"`
+		NetworkInterface  string `json:"network_interface"`
 		ConnectOnStartup  bool   `json:"connect_on_startup"`
 		NATPMPPortMapping bool   `json:"nat_pmp_port_mapping"`
 		UPnPPortMapping   bool   `json:"upnp_port_mapping"`
@@ -75,7 +77,7 @@ func Default() Config {
 
 func (c Config) Redacted() SafeConfig {
 	var out SafeConfig
-	out.Soulseek.Username, out.Soulseek.Password, out.Soulseek.Server, out.Soulseek.ListenAddr, out.Soulseek.ConnectOnStartup, out.Soulseek.NATPMPPortMapping, out.Soulseek.UPnPPortMapping = c.Soulseek.Username, "[redacted]", c.Soulseek.Server, c.Soulseek.ListenAddr, c.Soulseek.ConnectOnStartup, c.Soulseek.NATPMPPortMapping, c.Soulseek.UPnPPortMapping
+	out.Soulseek.Username, out.Soulseek.Password, out.Soulseek.Server, out.Soulseek.ListenAddr, out.Soulseek.NetworkInterface, out.Soulseek.ConnectOnStartup, out.Soulseek.NATPMPPortMapping, out.Soulseek.UPnPPortMapping = c.Soulseek.Username, "[redacted]", c.Soulseek.Server, c.Soulseek.ListenAddr, c.Soulseek.NetworkInterface, c.Soulseek.ConnectOnStartup, c.Soulseek.NATPMPPortMapping, c.Soulseek.UPnPPortMapping
 	out.Search, out.DownloadDir, out.Shares, out.DownloadSlots, out.UploadSlots = c.Search, c.DownloadDir, append([]Share(nil), c.Shares...), c.DownloadSlots, c.UploadSlots
 	return out
 }
@@ -108,7 +110,7 @@ func (c Config) Validate() error {
 }
 
 func applyEnv(c *Config) {
-	for k, dst := range map[string]*string{"OTO_USERNAME": &c.Soulseek.Username, "OTO_PASSWORD": &c.Soulseek.Password, "OTO_SERVER": &c.Soulseek.Server, "OTO_LISTEN_ADDR": &c.Soulseek.ListenAddr, "OTO_DOWNLOAD_DIR": &c.DownloadDir} {
+	for k, dst := range map[string]*string{"OTO_USERNAME": &c.Soulseek.Username, "OTO_PASSWORD": &c.Soulseek.Password, "OTO_SERVER": &c.Soulseek.Server, "OTO_LISTEN_ADDR": &c.Soulseek.ListenAddr, "OTO_NETWORK_INTERFACE": &c.Soulseek.NetworkInterface, "OTO_DOWNLOAD_DIR": &c.DownloadDir} {
 		if v, ok := os.LookupEnv(k); ok && v != "" {
 			*dst = v
 		}

@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -191,7 +192,7 @@ func TestContextualFooterHints(t *testing.T) {
 		{"share root", model{workspace: workspaceShares, shareTree: tree(treeShareRoot)}, []string{"enter expand", "/ add", "r rescan", "d remove"}, nil},
 		{"share folder", model{workspace: workspaceShares, shareTree: tree(treeFolder)}, []string{"enter expand", "/ add", "r rescan"}, []string{"d remove"}},
 		{"setting text", settings(settingsAccount, 0), []string{"enter edit", "s save"}, nil},
-		{"setting bool", settings(settingsConnection, 3), []string{"enter toggle", "s save"}, nil},
+		{"setting bool", settings(settingsConnection, 4), []string{"enter toggle", "s save"}, nil},
 		{"setting action", settings(settingsAccount, 1), []string{"enter change password", "s save"}, nil},
 		{"setting clear", settings(settingsSearch, 4), []string{"enter clear searches", "s save"}, nil},
 	}
@@ -315,11 +316,29 @@ func TestSetupMasksAndValidates(t *testing.T) {
 	if m.setupField != 0 {
 		t.Fatal("setup field navigation did not handle arrows and tab")
 	}
-	m.setupField = 4
+	m.setupField = 5
 	m.setupVals[0] = ""
 	m.setupKey(key("enter"))
 	if m.setupErr == "" {
 		t.Fatal("missing credential accepted")
+	}
+}
+
+func TestSetupSavesNetworkInterface(t *testing.T) {
+	cfg := config.Default()
+	cfg.Soulseek.NetworkInterface = "tun0"
+	path := t.TempDir() + "/config.json"
+	m := newModel(context.Background(), nil, path, false, cfg)
+	m.setup, m.setupField = true, 5
+	m.setupVals[0], m.setupVals[1], m.setupVals[3] = "alice", "secret", " wg0 "
+	if !strings.Contains(m.setupView(), "Network interface (optional)") || !strings.Contains(m.setupView(), "wg0") {
+		t.Fatal("setup did not show the network interface")
+	}
+	m.setupKey(key("enter"))
+	t.Setenv("OTO_NETWORK_INTERFACE", "")
+	loaded, err := config.Load(path)
+	if err != nil || loaded.Soulseek.NetworkInterface != "wg0" {
+		t.Fatalf("saved network interface = %q, %v", loaded.Soulseek.NetworkInterface, err)
 	}
 }
 func TestNarrowViewAndQuitConfirmation(t *testing.T) {
@@ -382,7 +401,7 @@ func TestTextFieldsEditAtCursor(t *testing.T) {
 		t.Fatalf("paste/caret at cursor = %q @ %d", m.input, m.inputCursor)
 	}
 
-	setup := model{setup: true, setupVals: [5]string{"abcd"}, inputCursor: 4}
+	setup := model{setup: true, setupVals: [6]string{"abcd"}, inputCursor: 4}
 	setup.setupKey(tea.KeyPressMsg(tea.Key{Code: tea.KeyLeft}))
 	setup.setupKey(tea.KeyPressMsg(tea.Key{Code: tea.KeyLeft}))
 	setup.setupKey(key("X"))
@@ -417,7 +436,7 @@ func TestTextFieldWordEditing(t *testing.T) {
 		t.Fatalf("ctrl+u = %q @ %d", m.input, m.inputCursor)
 	}
 
-	setup := model{setup: true, setupVals: [5]string{"one two"}, inputCursor: 7}
+	setup := model{setup: true, setupVals: [6]string{"one two"}, inputCursor: 7}
 	setup.setupKey(ctrl(tea.KeyLeft))
 	setup.setupKey(ctrl(tea.KeyBackspace))
 	if setup.setupVals[0] != "two" || setup.inputCursor != 0 {
@@ -474,15 +493,16 @@ func TestSettingsSidebarEditsAccountWithoutLeakingPassword(t *testing.T) {
 	}
 
 	m.key(tea.KeyPressMsg(tea.Key{Code: tea.KeyRight}))
-	if view := m.View().Content; m.settingsSection != settingsConnection || !strings.Contains(view, "Listen address") || !strings.Contains(view, "Public IP address") || !strings.Contains(view, "Unknown") || !strings.Contains(view, "Connect on startup") || !strings.Contains(view, "NAT-PMP port forwarding") || !strings.Contains(view, "UPnP port forwarding") {
+	if view := m.View().Content; m.settingsSection != settingsConnection || !strings.Contains(view, "Listen address") || !strings.Contains(view, "Network interface") || !strings.Contains(view, "Public IP address") || !strings.Contains(view, "Unknown") || !strings.Contains(view, "Connect on startup") || !strings.Contains(view, "NAT-PMP port forwarding") || !strings.Contains(view, "UPnP port forwarding") {
 		t.Fatal("settings sidebar did not navigate to connection settings")
 	}
 	m.status.publicIP = "1.2.3.4"
-	m.cursor = 2
+	m.cursor = 3
 	view = m.View().Content
 	for _, want := range []string{
 		"Server                  server.slsknet.org:2242",
 		"Listen address          0.0.0.0:50300",
+		"Network interface       ‹ Automatic ›",
 		"Public IP address       1.2.3.4",
 		"Connect on startup      On",
 		"NAT-PMP port forwarding On",
@@ -496,17 +516,17 @@ func TestSettingsSidebarEditsAccountWithoutLeakingPassword(t *testing.T) {
 	if m.editing || strings.Contains(strings.Join(m.footerHints(), " | "), "enter") {
 		t.Fatal("public IP address row was editable")
 	}
-	m.cursor = 3
+	m.cursor = 4
 	m.key(key("enter"))
 	if m.cfg.Soulseek.ConnectOnStartup {
 		t.Fatal("connect-on-startup setting was not staged")
 	}
-	m.cursor = 4
+	m.cursor = 5
 	m.key(key("enter"))
 	if m.editing || m.cfg.Soulseek.NATPMPPortMapping || !m.cfg.Soulseek.UPnPPortMapping {
 		t.Fatal("NAT-PMP setting did not toggle independently")
 	}
-	m.cursor = 5
+	m.cursor = 6
 	m.key(key("enter"))
 	if m.editing || m.cfg.Soulseek.NATPMPPortMapping || m.cfg.Soulseek.UPnPPortMapping {
 		t.Fatal("UPnP setting did not toggle independently")
@@ -523,6 +543,68 @@ func TestSettingsSidebarEditsAccountWithoutLeakingPassword(t *testing.T) {
 	m.key(tea.KeyPressMsg(tea.Key{Code: tea.KeyTab, Mod: tea.ModShift}))
 	if m.workspace != workspaceSettings {
 		t.Fatal("search tab did not wrap backward to settings")
+	}
+}
+
+func TestNetworkInterfaceChoiceAndCustomEntry(t *testing.T) {
+	t.Setenv("NO_COLOR", "1")
+	m := newModel(context.Background(), nil, "", false, config.Default())
+	m.width, m.height, m.workspace, m.settingsSection, m.cursor = 80, 16, workspaceSettings, settingsConnection, 2
+	m.networkInterfaces = []string{"eth0", "wg0"}
+	if view := m.View().Content; !strings.Contains(view, "‹ Automatic ›") {
+		t.Fatalf("automatic interface choice missing: %s", view)
+	}
+
+	m.key(key("right"))
+	if m.settingsSection != settingsDownloads {
+		t.Fatal("right arrow did not navigate sections outside choice mode")
+	}
+	m.settingsSection, m.cursor = settingsConnection, 2
+	m.key(key("enter"))
+	m.key(key("left"))
+	if !m.interfaceChoosing || m.interfaceChoice != 3 || !strings.Contains(m.View().Content, "‹ Custom… ›") {
+		t.Fatal("left arrow did not wrap to Custom")
+	}
+	m.key(key("esc"))
+	if m.interfaceChoosing || m.cfg.Soulseek.NetworkInterface != "" {
+		t.Fatal("escape changed the staged interface")
+	}
+
+	m.key(key("enter"))
+	m.key(key("right"))
+	m.key(key("right"))
+	m.key(key("enter"))
+	if m.cfg.Soulseek.NetworkInterface != "wg0" || m.interfaceChoosing {
+		t.Fatal("discovered interface was not staged")
+	}
+
+	m.key(key("enter"))
+	m.key(key("right"))
+	m.key(key("enter"))
+	if !m.editing || m.input != "" {
+		t.Fatal("Custom did not open a blank text editor")
+	}
+	m.input = " tun42 "
+	m.editKey(key("enter"))
+	if m.cfg.Soulseek.NetworkInterface != "tun42" || m.editing || !strings.Contains(m.View().Content, "‹ Custom: tun42 ›") {
+		t.Fatal("custom interface was not staged")
+	}
+
+	m.key(key("enter"))
+	m.key(key("enter"))
+	if !m.editing || m.input != "tun42" {
+		t.Fatal("existing custom interface was not prefilled")
+	}
+	m.input = "changed"
+	m.editKey(key("esc"))
+	if m.cfg.Soulseek.NetworkInterface != "tun42" || m.editing {
+		t.Fatal("escape changed the custom interface")
+	}
+
+	updated, _ := m.Update(networkInterfacesMsg{err: errors.New("interface lookup failed")})
+	m = updated.(model)
+	if !strings.Contains(m.err, "interface lookup failed") || m.cfg.Soulseek.NetworkInterface != "tun42" {
+		t.Fatal("interface lookup error was not exposed or custom value was lost")
 	}
 }
 

@@ -13,15 +13,17 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/catgirl-systems/oto/internal/country"
+	"golang.org/x/sys/unix"
 )
 
 type ClientConfig struct {
-	Address, Username, Password, ListenAddr string
-	Share                                   *ShareIndex
-	Uploads                                 *UploadManager
+	Address, Username, Password, ListenAddr, NetworkInterface string
+	Share                                                     *ShareIndex
+	Uploads                                                   *UploadManager
 }
 
 type UserStatus uint32
@@ -66,6 +68,8 @@ type Client struct {
 	browseSlot     chan struct{}
 	conn           net.Conn
 	listener       net.Listener
+	dialer         net.Dialer
+	listenConfig   net.ListenConfig
 	advertisedPort uint16
 	publicIP       string
 	loggedIn       bool
@@ -93,7 +97,24 @@ func NewClient(cfg ClientConfig) *Client {
 	if cfg.Uploads == nil {
 		cfg.Uploads = NewUploadManager(1)
 	}
-	return &Client{cfg: cfg, events: make(chan Event, 32), pending: make(map[uint32]chan SearchResponse), addresses: make(map[string]*peerAddressLookup), pierce: make(map[uint32]chan net.Conn), requested: make(map[string]*pendingDownload), downloads: make(map[uint32]*pendingDownload), distributed: NewDistributedNode(), browseSlot: make(chan struct{}, 1)}
+	control := bindToDevice(cfg.NetworkInterface)
+	return &Client{cfg: cfg, dialer: net.Dialer{Control: control}, listenConfig: net.ListenConfig{Control: control}, events: make(chan Event, 32), pending: make(map[uint32]chan SearchResponse), addresses: make(map[string]*peerAddressLookup), pierce: make(map[uint32]chan net.Conn), requested: make(map[string]*pendingDownload), downloads: make(map[uint32]*pendingDownload), distributed: NewDistributedNode(), browseSlot: make(chan struct{}, 1)}
+}
+
+func bindToDevice(name string) func(string, string, syscall.RawConn) error {
+	if name == "" {
+		return nil
+	}
+	return func(_, _ string, raw syscall.RawConn) error {
+		var bindErr error
+		if err := raw.Control(func(fd uintptr) { bindErr = unix.BindToDevice(int(fd), name) }); err != nil {
+			return fmt.Errorf("bind network interface %q: %w", name, err)
+		}
+		if bindErr != nil {
+			return fmt.Errorf("bind network interface %q: %w", name, bindErr)
+		}
+		return nil
+	}
 }
 
 // NewClientOnConn is useful for deterministic net.Pipe tests.
@@ -136,8 +157,7 @@ func (c *Client) Connect(ctx context.Context) error {
 		return errors.New("soulseek: already connected")
 	}
 	c.mu.Unlock()
-	d := net.Dialer{}
-	conn, e := d.DialContext(ctx, "tcp", c.cfg.Address)
+	conn, e := c.dialer.DialContext(ctx, "tcp", c.cfg.Address)
 	if e != nil {
 		return e
 	}
@@ -162,7 +182,7 @@ func (c *Client) startListener() error {
 	if c.cfg.ListenAddr == "" {
 		return nil
 	}
-	ln, e := net.Listen("tcp", c.cfg.ListenAddr)
+	ln, e := c.listenConfig.Listen(context.Background(), "tcp", c.cfg.ListenAddr)
 	if e != nil {
 		return e
 	}
@@ -222,7 +242,7 @@ func (c *Client) SetListenPort(port uint16) error {
 		c.mu.Unlock()
 		return nil
 	}
-	listener, err := net.Listen("tcp", address)
+	listener, err := c.listenConfig.Listen(context.Background(), "tcp", address)
 	if err != nil {
 		c.mu.Unlock()
 		return err
@@ -607,7 +627,7 @@ func readFrameContextProgress(ctx context.Context, c net.Conn, progress func(rec
 }
 
 func (c *Client) connectAddress(ctx context.Context, addr, kind string) (net.Conn, error) {
-	peer, err := (&net.Dialer{}).DialContext(ctx, "tcp", addr)
+	peer, err := c.dialer.DialContext(ctx, "tcp", addr)
 	if err != nil {
 		return nil, err
 	}
@@ -695,7 +715,7 @@ func (c *Client) connectIndirect(ctx context.Context, username, kind string) (ne
 func (c *Client) answerConnectPeer(instruction ConnectPeerInstruction) {
 	ctx, cancel := context.WithTimeout(c.baseContext(), 10*time.Second)
 	defer cancel()
-	peer, err := (&net.Dialer{}).DialContext(ctx, "tcp", net.JoinHostPort(instruction.IP, fmt.Sprint(instruction.Port)))
+	peer, err := c.dialer.DialContext(ctx, "tcp", net.JoinHostPort(instruction.IP, fmt.Sprint(instruction.Port)))
 	if err != nil {
 		return
 	}

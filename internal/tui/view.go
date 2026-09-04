@@ -33,8 +33,8 @@ func (m model) View() tea.View {
 }
 
 func (m model) setupView() string {
-	labels := []string{"Username", "Password", "Listen address", "Download path", "Share (name:path, optional)"}
-	placeholders := []string{"Soulseek username", "Required", "0.0.0.0:50300", "~/Downloads/oto", "music:/home/me/Music"}
+	labels := []string{"Username", "Password", "Listen address", "Network interface (optional)", "Download path", "Share (name:path, optional)"}
+	placeholders := []string{"Soulseek username", "Required", "0.0.0.0:50300", "Automatic (for example, wg0)", "~/Downloads/oto", "music:/home/me/Music"}
 	var b strings.Builder
 	b.WriteString(styled("oto", lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#CBA6F7"))))
 	b.WriteString("  First-time setup\n")
@@ -493,6 +493,9 @@ func (m model) statusView() string {
 }
 
 func (m model) footerHints() []string {
+	if m.interfaceChoosing {
+		return []string{"← → choose", "enter accept", "esc cancel"}
+	}
 	if m.editing {
 		action := "apply"
 		switch {
@@ -567,6 +570,8 @@ func (m model) footerHints() []string {
 			return hints
 		case settingBool:
 			action = "toggle"
+		case settingChoice:
+			action = "choose"
 		case settingAction:
 			switch field.id {
 			case settingChangePassword:

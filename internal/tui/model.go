@@ -123,6 +123,7 @@ const (
 	settingInt
 	settingAction
 	settingInfo
+	settingChoice
 )
 
 const (
@@ -130,6 +131,7 @@ const (
 	settingChangePassword
 	settingServer
 	settingListenAddress
+	settingNetworkInterface
 	settingPublicIPAddress
 	settingConnectOnStartup
 	settingNATPMPPortMapping
@@ -159,6 +161,7 @@ type model struct {
 	historyCursor                          historyCursor
 	transient                              bool
 	setup, help, confirm, editing, loading bool
+	interfaceChoosing                      bool
 	details, folderMenu, statusMenu        bool
 	loadingMore, filterEditing             bool
 	passwordForm, passwordChanging         bool
@@ -174,8 +177,10 @@ type model struct {
 	folderMenuSubfolders                   []string
 	folderMenuFiles                        [2][]download
 	folderMenuChoice, inputCursor          int
+	interfaceChoice                        int
+	networkInterfaces                      []string
 	setupField, passwordField              int
-	setupVals                              [5]string
+	setupVals                              [6]string
 	passwordVals                           [2]string
 	setupErr, passwordUser, passwordErr    string
 	status                                 snapshot
@@ -231,7 +236,7 @@ func (m model) rows() int {
 func (m model) pageRows() int { return max(1, m.height-8) }
 
 func newModel(ctx context.Context, c *ipc.Client, path string, transient bool, cfg config.Config) model {
-	m := model{ctx: ctx, client: c, configPath: path, historyPath: config.HistoryPath(), cfg: cfg, activeSearch: cfg.Search, transient: transient, width: 80, height: 24, selected: map[int]bool{}, setupVals: [5]string{cfg.Soulseek.Username, cfg.Soulseek.Password, cfg.Soulseek.ListenAddr, cfg.DownloadDir, ""}, inputCursor: utf8.RuneCountInString(cfg.Soulseek.Username), savedBrowseLoading: c != nil}
+	m := model{ctx: ctx, client: c, configPath: path, historyPath: config.HistoryPath(), cfg: cfg, activeSearch: cfg.Search, transient: transient, width: 80, height: 24, selected: map[int]bool{}, setupVals: [6]string{cfg.Soulseek.Username, cfg.Soulseek.Password, cfg.Soulseek.ListenAddr, cfg.Soulseek.NetworkInterface, cfg.DownloadDir, ""}, inputCursor: utf8.RuneCountInString(cfg.Soulseek.Username), savedBrowseLoading: c != nil}
 	m.historyCursor.reset("")
 	return m
 }

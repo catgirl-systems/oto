@@ -25,17 +25,19 @@ func TestSaveLoadModesEnvAndRedaction(t *testing.T) {
 	}
 	os.Setenv("OTO_SERVER", "example:1234")
 	os.Setenv("OTO_PASSWORD", "override")
+	os.Setenv("OTO_NETWORK_INTERFACE", "wg0")
 	defer os.Unsetenv("OTO_SERVER")
 	defer os.Unsetenv("OTO_PASSWORD")
+	defer os.Unsetenv("OTO_NETWORK_INTERFACE")
 	got, err := Load(p)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Soulseek.Server != "example:1234" || got.Soulseek.Password != "override" || got.Soulseek.ConnectOnStartup {
+	if got.Soulseek.Server != "example:1234" || got.Soulseek.Password != "override" || got.Soulseek.NetworkInterface != "wg0" || got.Soulseek.ConnectOnStartup {
 		t.Fatalf("env overrides or startup setting: %+v", got.Soulseek)
 	}
 	b, _ := json.Marshal(got.Redacted())
-	if strings.Contains(string(b), "override") || !strings.Contains(string(b), `"connect_on_startup":false`) {
+	if strings.Contains(string(b), "override") || !strings.Contains(string(b), `"network_interface":"wg0"`) || !strings.Contains(string(b), `"connect_on_startup":false`) {
 		t.Fatalf("unsafe or incomplete redaction: %s", b)
 	}
 	q := filepath.Join(d, "env-config.json")
@@ -68,6 +70,9 @@ func TestSearchDefaultsCompatibilityAndValidation(t *testing.T) {
 	if !got.Soulseek.ConnectOnStartup || !got.Soulseek.NATPMPPortMapping || !got.Soulseek.UPnPPortMapping {
 		t.Fatal("older config did not retain connection defaults")
 	}
+	if got.Soulseek.NetworkInterface != "" || got.Redacted().Soulseek.NetworkInterface != "" {
+		t.Fatal("older config did not default to automatic network routing")
+	}
 	safe := got.Redacted().Soulseek
 	if !safe.ConnectOnStartup || !safe.NATPMPPortMapping || !safe.UPnPPortMapping {
 		t.Fatal("redacted config omitted connection defaults")
@@ -78,16 +83,17 @@ func TestSearchDefaultsCompatibilityAndValidation(t *testing.T) {
 	}
 	got.Soulseek.ConnectOnStartup = false
 	got.Soulseek.NATPMPPortMapping = false
+	got.Soulseek.NetworkInterface = "tun0"
 	roundTripPath := filepath.Join(d, "round-trip.json")
 	if err := got.Save(roundTripPath); err != nil {
 		t.Fatal(err)
 	}
 	roundTrip, err := Load(roundTripPath)
-	if err != nil || roundTrip.Search != got.Search || roundTrip.Soulseek.ConnectOnStartup || roundTrip.Soulseek.NATPMPPortMapping || !roundTrip.Soulseek.UPnPPortMapping {
+	if err != nil || roundTrip.Search != got.Search || roundTrip.Soulseek.NetworkInterface != "tun0" || roundTrip.Soulseek.ConnectOnStartup || roundTrip.Soulseek.NATPMPPortMapping || !roundTrip.Soulseek.UPnPPortMapping {
 		t.Fatalf("config round trip: %+v %v", roundTrip, err)
 	}
 	roundTripSafe := roundTrip.Redacted().Soulseek
-	if roundTripSafe.NATPMPPortMapping || !roundTripSafe.UPnPPortMapping {
+	if roundTripSafe.NetworkInterface != "tun0" || roundTripSafe.NATPMPPortMapping || !roundTripSafe.UPnPPortMapping {
 		t.Fatalf("redacted port mapping settings: %+v", roundTripSafe)
 	}
 	got.Search.FilterHistoryLimit = -1

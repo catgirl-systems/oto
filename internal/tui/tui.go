@@ -112,6 +112,10 @@ type settingsMsg struct {
 	search config.Search
 	err    error
 }
+type networkInterfacesMsg struct {
+	names []string
+	err   error
+}
 type passwordMsg struct {
 	password string
 	result   daemon.PasswordChangeResult
@@ -152,6 +156,15 @@ func (m *model) setNotice(message string) {
 }
 func (m model) loadStatus() tea.Cmd {
 	return func() tea.Msg { s, e := m.client.Status(m.ctx); return statusMsg{s, e} }
+}
+func (m model) loadNetworkInterfaces() tea.Cmd {
+	if m.client == nil {
+		return nil
+	}
+	return func() tea.Msg {
+		names, err := m.client.NetworkInterfaces(m.ctx)
+		return networkInterfacesMsg{names: names, err: err}
+	}
 }
 func (m model) setPresence(presence daemon.Presence) tea.Cmd {
 	return func() tea.Msg { return presenceMsg{presence, m.client.SetPresence(m.ctx, presence)} }
@@ -606,6 +619,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.status.err = x.err.Error()
 		} else {
 			m.status = snapshot{status: x.snapshot.Status, presence: x.snapshot.Presence, user: x.snapshot.Config.Soulseek.Username, publicIP: x.snapshot.PublicIP, err: x.snapshot.Error}
+		}
+	case networkInterfacesMsg:
+		if x.err != nil {
+			m.networkInterfaces = nil
+			m.err = x.err.Error()
+		} else {
+			m.networkInterfaces = x.names
+			m.err = ""
 		}
 	case searchMsg:
 		if x.request != 0 {

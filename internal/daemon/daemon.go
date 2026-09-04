@@ -472,7 +472,7 @@ func (s *Service) connectOnce(ctx context.Context) error {
 			return err
 		}
 	}
-	client := soulseek.NewClient(soulseek.ClientConfig{Address: cfg.Soulseek.Server, Username: cfg.Soulseek.Username, Password: cfg.Soulseek.Password, ListenAddr: cfg.Soulseek.ListenAddr, Share: idx, Uploads: soulseek.NewUploadManager(cfg.UploadSlots)})
+	client := soulseek.NewClient(soulseek.ClientConfig{Address: cfg.Soulseek.Server, Username: cfg.Soulseek.Username, Password: cfg.Soulseek.Password, ListenAddr: cfg.Soulseek.ListenAddr, NetworkInterface: cfg.Soulseek.NetworkInterface, Share: idx, Uploads: soulseek.NewUploadManager(cfg.UploadSlots)})
 	if err := client.Connect(ctx); err != nil {
 		return err
 	}
@@ -481,6 +481,10 @@ func (s *Service) connectOnce(ctx context.Context) error {
 	if portFile != "" {
 		if cfg.Soulseek.NATPMPPortMapping || cfg.Soulseek.UPnPPortMapping {
 			log.Printf("port mapping: skipped because --listen-port-file is configured")
+		}
+	} else if cfg.Soulseek.NetworkInterface != "" {
+		if cfg.Soulseek.NATPMPPortMapping || cfg.Soulseek.UPnPPortMapping {
+			log.Printf("port mapping: skipped because network interface %q is configured", cfg.Soulseek.NetworkInterface)
 		}
 	} else if cfg.Soulseek.NATPMPPortMapping || cfg.Soulseek.UPnPPortMapping {
 		opened, err := openMapping(ctx, client.ListenPort(), cfg.Soulseek.NATPMPPortMapping, cfg.Soulseek.UPnPPortMapping, func(port uint16) {

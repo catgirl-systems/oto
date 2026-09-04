@@ -469,6 +469,8 @@ func (m model) renderSettings(width, height int) string {
 				} else {
 					value = "Off"
 				}
+			case settingChoice:
+				value = "‹ " + value + " ›"
 			case settingInt:
 				if value == "0" {
 					value = "Unlimited"
@@ -482,7 +484,7 @@ func (m model) renderSettings(width, height int) string {
 		formLines = append(formLines, selectedRow(trunc(row, max(4, width-sidebarWidth-4)), i == m.cursor))
 	}
 	if fieldStart == 0 && fieldEnd == len(fields) && len(formLines)+2 <= contentHeight {
-		formLines = append(formLines, "", muted("enter edit/toggle/run  •  s save  •  ← → section"))
+		formLines = append(formLines, "", muted("enter edit/toggle/choose/run  •  s save  •  ← → section"))
 	}
 	formWidth := max(12, width-sidebarWidth-2)
 	content := lipgloss.JoinHorizontal(lipgloss.Top, sideStyle.Render(sidebar.String()), lipgloss.NewStyle().Width(formWidth).PaddingLeft(2).Render(strings.Join(formLines, "\n")))
@@ -504,6 +506,7 @@ func (m model) settingFields() []settingField {
 		return []settingField{
 			{settingServer, "Server", m.cfg.Soulseek.Server, settingText},
 			{settingListenAddress, "Listen address", m.cfg.Soulseek.ListenAddr, settingText},
+			{settingNetworkInterface, "Network interface", m.networkInterfaceValue(), settingChoice},
 			{settingPublicIPAddress, "Public IP address", publicIP, settingInfo},
 			{settingConnectOnStartup, "Connect on startup", strconv.FormatBool(m.cfg.Soulseek.ConnectOnStartup), settingBool},
 			{settingNATPMPPortMapping, "NAT-PMP port forwarding", strconv.FormatBool(m.cfg.Soulseek.NATPMPPortMapping), settingBool},
@@ -532,6 +535,11 @@ func (m *model) setSettingValue(value string) error {
 		m.cfg.Soulseek.Server = value
 	case settingListenAddress:
 		m.cfg.Soulseek.ListenAddr = value
+	case settingNetworkInterface:
+		if value == "" {
+			return errors.New("network interface cannot be empty; choose Automatic to clear it")
+		}
+		m.cfg.Soulseek.NetworkInterface = value
 	case settingDownloadPath:
 		m.cfg.DownloadDir = value
 	case settingSearchHistoryLimit, settingFilterHistoryLimit:
@@ -546,4 +554,41 @@ func (m *model) setSettingValue(value string) error {
 		}
 	}
 	return nil
+}
+
+func (m model) networkInterfaceValue() string {
+	if m.interfaceChoosing {
+		return m.networkInterfaceChoice(m.interfaceChoice)
+	}
+	if m.cfg.Soulseek.NetworkInterface == "" {
+		return "Automatic"
+	}
+	for _, name := range m.networkInterfaces {
+		if name == m.cfg.Soulseek.NetworkInterface {
+			return name
+		}
+	}
+	return "Custom: " + m.cfg.Soulseek.NetworkInterface
+}
+
+func (m model) networkInterfaceChoice(choice int) string {
+	if choice == 0 {
+		return "Automatic"
+	}
+	if choice <= len(m.networkInterfaces) {
+		return m.networkInterfaces[choice-1]
+	}
+	return "Custom…"
+}
+
+func (m model) configuredInterfaceChoice() int {
+	if m.cfg.Soulseek.NetworkInterface == "" {
+		return 0
+	}
+	for i, name := range m.networkInterfaces {
+		if name == m.cfg.Soulseek.NetworkInterface {
+			return i + 1
+		}
+	}
+	return len(m.networkInterfaces) + 1
 }

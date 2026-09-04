@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -27,14 +28,15 @@ const (
 )
 
 type Server struct {
-	service  *daemon.Service
-	path     string
-	http     *http.Server
-	listener net.Listener
+	service        *daemon.Service
+	path           string
+	http           *http.Server
+	listener       net.Listener
+	listInterfaces func() ([]net.Interface, error)
 }
 
 func NewServer(service *daemon.Service, path string) *Server {
-	return &Server{service: service, path: path}
+	return &Server{service: service, path: path, listInterfaces: net.Interfaces}
 }
 
 // Listen takes ownership of the Unix socket. An existing socket is removed only
@@ -97,6 +99,7 @@ func (s *Server) Close() error {
 func (s *Server) handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/state", s.state)
+	mux.HandleFunc("GET /v1/network/interfaces", s.networkInterfaces)
 	mux.HandleFunc("PUT /v1/presence", s.presence)
 	mux.HandleFunc("PUT /v1/account/password", s.accountPassword)
 	mux.HandleFunc("GET /v1/searches", s.searches)
@@ -140,6 +143,23 @@ func decode(w http.ResponseWriter, r *http.Request, v any) error {
 }
 func (s *Server) state(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, 200, s.service.Snapshot())
+}
+
+func (s *Server) networkInterfaces(w http.ResponseWriter, _ *http.Request) {
+	interfaces, err := s.listInterfaces()
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	names := make([]string, 0, len(interfaces))
+	for _, networkInterface := range interfaces {
+		if networkInterface.Name != "" {
+			names = append(names, networkInterface.Name)
+		}
+	}
+	slices.Sort(names)
+	names = slices.Compact(names)
+	writeJSON(w, http.StatusOK, names)
 }
 
 func (s *Server) presence(w http.ResponseWriter, r *http.Request) {
@@ -487,6 +507,12 @@ func (c *Client) Rescan(ctx context.Context) ([]config.Share, error) {
 	var x []config.Share
 	err := c.Do(ctx, "POST", "/v1/shares/rescan", nil, &x)
 	return x, err
+}
+
+func (c *Client) NetworkInterfaces(ctx context.Context) ([]string, error) {
+	var names []string
+	err := c.Do(ctx, "GET", "/v1/network/interfaces", nil, &names)
+	return names, err
 }
 func (c *Client) UpdateConfig(ctx context.Context, cfg config.Config) (config.SafeConfig, error) {
 	var x config.SafeConfig

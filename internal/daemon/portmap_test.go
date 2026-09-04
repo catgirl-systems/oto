@@ -204,6 +204,24 @@ func TestPortMappingFailureDisabledAndListenPortFilePrecedence(t *testing.T) {
 		}
 	})
 
+	t.Run("network interface", func(t *testing.T) {
+		server, observations := startMappingServer(t, false, nil)
+		service, ctx := prepareConnectOnce(t, server, true, true)
+		service.cfg.Soulseek.NetworkInterface = "lo"
+		var calls atomic.Int32
+		service.portMapOpen = func(context.Context, uint16, bool, bool, func(uint16)) (portMapping, error) {
+			calls.Add(1)
+			return nil, nil
+		}
+		if err := service.connectOnce(ctx); err != nil {
+			t.Fatal(err)
+		}
+		cfg := service.Config()
+		if observation := awaitMappingObservation(t, observations); calls.Load() != 0 || observation.port != service.client.ListenPort() || !cfg.Soulseek.NATPMPPortMapping || !cfg.Soulseek.UPnPPortMapping {
+			t.Fatalf("calls=%d advertised=%d listener=%d config=%+v", calls.Load(), observation.port, service.client.ListenPort(), cfg.Soulseek)
+		}
+	})
+
 	t.Run("listen port file", func(t *testing.T) {
 		server, observations := startMappingServer(t, false, nil)
 		service, ctx := prepareConnectOnce(t, server, true, true)

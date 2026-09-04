@@ -34,6 +34,9 @@ func (m *model) key(k tea.KeyPressMsg) tea.Cmd {
 	if m.folderMenu {
 		return m.folderMenuKey(k)
 	}
+	if m.interfaceChoosing {
+		return m.interfaceChoiceKey(k)
+	}
 	if m.setup {
 		return m.setupKey(k)
 	}
@@ -84,12 +87,21 @@ func (m *model) key(k tea.KeyPressMsg) tea.Cmd {
 		}
 	case "tab":
 		m.switchWorkspace(m.workspace + 1)
+		if m.workspace == workspaceSettings && m.settingsSection == settingsConnection {
+			return m.loadNetworkInterfaces()
+		}
 	case "shift+tab":
 		m.switchWorkspace(m.workspace - 1)
+		if m.workspace == workspaceSettings && m.settingsSection == settingsConnection {
+			return m.loadNetworkInterfaces()
+		}
 	case "right":
 		if m.workspace == workspaceSettings {
 			m.settingsSection = (m.settingsSection + 1) % settingsSectionCount
 			m.cursor, m.selected = 0, map[int]bool{}
+			if m.settingsSection == settingsConnection {
+				return m.loadNetworkInterfaces()
+			}
 		} else {
 			return m.openTreeNode(false)
 		}
@@ -97,6 +109,9 @@ func (m *model) key(k tea.KeyPressMsg) tea.Cmd {
 		if m.workspace == workspaceSettings {
 			m.settingsSection = (m.settingsSection + settingsSectionCount - 1) % settingsSectionCount
 			m.cursor, m.selected = 0, map[int]bool{}
+			if m.settingsSection == settingsConnection {
+				return m.loadNetworkInterfaces()
+			}
 		} else if tree := m.currentTree(); tree != nil {
 			m.cursor = tree.left(m.cursor)
 		}
@@ -139,6 +154,9 @@ func (m *model) key(k tea.KeyPressMsg) tea.Cmd {
 				return nil
 			}
 			switch fields[m.cursor].id {
+			case settingNetworkInterface:
+				m.interfaceChoosing = true
+				m.interfaceChoice = m.configuredInterfaceChoice()
 			case settingConnectOnStartup:
 				m.cfg.Soulseek.ConnectOnStartup = !m.cfg.Soulseek.ConnectOnStartup
 			case settingNATPMPPortMapping:
@@ -426,10 +444,38 @@ func (m *model) folderMenuKey(k tea.KeyPressMsg) tea.Cmd {
 	return nil
 }
 
+func (m *model) interfaceChoiceKey(k tea.KeyPressMsg) tea.Cmd {
+	count := len(m.networkInterfaces) + 2
+	switch k.String() {
+	case "left":
+		m.interfaceChoice = (m.interfaceChoice + count - 1) % count
+	case "right":
+		m.interfaceChoice = (m.interfaceChoice + 1) % count
+	case "esc":
+		m.interfaceChoosing = false
+	case "enter":
+		choice := m.interfaceChoice
+		m.interfaceChoosing = false
+		if choice == 0 {
+			m.cfg.Soulseek.NetworkInterface = ""
+		} else if choice <= len(m.networkInterfaces) {
+			m.cfg.Soulseek.NetworkInterface = m.networkInterfaces[choice-1]
+		} else {
+			m.editing = true
+			m.input = ""
+			if m.configuredInterfaceChoice() == len(m.networkInterfaces)+1 {
+				m.input = m.cfg.Soulseek.NetworkInterface
+			}
+			m.inputCursor = len([]rune(m.input))
+		}
+	}
+	return nil
+}
+
 func (m *model) beginEdit() {
 	if m.workspace == workspaceSettings {
 		fields := m.settingFields()
-		if m.cursor >= len(fields) || fields[m.cursor].kind == settingBool || fields[m.cursor].kind == settingAction || fields[m.cursor].kind == settingInfo {
+		if m.cursor >= len(fields) || fields[m.cursor].kind == settingBool || fields[m.cursor].kind == settingAction || fields[m.cursor].kind == settingInfo || fields[m.cursor].kind == settingChoice {
 			return
 		}
 	}
@@ -503,6 +549,7 @@ func (m *model) editKey(k tea.KeyPressMsg) tea.Cmd {
 			value := strings.TrimSpace(m.input)
 			if err := m.setSettingValue(value); err != nil {
 				m.err = err.Error()
+				m.editing = m.settingFields()[m.cursor].id == settingNetworkInterface
 			} else {
 				m.err = ""
 			}
@@ -895,7 +942,7 @@ func (m *model) setupKey(k tea.KeyPressMsg) tea.Cmd {
 		return nil
 	}
 	if s == "enter" {
-		if m.setupField < 4 {
+		if m.setupField < 5 {
 			m.selectSetupField(m.setupField + 1)
 			return nil
 		}
@@ -903,8 +950,9 @@ func (m *model) setupKey(k tea.KeyPressMsg) tea.Cmd {
 		cfg.Soulseek.Username = strings.TrimSpace(m.setupVals[0])
 		cfg.Soulseek.Password = m.setupVals[1]
 		cfg.Soulseek.ListenAddr = strings.TrimSpace(m.setupVals[2])
-		cfg.DownloadDir = strings.TrimSpace(m.setupVals[3])
-		if x := strings.TrimSpace(m.setupVals[4]); x != "" {
+		cfg.Soulseek.NetworkInterface = strings.TrimSpace(m.setupVals[3])
+		cfg.DownloadDir = strings.TrimSpace(m.setupVals[4])
+		if x := strings.TrimSpace(m.setupVals[5]); x != "" {
 			p := strings.SplitN(x, ":", 2)
 			if len(p) != 2 {
 				m.setupErr = "share must be name:path"
