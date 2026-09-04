@@ -165,16 +165,26 @@ func TestPortMappingFailureDisabledAndListenPortFilePrecedence(t *testing.T) {
 		service, ctx := prepareConnectOnce(t, server, true, true)
 		var calls atomic.Int32
 		var internalPort uint16
+		var failed *fakePortMapping
 		service.portMapOpen = func(_ context.Context, port uint16, _, _ bool, _ func(uint16)) (portMapping, error) {
 			calls.Add(1)
 			internalPort = port
-			return nil, errors.New("router unavailable")
+			return failed, errors.New("router unavailable")
 		}
 		if err := service.connectOnce(ctx); err != nil {
 			t.Fatal(err)
 		}
 		if observation := awaitMappingObservation(t, observations); calls.Load() != 1 || observation.port != internalPort {
 			t.Fatalf("calls=%d advertised=%d internal=%d", calls.Load(), observation.port, internalPort)
+		}
+		if err := service.SetPresence(PresenceOffline); err != nil {
+			t.Fatal(err)
+		}
+		if err := service.SetPresence(PresenceOnline); err != nil {
+			t.Fatal(err)
+		}
+		if observation := awaitMappingObservation(t, observations); calls.Load() != 2 || observation.port != internalPort {
+			t.Fatalf("reconnect: calls=%d advertised=%d internal=%d", calls.Load(), observation.port, internalPort)
 		}
 	})
 

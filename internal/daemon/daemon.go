@@ -478,14 +478,15 @@ func (s *Service) connectOnce(ctx context.Context) error {
 			log.Printf("port mapping: skipped because --listen-port-file is configured")
 		}
 	} else if cfg.Soulseek.NATPMPPortMapping || cfg.Soulseek.UPnPPortMapping {
-		var err error
-		mapping, err = openMapping(ctx, client.ListenPort(), cfg.Soulseek.NATPMPPortMapping, cfg.Soulseek.UPnPPortMapping, func(port uint16) {
+		opened, err := openMapping(ctx, client.ListenPort(), cfg.Soulseek.NATPMPPortMapping, cfg.Soulseek.UPnPPortMapping, func(port uint16) {
 			if err := client.SetAdvertisedPort(port); err != nil {
 				log.Printf("port mapping: advertise external port %d: %v", port, err)
 			}
 		})
 		if err != nil {
 			log.Printf("port mapping: %v; continuing without automatic forwarding", err)
+		} else {
+			mapping = opened
 		}
 	}
 	if err := client.Login(ctx); err != nil {
