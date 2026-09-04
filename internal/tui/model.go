@@ -92,16 +92,16 @@ type searchTab struct {
 }
 
 type browseTab struct {
-	user, target, err string
-	entries           []entry
-	cursor            int
-	selected          map[int]bool
-	loading, loaded   bool
-	cached            bool
-	request, revision uint64
-	received, total   uint64
-	savedAt           time.Time
-	tree              treeState
+	user, target, filter, err string
+	entries                   []entry
+	cursor                    int
+	selected                  map[int]bool
+	loading, loaded           bool
+	cached                    bool
+	request, revision         uint64
+	received, total           uint64
+	savedAt                   time.Time
+	tree                      treeState
 }
 type transfer struct {
 	id, user, filename, direction, state, err string
@@ -170,6 +170,7 @@ type model struct {
 	details, folderMenu, statusMenu        bool
 	folderMenuEditing                      bool
 	loadingMore, filterEditing             bool
+	browseFindEditing                      bool
 	passwordForm, passwordChanging         bool
 	width, height                          int
 	workspace                              workspace
@@ -179,6 +180,7 @@ type model struct {
 	searchTotal, searchFound, searchNext   int
 	input, query, browseUser, searchID     string
 	searchFilter, searchFilterUndo         string
+	browseFilter                           string
 	folderMenuUser, folderMenuPath         string
 	folderMenuDownloadDir                  string
 	folderMenuSubfolders                   []string

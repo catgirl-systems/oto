@@ -165,7 +165,7 @@ func (m model) browseTabsLine(width int) string {
 func (m model) renderBrowse(width, height int) string {
 	prompt := muted("/  Press / to enter a username")
 	inputStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#F5E0DC"))
-	if m.editing {
+	if m.editing && !m.browseFindEditing {
 		prompt = renderInput("/  ", m.input, m.inputCursor, false, inputStyle) + muted("   enter browse  •  esc cancel")
 	} else if m.browseUser != "" {
 		prompt = styled("/  "+m.browseUser, inputStyle)
@@ -174,11 +174,29 @@ func (m model) renderBrowse(width, height int) string {
 	if len(m.browseTabs) == 0 {
 		count, singular = len(m.savedBrowses), "saved user"
 	}
-	lines := []string{sectionHeader("BROWSE", countLabel(count, singular), width)}
+	countText := countLabel(count, singular)
+	if m.browseFilter != "" {
+		matches := browseMatchCount(m.entries, m.browseFilter)
+		matchWord := "matches"
+		if matches == 1 {
+			matchWord = "match"
+		}
+		countText = fmt.Sprintf("%d %s / %s", matches, matchWord, countLabel(len(m.entries), "item"))
+	}
+	lines := []string{sectionHeader("BROWSE", countText, width)}
 	if tabs := m.browseTabsLine(width); tabs != "" {
 		lines = append(lines, tabs)
 	}
 	lines = append(lines, trunc(prompt, width))
+	if m.browseLoaded {
+		findLine := muted("f  Press f to find in loaded shares")
+		if m.editing && m.browseFindEditing {
+			findLine = renderInput("f  ", m.input, m.inputCursor, false, inputStyle) + muted("   enter apply  •  esc cancel")
+		} else if m.browseFilter != "" {
+			findLine = styled("f  "+m.browseFilter, inputStyle)
+		}
+		lines = append(lines, trunc(findLine, width))
+	}
 
 	if len(m.browseTabs) == 0 {
 		if m.savedBrowseLoading && height > len(lines) {
@@ -205,6 +223,9 @@ func (m model) renderBrowse(width, height int) string {
 	}
 	if len(m.entries) == 0 && height > len(lines) {
 		return strings.Join(append(lines, "\n"+muted("Enter a Soulseek username to browse their shared files.")), "\n")
+	}
+	if m.browseFilter != "" && len(m.browseTree.visible) == 0 && height > len(lines) {
+		return strings.Join(append(lines, muted("No matching shared files. Press f to change or clear the find.")), "\n")
 	}
 
 	_, selectedNode := m.browseTree.node(m.cursor)

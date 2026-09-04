@@ -45,7 +45,7 @@ For dynamically forwarded incoming ports, `--listen-port-file` watches the file'
 | `ctrl+a` / `ctrl+e`, `ctrl+u` / `ctrl+k` | jump to start/end; delete before/after the caret |
 | `/` | edit search, add a wishlist item, enter a username or `name:path` share, or edit a setting |
 | `enter` | open wishlist or saved Browse results; toggle a folder; download a Search/Browse file |
-| `f` | edit cached Search filters or a wishlist item's stored filter |
+| `f` | edit cached Search filters, a wishlist item's stored filter, or find within a loaded Browse list |
 | `w` in Search | save or update the active query and filter as a wishlist item |
 | `tab` / `shift+tab` while filtering | complete fields, types, booleans, and comparison operators |
 | `c` | clear/restore search filters or clear the selected transfer subtree |
@@ -67,7 +67,7 @@ Search groups results as user → folders → files; Browse shows remote folders
 
 Pending network searches and remote share-list requests temporarily replace the bottom keyboard hints with an activity bar. Share-list requests switch to byte and percentage progress once the peer's response size is known; the normal footer returns immediately when the operation finishes.
 
-Press `s` in a loaded Browse tab to save that user's complete share list. With no Browse tabs open, saved users are listed for selection with the arrow keys and Enter. Opening remains network-first while connected, but falls back to the saved list when offline or when the peer cannot be reached; cached tabs are labeled `(cached)`, and `r` retries the live list.
+Press `s` in a loaded Browse tab to save that user's complete share list. With no Browse tabs open, saved users are listed for selection with the arrow keys and Enter. Opening remains network-first while connected, but falls back to the saved list when offline or when the peer cannot be reached; cached tabs are labeled `(cached)`, and `r` retries the live list. Press `f` in a loaded Browse tab to filter its files and folders locally by a case-insensitive path substring; enter an empty find to restore the complete tree. Finds are kept separately per open tab and work with live or saved lists without contacting the peer.
 
 Searches support quoted phrases, excluded words (`-remix`), and partial terms (`*radio`). Filter cached results without another network search using fields such as:
 
@@ -185,7 +185,7 @@ This tracks user-visible Soulseek functionality and meaningful operational quali
 | Refresh a user's share list | :white_check_mark: | :white_check_mark: |
 | Jump from a search result to its user's folder | :white_check_mark: | :white_check_mark: |
 | Browse public and private entries returned by a peer | :white_check_mark: | :white_check_mark: |
-| Search within a loaded share list | :x: | :white_check_mark: |
+| Search within a loaded share list | :white_check_mark: | :white_check_mark: |
 | Download selected files | :white_check_mark: | :white_check_mark: |
 | Download a loaded folder subtree | :white_check_mark: | :white_check_mark: |
 | Request and download a complete remote folder recursively | :white_check_mark: | :white_check_mark: |

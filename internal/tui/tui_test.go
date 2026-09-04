@@ -44,7 +44,7 @@ func TestNavigationSelectionAndHelp(t *testing.T) {
 		t.Fatal("help")
 	}
 	guide := m.View().Content
-	if !strings.Contains(guide, "Keyboard") || strings.Contains(guide, "Keyboard guide") || strings.Contains(guide, "Everything is reachable without a mouse.") || !strings.Contains(guide, "NAVIGATION") || !strings.Contains(guide, "q") || !strings.Contains(guide, "quit") {
+	if !strings.Contains(guide, "Keyboard") || strings.Contains(guide, "Keyboard guide") || strings.Contains(guide, "Everything is reachable without a mouse.") || !strings.Contains(guide, "NAVIGATION") || !strings.Contains(guide, "loaded Browse list") || !strings.Contains(guide, "q") || !strings.Contains(guide, "quit") {
 		t.Fatalf("incomplete keyboard guide: %q", guide)
 	}
 }
@@ -250,12 +250,13 @@ func TestContextualFooterHints(t *testing.T) {
 	}{
 		{"search edit", model{workspace: workspaceSearch, editing: true}, []string{"enter search", "esc cancel"}, nil},
 		{"filter edit", model{workspace: workspaceSearch, editing: true, filterEditing: true}, []string{"enter apply filter", "esc cancel"}, nil},
+		{"browse find edit", model{workspace: workspaceBrowse, editing: true, browseFindEditing: true}, []string{"enter apply find", "esc cancel"}, nil},
 		{"saved browse", model{workspace: workspaceBrowse}, []string{"enter open", "r refresh"}, []string{"save list"}},
 		{"search folder", model{workspace: workspaceSearch, searchTree: tree(treeFolder)}, []string{"/ search", "f filter", "enter expand", "b browse", "d folder download"}, []string{"i details"}},
 		{"search file", model{workspace: workspaceSearch, searchTree: tree(treeFile)}, []string{"enter/d download", "space select", "b browse", "i details"}, []string{"folder download"}},
 		{"wishlist", model{workspace: workspaceWishlist}, []string{"/ add", "f filter", "enter open", "r rerun", "d remove"}, nil},
-		{"browse folder", model{workspace: workspaceBrowse, browseTabs: []browseTab{{}}, browseTree: tree(treeFolder)}, []string{"enter expand", "d folder download", "s save list", "r refresh"}, []string{"i details"}},
-		{"browse file", model{workspace: workspaceBrowse, browseTabs: []browseTab{{}}, browseTree: tree(treeFile)}, []string{"enter/d download", "space select", "i details", "s save list", "r refresh"}, []string{"folder download"}},
+		{"browse folder", model{workspace: workspaceBrowse, browseTabs: []browseTab{{}}, browseLoaded: true, browseTree: tree(treeFolder)}, []string{"f find", "enter expand", "d folder download", "s save list", "r refresh"}, []string{"i details"}},
+		{"browse file", model{workspace: workspaceBrowse, browseTabs: []browseTab{{}}, browseLoaded: true, browseTree: tree(treeFile)}, []string{"f find", "enter/d download", "space select", "i details", "s save list", "r refresh"}, []string{"folder download"}},
 		{"transfers", model{workspace: workspaceTransfers}, []string{"d cancel", "r retry", "c clear"}, nil},
 		{"share root", model{workspace: workspaceShares, shareTree: tree(treeShareRoot)}, []string{"enter expand", "/ add", "r rescan", "d remove"}, nil},
 		{"share folder", model{workspace: workspaceShares, shareTree: tree(treeFolder)}, []string{"enter expand", "/ add", "r rescan"}, []string{"d remove"}},
@@ -1067,7 +1068,7 @@ func TestFileDetails(t *testing.T) {
 
 	m.workspace, m.browseUser = workspaceBrowse, "bob"
 	m.entries = []entry{{name: `Private\demo.wav`, extension: "wav", size: 42, private: true, bitrate: 1411}}
-	m.browseTree, m.cursor = buildBrowseTree(m.entries, treeState{}, 0)
+	m.browseTree, m.cursor = buildBrowseTree(m.entries, "", treeState{}, 0)
 	m.cursor = m.browseTree.cursorForSource(0)
 	m.key(key("i"))
 	view = m.View().Content
@@ -1139,6 +1140,117 @@ func TestBrowseResultFolderAndUserTabs(t *testing.T) {
 	m.key(tea.KeyPressMsg(tea.Key{Code: 'w', Mod: tea.ModCtrl}))
 	if len(m.browseTabs) != 1 || m.browseUser != "LittleDeng" {
 		t.Fatalf("ctrl+w did not close active user tab: user=%q tabs=%d", m.browseUser, len(m.browseTabs))
+	}
+}
+
+func TestBrowseFindTree(t *testing.T) {
+	entries := []entry{
+		{name: `Music\Album`, directory: true},
+		{name: `Music\Album\Song.FLAC`},
+		{name: `Music\Album\Disc`, directory: true},
+		{name: `Music\Album\Disc\mix.mp3`},
+		{name: `Other`, directory: true},
+		{name: `Other\SONG.FLAC`},
+	}
+	filtered, _ := buildBrowseTree(entries, "ALBUM", treeState{}, 0)
+	_, hasMusic := filtered.byID[treeID("browse-dir", "Music")]
+	_, hasDisc := filtered.byID[treeID("browse-dir", `Music\Album\Disc`)]
+	if browseMatchCount(entries, "ALBUM") != 4 || !hasMusic || !hasDisc {
+		t.Fatalf("folder query did not retain its subtree and ancestors: %+v", filtered.byID)
+	}
+	if cursor := filtered.cursorForSource(3); filtered.nodes[filtered.visible[cursor]].source != 3 {
+		t.Fatal("filtered tree lost the original source index")
+	}
+	filesOnly, _ := buildBrowseTree(entries, "song.flac", treeState{}, 0)
+	found := map[int]bool{}
+	for _, node := range filesOnly.nodes {
+		if node.kind == treeFile {
+			found[node.source] = true
+		}
+	}
+	if !found[1] || !found[5] || len(found) != 2 {
+		t.Fatalf("case-insensitive file matches = %+v", found)
+	}
+	none, _ := buildBrowseTree(entries, "missing", treeState{}, 0)
+	all, _ := buildBrowseTree(entries, "", treeState{}, 0)
+	if len(none.visible) != 0 || browseMatchCount(entries, "") != len(entries) || len(all.visible) <= len(filtered.visible) {
+		t.Fatal("zero-match or cleared Browse find was not represented correctly")
+	}
+}
+
+func TestBrowseFindInputTabsRefreshAndTarget(t *testing.T) {
+	entries := []entry{
+		{name: `Music\Album`, directory: true},
+		{name: `Music\Album\Song.FLAC`},
+		{name: `Music\Album\Disc`, directory: true},
+		{name: `Music\Album\Disc\mix.mp3`},
+		{name: `Other`, directory: true},
+		{name: `Other\notes.txt`},
+	}
+	full, _ := buildBrowseTree(entries, "", treeState{}, 0)
+	m := model{workspace: workspaceBrowse, browseTabs: []browseTab{{user: "peer", entries: entries, selected: map[int]bool{}, loaded: true, tree: full}}, browseTabIndex: 0, width: 100, height: 20}
+	m.loadBrowseTab(0)
+	m.selected[1] = true
+	if cmd := m.key(key("f")); cmd != nil || !m.editing || !m.browseFindEditing {
+		t.Fatal("f did not open local Browse find")
+	}
+	m.input = "ignored"
+	m.editKey(key("esc"))
+	if m.browseFilter != "" || !m.selected[1] {
+		t.Fatal("Escape applied the Browse find or cleared selection")
+	}
+	m.key(key("f"))
+	m.input = "missing"
+	m.editKey(key("enter"))
+	if !strings.Contains(m.renderBrowse(100, 15), "No matching shared files") {
+		t.Fatal("zero-match Browse find message was not rendered")
+	}
+	m.key(key("f"))
+	m.input = " album "
+	if cmd := m.editKey(key("enter")); cmd != nil || m.browseFilter != "album" || len(m.selected) != 0 || m.browseTabs[0].filter != "album" {
+		t.Fatalf("Browse find was not applied locally: filter=%q selected=%v", m.browseFilter, m.selected)
+	}
+	view := m.renderBrowse(100, 15)
+	if !strings.Contains(view, "4 matches / 6 items") || !strings.Contains(view, "f  album") {
+		t.Fatalf("Browse find UI missing count or query: %q", view)
+	}
+	album := treeID("browse-dir", `Music\Album`)
+	m.cursor = 0
+	for cursor, index := range m.browseTree.visible {
+		if m.browseTree.nodes[index].id == album {
+			m.cursor = cursor
+			break
+		}
+	}
+	m.toggle()
+	if !m.selected[1] || !m.selected[3] || len(m.selected) != 2 {
+		t.Fatalf("filtered folder selected hidden files: %+v", m.selected)
+	}
+
+	if cmd := m.openBrowse("peer", "", true); cmd == nil {
+		t.Fatal("refresh did not start")
+	}
+	request := m.browseTabs[0].request
+	refreshed := []entry{{name: `Music\Album`, directory: true}, {name: `Music\Album\new.flac`}, {name: `Other`, directory: true}}
+	updated, _ := m.Update(browseMsg{user: "peer", request: request, entries: refreshed})
+	m = updated.(model)
+	if m.browseFilter != "album" || m.browseTabs[0].filter != "album" || browseMatchCount(m.entries, m.browseFilter) != 2 {
+		t.Fatal("refresh did not reapply the tab's Browse find")
+	}
+	m.openBrowse("other", "", false)
+	if m.browseFilter != "" || len(m.browseTabs) != 2 {
+		t.Fatal("new Browse tab inherited another tab's find")
+	}
+	m.switchBrowseTab(-1)
+	if m.browseUser != "peer" || m.browseFilter != "album" {
+		t.Fatal("Browse find was not restored with its tab")
+	}
+	if cmd := m.openBrowse("peer", `Music\Album`, false); cmd != nil || m.browseFilter != "" || m.browseTabs[0].filter != "" {
+		t.Fatal("targeted Browse did not clear the local find")
+	}
+	_, node := m.browseTree.node(m.cursor)
+	if node == nil || node.path != `Music\Album` {
+		t.Fatalf("target folder remained hidden: %+v", node)
 	}
 }
 
@@ -1320,12 +1432,17 @@ func TestFolderDownloadMenu(t *testing.T) {
 		t.Fatal("file cursor did not keep immediate download behavior")
 	}
 
-	browseEntries := []entry{{name: `Music\Album`, directory: true}, {name: `Music\Album\song.flac`, size: 5}}
-	browseTree, _ := buildBrowseTree(browseEntries, treeState{}, 0)
-	m = model{workspace: workspaceBrowse, cfg: config.Config{DownloadDir: "/downloads"}, browseUser: "peer", entries: browseEntries, browseTree: browseTree, selected: map[int]bool{}}
-	m.cursor = 0
-	if cmd := m.key(key("d")); cmd != nil || !m.folderMenu || m.folderMenuUser != "peer" {
-		t.Fatalf("browse folder menu did not open: %+v", m)
+	browseEntries := []entry{{name: `Music\Album`, directory: true}, {name: `Music\Album\song.flac`, size: 5}, {name: `Music\Album\Disc`, directory: true}, {name: `Music\Album\Disc\two.flac`, size: 6}}
+	browseTree, _ := buildBrowseTree(browseEntries, "song", treeState{}, 0)
+	m = model{workspace: workspaceBrowse, cfg: config.Config{DownloadDir: "/downloads"}, browseUser: "peer", browseFilter: "song", entries: browseEntries, browseTree: browseTree, selected: map[int]bool{}}
+	for cursor, index := range m.browseTree.visible {
+		if m.browseTree.nodes[index].id == treeID("browse-dir", `Music\Album`) {
+			m.cursor = cursor
+			break
+		}
+	}
+	if cmd := m.key(key("d")); cmd != nil || !m.folderMenu || m.folderMenuUser != "peer" || len(m.folderMenuSubfolders) != 1 || len(m.folderMenuFiles[1]) != 2 {
+		t.Fatalf("filtered Browse folder menu used partial contents: %+v", m)
 	}
 }
 

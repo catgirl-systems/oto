@@ -266,10 +266,29 @@ func buildSearchTree(results []result, previous treeState, cursor int) (treeStat
 	return t, t.finish(previous, cursor)
 }
 
-func buildBrowseTree(entries []entry, previous treeState, cursor int) (treeState, int) {
+func normalizeBrowseQuery(query string) string {
+	return strings.ToLower(normalizeBrowsePath(strings.TrimSpace(query)))
+}
+
+func browseMatchCount(entries []entry, query string) int {
+	query = normalizeBrowseQuery(query)
+	count := 0
+	for _, item := range entries {
+		if query == "" || strings.Contains(strings.ToLower(normalizeBrowsePath(item.name)), query) {
+			count++
+		}
+	}
+	return count
+}
+
+func buildBrowseTree(entries []entry, query string, previous treeState, cursor int) (treeState, int) {
 	t := newTree(true, previous)
 	duplicates := map[string]int{}
+	query = normalizeBrowseQuery(query)
 	for source, item := range entries {
+		if query != "" && !strings.Contains(strings.ToLower(normalizeBrowsePath(item.name)), query) {
+			continue
+		}
 		parent, path := "", ""
 		parts := treeParts(item.name)
 		for i, part := range parts {

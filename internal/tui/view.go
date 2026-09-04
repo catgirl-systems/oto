@@ -272,7 +272,7 @@ func (m model) helpView() string {
 		{"Files & actions", [][2]string{
 			{"enter", "toggle folder / download Search or Browse file"},
 			{"i", "show file details"},
-			{"f", "edit search filters"},
+			{"f", "edit Search filters / find in loaded Browse list"},
 			{"c", "clear / restore search filters"},
 			{"w (search)", "save the active query and filter to Wishlist"},
 			{"/ f r d (wishlist)", "add, edit filter, rerun, or remove a wishlist item"},
@@ -523,6 +523,8 @@ func (m model) footerHints() []string {
 		switch {
 		case m.filterEditing:
 			action = "apply filter"
+		case m.browseFindEditing:
+			action = "apply find"
 		case m.workspace == workspaceSearch:
 			action = "search"
 		case m.workspace == workspaceBrowse:
@@ -555,6 +557,9 @@ func (m model) footerHints() []string {
 			return []string{"enter open", "r refresh"}
 		}
 		hints := []string{"s save list", "r refresh"}
+		if m.browseLoaded {
+			hints = append([]string{"f find"}, hints...)
+		}
 		_, node := m.browseTree.node(m.cursor)
 		if node == nil {
 			return hints

@@ -292,6 +292,12 @@ func (m *model) key(k tea.KeyPressMsg) tea.Cmd {
 			m.historyCursor.reset(m.input)
 			return nil
 		}
+		if m.workspace == workspaceBrowse && m.browseLoaded && len(m.browseTabs) > 0 {
+			m.editing, m.filterEditing, m.browseFindEditing = true, false, true
+			m.input = m.browseFilter
+			m.inputCursor = len([]rune(m.input))
+			return nil
+		}
 	case "w":
 		if m.workspace == workspaceSearch && strings.TrimSpace(m.query) != "" {
 			return m.putWishlist(m.query, m.searchFilter, "Saved search to Wishlist")
@@ -413,6 +419,15 @@ func (m *model) openFolderMenu() bool {
 	if user == "" {
 		return false
 	}
+	if m.workspace == workspaceBrowse && m.browseFilter != "" {
+		fullTree, _ := buildBrowseTree(m.entries, "", treeState{}, 0)
+		fullIndex, ok := fullTree.byID[node.id]
+		if !ok {
+			return false
+		}
+		tree, index = &fullTree, fullIndex
+		node = &tree.nodes[index]
+	}
 	fileAt := func(source int) (download, bool) {
 		if m.workspace == workspaceSearch && source >= 0 && source < len(m.results) && !m.results[source].directory {
 			return download{filename: m.results[source].path, size: m.results[source].size}, true
@@ -530,7 +545,7 @@ func (m *model) beginEdit() {
 			return
 		}
 	}
-	m.editing, m.filterEditing = true, false
+	m.editing, m.filterEditing, m.browseFindEditing = true, false, false
 	switch m.workspace {
 	case workspaceSearch:
 		m.input = m.query
@@ -565,13 +580,23 @@ func (m *model) editKey(k tea.KeyPressMsg) tea.Cmd {
 		return nil
 	}
 	if s == "esc" {
-		m.editing, m.filterEditing = false, false
+		m.editing, m.filterEditing, m.browseFindEditing = false, false, false
 		m.input = ""
 		return nil
 	}
 	if s == "enter" {
-		filterEditing := m.filterEditing
-		m.editing, m.filterEditing = false, false
+		filterEditing, browseFindEditing := m.filterEditing, m.browseFindEditing
+		m.editing, m.filterEditing, m.browseFindEditing = false, false, false
+		if browseFindEditing {
+			filter := strings.TrimSpace(m.input)
+			if filter != m.browseFilter {
+				m.browseFilter, m.selected = filter, map[int]bool{}
+				m.browseTree, m.cursor = buildBrowseTree(m.entries, filter, m.browseTree, m.cursor)
+				m.saveBrowseTab()
+			}
+			m.input = ""
+			return nil
+		}
 		if filterEditing {
 			filter := strings.TrimSpace(m.input)
 			if err := daemon.ValidateSearchFilter(filter); err != nil {

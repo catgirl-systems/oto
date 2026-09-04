@@ -502,14 +502,16 @@ func (m *model) saveBrowseTab() {
 	}
 	tab := &m.browseTabs[m.browseTabIndex]
 	tab.entries, tab.cursor, tab.selected, tab.loading, tab.tree = m.entries, m.cursor, m.selected, m.loading, m.browseTree
+	tab.filter = m.browseFilter
 	tab.loaded, tab.cached, tab.revision, tab.savedAt = m.browseLoaded, m.browseCached, m.browseRevision, m.browseSavedAt
 }
 
 func (m *model) loadBrowseTab(index int) {
 	if index < 0 || index >= len(m.browseTabs) {
 		m.browseTabIndex = -1
-		m.browseUser, m.entries, m.cursor, m.loading = "", nil, max(0, min(m.savedBrowseCursor, len(m.savedBrowses)-1)), false
+		m.browseUser, m.browseFilter, m.entries, m.cursor, m.loading = "", "", nil, max(0, min(m.savedBrowseCursor, len(m.savedBrowses)-1)), false
 		m.browseLoaded, m.browseCached, m.browseRevision, m.browseSavedAt = false, false, 0, time.Time{}
+		m.browseFindEditing = false
 		m.selected, m.err = map[int]bool{}, ""
 		m.browseTree = treeState{}
 		return
@@ -519,7 +521,7 @@ func (m *model) loadBrowseTab(index int) {
 	if tab.selected == nil {
 		tab.selected = map[int]bool{}
 	}
-	m.browseUser, m.entries, m.cursor, m.selected, m.loading, m.browseTree = tab.user, tab.entries, tab.cursor, tab.selected, tab.loading, tab.tree
+	m.browseUser, m.browseFilter, m.entries, m.cursor, m.selected, m.loading, m.browseTree = tab.user, tab.filter, tab.entries, tab.cursor, tab.selected, tab.loading, tab.tree
 	m.browseLoaded, m.browseCached, m.browseRevision, m.browseSavedAt = tab.loaded, tab.cached, tab.revision, tab.savedAt
 	m.err = tab.err
 }
@@ -645,13 +647,17 @@ func (m *model) openBrowse(user, target string, refresh bool) tea.Cmd {
 	}
 	tab := &m.browseTabs[index]
 	tab.target = normalizeBrowsePath(target)
+	if tab.target != "" && tab.filter != "" {
+		tab.filter, tab.selected = "", map[int]bool{}
+		tab.tree, tab.cursor = buildBrowseTree(tab.entries, "", tab.tree, tab.cursor)
+	}
 	request := refresh || (!tab.loaded && !tab.loading)
 	if request {
 		m.browseRequest++
 		tab.request, tab.loading = m.browseRequest, true
 		tab.received, tab.total = 0, 0
 	} else if tab.target != "" {
-		tab.cursor = browseTargetCursor(tab.entries, tab.target)
+		tab.cursor = tab.tree.cursorForSource(browseTargetCursor(tab.entries, tab.target))
 		tab.target = ""
 	}
 	m.workspace = workspaceBrowse
@@ -841,7 +847,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				target := browseTargetCursor(x.entries, tab.target)
 				tab.entries, tab.selected = x.entries, map[int]bool{}
 				tab.loaded, tab.cached, tab.revision, tab.savedAt = true, x.cached, x.revision, x.savedAt
-				tab.tree, tab.cursor = buildBrowseTree(tab.entries, tab.tree, tab.cursor)
+				tab.tree, tab.cursor = buildBrowseTree(tab.entries, tab.filter, tab.tree, tab.cursor)
 				if tab.target != "" {
 					tab.cursor = tab.tree.cursorForSource(target)
 				}
