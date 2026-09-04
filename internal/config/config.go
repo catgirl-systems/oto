@@ -39,15 +39,16 @@ type Share struct {
 }
 
 type Search struct {
-	RememberSearches             bool `json:"remember_searches"`
-	SearchHistoryLimit           int  `json:"search_history_limit" validate:"min=0"`
-	RememberFilters              bool `json:"remember_filters"`
-	FilterHistoryLimit           int  `json:"filter_history_limit" validate:"min=0"`
-	WishlistIntervalMinutes      int  `json:"wishlist_interval_minutes" validate:"min=0,max=525600"`
-	WishlistNotifications        bool `json:"wishlist_notifications"`
-	RespondToIncomingSearches    bool `json:"respond_to_incoming_searches"`
-	MinimumIncomingSearchLength  int  `json:"minimum_incoming_search_length" validate:"min=0,max=50"`
-	MaximumIncomingSearchResults int  `json:"maximum_incoming_search_results" validate:"min=50,max=10000"`
+	RememberSearches             bool   `json:"remember_searches"`
+	SearchHistoryLimit           int    `json:"search_history_limit" validate:"min=0"`
+	RememberFilters              bool   `json:"remember_filters"`
+	FilterHistoryLimit           int    `json:"filter_history_limit" validate:"min=0"`
+	DefaultFilter                string `json:"default_filter"`
+	WishlistIntervalMinutes      int    `json:"wishlist_interval_minutes" validate:"min=0,max=525600"`
+	WishlistNotifications        bool   `json:"wishlist_notifications"`
+	RespondToIncomingSearches    bool   `json:"respond_to_incoming_searches"`
+	MinimumIncomingSearchLength  int    `json:"minimum_incoming_search_length" validate:"min=0,max=50"`
+	MaximumIncomingSearchResults int    `json:"maximum_incoming_search_results" validate:"min=50,max=10000"`
 }
 
 type UploadLimitScope string
@@ -77,8 +78,10 @@ type Uploads struct {
 }
 
 type Downloads struct {
-	AfterFileCommand   string `json:"after_file_command"`
-	AfterFolderCommand string `json:"after_folder_command"`
+	AfterFileCommand    string `json:"after_file_command"`
+	AfterFolderCommand  string `json:"after_folder_command"`
+	FileNotifications   bool   `json:"file_notifications"`
+	FolderNotifications bool   `json:"folder_notifications"`
 }
 
 func (u Uploads) ActiveSpeedLimitKiB() int {
@@ -130,7 +133,7 @@ type SafeConfig struct {
 
 func Default() Config {
 	home, _ := os.UserHomeDir()
-	return Config{Soulseek: Soulseek{Server: DefaultServer, ListenAddr: DefaultListenAddr, ConnectOnStartup: true, NATPMPPortMapping: true, UPnPPortMapping: true}, Search: Search{RememberSearches: true, SearchHistoryLimit: 200, RememberFilters: true, FilterHistoryLimit: 50, WishlistIntervalMinutes: 15, WishlistNotifications: true, RespondToIncomingSearches: true, MinimumIncomingSearchLength: 3, MaximumIncomingSearchResults: 300}, Uploads: Uploads{Profiles: []UploadProfile{{Name: "Unlimited"}}, ActiveProfile: "Unlimited", LimitScope: UploadLimitTotal, Scheduling: UploadSchedulingFIFO}, DownloadDir: filepath.Join(home, DefaultDownloadDir), DownloadSlots: 4, UploadSlots: 2}
+	return Config{Soulseek: Soulseek{Server: DefaultServer, ListenAddr: DefaultListenAddr, ConnectOnStartup: true, NATPMPPortMapping: true, UPnPPortMapping: true}, Search: Search{RememberSearches: true, SearchHistoryLimit: 200, RememberFilters: true, FilterHistoryLimit: 50, WishlistIntervalMinutes: 15, WishlistNotifications: true, RespondToIncomingSearches: true, MinimumIncomingSearchLength: 3, MaximumIncomingSearchResults: 300}, Uploads: Uploads{Profiles: []UploadProfile{{Name: "Unlimited"}}, ActiveProfile: "Unlimited", LimitScope: UploadLimitTotal, Scheduling: UploadSchedulingFIFO}, Downloads: Downloads{FolderNotifications: true}, DownloadDir: filepath.Join(home, DefaultDownloadDir), DownloadSlots: 4, UploadSlots: 2}
 }
 
 func (c Config) Redacted() SafeConfig {

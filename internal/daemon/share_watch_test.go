@@ -22,11 +22,10 @@ func watchingService(t *testing.T, shares []config.Share, quiet time.Duration, b
 		t.Fatal(err)
 	}
 	service.SetConfigPath(filepath.Join(t.TempDir(), "config.json"))
-	service.mu.Lock()
-	if err := service.configureSharesLocked(); err != nil {
-		service.mu.Unlock()
+	if err := service.Rescan(); err != nil {
 		t.Fatal(err)
 	}
+	service.mu.Lock()
 	if builder != nil {
 		service.shareIndexBuilder = builder
 	}

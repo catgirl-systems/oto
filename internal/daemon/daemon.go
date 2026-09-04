@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -27,6 +28,7 @@ var (
 	ErrNotStarted            = errors.New("daemon: not connected")
 	ErrSearchNotFound        = errors.New("daemon: search not found")
 	ErrListenPortUnavailable = errors.New("daemon: listening port unavailable")
+	ErrScanBusy              = errors.New("daemon: share scan already in progress")
 )
 
 type Status string
@@ -49,16 +51,31 @@ const (
 
 const searchPageSize = 100
 
+type ShareScan struct {
+	ID          uint64    `json:"id"`
+	State       string    `json:"state"`
+	Root        string    `json:"root,omitempty"`
+	Files       uint64    `json:"files"`
+	Directories uint64    `json:"directories"`
+	StartedAt   time.Time `json:"started_at"`
+	FinishedAt  time.Time `json:"finished_at,omitempty"`
+	ElapsedMS   int64     `json:"elapsed_ms"`
+	Error       string    `json:"error,omitempty"`
+}
+
 type Snapshot struct {
-	Status     Status            `json:"status"`
-	Presence   Presence          `json:"presence"`
-	Error      string            `json:"error,omitempty"`
-	PublicIP   string            `json:"public_ip,omitempty"`
-	PublicPort uint16            `json:"public_port,omitempty"`
-	Config     config.SafeConfig `json:"config"`
-	Shares     []config.Share    `json:"shares"`
-	Downloads  []Download        `json:"downloads"`
-	Transfers  []Transfer        `json:"transfers"`
+	Status               Status               `json:"status"`
+	Presence             Presence             `json:"presence"`
+	Error                string               `json:"error,omitempty"`
+	PublicIP             string               `json:"public_ip,omitempty"`
+	PublicPort           uint16               `json:"public_port,omitempty"`
+	Config               config.SafeConfig    `json:"config"`
+	Shares               []config.Share       `json:"shares"`
+	ShareScan            *ShareScan           `json:"share_scan,omitempty"`
+	ShareIndexRevision   uint64               `json:"share_index_revision"`
+	DownloadNotification DownloadNotification `json:"download_notification"`
+	Downloads            []Download           `json:"downloads"`
+	Transfers            []Transfer           `json:"transfers"`
 }
 
 type PasswordChangeResult struct {
@@ -193,6 +210,14 @@ type Service struct {
 	cancel                 context.CancelFunc
 	shareWatchCancel       context.CancelFunc
 	shareIndexBuilder      func(context.Context, []config.Share) (*soulseek.ShareIndex, error)
+	downloadNotification   DownloadNotification
+	desktopNotify          func(context.Context, string, string) error
+	shareScanGate          chan struct{}
+	scanCtx                context.Context
+	scanCancel             context.CancelFunc
+	shareScanID            uint64
+	shareScan              *ShareScan
+	shareIndexRevision     uint64
 	shareIndexPath         string
 	shareRescanDelay       time.Duration
 	shareWatchGeneration   uint64
@@ -212,18 +237,29 @@ type Service struct {
 	downloadWG             sync.WaitGroup
 }
 
-func New(cfg config.Config, path string) (*Service, error) {
+func validateConfig(cfg config.Config) error {
 	if err := cfg.Validate(); err != nil {
+		return err
+	}
+	if err := ValidateSearchFilter(cfg.Search.DefaultFilter); err != nil {
+		return fmt.Errorf("config: invalid search default filter: %w", err)
+	}
+	return nil
+}
+
+func New(cfg config.Config, path string) (*Service, error) {
+	if err := validateConfig(cfg); err != nil {
 		return nil, err
 	}
-	s := &Service{cfg: cfg, configPath: config.ConfigPath(), shares: soulseek.NewShareIndex(), searches: make(map[string]Search), wishlistWake: make(chan struct{}, 1), wishlistSearch: func(ctx context.Context, client *soulseek.Client, query string, automatic bool) ([]soulseek.SearchResult, error) {
+	scanCtx, scanCancel := context.WithCancel(context.Background())
+	s := &Service{downloadNotification: DownloadNotification{SessionID: rand.Text()}, desktopNotify: notifyDesktop, scanCtx: scanCtx, scanCancel: scanCancel, cfg: cfg, configPath: config.ConfigPath(), shares: soulseek.NewShareIndex(), searches: make(map[string]Search), wishlistWake: make(chan struct{}, 1), wishlistSearch: func(ctx context.Context, client *soulseek.Client, query string, automatic bool) ([]soulseek.SearchResult, error) {
 		if automatic {
 			return client.WishlistSearch(ctx, query)
 		}
 		return client.Search(ctx, query)
 	}, wishlistNotify: notifyWishlist, browses: make(map[string]loadedBrowse), browseProgress: make(map[string]trackedBrowse), fullBrowse: func(ctx context.Context, client *soulseek.Client, username string, progress func(received, total uint64)) ([]soulseek.ShareEntry, error) {
 		return client.BrowseUserWithProgress(ctx, username, "", progress)
-	}, transfers: make(map[string]Transfer), downloadSlots: make(chan struct{}, cfg.DownloadSlots), downloadCancels: make(map[string]context.CancelFunc), downloadDone: make(map[string]chan struct{}), downloadPeers: make(map[string]chan struct{}), shareIndexBuilder: buildShareIndex, shareRescanDelay: DefaultShareRescanDelay, listenPortInterval: DefaultListenPortReconcileInterval, portMapOpen: func(ctx context.Context, port uint16, natPMP, upnp bool, changed func(uint16)) (portMapping, error) {
+	}, transfers: make(map[string]Transfer), downloadSlots: make(chan struct{}, cfg.DownloadSlots), downloadCancels: make(map[string]context.CancelFunc), downloadDone: make(map[string]chan struct{}), downloadPeers: make(map[string]chan struct{}), shareIndexBuilder: buildShareIndex, shareScanGate: make(chan struct{}, 1), shareRescanDelay: DefaultShareRescanDelay, listenPortInterval: DefaultListenPortReconcileInterval, portMapOpen: func(ctx context.Context, port uint16, natPMP, upnp bool, changed func(uint16)) (portMapping, error) {
 		return portmap.Open(ctx, port, natPMP, upnp, changed)
 	}, portCheck: defaultListeningPortCheck, reconnectWake: make(chan struct{}, 1), status: StatusStopped, presence: PresenceOffline, journalPath: path}
 	s.shareIndexPath = filepath.Join(filepath.Dir(path), "shares.json")
@@ -276,7 +312,15 @@ func (s *Service) Snapshot() Snapshot {
 	if s.status == StatusConnected && s.client != nil {
 		publicIP, publicPort = s.client.PublicIP(), s.client.PublicPort()
 	}
-	return Snapshot{Status: s.status, Presence: s.presence, Error: s.lastErr, PublicIP: publicIP, PublicPort: publicPort, Config: s.cfg.Redacted(), Shares: append([]config.Share(nil), s.cfg.Shares...), Downloads: append([]Download(nil), s.journal.Downloads...), Transfers: transferValues(s.transfers)}
+	var scan *ShareScan
+	if s.shareScan != nil {
+		x := *s.shareScan
+		if x.State == "scanning" || x.State == "publishing" {
+			x.ElapsedMS = time.Since(x.StartedAt).Milliseconds()
+		}
+		scan = &x
+	}
+	return Snapshot{Status: s.status, Presence: s.presence, Error: s.lastErr, PublicIP: publicIP, PublicPort: publicPort, Config: s.cfg.Redacted(), Shares: append([]config.Share(nil), s.cfg.Shares...), ShareScan: scan, ShareIndexRevision: s.shareIndexRevision, DownloadNotification: s.downloadNotification, Downloads: append([]Download(nil), s.journal.Downloads...), Transfers: transferValues(s.transfers)}
 }
 func transferValues(m map[string]Transfer) []Transfer {
 	out := make([]Transfer, 0, len(m))
@@ -302,21 +346,43 @@ func (s *Service) Start(ctx context.Context) error {
 		return nil
 	}
 	s.runCtx, s.runCancel = context.WithCancel(ctx)
-	if idx, err := loadShareIndexCache(s.shareIndexPath, s.cfg.Shares); err == nil {
-		s.shares = idx
+	runCtx := s.runCtx
+	shares := append([]config.Share(nil), s.cfg.Shares...)
+	generation := s.shareWatchGeneration
+	revision := s.shareIndexRevision
+	connect := s.cfg.Soulseek.ConnectOnStartup
+	s.mu.Unlock()
+
+	if idx, err := loadShareIndexCache(s.shareIndexPath, shares); err == nil {
+		s.mu.Lock()
+		// A manual scan may have published while the cache was loading.
+		if !s.closed && runCtx.Err() == nil && s.shareIndexRevision == revision {
+			s.shares = idx
+			s.shareIndexRevision++
+		}
+		s.mu.Unlock()
 	} else {
 		if !errors.Is(err, os.ErrNotExist) {
 			log.Printf("load share index cache: %v", err)
 		}
-		if err := s.configureSharesLocked(); err != nil {
+		if err := s.runShareScan(runCtx, shares, generation, false, nil, func(index *soulseek.ShareIndex) error {
+			return s.publishShareIndex(generation, index)
+		}); err != nil && !errors.Is(err, context.Canceled) {
+			s.mu.Lock()
 			s.lastErr = err.Error()
+			s.mu.Unlock()
 		}
+	}
+
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return ErrClosed
 	}
 	s.restartShareWatcherLocked()
 	s.startListenPortWatcherLocked()
 	s.wg.Add(1)
 	go s.wishlistLoop(s.runCtx)
-	connect := s.cfg.Soulseek.ConnectOnStartup
 	s.mu.Unlock()
 	if connect {
 		return s.setPresenceLocked(PresenceOnline)
@@ -471,19 +537,6 @@ func (s *Service) stopSessionLocked(offline bool) {
 	s.mu.Lock()
 	s.requeueDownloads = false
 	s.mu.Unlock()
-}
-
-func (s *Service) configureSharesLocked() error {
-	idx, err := s.shareIndexBuilder(context.Background(), append([]config.Share(nil), s.cfg.Shares...))
-	if err != nil {
-		return err
-	}
-	s.shares = idx
-	if s.client != nil {
-		s.client.SetShareIndex(idx)
-	}
-	s.persistShareIndex(idx)
-	return nil
 }
 
 func uploadPolicy(c config.Config) soulseek.UploadPolicy {
@@ -705,6 +758,15 @@ func (s *Service) safeError(err error) string {
 }
 
 func (s *Service) Close() error {
+	s.scanCancel()
+	// Cancel the daemon lifetime before waiting for a config mutation, so a
+	// blocked scan can always unblock shutdown.
+	s.mu.RLock()
+	runCancel := s.runCancel
+	s.mu.RUnlock()
+	if runCancel != nil {
+		runCancel()
+	}
 	s.lifecycleMu.Lock()
 	defer s.lifecycleMu.Unlock()
 
@@ -1029,6 +1091,9 @@ func (s *Service) Transfers() []Transfer {
 	return transferValues(s.transfers)
 }
 func (s *Service) TransferAction(id, action string) error {
+	if strings.HasPrefix(id, "upload:") {
+		return errors.New("daemon: upload controls are not supported")
+	}
 	// Serialize stop/resume with each other and session shutdown. A stopped
 	// worker must release its file before it can be resumed or cleared.
 	s.lifecycleMu.Lock()
@@ -1125,49 +1190,88 @@ func (s *Service) Shares() []config.Share {
 	defer s.mu.RUnlock()
 	return append([]config.Share(nil), s.cfg.Shares...)
 }
-func (s *Service) AddShare(sh config.Share) error {
+func (s *Service) mutateShares(candidate []config.Share, next config.Config) error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	if s.closed {
+		s.mu.Unlock()
+		return ErrClosed
+	}
+	s.stopShareWatcherLocked()
+	generation := s.shareWatchGeneration
+	runCtx := s.runCtx
+	configPath := s.configPath
+	s.mu.Unlock()
+	if runCtx == nil {
+		runCtx = context.Background()
+	}
+	err := s.runShareScan(runCtx, candidate, generation, false, nil, func(index *soulseek.ShareIndex) error {
+		s.mu.Lock()
+		if s.closed || s.scanCtx.Err() != nil || s.shareWatchGeneration != generation {
+			s.mu.Unlock()
+			return errShareScanDiscarded
+		}
+		if err := next.Save(configPath); err != nil {
+			s.mu.Unlock()
+			return err
+		}
+		s.cfg, s.shares = next, index
+		s.shareIndexRevision++
+		client := s.client
+		s.restartShareWatcherLocked()
+		s.mu.Unlock()
+		if client != nil {
+			client.SetShareIndex(index)
+		}
+		s.persistShareIndex(index)
+		return nil
+	})
+	s.mu.Lock()
+	if err != nil && !s.closed && s.shareWatchGeneration == generation {
+		s.restartShareWatcherLocked()
+	}
+	s.mu.Unlock()
+	return err
+}
+
+func (s *Service) AddShare(sh config.Share) error {
+	s.lifecycleMu.Lock()
+	defer s.lifecycleMu.Unlock()
+	s.mu.RLock()
 	for _, x := range s.cfg.Shares {
 		if x.Name == sh.Name {
+			s.mu.RUnlock()
 			return errors.New("daemon: duplicate share")
 		}
 	}
 	candidate := append(append([]config.Share(nil), s.cfg.Shares...), sh)
-	check := s.cfg
-	check.Shares = candidate
-	if err := check.Validate(); err != nil {
+	next := s.cfg
+	s.mu.RUnlock()
+	next.Shares = candidate
+	if err := next.Validate(); err != nil {
 		return err
 	}
-	s.cfg.Shares = candidate
-	if err := s.configureSharesLocked(); err != nil {
-		s.cfg.Shares = s.cfg.Shares[:len(s.cfg.Shares)-1]
-		_ = s.configureSharesLocked()
-		s.restartShareWatcherLocked()
-		return err
-	}
-	s.restartShareWatcherLocked()
-	return s.cfg.Save(s.configPath)
+	return s.mutateShares(candidate, next)
 }
 func (s *Service) RemoveShare(name string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	for i, x := range s.cfg.Shares {
-		if x.Name != name {
-			continue
+	s.lifecycleMu.Lock()
+	defer s.lifecycleMu.Unlock()
+	s.mu.RLock()
+	candidate := append([]config.Share(nil), s.cfg.Shares...)
+	index := -1
+	for i, x := range candidate {
+		if x.Name == name {
+			index = i
+			break
 		}
-		previous := append([]config.Share(nil), s.cfg.Shares...)
-		s.cfg.Shares = append(append([]config.Share(nil), s.cfg.Shares[:i]...), s.cfg.Shares[i+1:]...)
-		if err := s.configureSharesLocked(); err != nil {
-			s.cfg.Shares = previous
-			_ = s.configureSharesLocked()
-			s.restartShareWatcherLocked()
-			return err
-		}
-		s.restartShareWatcherLocked()
-		return s.cfg.Save(s.configPath)
 	}
-	return os.ErrNotExist
+	next := s.cfg
+	s.mu.RUnlock()
+	if index < 0 {
+		return os.ErrNotExist
+	}
+	candidate = append(candidate[:index], candidate[index+1:]...)
+	next.Shares = candidate
+	return s.mutateShares(candidate, next)
 }
 func (s *Service) Rescan() error {
 	s.mu.RLock()
@@ -1176,16 +1280,15 @@ func (s *Service) Rescan() error {
 		return ErrClosed
 	}
 	shares := append([]config.Share(nil), s.cfg.Shares...)
-	generation, builder := s.shareWatchGeneration, s.shareIndexBuilder
+	generation := s.shareWatchGeneration
+	runCtx := s.runCtx
 	s.mu.RUnlock()
-	idx, err := builder(context.Background(), shares)
-	if err != nil {
-		return err
+	if runCtx == nil {
+		runCtx = context.Background()
 	}
-	if !s.publishWatchedShareIndex(generation, idx) {
-		return errors.New("daemon: share roots changed during rescan")
-	}
-	return nil
+	return s.runShareScan(runCtx, shares, generation, true, nil, func(index *soulseek.ShareIndex) error {
+		return s.publishShareIndex(generation, index)
+	})
 }
 
 func hotConfigUpdate(old, next config.Config) bool {
@@ -1202,7 +1305,7 @@ func sameUploadConfig(a, b config.Uploads) bool {
 }
 
 func (s *Service) UpdateConfig(c config.Config) error {
-	if err := c.Validate(); err != nil {
+	if err := validateConfig(c); err != nil {
 		return err
 	}
 	s.lifecycleMu.Lock()
@@ -1233,31 +1336,54 @@ func (s *Service) UpdateConfig(c config.Config) error {
 		}
 		return err
 	}
-	builder, configPath := s.shareIndexBuilder, s.configPath
 	s.mu.Unlock()
 
-	idx, err := builder(context.Background(), append([]config.Share(nil), c.Shares...))
+	s.mu.Lock()
+	s.stopShareWatcherLocked()
+	generation := s.shareWatchGeneration
+	runCtx := s.runCtx
+	configPath := s.configPath
+	active := s.cancel != nil
+	s.mu.Unlock()
+	if runCtx == nil {
+		runCtx = context.Background()
+	}
+	err := s.runShareScan(runCtx, append([]config.Share(nil), c.Shares...), generation, false, nil, func(index *soulseek.ShareIndex) error {
+		s.mu.Lock()
+		if s.closed || s.scanCtx.Err() != nil || s.shareWatchGeneration != generation {
+			s.mu.Unlock()
+			return errShareScanDiscarded
+		}
+		if err := c.Save(configPath); err != nil {
+			s.mu.Unlock()
+			return err
+		}
+		s.mu.Unlock()
+		if active {
+			s.stopSessionLocked(false)
+		}
+		s.mu.Lock()
+		s.cfg, s.shares = c, index
+		s.shareIndexRevision++
+		s.downloadSlots = make(chan struct{}, c.DownloadSlots)
+		client := s.client
+		s.restartShareWatcherLocked()
+		s.mu.Unlock()
+		if client != nil {
+			client.SetShareIndex(index)
+		}
+		s.persistShareIndex(index)
+		return nil
+	})
+	s.mu.Lock()
+	if err != nil && !s.closed && s.shareWatchGeneration == generation {
+		s.restartShareWatcherLocked()
+	}
+	s.mu.Unlock()
 	if err != nil {
 		return err
 	}
-	if err := c.Save(configPath); err != nil {
-		return err
-	}
-
-	s.mu.RLock()
-	active := s.cancel != nil
-	s.mu.RUnlock()
-	if active {
-		s.stopSessionLocked(false)
-	}
-	s.mu.Lock()
-	s.stopShareWatcherLocked()
-	s.cfg, s.shares = c, idx
-	s.downloadSlots = make(chan struct{}, c.DownloadSlots)
-	s.restartShareWatcherLocked()
-	s.mu.Unlock()
 	s.wakeWishlist()
-	s.persistShareIndex(idx)
 	if active {
 		return s.startSessionLocked()
 	}

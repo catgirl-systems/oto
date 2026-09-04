@@ -14,6 +14,18 @@ import (
 
 var ErrOutsideShare = errors.New("soulseek: path outside shared root")
 
+type shareScanProgressKey struct{}
+
+// WithShareScanProgress attaches a callback invoked for each accepted index entry.
+func WithShareScanProgress(ctx context.Context, progress func(root string, directory bool)) context.Context {
+	return context.WithValue(ctx, shareScanProgressKey{}, progress)
+}
+
+func shareScanProgress(ctx context.Context) func(string, bool) {
+	progress, _ := ctx.Value(shareScanProgressKey{}).(func(string, bool))
+	return progress
+}
+
 // ShareRoot names one local directory in the virtual share namespace.
 type ShareRoot struct{ Name, Path string }
 
@@ -126,6 +138,7 @@ func (s *ShareIndex) ScanContext(ctx context.Context) error {
 	if s == nil {
 		return errors.New("nil share index")
 	}
+	progress := shareScanProgress(ctx)
 	var out []ShareFile
 	for _, r := range s.Roots() {
 		err := filepath.WalkDir(r.Path, func(path string, d fs.DirEntry, err error) error {
@@ -160,6 +173,9 @@ func (s *ShareIndex) ScanContext(ctx context.Context) error {
 				size = uint64(info.Size())
 			}
 			out = append(out, ShareFile{Root: r.Name, Path: filepath.ToSlash(rel), Size: size, Directory: d.IsDir()})
+			if progress != nil {
+				progress(r.Name, d.IsDir())
+			}
 			return nil
 		})
 		if err != nil {

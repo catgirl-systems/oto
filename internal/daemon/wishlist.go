@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"os/exec"
 	"slices"
 	"strconv"
 	"strings"
@@ -369,7 +368,5 @@ func (s *Service) wishlistLoop(ctx context.Context) {
 }
 
 func notifyWishlist(ctx context.Context, query string, count int) error {
-	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
-	defer cancel()
-	return exec.CommandContext(ctx, "notify-send", "Wishlist results found", fmt.Sprintf("%s found %d matching results", query, count)).Run()
+	return notifyDesktop(ctx, "Wishlist results found", fmt.Sprintf("%q found %d matching results", query, count))
 }
