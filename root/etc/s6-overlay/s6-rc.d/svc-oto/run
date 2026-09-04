@@ -1,0 +1,11 @@
+#!/usr/bin/with-contenv bash
+set -e
+umask "${UMASK:-022}"
+
+if [[ ! -e /config/config.json ]]; then
+    cp /defaults/config.json /config/config.json
+    chown abc:abc /config/config.json
+    chmod 600 /config/config.json
+fi
+
+exec s6-setuidgid abc /usr/local/bin/oto daemon --config /config/config.json

@@ -1,0 +1,109 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    outputs:
+      valid: ${{ steps.version.outputs.valid }}
+      version: ${{ steps.version.outputs.version }}
+      minor: ${{ steps.version.outputs.minor }}
+      major: ${{ steps.version.outputs.major }}
+    steps:
+      - id: version
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          echo "valid=false" >> "$GITHUB_OUTPUT"
+          if [[ "$TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            version=${TAG#v}
+            echo "valid=true" >> "$GITHUB_OUTPUT"
+            echo "version=$version" >> "$GITHUB_OUTPUT"
+            echo "minor=${version%.*}" >> "$GITHUB_OUTPUT"
+            echo "major=${version%%.*}" >> "$GITHUB_OUTPUT"
+          fi
+
+  tests:
+    needs: validate
+    if: needs.validate.outputs.valid == 'true'
+    uses: ./.github/workflows/ci.yml
+
+  image:
+    needs: [validate, tests]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: build
+        run: echo "date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          provenance: false
+          tags: |
+            ghcr.io/catgirl-systems/oto:${{ needs.validate.outputs.version }}
+            ghcr.io/catgirl-systems/oto:${{ needs.validate.outputs.minor }}
+            ghcr.io/catgirl-systems/oto:${{ needs.validate.outputs.major }}
+            ghcr.io/catgirl-systems/oto:latest
+          build-args: |
+            VERSION=${{ needs.validate.outputs.version }}
+            REVISION=${{ github.sha }}
+            BUILD_DATE=${{ steps.build.outputs.date }}
+
+  release:
+    needs: [validate, image]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      VERSION: ${{ needs.validate.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: 1.25.x
+          cache: true
+      - name: Build release assets
+        run: |
+          mkdir dist
+          for arch in amd64 arm64; do
+            CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -trimpath \
+              -ldflags="-s -w -X main.version=$VERSION" \
+              -o "dist/oto-linux-$arch" ./cmd/oto
+          done
+          (cd dist && sha256sum oto-linux-* > SHA256SUMS)
+          ./dist/oto-linux-amd64 version
+          (cd dist && sha256sum -c SHA256SUMS)
+      - name: Publish GitHub release
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          gh release view "$TAG" >/dev/null 2>&1 || \
+            gh release create "$TAG" --verify-tag --generate-notes --title "oto $VERSION"
+          gh release upload "$TAG" \
+            dist/oto-linux-amd64 \
+            dist/oto-linux-arm64 \
+            dist/SHA256SUMS \
+            --clobber

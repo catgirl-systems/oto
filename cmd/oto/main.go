@@ -23,7 +23,10 @@ import (
 
 const sourceURL = "https://github.com/catgirl-systems/oto"
 
-var executable = os.Executable
+var (
+	version    = "dev"
+	executable = os.Executable
+)
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
@@ -43,7 +46,7 @@ func run(args []string) error {
 			usage()
 			return nil
 		case "version", "--version":
-			fmt.Println("oto dev", sourceURL, "AGPL-3.0-only; no warranty")
+			fmt.Println("oto", version, sourceURL, "AGPL-3.0-only; no warranty")
 			return nil
 		}
 	}

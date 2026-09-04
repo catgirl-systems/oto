@@ -21,6 +21,57 @@ The first launch asks for the Soulseek credentials, listening address, optional 
 ./oto status --json
 ```
 
+## Docker
+
+Stable releases publish a multi-architecture image for amd64 and arm64 at `ghcr.io/catgirl-systems/oto`.
+
+```yaml
+services:
+  oto:
+    image: ghcr.io/catgirl-systems/oto:latest
+    container_name: oto
+    environment:
+      PUID: "1000"
+      PGID: "1000"
+      TZ: Etc/UTC
+      UMASK: "022"
+      OTO_USERNAME: your-soulseek-username
+      OTO_PASSWORD: your-soulseek-password
+      OTO_DOWNLOAD_DIR: /downloads
+    volumes:
+      - ./oto-config:/config
+      - ./downloads:/downloads
+      - ./music:/shares/music:ro
+    ports:
+      - "50300:50300"
+    restart: unless-stopped
+```
+
+The equivalent Docker CLI command is:
+
+```sh
+docker run -d \
+  --name oto \
+  -e PUID=1000 -e PGID=1000 -e TZ=Etc/UTC -e UMASK=022 \
+  -e OTO_USERNAME=your-soulseek-username \
+  -e OTO_PASSWORD=your-soulseek-password \
+  -e OTO_DOWNLOAD_DIR=/downloads \
+  -v "$PWD/oto-config:/config" \
+  -v "$PWD/downloads:/downloads" \
+  -v "$PWD/music:/shares/music:ro" \
+  -p 50300:50300 \
+  --restart unless-stopped \
+  ghcr.io/catgirl-systems/oto:latest
+```
+
+The image runs `oto daemon` as the LinuxServer `abc` user. `PUID` and `PGID` should match the owner of the mounted directories. On first start it copies the example to `/config/config.json`; edit that file for shares or other settings, or use the existing `OTO_*` overrides. Configuration and daemon state persist under `/config`.
+
+Release downloads include `oto-linux-amd64`, `oto-linux-arm64`, and `SHA256SUMS`. Verify them from the same directory with:
+
+```sh
+sha256sum -c SHA256SUMS
+```
+
 The TUI uses an owner-only Unix socket. If no standalone daemon exists, it starts a child daemon whose lifetime is tied to the TUI. Exiting the TUI asks for confirmation when that would pause active transfers. An attached standalone daemon and its transfers continue running.
 
 Soulseek permits one login per username. Keeping the session in the daemon prevents the TUI from kicking it off the network.
