@@ -73,9 +73,12 @@ func (s *Service) completeDownload(id, root, partPath string) {
 	folderFinished := folder != root && s.folderCompleteLocked(download.Username, folder)
 	closed := s.closed
 	err = s.saveJournalLocked()
+	if err == nil && !closed {
+		s.notifyDownloadLocked(download.Username, target, folderFinished)
+	}
 	s.mu.Unlock()
 	if err != nil {
-		log.Printf("save completed download (commands skipped): %v", err)
+		log.Printf("save completed download (commands and notifications skipped): %v", err)
 		return
 	}
 	if closed {

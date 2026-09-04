@@ -402,7 +402,11 @@ func (s *Server) shares(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, out)
 	case r.URL.Path == "/v1/shares/rescan":
 		if err := s.service.Rescan(); err != nil {
-			writeErr(w, 400, err)
+			status := http.StatusBadRequest
+			if errors.Is(err, daemon.ErrScanBusy) {
+				status = http.StatusConflict
+			}
+			writeErr(w, status, err)
 			return
 		}
 		writeJSON(w, 200, s.service.Shares())
@@ -456,6 +460,10 @@ func (c *Client) Do(ctx context.Context, method, path string, body any, out any)
 }
 
 func (c *Client) do(ctx context.Context, method, path string, body any, out any, responseLimit int64) error {
+	return c.doWith(ctx, method, path, body, out, responseLimit, c.http)
+}
+
+func (c *Client) doWith(ctx context.Context, method, path string, body any, out any, responseLimit int64, client *http.Client) error {
 	var rd io.Reader
 	if body != nil {
 		b, e := json.Marshal(body)
@@ -474,7 +482,7 @@ func (c *Client) do(ctx context.Context, method, path string, body any, out any,
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
-	resp, e := c.http.Do(req)
+	resp, e := client.Do(req)
 	if e != nil {
 		return e
 	}
@@ -614,7 +622,10 @@ func (c *Client) AddShare(ctx context.Context, sh config.Share) ([]config.Share,
 }
 func (c *Client) Rescan(ctx context.Context) ([]config.Share, error) {
 	var x []config.Share
-	err := c.Do(ctx, "POST", "/v1/shares/rescan", nil, &x)
+	// The daemon may need longer than the ordinary interactive request budget.
+	client := *c.http
+	client.Timeout = 0
+	err := c.doWith(ctx, "POST", "/v1/shares/rescan", nil, &x, MaxBodySize, &client)
 	return x, err
 }
 

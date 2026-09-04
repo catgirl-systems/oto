@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/catgirl-systems/oto/internal/config"
@@ -28,6 +29,133 @@ type shareScanResult struct {
 	index    *soulseek.ShareIndex
 	revision uint64
 	err      error
+	reply    chan error
+}
+
+var errShareScanDiscarded = errors.New("daemon: share scan discarded")
+
+func (s *Service) acquireShareScan(ctx context.Context, manual bool) error {
+	if manual {
+		select {
+		case s.shareScanGate <- struct{}{}:
+			return nil
+		default:
+			return ErrScanBusy
+		}
+	}
+	select {
+	case s.shareScanGate <- struct{}{}:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (s *Service) finishShareScan(id uint64, state string, started time.Time, err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.shareScan == nil || s.shareScan.ID != id {
+		return
+	}
+	s.shareScan.State = state
+	s.shareScan.FinishedAt = time.Now().UTC()
+	s.shareScan.ElapsedMS = time.Since(started).Milliseconds()
+	if err != nil {
+		s.shareScan.Error = err.Error()
+	}
+}
+
+// runShareScan owns the single scan gate through building and publication.
+func (s *Service) runShareScan(ctx context.Context, shares []config.Share, generation uint64, manual bool, builder func(context.Context, []config.Share) (*soulseek.ShareIndex, error), publish func(*soulseek.ShareIndex) error) error {
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return ErrClosed
+	}
+	s.wg.Add(1)
+	if builder == nil {
+		builder = s.shareIndexBuilder
+	}
+	s.mu.Unlock()
+	defer s.wg.Done()
+	ctx, cancel := context.WithCancel(ctx)
+	stop := context.AfterFunc(s.scanCtx, cancel)
+	defer stop()
+	defer cancel()
+	if err := s.acquireShareScan(ctx, manual); err != nil {
+		return err
+	}
+	defer func() { <-s.shareScanGate }()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	started := time.Now()
+	s.mu.Lock()
+	if s.closed || s.scanCtx.Err() != nil || generation != s.shareWatchGeneration {
+		s.mu.Unlock()
+		return errShareScanDiscarded
+	}
+	s.shareScanID++
+	id := s.shareScanID
+	s.shareScan = &ShareScan{ID: id, State: "scanning", StartedAt: started}
+	s.mu.Unlock()
+
+	var progressMu sync.Mutex
+	var files, directories uint64
+	var last time.Time
+	var lastRoot string
+	progress := func(root string, directory bool) {
+		progressMu.Lock()
+		defer progressMu.Unlock()
+		if directory {
+			directories++
+		} else {
+			files++
+		}
+		now := time.Now()
+		if root == lastRoot && !last.IsZero() && now.Sub(last) < 200*time.Millisecond {
+			return
+		}
+		last, lastRoot = now, root
+		s.mu.Lock()
+		if s.shareScan != nil && s.shareScan.ID == id && s.shareScan.State == "scanning" && ctx.Err() == nil {
+			s.shareScan.Root, s.shareScan.Files, s.shareScan.Directories = root, files, directories
+		}
+		s.mu.Unlock()
+	}
+	index, err := builder(soulseek.WithShareScanProgress(ctx, progress), shares)
+	if err == nil {
+		err = ctx.Err()
+	}
+	if err == nil && index == nil {
+		err = errors.New("daemon: share scan returned nil index")
+	}
+	progressMu.Lock()
+	s.mu.Lock()
+	if s.shareScan != nil && s.shareScan.ID == id {
+		s.shareScan.Files, s.shareScan.Directories = files, directories
+		if err == nil {
+			s.shareScan.State = "publishing"
+		}
+	}
+	s.mu.Unlock()
+	progressMu.Unlock()
+	if err == nil {
+		err = publish(index)
+	}
+	state := "completed"
+	if err != nil {
+		switch {
+		case errors.Is(err, errShareScanDiscarded):
+			state = "discarded"
+		case ctx.Err() != nil:
+			state = "cancelled"
+		default:
+			state = "failed"
+		}
+	}
+	s.finishShareScan(id, state, started, err)
+	return err
 }
 
 type shareIndexCache struct {
@@ -125,20 +253,21 @@ func (s *Service) restartShareWatcherLocked() {
 	}()
 }
 
-func (s *Service) publishWatchedShareIndex(generation uint64, index *soulseek.ShareIndex) bool {
+func (s *Service) publishShareIndex(generation uint64, index *soulseek.ShareIndex) error {
 	s.mu.Lock()
-	if s.closed || generation != s.shareWatchGeneration {
+	if s.closed || s.scanCtx.Err() != nil || generation != s.shareWatchGeneration {
 		s.mu.Unlock()
-		return false
+		return errShareScanDiscarded
 	}
 	s.shares = index
+	s.shareIndexRevision++
 	client := s.client
 	s.mu.Unlock()
 	if client != nil {
 		client.SetShareIndex(index)
 	}
 	s.persistShareIndex(index)
-	return true
+	return nil
 }
 
 func (s *Service) watchShares(ctx context.Context, generation uint64, shares []config.Share, roots []soulseek.ShareRoot, quiet, maximum time.Duration, builder func(context.Context, []config.Share) (*soulseek.ShareIndex, error)) {
@@ -194,6 +323,7 @@ func (s *Service) watchShares(ctx context.Context, generation uint64, shares []c
 	dirty, scanning := true, false
 	quietReady, maxReady := false, false
 	scanDone := make(chan shareScanResult, 1)
+	scanPublish := make(chan shareScanResult)
 	startScan := func() {
 		if scanning || !dirty {
 			return
@@ -204,8 +334,21 @@ func (s *Service) watchShares(ctx context.Context, generation uint64, shares []c
 		stopTimer(&maxTimer, &maxC)
 		scanRevision := revision
 		go func() {
-			index, err := builder(ctx, shares)
-			scanDone <- shareScanResult{index: index, revision: scanRevision, err: err}
+			err := s.runShareScan(ctx, shares, generation, false, builder, func(index *soulseek.ShareIndex) error {
+				reply := make(chan error, 1)
+				select {
+				case scanPublish <- shareScanResult{index: index, revision: scanRevision, reply: reply}:
+				case <-ctx.Done():
+					return ctx.Err()
+				}
+				select {
+				case err := <-reply:
+					return err
+				case <-ctx.Done():
+					return ctx.Err()
+				}
+			})
+			scanDone <- shareScanResult{revision: scanRevision, err: err}
 		}()
 	}
 	markDirty := func() {
@@ -265,30 +408,35 @@ func (s *Service) watchShares(ctx context.Context, generation uint64, shares []c
 			if !scanning {
 				startScan()
 			}
+		case result := <-scanPublish:
+			if ctx.Err() != nil || dirty || result.revision != revision {
+				result.reply <- errShareScanDiscarded
+				continue
+			}
+			for _, root := range result.index.Roots() {
+				if addErr := addWatchTree(ctx, watcher, watched, root.Path, root.Path); addErr != nil {
+					log.Printf("share watcher %s: %v", root.Path, addErr)
+					watching = false
+				}
+			}
+			result.reply <- s.publishShareIndex(generation, result.index)
 		case result := <-scanDone:
 			scanning = false
 			if result.err != nil {
 				if ctx.Err() != nil {
 					return
 				}
-				log.Printf("share rescan: %v", result.err)
+				if !errors.Is(result.err, errShareScanDiscarded) {
+					log.Printf("share rescan: %v", result.err)
+				}
 				dirty = true
 				if quietTimer == nil && !quietReady {
 					resetQuiet()
 				}
 				startMaximum()
-			} else if dirty || result.revision != revision {
+			} else if result.revision != revision {
 				dirty = true
 			} else {
-				for _, root := range result.index.Roots() {
-					if addErr := addWatchTree(ctx, watcher, watched, root.Path, root.Path); addErr != nil {
-						log.Printf("share watcher %s: %v", root.Path, addErr)
-						watching = false
-					}
-				}
-				if !s.publishWatchedShareIndex(generation, result.index) {
-					return
-				}
 				if !watching {
 					dirty = true
 					resetQuiet()
@@ -311,14 +459,14 @@ func (s *Service) pollShares(ctx context.Context, generation uint64, shares []co
 			return
 		case <-timer.C:
 		}
-		index, err := builder(ctx, shares)
+		err := s.runShareScan(ctx, shares, generation, false, builder, func(index *soulseek.ShareIndex) error {
+			return s.publishShareIndex(generation, index)
+		})
 		if err != nil {
-			if ctx.Err() != nil {
+			if ctx.Err() != nil || errors.Is(err, errShareScanDiscarded) {
 				return
 			}
 			log.Printf("share rescan: %v", err)
-		} else if !s.publishWatchedShareIndex(generation, index) {
-			return
 		}
 		timer.Reset(delay)
 	}
