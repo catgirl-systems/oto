@@ -152,7 +152,12 @@ func TestSoulfindDaemonDownloadLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	time.Sleep(200 * time.Millisecond)
+	waitForIntegration(t, func() bool {
+		service.mu.RLock()
+		defer service.mu.RUnlock()
+		_, started := service.downloadCancels[second[0].ID]
+		return started
+	})
 	if download := integrationDownload(service, second[0].ID); download.State != "queued" {
 		t.Fatalf("second download bypassed slot: %+v", download)
 	}
