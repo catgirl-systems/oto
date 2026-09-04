@@ -370,6 +370,10 @@ func TestUpdateConfigHotAppliesSearchAndDownload(t *testing.T) {
 	defer s.Close()
 	configPath := filepath.Join(t.TempDir(), "config.json")
 	s.SetConfigPath(configPath)
+	client := soulseek.NewClient(soulseek.ClientConfig{})
+	s.mu.Lock()
+	s.client = client
+	s.mu.Unlock()
 
 	builderCalled := false
 	s.shareIndexBuilder = func(context.Context, []config.Share) (*soulseek.ShareIndex, error) {
@@ -382,6 +386,9 @@ func TestUpdateConfigHotAppliesSearchAndDownload(t *testing.T) {
 	next.Search.SearchHistoryLimit = 0
 	next.Search.WishlistIntervalMinutes = 30
 	next.Soulseek.ConnectOnStartup = false
+	next.Search.RespondToIncomingSearches = false
+	next.Search.MinimumIncomingSearchLength = 7
+	next.Search.MaximumIncomingSearchResults = 500
 	if err := s.UpdateConfig(next); err != nil {
 		t.Fatalf("hot update: %v", err)
 	}
@@ -390,8 +397,11 @@ func TestUpdateConfigHotAppliesSearchAndDownload(t *testing.T) {
 	default:
 		t.Fatal("wishlist scheduler was not woken by interval change")
 	}
-	if builderCalled || s.cfg.DownloadDir != next.DownloadDir || s.cfg.Search != next.Search || s.cfg.Soulseek.ConnectOnStartup {
-		t.Fatalf("hot update rebuilt or was not adopted: called=%v cfg=%+v", builderCalled, s.cfg)
+	if builderCalled || s.client != client || s.cfg.DownloadDir != next.DownloadDir || s.cfg.Search != next.Search || s.cfg.Soulseek.ConnectOnStartup {
+		t.Fatalf("hot update rebuilt or was not adopted: called=%v sameClient=%v cfg=%+v", builderCalled, s.client == client, s.cfg)
+	}
+	if got := client.IncomingSearchPolicy(); got != incomingSearchPolicy(next) {
+		t.Fatalf("incoming search policy was not hot-applied: %+v", got)
 	}
 	loaded, err := config.Load(configPath)
 	if err != nil || loaded.Search != next.Search || loaded.DownloadDir != next.DownloadDir || loaded.Soulseek.ConnectOnStartup {

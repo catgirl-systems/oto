@@ -554,9 +554,12 @@ func (m model) renderSettings(width, height int) string {
 				value = "‹ " + value + " ›"
 			case settingInt:
 				if value == "0" {
-					if field.id == settingWishlistInterval {
+					switch field.id {
+					case settingWishlistInterval:
 						value = "Off"
-					} else {
+					case settingMinimumIncomingSearchLength:
+						value = "No minimum"
+					default:
 						value = "Unlimited"
 					}
 				}
@@ -626,6 +629,9 @@ func (m model) settingFields() []settingField {
 		}
 	default:
 		return []settingField{
+			{settingRespondToIncomingSearches, "Respond to incoming searches", strconv.FormatBool(m.cfg.Search.RespondToIncomingSearches), settingBool},
+			{settingMinimumIncomingSearchLength, "Minimum incoming search length", strconv.Itoa(m.cfg.Search.MinimumIncomingSearchLength), settingInt},
+			{settingMaximumIncomingSearchResults, "Maximum incoming search results", strconv.Itoa(m.cfg.Search.MaximumIncomingSearchResults), settingInt},
 			{settingRememberSearches, "Remember searches", strconv.FormatBool(m.cfg.Search.RememberSearches), settingBool},
 			{settingSearchHistoryLimit, "Search history limit", strconv.Itoa(m.cfg.Search.SearchHistoryLimit), settingInt},
 			{settingRememberFilters, "Remember filters", strconv.FormatBool(m.cfg.Search.RememberFilters), settingBool},
@@ -671,7 +677,7 @@ func (m *model) setSettingValue(value string) error {
 		}
 		m.cfg.Uploads.Profiles[i].Name = value
 		m.cfg.Uploads.ActiveProfile = value
-	case settingUploadSpeedLimit, settingSearchHistoryLimit, settingFilterHistoryLimit, settingWishlistInterval:
+	case settingUploadSpeedLimit, settingMinimumIncomingSearchLength, settingMaximumIncomingSearchResults, settingSearchHistoryLimit, settingFilterHistoryLimit, settingWishlistInterval:
 		limit, err := strconv.Atoi(value)
 		if err != nil || limit < 0 {
 			return errors.New("value must be a nonnegative integer")
@@ -682,6 +688,16 @@ func (m *model) setSettingValue(value string) error {
 				return errors.New("upload speed limit must be at most 1000000 KiB/s")
 			}
 			m.cfg.Uploads.Profiles[m.activeUploadProfileIndex()].SpeedLimitKiB = limit
+		case settingMinimumIncomingSearchLength:
+			if limit > 50 {
+				return errors.New("minimum incoming search length must be at most 50")
+			}
+			m.cfg.Search.MinimumIncomingSearchLength = limit
+		case settingMaximumIncomingSearchResults:
+			if limit < 50 || limit > 10000 {
+				return errors.New("maximum incoming search results must be between 50 and 10000")
+			}
+			m.cfg.Search.MaximumIncomingSearchResults = limit
 		case settingSearchHistoryLimit:
 			m.cfg.Search.SearchHistoryLimit = limit
 		case settingFilterHistoryLimit:

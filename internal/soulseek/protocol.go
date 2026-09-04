@@ -10,25 +10,26 @@ import (
 
 // Soulseek command identifiers. The wire command byte follows the frame length.
 const (
-	ServerLogin            uint32 = 1
-	ServerSetListenPort    uint32 = 2
-	ServerGetPeerAddress   uint32 = 3
-	ServerAddUser          uint32 = 5
-	ServerConnectToPeer    uint32 = 18
-	ServerFileSearch       uint32 = 26
-	ServerSetStatus        uint32 = 28
-	ServerPing             uint32 = 32
-	ServerSharedCounts     uint32 = 35
-	ServerHaveNoParent     uint32 = 71
-	ServerEmbeddedMessage  uint32 = 93
-	ServerAcceptChildren   uint32 = 100
-	ServerPossibleParents  uint32 = 102
-	ServerWishlistSearch   uint32 = 103
-	ServerWishlistInterval uint32 = 104
-	ServerBranchLevel      uint32 = 126
-	ServerBranchRoot       uint32 = 127
-	ServerResetDistributed uint32 = 130
-	ServerChangePassword   uint32 = 142
+	ServerLogin                 uint32 = 1
+	ServerSetListenPort         uint32 = 2
+	ServerGetPeerAddress        uint32 = 3
+	ServerAddUser               uint32 = 5
+	ServerConnectToPeer         uint32 = 18
+	ServerFileSearch            uint32 = 26
+	ServerSetStatus             uint32 = 28
+	ServerPing                  uint32 = 32
+	ServerSharedCounts          uint32 = 35
+	ServerHaveNoParent          uint32 = 71
+	ServerEmbeddedMessage       uint32 = 93
+	ServerAcceptChildren        uint32 = 100
+	ServerPossibleParents       uint32 = 102
+	ServerWishlistSearch        uint32 = 103
+	ServerWishlistInterval      uint32 = 104
+	ServerBranchLevel           uint32 = 126
+	ServerBranchRoot            uint32 = 127
+	ServerResetDistributed      uint32 = 130
+	ServerChangePassword        uint32 = 142
+	ServerExcludedSearchPhrases uint32 = 160
 
 	PeerInit                uint32 = 1
 	PeerSearch              uint32 = 9
@@ -50,7 +51,11 @@ const (
 	DistributedBranchRootCommand  byte = 5
 )
 
-const maxShareEntries = 500_000
+const (
+	maxShareEntries          = 500_000
+	maxSearchResults         = 10_000
+	maxExcludedSearchPhrases = 10_000
+)
 
 // Message is a command payload that can be encoded on the wire.
 type Message interface {
@@ -410,6 +415,28 @@ func DecodeWishlistInterval(b []byte) (WishlistInterval, error) {
 	return WishlistInterval{Seconds: seconds}, d.Done()
 }
 
+type ExcludedSearchPhrases struct{ Phrases []string }
+
+func DecodeExcludedSearchPhrases(b []byte) (ExcludedSearchPhrases, error) {
+	d := NewDecoder(b)
+	count, err := d.U32()
+	if err != nil {
+		return ExcludedSearchPhrases{}, err
+	}
+	if count > maxExcludedSearchPhrases {
+		return ExcludedSearchPhrases{}, ErrTooLarge
+	}
+	message := ExcludedSearchPhrases{Phrases: make([]string, 0, count)}
+	for i := uint32(0); i < count; i++ {
+		phrase, err := d.String()
+		if err != nil {
+			return message, err
+		}
+		message.Phrases = append(message.Phrases, phrase)
+	}
+	return message, d.Done()
+}
+
 type IncomingSearch struct {
 	Username string
 	Token    uint32
@@ -451,7 +478,7 @@ func (m SearchResponse) encode(e *Encoder) error {
 			private = append(private, result)
 		}
 	}
-	if len(public) > 500 || len(private) > 500 {
+	if len(public) > maxSearchResults || len(private) > maxSearchResults {
 		return ErrTooLarge
 	}
 	var raw Encoder
@@ -609,7 +636,7 @@ func DecodeSearchResponse(b []byte) (SearchResponse, error) {
 	if err != nil {
 		return message, err
 	}
-	if count > 500 {
+	if count > maxSearchResults {
 		return message, ErrTooLarge
 	}
 	message.Results = make([]SearchResult, 0, count)
@@ -638,7 +665,7 @@ func DecodeSearchResponse(b []byte) (SearchResponse, error) {
 		if readErr != nil {
 			return message, readErr
 		}
-		if privateCount > 500 {
+		if privateCount > maxSearchResults {
 			return message, ErrTooLarge
 		}
 		for i := uint32(0); i < privateCount; i++ {
@@ -1073,6 +1100,8 @@ func DecodeMessage(command uint32, payload []byte) (any, error) {
 		return DecodePossibleParents(payload)
 	case ServerWishlistInterval:
 		return DecodeWishlistInterval(payload)
+	case ServerExcludedSearchPhrases:
+		return DecodeExcludedSearchPhrases(payload)
 	case PeerSearch:
 		return DecodeSearchResponse(payload)
 	case PeerSharedList:

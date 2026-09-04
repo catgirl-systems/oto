@@ -15,7 +15,10 @@
     "remember_filters": true,
     "filter_history_limit": 50,
     "wishlist_interval_minutes": 15,
-    "wishlist_notifications": true
+    "wishlist_notifications": true,
+    "respond_to_incoming_searches": true,
+    "minimum_incoming_search_length": 3,
+    "maximum_incoming_search_results": 300
   },
   "uploads": {
     "profiles": [

@@ -242,12 +242,12 @@ func TestTypedSearchSettingsStageApplyTrimAndClear(t *testing.T) {
 	if err := config.SaveJSON(m.historyPath, m.history); err != nil {
 		t.Fatal(err)
 	}
-	m.workspace, m.settingsSection = workspaceSettings, settingsSearch
+	m.workspace, m.settingsSection, m.cursor = workspaceSettings, settingsSearch, 3
 	m.key(key("enter"))
 	if m.cfg.Search.RememberSearches || !m.activeSearch.RememberSearches {
 		t.Fatal("boolean setting did not remain staged")
 	}
-	m.cursor = 1
+	m.cursor = 4
 	m.key(key("enter"))
 	m.input = "1"
 	m.editKey(key("enter"))
@@ -260,7 +260,7 @@ func TestTypedSearchSettingsStageApplyTrimAndClear(t *testing.T) {
 		t.Fatalf("saved settings were not activated and trimmed: active=%+v history=%#v", m.activeSearch, m.history.Searches)
 	}
 
-	m.cursor = 1
+	m.cursor = 4
 	m.key(key("enter"))
 	m.input = "0"
 	m.editKey(key("enter"))
@@ -274,7 +274,7 @@ func TestTypedSearchSettingsStageApplyTrimAndClear(t *testing.T) {
 		t.Fatal("negative history limit was accepted")
 	}
 
-	m.cursor = 6
+	m.cursor = 9
 	if !strings.Contains(m.renderSettings(80, 4), "Clear search history") {
 		t.Fatal("selected setting row was not scrolled into view")
 	}
@@ -286,9 +286,47 @@ func TestTypedSearchSettingsStageApplyTrimAndClear(t *testing.T) {
 	if len(m.history.Searches) != 0 || m.notice != "search history cleared" {
 		t.Fatal("search clear action failed")
 	}
-	m.cursor = 7
+	m.cursor = 10
 	m.key(key("enter"))
 	if len(m.history.Filters) != 0 || m.notice != "filter history cleared" {
 		t.Fatal("filter clear action failed")
+	}
+}
+
+func TestIncomingSearchSettingsStageRenderAndValidate(t *testing.T) {
+	t.Setenv("NO_COLOR", "1")
+	cfg := config.Default()
+	m := newModel(context.Background(), nil, "", false, cfg)
+	m.workspace, m.settingsSection = workspaceSettings, settingsSearch
+
+	view := m.renderSettings(100, 8)
+	if !strings.Contains(view, "Respond to incoming searches") || !strings.Contains(view, "Minimum incoming search length") {
+		t.Fatalf("incoming search settings missing: %s", view)
+	}
+	m.cursor = 0
+	m.key(key("enter"))
+	if m.cfg.Search.RespondToIncomingSearches || !m.activeSearch.RespondToIncomingSearches {
+		t.Fatal("incoming response toggle did not remain staged")
+	}
+	m.cursor = 1
+	if err := m.setSettingValue("0"); err != nil || !strings.Contains(m.renderSettings(100, 5), "No minimum") {
+		t.Fatalf("zero minimum: %v", err)
+	}
+	if err := m.setSettingValue("51"); err == nil {
+		t.Fatal("oversized incoming minimum accepted")
+	}
+	m.cursor = 2
+	if err := m.setSettingValue("49"); err == nil {
+		t.Fatal("small incoming maximum accepted")
+	}
+	if err := m.setSettingValue("10001"); err == nil {
+		t.Fatal("oversized incoming maximum accepted")
+	}
+	if err := m.setSettingValue("500"); err != nil || m.cfg.Search.MaximumIncomingSearchResults != 500 {
+		t.Fatalf("valid incoming maximum: %d %v", m.cfg.Search.MaximumIncomingSearchResults, err)
+	}
+	updated, _ := m.Update(settingsMsg{search: m.cfg.Search})
+	if updated.(model).activeSearch != m.cfg.Search {
+		t.Fatal("saved incoming search settings were not activated")
 	}
 }

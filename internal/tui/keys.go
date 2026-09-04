@@ -189,6 +189,8 @@ func (m *model) key(k tea.KeyPressMsg) tea.Cmd {
 				m.cfg.Soulseek.NATPMPPortMapping = !m.cfg.Soulseek.NATPMPPortMapping
 			case settingUPnPPortMapping:
 				m.cfg.Soulseek.UPnPPortMapping = !m.cfg.Soulseek.UPnPPortMapping
+			case settingRespondToIncomingSearches:
+				m.cfg.Search.RespondToIncomingSearches = !m.cfg.Search.RespondToIncomingSearches
 			case settingRememberSearches:
 				m.cfg.Search.RememberSearches = !m.cfg.Search.RememberSearches
 			case settingRememberFilters:

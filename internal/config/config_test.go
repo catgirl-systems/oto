@@ -64,7 +64,7 @@ func TestSearchDefaultsCompatibilityAndValidation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := (Search{RememberSearches: true, SearchHistoryLimit: 200, RememberFilters: true, FilterHistoryLimit: 50, WishlistIntervalMinutes: 15, WishlistNotifications: true})
+	want := Search{RememberSearches: true, SearchHistoryLimit: 200, RememberFilters: true, FilterHistoryLimit: 50, WishlistIntervalMinutes: 15, WishlistNotifications: true, RespondToIncomingSearches: true, MinimumIncomingSearchLength: 3, MaximumIncomingSearchResults: 300}
 	if got.Search != want || got.Redacted().Search != want {
 		t.Fatalf("search defaults or redaction: got %+v safe %+v", got.Search, got.Redacted().Search)
 	}
@@ -73,8 +73,10 @@ func TestSearchDefaultsCompatibilityAndValidation(t *testing.T) {
 		t.Fatalf("upload defaults or safe config: got %+v safe %+v", got.Uploads, got.Redacted().Uploads)
 	}
 	encoded, _ := json.Marshal(got.Redacted())
-	if !strings.Contains(string(encoded), `"wishlist_interval_minutes":15`) || !strings.Contains(string(encoded), `"wishlist_notifications":true`) {
-		t.Fatalf("safe config omitted wishlist settings: %s", encoded)
+	for _, setting := range []string{`"wishlist_interval_minutes":15`, `"wishlist_notifications":true`, `"respond_to_incoming_searches":true`, `"minimum_incoming_search_length":3`, `"maximum_incoming_search_results":300`} {
+		if !strings.Contains(string(encoded), setting) {
+			t.Fatalf("safe config omitted search setting %s: %s", setting, encoded)
+		}
 	}
 	if !got.Soulseek.ConnectOnStartup || !got.Soulseek.NATPMPPortMapping || !got.Soulseek.UPnPPortMapping {
 		t.Fatal("older config did not retain connection defaults")
@@ -108,6 +110,22 @@ func TestSearchDefaultsCompatibilityAndValidation(t *testing.T) {
 	got.Search.FilterHistoryLimit = -1
 	if err := got.Validate(); err == nil {
 		t.Fatal("negative history limit accepted")
+	}
+	for _, test := range []struct {
+		name         string
+		minimum, max int
+	}{
+		{"negative incoming minimum", -1, 300},
+		{"oversized incoming minimum", 51, 300},
+		{"small incoming maximum", 3, 49},
+		{"oversized incoming maximum", 3, 10001},
+	} {
+		invalid := Default()
+		invalid.Search.MinimumIncomingSearchLength = test.minimum
+		invalid.Search.MaximumIncomingSearchResults = test.max
+		if err := invalid.Validate(); err == nil {
+			t.Fatalf("%s accepted", test.name)
+		}
 	}
 	got = Default()
 	got.Search.WishlistIntervalMinutes = 525601

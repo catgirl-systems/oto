@@ -109,7 +109,7 @@ func TestShareScanSearchAndContainment(t *testing.T) {
 	if counts := sharedCounts(s); counts != (SharedCounts{Folders: 1, Files: 2}) {
 		t.Fatalf("shared counts: %+v", counts)
 	}
-	got := s.Search("Beyoncé -secret")
+	got := s.Search("Beyoncé -secret", 500)
 	if len(got) != 1 || got[0].Path != "Beyoncé.mp3" {
 		t.Fatalf("search: %+v", got)
 	}

@@ -147,6 +147,9 @@ const (
 	settingDeleteUploadProfile
 	settingUploadLimitScope
 	settingUploadScheduling
+	settingRespondToIncomingSearches
+	settingMinimumIncomingSearchLength
+	settingMaximumIncomingSearchResults
 	settingRememberSearches
 	settingSearchHistoryLimit
 	settingRememberFilters

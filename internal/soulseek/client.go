@@ -15,15 +15,28 @@ import (
 	"sync"
 	"syscall"
 	"time"
+	"unicode/utf8"
 
 	"github.com/catgirl-systems/oto/internal/country"
 	"golang.org/x/sys/unix"
+	"golang.org/x/text/cases"
 )
 
 type ClientConfig struct {
 	Address, Username, Password, ListenAddr, NetworkInterface string
 	Share                                                     *ShareIndex
 	Uploads                                                   *UploadManager
+	IncomingSearch                                            *IncomingSearchPolicy
+}
+
+type IncomingSearchPolicy struct {
+	Respond        bool
+	MinimumLength  int
+	MaximumResults int
+}
+
+func defaultIncomingSearchPolicy() IncomingSearchPolicy {
+	return IncomingSearchPolicy{Respond: true, MaximumResults: 500}
 }
 
 type UserStatus uint32
@@ -62,29 +75,31 @@ type peerAddressLookup struct {
 
 // Client owns one server connection; reconnecting creates a fresh lifecycle.
 type Client struct {
-	cfg            ClientConfig
-	mu             sync.Mutex
-	writeMu        sync.Mutex
-	browseSlot     chan struct{}
-	conn           net.Conn
-	listener       net.Listener
-	dialer         net.Dialer
-	listenConfig   net.ListenConfig
-	advertisedPort uint16
-	publicIP       string
-	loggedIn       bool
-	ctx            context.Context
-	cancel         context.CancelFunc
-	done           chan struct{}
-	events         chan Event
-	pending        map[uint32]chan SearchResponse
-	passwordChange chan string
-	addresses      map[string]*peerAddressLookup
-	pierce         map[uint32]chan net.Conn
-	requested      map[string]*pendingDownload
-	downloads      map[uint32]*pendingDownload
-	distributed    *DistributedNode
-	token          uint32
+	cfg                   ClientConfig
+	mu                    sync.Mutex
+	writeMu               sync.Mutex
+	browseSlot            chan struct{}
+	conn                  net.Conn
+	listener              net.Listener
+	dialer                net.Dialer
+	listenConfig          net.ListenConfig
+	advertisedPort        uint16
+	publicIP              string
+	loggedIn              bool
+	ctx                   context.Context
+	cancel                context.CancelFunc
+	done                  chan struct{}
+	events                chan Event
+	pending               map[uint32]chan SearchResponse
+	passwordChange        chan string
+	addresses             map[string]*peerAddressLookup
+	pierce                map[uint32]chan net.Conn
+	requested             map[string]*pendingDownload
+	downloads             map[uint32]*pendingDownload
+	distributed           *DistributedNode
+	incomingSearch        IncomingSearchPolicy
+	excludedSearchPhrases []string
+	token                 uint32
 }
 
 func NewClient(cfg ClientConfig) *Client {
@@ -97,8 +112,12 @@ func NewClient(cfg ClientConfig) *Client {
 	if cfg.Uploads == nil {
 		cfg.Uploads = NewUploadManager(1)
 	}
+	policy := defaultIncomingSearchPolicy()
+	if cfg.IncomingSearch != nil {
+		policy = *cfg.IncomingSearch
+	}
 	control := bindToDevice(cfg.NetworkInterface)
-	return &Client{cfg: cfg, dialer: net.Dialer{Control: control}, listenConfig: net.ListenConfig{Control: control}, events: make(chan Event, 32), pending: make(map[uint32]chan SearchResponse), addresses: make(map[string]*peerAddressLookup), pierce: make(map[uint32]chan net.Conn), requested: make(map[string]*pendingDownload), downloads: make(map[uint32]*pendingDownload), distributed: NewDistributedNode(), browseSlot: make(chan struct{}, 1)}
+	return &Client{cfg: cfg, dialer: net.Dialer{Control: control}, listenConfig: net.ListenConfig{Control: control}, events: make(chan Event, 32), pending: make(map[uint32]chan SearchResponse), addresses: make(map[string]*peerAddressLookup), pierce: make(map[uint32]chan net.Conn), requested: make(map[string]*pendingDownload), downloads: make(map[uint32]*pendingDownload), distributed: NewDistributedNode(), incomingSearch: policy, browseSlot: make(chan struct{}, 1)}
 }
 
 func bindToDevice(name string) func(string, string, syscall.RawConn) error {
@@ -168,6 +187,18 @@ func (c *Client) ConfigureUploads(policy UploadPolicy) {
 	c.cfg.Uploads.Configure(policy)
 }
 
+func (c *Client) ConfigureIncomingSearch(policy IncomingSearchPolicy) {
+	c.mu.Lock()
+	c.incomingSearch = policy
+	c.mu.Unlock()
+}
+
+func (c *Client) IncomingSearchPolicy() IncomingSearchPolicy {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.incomingSearch
+}
+
 func (c *Client) UploadPolicy() UploadPolicy {
 	return c.cfg.Uploads.Policy()
 }
@@ -189,6 +220,7 @@ func (c *Client) Connect(ctx context.Context) error {
 	c.done = make(chan struct{})
 	c.pending = make(map[uint32]chan SearchResponse)
 	c.token = 0
+	c.excludedSearchPhrases = nil
 	c.mu.Unlock()
 	if e := c.startListener(); e != nil {
 		_ = conn.Close()
@@ -426,6 +458,11 @@ func (c *Client) Run(ctx context.Context) error {
 		return errors.New("soulseek: not connected")
 	}
 	defer close(c.done)
+	defer func() {
+		c.mu.Lock()
+		c.excludedSearchPhrases = nil
+		c.mu.Unlock()
+	}()
 	for {
 		cmd, p, e := ReadFrame(conn)
 		if e != nil {
@@ -487,6 +524,14 @@ func (c *Client) route(cmd uint32, m any) {
 		go c.answerConnectPeer(message)
 	case IncomingSearch:
 		go c.respondSearch(message)
+	case ExcludedSearchPhrases:
+		fold := cases.Fold()
+		c.mu.Lock()
+		c.excludedSearchPhrases = make([]string, len(message.Phrases))
+		for i, phrase := range message.Phrases {
+			c.excludedSearchPhrases[i] = fold.String(phrase)
+		}
+		c.mu.Unlock()
 	case EmbeddedDistributed:
 		if message.Command == DistributedSearchCommand {
 			c.handleDistributedSearch(message.Payload)
@@ -908,12 +953,19 @@ func (c *Client) serveFile(peer net.Conn) {
 	pending.done <- err
 }
 
-func (c *Client) respondSearch(search IncomingSearch) {
-	index := c.shareIndex()
-	if index == nil {
-		return
+func (c *Client) incomingSearchResults(query string) []SearchResult {
+	c.mu.Lock()
+	index, policy := c.cfg.Share, c.incomingSearch
+	excluded := append([]string(nil), c.excludedSearchPhrases...)
+	c.mu.Unlock()
+	if index == nil || !policy.Respond || utf8.RuneCountInString(query) < policy.MinimumLength {
+		return nil
 	}
-	results := searchToResults(index.Search(search.Query))
+	return searchToResults(index.Search(query, policy.MaximumResults), excluded)
+}
+
+func (c *Client) respondSearch(search IncomingSearch) {
+	results := c.incomingSearchResults(search.Query)
 	if len(results) == 0 {
 		return
 	}
@@ -1258,10 +1310,21 @@ func (c *Client) shareEntries() []ShareEntry {
 	}
 	return out
 }
-func searchToResults(files []ShareFile) []SearchResult {
+func searchToResults(files []ShareFile, excludedPhrases []string) []SearchResult {
 	out := make([]SearchResult, 0, len(files))
+	fold := cases.Fold()
 	for _, file := range files {
-		out = append(out, SearchResult{Path: file.Root + "\\" + strings.ReplaceAll(file.Path, "/", "\\"), Size: file.Size, IsDirectory: file.Directory, Extension: strings.TrimPrefix(strings.ToLower(filepath.Ext(file.Path)), "."), Public: true})
+		path := file.Root + "\\" + strings.ReplaceAll(file.Path, "/", "\\")
+		foldedPath, excluded := fold.String(path), false
+		for _, phrase := range excludedPhrases {
+			if strings.Contains(foldedPath, phrase) {
+				excluded = true
+				break
+			}
+		}
+		if !excluded {
+			out = append(out, SearchResult{Path: path, Size: file.Size, IsDirectory: file.Directory, Extension: strings.TrimPrefix(strings.ToLower(filepath.Ext(file.Path)), "."), Public: true})
+		}
 	}
 	return out
 }
@@ -1274,6 +1337,7 @@ func (c *Client) Close() error {
 	c.conn = nil
 	c.cancel = nil
 	c.loggedIn, c.advertisedPort, c.publicIP = false, 0, ""
+	c.excludedSearchPhrases = nil
 	c.mu.Unlock()
 	if cancel != nil {
 		cancel()

@@ -100,7 +100,7 @@ func TestWishlistWorkspaceKeysBadgeAndBell(t *testing.T) {
 		t.Fatal("same wishlist notification rang twice")
 	}
 
-	m.workspace, m.settingsSection, m.cursor = workspaceSettings, settingsSearch, 4
+	m.workspace, m.settingsSection, m.cursor = workspaceSettings, settingsSearch, 7
 	m.cfg.Search.WishlistIntervalMinutes = 0
 	if !strings.Contains(m.renderSettings(80, 12), "Off") {
 		t.Fatal("zero wishlist interval was not shown as Off")
@@ -111,7 +111,7 @@ func TestWishlistWorkspaceKeysBadgeAndBell(t *testing.T) {
 	if m.cfg.Search.WishlistIntervalMinutes != 30 {
 		t.Fatal("wishlist interval setting was not edited")
 	}
-	m.cursor = 5
+	m.cursor = 8
 	m.key(key("enter"))
 	if m.cfg.Search.WishlistNotifications {
 		t.Fatal("wishlist notification setting did not toggle")
@@ -265,7 +265,7 @@ func TestContextualFooterHints(t *testing.T) {
 		{"setting text", settings(settingsAccount, 0), []string{"enter edit", "s save"}, nil},
 		{"setting bool", settings(settingsConnection, 5), []string{"enter toggle", "s save"}, nil},
 		{"setting action", settings(settingsAccount, 1), []string{"enter change password", "s save"}, nil},
-		{"setting clear", settings(settingsSearch, 6), []string{"enter clear searches", "s save"}, nil},
+		{"setting clear", settings(settingsSearch, 9), []string{"enter clear searches", "s save"}, nil},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

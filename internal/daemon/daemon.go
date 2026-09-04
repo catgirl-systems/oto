@@ -486,6 +486,14 @@ func uploadPolicy(c config.Config) soulseek.UploadPolicy {
 	return soulseek.UploadPolicy{Scheduling: string(c.Uploads.Scheduling), BytesPerSecond: int64(c.Uploads.ActiveSpeedLimitKiB()) * 1024, PerTransfer: c.Uploads.LimitScope == config.UploadLimitPerTransfer}
 }
 
+func incomingSearchPolicy(c config.Config) soulseek.IncomingSearchPolicy {
+	return soulseek.IncomingSearchPolicy{
+		Respond:        c.Search.RespondToIncomingSearches,
+		MinimumLength:  c.Search.MinimumIncomingSearchLength,
+		MaximumResults: c.Search.MaximumIncomingSearchResults,
+	}
+}
+
 func newUploadManager(c config.Config) *soulseek.UploadManager {
 	uploads := soulseek.NewUploadManager(c.UploadSlots)
 	uploads.Configure(uploadPolicy(c))
@@ -510,7 +518,12 @@ func (s *Service) connectOnce(ctx context.Context) error {
 			return err
 		}
 	}
-	client := soulseek.NewClient(soulseek.ClientConfig{Address: cfg.Soulseek.Server, Username: cfg.Soulseek.Username, Password: cfg.Soulseek.Password, ListenAddr: cfg.Soulseek.ListenAddr, NetworkInterface: cfg.Soulseek.NetworkInterface, Share: idx, Uploads: newUploadManager(cfg)})
+	searchPolicy := incomingSearchPolicy(cfg)
+	client := soulseek.NewClient(soulseek.ClientConfig{
+		Address: cfg.Soulseek.Server, Username: cfg.Soulseek.Username, Password: cfg.Soulseek.Password,
+		ListenAddr: cfg.Soulseek.ListenAddr, NetworkInterface: cfg.Soulseek.NetworkInterface,
+		Share: idx, Uploads: newUploadManager(cfg), IncomingSearch: &searchPolicy,
+	})
 	if err := client.Connect(ctx); err != nil {
 		return err
 	}
@@ -1176,6 +1189,9 @@ func (s *Service) UpdateConfig(c config.Config) error {
 		s.mu.Unlock()
 		if err == nil && uploadsChanged && client != nil {
 			client.ConfigureUploads(uploadPolicy(c))
+		}
+		if err == nil && client != nil {
+			client.ConfigureIncomingSearch(incomingSearchPolicy(c))
 		}
 		if err == nil && oldInterval != c.Search.WishlistIntervalMinutes {
 			s.wakeWishlist()

@@ -131,6 +131,8 @@ in:"live|radio session" out:remix type:audio,!mp3 size:>=20MiB bitrate:>=320 dur
 `country` accepts case-insensitive, comma-separated two-letter codes. Positive codes are alternatives (`country:US,CA`); prefix exclusions with `!` (`country:!GB,!DE`). Unknown locations match exclusion-only filters but not positive codes.
 Search queries and complete filter expressions are kept as separate most-recent-first histories. Press up/down while editing to recall entries. The Settings → Search section independently enables each history, sets its retention limit (`0` means unlimited), and clears it immediately.
 
+Settings → Search also controls incoming search responses with `search.respond_to_incoming_searches`, `search.minimum_incoming_search_length` (`0` means no minimum), and `search.maximum_incoming_search_results`. Defaults match Nicotine+: On, 3 characters, and 300 results; the editable ranges are 0–50 characters and 50–10000 results. Saved changes hot-apply without reconnecting. Paths containing case-insensitive phrases prohibited by Soulseek server message 160 are always omitted from responses; this does not affect local browsing or exact-path uploads.
+
 Wishlist searches are daemon-owned and survive TUI and daemon restarts in `wishlist.json`. Press `w` in Search to save the active query and filter. The Wishlist workspace uses `/` to add, `f` to edit the selected item's stored filter, Enter to open its latest cached results, `r` to rerun it immediately, and `d` to remove it. Automatic searches rotate one item at a time, so each item repeats after roughly item count × effective interval; **Settings → Search → Wishlist interval** (`search.wishlist_interval_minutes`) controls the delay between requests (`0` is Off), clamped to the minimum interval advertised by the Soulseek server. `search.wishlist_notifications` controls bells and desktop notifications. With notifications enabled, changed nonempty filtered results mark the item unread, ring an attached TUI once, and invoke `notify-send` when available. The unread badge remains available when notifications are disabled or desktop delivery fails. Result payloads stay in daemon memory, so after a daemon restart an item must run again before it can be opened.
 
 Settings → Connection shows the public IPv4 address reported by the Soulseek server at login and controls **Connect on startup** (`soulseek.connect_on_startup`), **Network interface** (`soulseek.network_interface`), **NAT-PMP port forwarding** (`soulseek.nat_pmp_port_mapping`), and **UPnP port forwarding** (`soulseek.upnp_port_mapping`). The displayed address itself does not use a third-party lookup. Selecting **Listening port status** and pressing Enter explicitly sends one HTTPS request to the Soulseek website at `www.slsknet.org/porttest.php`; the daemon checks its current advertised TCP port, including a mapped or `--listen-port-file` port, and reports open, closed, or unknown after a maximum of five seconds. No check runs at startup or in the background. All three switches default to On and the forwarding protocols can be enabled independently. With both forwarding protocols enabled, oto tries NAT-PMP before UPnP. It maps only the incoming TCP listener through an IPv4 router, requests a 12-hour lease, and renews it every two hours. Discovery and mapping are best effort: failures do not prevent Soulseek login or its server-mediated firewall-piercing fallback.
@@ -224,10 +226,10 @@ This tracks user-visible Soulseek functionality and meaningful operational quali
 | Store filters per wishlist item | :white_check_mark: | :white_check_mark: |
 | Manually rerun a wishlist item | :white_check_mark: | :white_check_mark: |
 | Notify when a wishlist finds results | :white_check_mark: | :white_check_mark: |
-| Disable responses to incoming searches | :x: | :white_check_mark: |
-| Configure minimum incoming search length | :x: | :white_check_mark: |
-| Configure maximum results returned to peers | :x: | :white_check_mark: |
-| Honor server-provided excluded search phrases | :x: | :white_check_mark: |
+| Disable responses to incoming searches | :white_check_mark: | :white_check_mark: |
+| Configure minimum incoming search length | :white_check_mark: | :white_check_mark: |
+| Configure maximum results returned to peers | :white_check_mark: | :white_check_mark: |
+| Honor server-provided excluded search phrases | :white_check_mark: | :white_check_mark: |
 
 ### Browsing users and files
 
