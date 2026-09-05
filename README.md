@@ -113,6 +113,8 @@ The headless controls attach only to the daemon's XDG Unix socket; they never la
 | `ctrl+page up` / `ctrl+page down` in Search, Browse, or Transfers | switch result tabs or Downloads/Uploads |
 | `ctrl+w` in Search or Browse | close the active result tab |
 | `d` | download selected files; choose a folder download mode and destination; remove a wishlist/share item; or cancel a transfer subtree |
+| `D` in Uploads | confirm aborting all current uploads for selected users |
+| `C` in Uploads | clear uploads by status, independently of selection |
 | `r` | rerun a wishlist item, refresh a user browse or saved-user list, resume/retry a transfer subtree, or rescan shares |
 | `p` in Downloads | pause the selected transfer subtree without deleting partial data |
 | `o` | choose Online, Away, or Offline without quitting |
@@ -155,6 +157,18 @@ The network-interface picker cycles through **Automatic**, interfaces visible in
 Settings → Uploads manages ordered named speed-limit profiles. `uploads.active_profile` selects a profile; `speed_limit_kib` is KiB/s and `0` means unlimited. `limit_scope` accepts `total` or `per_transfer`; `scheduling` accepts `fifo`, `round_robin`, `random`, or `smallest_first`. Limits can apply once across all active uploads or independently to each transfer. FIFO, user-fair round-robin, user-uniform random, and smallest-file-first scheduling affect queued uploads only. Profile, scope, and scheduler changes are staged until `s`, then hot-applied without reconnecting; active transfers keep running.
 
 Settings → Account can change the currently connected Soulseek account password. Select **Change Soulseek password**, press Enter, and enter the new password twice. The change is sent and saved immediately; it cannot be used while disconnected, while a username change is staged, or when `OTO_PASSWORD` supplies the credential.
+
+## Upload controls
+
+In Uploads, `space` marks a file or all files beneath a user/folder. Marks follow transfer IDs across refreshes and tab changes. `r` retries marked failed/cancelled uploads; `d` aborts marked uploads; with no marks, both use the focused subtree. Retry requires an online connection and uses the current upload scheduler and speed profile. There is no automatic upload retry timer.
+
+`D` confirms aborting every current upload for the marked files' users (or the focused subtree's user), including other folders. Aborted entries retain their progress as **cancelled**. This does not ban users or prevent future requests.
+
+`c` confirms removing selected upload entries, stopping any live attempts first. `C` opens the global clear menu: **Completed / Cancelled / Failed**, **Completed / Cancelled**, **Completed**, **Cancelled**, **Failed**, **Queued**, or **Everything**. Queued and Everything require confirmation; confirmations default to **No**, and Escape cancels. Clearing uploads never deletes shared files.
+
+Upload history lasts for the daemon run only. Going offline or losing the session stops live uploads and records them as failed; reconnect does not automatically restart them. Offline errors use the same failed category as other upload errors.
+
+The owner-only Unix API supports `POST /v1/uploads/actions` with an `action` (`retry`, `cancel`, `clear`) and exactly one selector: `ids`, `usernames`, `states`, or `all: true`. Retry takes IDs; cancel takes IDs or usernames; clear takes IDs, states, or all. Results report `changed`, `skipped`, and per-ID `errors`. The existing single-transfer endpoint also accepts upload IDs. No new CLI commands are required.
 
 ## Download controls and completion commands
 
@@ -335,10 +349,10 @@ This tracks user-visible Soulseek functionality and meaningful operational quali
 | Configurable fixed upload-slot count | :white_check_mark: | :white_check_mark: |
 | Report upload queue positions | :white_check_mark: | :white_check_mark: |
 | Persist the upload queue and history across restarts | :x: | :white_check_mark: |
-| Retry failed uploads | :x: | :white_check_mark: |
-| Abort selected uploads | :x: | :white_check_mark: |
-| Abort every upload from selected users | :x: | :white_check_mark: |
-| Clear uploads by status | :x: | :white_check_mark: |
+| Retry failed uploads | :white_check_mark: | :white_check_mark: |
+| Abort selected uploads | :white_check_mark: | :white_check_mark: |
+| Abort every upload from selected users | :white_check_mark: | :white_check_mark: |
+| Clear uploads by status | :white_check_mark: | :white_check_mark: |
 | Automatically clear finished or cancelled uploads | :x: | :white_check_mark: |
 | Manually send a file to another user | :x: | :white_check_mark: |
 | Manually send a folder to another user | :x: | :white_check_mark: |
