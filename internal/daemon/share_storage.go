@@ -16,34 +16,22 @@ import (
 	storageDB "github.com/catgirl-systems/oto/internal/storage/db"
 )
 
-func shareBool(value bool) int64 {
-	if value {
-		return 1
-	}
-	return 0
-}
-
-func shareEntryRow(snapshotID, ordinal int64, kind, root, path, name string, entry soulseek.ShareEntry, file *soulseek.ShareFile) storageDB.InsertShareEntryParams {
-	row := storageDB.InsertShareEntryParams{SnapshotID: snapshotID, Ordinal: ordinal, Kind: kind, Root: root, Path: path, Name: name, Size: storage.EncodeUint64(entry.Size), Directory: shareBool(entry.Directory), Private: shareBool(entry.Private), Vbr: shareBool(entry.VBR), VbrKnown: shareBool(entry.VBRKnown), Extension: entry.Extension, Bitrate: int64(entry.Bitrate), Duration: int64(entry.Duration), SampleRate: int64(entry.SampleRate), BitDepth: int64(entry.BitDepth)}
-	if file != nil {
-		row.Root, row.Path, row.Directory = file.Root, file.Path, shareBool(file.Directory)
-		row.AudioSource = file.AudioSource
-		row.FingerprintSize = storage.EncodeUint64(file.AudioFingerprint.Size)
-		row.FingerprintMtime = file.AudioFingerprint.MTimeUnixNano
-		row.FingerprintCtime = file.AudioFingerprint.CTimeUnixNano
-		row.ExtractorVersion = file.AudioFingerprint.ExtractorVersion
-		row.Size = storage.EncodeUint64(file.Size)
-		row.Private = 0
-	}
-	return row
-}
-
 func localEntryRow(snapshotID, ordinal int64, file soulseek.ShareFile) storageDB.InsertShareEntryParams {
-	return shareEntryRow(snapshotID, ordinal, "local", file.Root, file.Path, "", soulseek.ShareEntry{Size: file.Size, Directory: file.Directory, Bitrate: file.Bitrate, Duration: file.Duration, SampleRate: file.SampleRate, BitDepth: file.BitDepth}, &file)
+	return storageDB.InsertShareEntryParams{
+		SnapshotID: snapshotID, Ordinal: ordinal, Kind: "local", Root: file.Root, Path: file.Path,
+		Size: storage.EncodeUint64(file.Size), Directory: boolInt(file.Directory),
+		Bitrate: int64(file.Bitrate), Duration: int64(file.Duration), SampleRate: int64(file.SampleRate), BitDepth: int64(file.BitDepth),
+		AudioSource: file.AudioSource, FingerprintSize: storage.EncodeUint64(file.AudioFingerprint.Size),
+		FingerprintMtime: file.AudioFingerprint.MTimeUnixNano, FingerprintCtime: file.AudioFingerprint.CTimeUnixNano, ExtractorVersion: file.AudioFingerprint.ExtractorVersion,
+	}
 }
 
 func remoteEntryRow(snapshotID, ordinal int64, entry soulseek.ShareEntry) storageDB.InsertShareEntryParams {
-	return shareEntryRow(snapshotID, ordinal, "remote", "", entry.Name, "", entry, nil)
+	return storageDB.InsertShareEntryParams{
+		SnapshotID: snapshotID, Ordinal: ordinal, Kind: "remote", Path: entry.Name, Size: storage.EncodeUint64(entry.Size),
+		Directory: boolInt(entry.Directory), Private: boolInt(entry.Private), Vbr: boolInt(entry.VBR), VbrKnown: boolInt(entry.VBRKnown),
+		Extension: entry.Extension, Bitrate: int64(entry.Bitrate), Duration: int64(entry.Duration), SampleRate: int64(entry.SampleRate), BitDepth: int64(entry.BitDepth),
+	}
 }
 
 func insertShareSnapshot(ctx context.Context, db *storage.DB, source, username string, createdAt int64, roots []soulseek.ShareRoot, exclusions []string) (int64, error) {
@@ -146,30 +134,17 @@ func stageShareSnapshotAt(ctx context.Context, db *storage.DB, source, username 
 		}
 	}()
 	rows := make([]storageDB.InsertShareEntryParams, 0, storage.ShareBatchSize)
-	if len(files) > 0 {
-		for ordinal, file := range files {
-			rows = append(rows, localEntryRow(id, int64(ordinal), file))
-			if len(rows) == storage.ShareBatchSize {
-				if err := insertShareEntryBatch(ctx, db, id, rows); err != nil {
-					return 0, err
-				}
-				rows = rows[:0]
-			}
+	for ordinal := 0; ordinal < len(files)+len(entries); ordinal++ {
+		if len(files) > 0 {
+			rows = append(rows, localEntryRow(id, int64(ordinal), files[ordinal]))
+		} else {
+			rows = append(rows, remoteEntryRow(id, int64(ordinal), entries[ordinal]))
 		}
-	} else {
-		for ordinal, entry := range entries {
-			rows = append(rows, remoteEntryRow(id, int64(ordinal), entry))
-			if len(rows) == storage.ShareBatchSize {
-				if err := insertShareEntryBatch(ctx, db, id, rows); err != nil {
-					return 0, err
-				}
-				rows = rows[:0]
+		if len(rows) == storage.ShareBatchSize || ordinal+1 == len(files)+len(entries) {
+			if err := insertShareEntryBatch(ctx, db, id, rows); err != nil {
+				return 0, err
 			}
-		}
-	}
-	if len(rows) > 0 {
-		if err := insertShareEntryBatch(ctx, db, id, rows); err != nil {
-			return 0, err
+			rows = rows[:0]
 		}
 	}
 	cleanup = false
