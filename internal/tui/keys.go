@@ -14,6 +14,12 @@ import (
 
 func (m *model) key(k tea.KeyPressMsg) tea.Cmd {
 	s := k.String()
+	if m.workspace == workspaceStats && (m.stats.prune || m.stats.edit != "" || m.stats.detail != nil) {
+		return m.statsKey(k)
+	}
+	if m.searchScope != nil {
+		return m.searchScopeKey(k)
+	}
 	if m.passwordForm {
 		return m.passwordFormKey(k)
 	}
@@ -59,6 +65,9 @@ func (m *model) key(k tea.KeyPressMsg) tea.Cmd {
 	if m.editing {
 		return m.editKey(k)
 	}
+	if m.workspace == workspaceStats && s != "tab" && s != "shift+tab" && s != "q" && s != "ctrl+c" && s != "?" && s != "o" {
+		return m.statsKey(k)
+	}
 	switch s {
 	case "q", "ctrl+c":
 		if m.transient && m.active() {
@@ -70,6 +79,10 @@ func (m *model) key(k tea.KeyPressMsg) tea.Cmd {
 		m.help = true
 	case "o":
 		m.openStatusMenu()
+	case "u":
+		m.openSearchScope()
+	case "F":
+		m.confirmForceDownloads()
 	case "ctrl+pgup":
 		if m.workspace == workspaceSearch {
 			m.switchSearchTab(-1)
@@ -168,6 +181,19 @@ func (m *model) key(k tea.KeyPressMsg) tea.Cmd {
 				return nil
 			}
 			switch fields[m.cursor].id {
+			case settingAudioMetadata:
+				m.cfg.AudioMetadata = !m.cfg.AudioMetadata
+			case settingStatsASCII:
+				m.cfg.Statistics.ASCIICharts = !m.cfg.Statistics.ASCIICharts
+			case settingStatsPrune:
+				m.switchWorkspace(workspaceStats)
+				m.openStatsPrune()
+			case settingDownloadFilters:
+				m.cfg.Downloads.FiltersEnabled = !m.cfg.Downloads.FiltersEnabled
+			case settingRestoreDownloadRules:
+				m.restoreDownloadRules = true
+				m.uploadConfirm, m.uploadConfirmChoice = true, 0
+				m.uploadConfirmLabel = "Restore default download filters"
 			case settingRestoreShareExclusions:
 				m.restoreShareExclusions = true
 				m.uploadConfirm, m.uploadConfirmChoice = true, 0
@@ -245,6 +271,13 @@ func (m *model) key(k tea.KeyPressMsg) tea.Cmd {
 			m.details = node != nil && node.kind == treeFile && node.source >= 0
 		}
 	case "d":
+		if m.workspace == workspaceSettings && m.settingsSection == settingsDownloads {
+			if i := m.downloadRuleIndex(); i >= 0 {
+				rules := append([]string{}, m.cfg.Downloads.FilterPatterns...)
+				m.cfg.Downloads.FilterPatterns = append(rules[:i], rules[i+1:]...)
+			}
+			return nil
+		}
 		if m.workspace == workspaceSettings && m.settingsSection == settingsShares {
 			if m.cursor >= 0 && m.cursor < len(m.cfg.ShareExclusions) {
 				rules := append([]string{}, m.cfg.ShareExclusions...)
@@ -373,6 +406,10 @@ func (m *model) key(k tea.KeyPressMsg) tea.Cmd {
 		}
 	case "w":
 		if m.workspace == workspaceSearch && strings.TrimSpace(m.query) != "" {
+			if len(m.searchUsers()) > 0 {
+				m.setNotice("Wishlist searches are global; targeted searches cannot be saved")
+				return nil
+			}
 			return m.putWishlist(m.query, m.searchFilter, "Saved search to Wishlist")
 		}
 	case "/":
@@ -916,6 +953,10 @@ func (m *model) enter() tea.Cmd {
 }
 
 func (m *model) toggle() {
+	if m.workspace == workspaceTransfers && m.transferTab == transferDownloads {
+		m.toggleDownloadSelection()
+		return
+	}
 	if m.workspace == workspaceTransfers && m.transferTab == transferUploads {
 		m.toggleUploadSelection()
 		return
@@ -1234,6 +1275,21 @@ func (m *model) uploadConfirmKey(k tea.KeyPressMsg) tea.Cmd {
 		return nil
 	}
 	m.uploadConfirm = false
+	if m.forcePending != nil {
+		ids := m.forcePending
+		m.forcePending = nil
+		if accepted {
+			return m.forceDownloads(ids)
+		}
+		return nil
+	}
+	if m.restoreDownloadRules {
+		m.restoreDownloadRules = false
+		if accepted {
+			m.cfg.Downloads.FilterPatterns = config.DefaultDownloadFilters()
+		}
+		return nil
+	}
 	if m.restoreShareExclusions {
 		m.restoreShareExclusions = false
 		if accepted {

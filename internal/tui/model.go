@@ -25,7 +25,7 @@ type result struct {
 	directory, free                bool
 	speed, queue                   uint32
 	bitrate, duration              uint32
-	vbr                            bool
+	vbr, vbrKnown                  bool
 	sampleRate, bitDepth           uint32
 	public                         bool
 }
@@ -34,7 +34,7 @@ type entry struct {
 	size                 uint64
 	directory, private   bool
 	bitrate, duration    uint32
-	vbr                  bool
+	vbr, vbrKnown        bool
 	sampleRate, bitDepth uint32
 }
 
@@ -52,6 +52,7 @@ const (
 	workspaceWishlist
 	workspaceBrowse
 	workspaceTransfers
+	workspaceStats
 	workspaceShares
 	workspaceSettings
 	workspaceCount
@@ -67,6 +68,7 @@ const (
 	settingsUploads
 	settingsSearch
 	settingsShares
+	settingsStatistics
 	settingsSectionCount
 )
 
@@ -87,6 +89,7 @@ type activity struct {
 }
 
 type searchTab struct {
+	usernames                          []string
 	query, id, filter, filterUndo, err string
 	results                            []result
 	total, found, next, cursor         int
@@ -183,6 +186,10 @@ type settingField struct {
 }
 
 type model struct {
+	stats                                  statsViewState
+	searchScope                            *searchScope
+	downloadSelected                       map[string]bool
+	forcePending                           []string
 	ctx                                    context.Context
 	client                                 *ipc.Client
 	configPath, historyPath                string
@@ -199,6 +206,7 @@ type model struct {
 	uploadStatusMenu, uploadConfirm        bool
 	uploadConfirmChoice                    int
 	restoreShareExclusions                 bool
+	restoreDownloadRules                   bool
 	folderMenuEditing                      bool
 	loadingMore, filterEditing             bool
 	browseFindEditing                      bool
@@ -297,14 +305,14 @@ func newModel(ctx context.Context, c *ipc.Client, path string, transient bool, c
 func toResults(x []daemon.SearchResult) []result {
 	r := make([]result, len(x))
 	for i, v := range x {
-		r[i] = result{user: v.Username, path: v.Path, extension: v.Extension, country: v.CountryCode, size: v.Size, directory: v.Directory, free: v.SlotFree, speed: v.Speed, queue: v.Queue, bitrate: v.Bitrate, duration: v.Duration, vbr: v.VBR, sampleRate: v.SampleRate, bitDepth: v.BitDepth, public: v.Public}
+		r[i] = result{user: v.Username, path: v.Path, extension: v.Extension, country: v.CountryCode, size: v.Size, directory: v.Directory, free: v.SlotFree, speed: v.Speed, queue: v.Queue, bitrate: v.Bitrate, duration: v.Duration, vbr: v.VBR, vbrKnown: v.VBRKnown, sampleRate: v.SampleRate, bitDepth: v.BitDepth, public: v.Public}
 	}
 	return r
 }
 func toEntries(x []soulseek.ShareEntry) []entry {
 	r := make([]entry, len(x))
 	for i, v := range x {
-		r[i] = entry{name: v.Name, extension: v.Extension, size: v.Size, directory: v.Directory, private: v.Private, bitrate: v.Bitrate, duration: v.Duration, vbr: v.VBR, sampleRate: v.SampleRate, bitDepth: v.BitDepth}
+		r[i] = entry{name: v.Name, extension: v.Extension, size: v.Size, directory: v.Directory, private: v.Private, bitrate: v.Bitrate, duration: v.Duration, vbr: v.VBR, vbrKnown: v.VBRKnown, sampleRate: v.SampleRate, bitDepth: v.BitDepth}
 	}
 	return r
 }
