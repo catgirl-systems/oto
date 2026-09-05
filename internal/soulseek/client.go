@@ -58,15 +58,26 @@ type TransferEvent struct {
 	Error                                string
 }
 
+const downloadSetupTimeout = 45 * time.Second
+
 type pendingDownload struct {
 	fileMu             sync.Mutex // Download waits for the file writer before returning.
 	accepted           bool
+	startTimer         *time.Timer // Protected by Client.mu; only bounds the wait for F.
 	username, filename string
 	size, offset       uint64
 	writer             io.WriterAt
 	progress           ProgressFunc
 	done               chan error
 	ctx                context.Context
+}
+
+func (p *pendingDownload) finish(err error) {
+	// File completion, setup timeout and remote rejection can race; never block cleanup.
+	select {
+	case p.done <- err:
+	default:
+	}
 }
 
 type peerAddressLookup struct {
@@ -860,6 +871,9 @@ func (c *Client) Download(ctx context.Context, username, filename string, size, 
 		cancel()
 		c.mu.Lock()
 		delete(c.requested, key)
+		if pending.startTimer != nil {
+			pending.startTimer.Stop()
+		}
 		for token, download := range c.downloads {
 			if download == pending {
 				delete(c.downloads, token)
@@ -870,7 +884,7 @@ func (c *Client) Download(ctx context.Context, username, filename string, size, 
 		pending.fileMu.Unlock()
 	}()
 
-	setupCtx, stopSetup := context.WithTimeout(ctx, 45*time.Second)
+	setupCtx, stopSetup := context.WithTimeout(ctx, downloadSetupTimeout)
 	peer, err := c.connectUser(setupCtx, username)
 	stopSetup()
 	if err != nil {
@@ -888,7 +902,7 @@ func (c *Client) Download(ctx context.Context, username, filename string, size, 
 		err     error
 	}
 	frames := make(chan frame, 1)
-	go func() {
+	go func(frames chan<- frame) {
 		for {
 			command, payload, err := ReadFrame(peer)
 			select {
@@ -900,7 +914,7 @@ func (c *Client) Download(ctx context.Context, username, filename string, size, 
 				return
 			}
 		}
-	}()
+	}(frames)
 	for {
 		select {
 		case <-ctx.Done():
@@ -909,7 +923,19 @@ func (c *Client) Download(ctx context.Context, username, filename string, size, 
 			return err
 		case message := <-frames:
 			if message.err != nil {
-				return message.err
+				c.mu.Lock()
+				accepted := pending.accepted
+				c.mu.Unlock()
+				var netErr net.Error
+				transportError := errors.Is(message.err, io.EOF) || errors.Is(message.err, io.ErrUnexpectedEOF) ||
+					errors.Is(message.err, net.ErrClosed) || errors.As(message.err, &netErr)
+				if accepted && transportError {
+					// P may close while F is still sending. The file result (or setup timeout) owns completion.
+					_ = peer.Close()
+					frames = nil
+					continue
+				}
+				return fmt.Errorf("soulseek: download control connection: %w", message.err)
 			}
 			switch message.command {
 			case PeerPlaceInQueue:
@@ -920,16 +946,11 @@ func (c *Client) Download(ctx context.Context, username, filename string, size, 
 					pending.progress(Progress{Done: offset, Total: size, State: "queued", Queue: place})
 				}
 				continue
-			case PeerUploadDenied:
-				d := NewDecoder(message.payload)
-				_, _ = d.String()
-				reason, _ := d.String()
-				if reason == "" {
-					reason = "upload denied"
+			case PeerUploadDenied, PeerUploadFailed:
+				name, err := decodeDownloadFailure(message.command, message.payload)
+				if name == "" || name == filename {
+					return err
 				}
-				return &DownloadRejectedError{Reason: reason}
-			case PeerUploadFailed:
-				return ErrUploadFailed
 			case PeerTransferRequest:
 				request, err := DecodeTransferRequest(message.payload)
 				if err != nil {
@@ -946,6 +967,29 @@ func (c *Client) Download(ctx context.Context, username, filename string, size, 
 	}
 }
 
+func decodeDownloadFailure(command uint32, payload []byte) (string, error) {
+	d := NewDecoder(payload)
+	filename, err := d.String()
+	if err != nil {
+		return "", err
+	}
+	failure := ErrUploadFailed
+	if command == PeerUploadDenied {
+		reason, err := d.String()
+		if err != nil {
+			return filename, err
+		}
+		if reason == "" {
+			reason = "upload denied"
+		}
+		failure = &DownloadRejectedError{Reason: reason}
+	}
+	if err := d.Done(); err != nil {
+		return filename, err
+	}
+	return filename, failure
+}
+
 func (c *Client) acceptDownload(peer net.Conn, pending *pendingDownload, request TransferRequest) error {
 	c.mu.Lock()
 	if err := pending.ctx.Err(); err != nil {
@@ -960,13 +1004,32 @@ func (c *Client) acceptDownload(peer net.Conn, pending *pendingDownload, request
 		c.mu.Unlock()
 		return errors.New("soulseek: remote file size changed")
 	}
+	if c.downloads[request.Token] != nil {
+		c.mu.Unlock()
+		return errors.New("soulseek: file connection token already in use")
+	}
 	pending.size, pending.accepted = request.Size, true
 	c.downloads[request.Token] = pending
+	pending.startTimer = time.AfterFunc(downloadSetupTimeout, func() {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		if c.downloads[request.Token] == pending {
+			delete(c.downloads, request.Token)
+			pending.finish(fmt.Errorf("soulseek: waiting for file connection: %w", context.DeadlineExceeded))
+		}
+	})
 	c.mu.Unlock()
+	if err := peer.SetWriteDeadline(time.Now().Add(downloadSetupTimeout)); err != nil {
+		return err
+	}
+	defer peer.SetWriteDeadline(time.Time{})
 	return writeMessage(peer, TransferResponse{Token: request.Token, Accepted: true})
 }
 
 func (c *Client) serveFile(peer net.Conn) {
+	if err := peer.SetDeadline(time.Now().Add(downloadSetupTimeout)); err != nil {
+		return
+	}
 	var tokenBytes [4]byte
 	if _, err := io.ReadFull(peer, tokenBytes[:]); err != nil {
 		return
@@ -975,6 +1038,9 @@ func (c *Client) serveFile(peer net.Conn) {
 	c.mu.Lock()
 	pending := c.downloads[token]
 	delete(c.downloads, token)
+	if pending != nil && pending.startTimer != nil {
+		pending.startTimer.Stop()
+	}
 	c.mu.Unlock()
 	if pending == nil {
 		return
@@ -982,7 +1048,7 @@ func (c *Client) serveFile(peer net.Conn) {
 	pending.fileMu.Lock()
 	defer pending.fileMu.Unlock()
 	if pending.ctx.Err() != nil {
-		pending.done <- pending.ctx.Err()
+		pending.finish(pending.ctx.Err())
 		return
 	}
 	stop := context.AfterFunc(pending.ctx, func() { _ = peer.Close() })
@@ -990,11 +1056,15 @@ func (c *Client) serveFile(peer net.Conn) {
 	var offsetBytes [8]byte
 	binary.LittleEndian.PutUint64(offsetBytes[:], pending.offset)
 	if _, err := peer.Write(offsetBytes[:]); err != nil {
-		pending.done <- err
+		pending.finish(err)
+		return
+	}
+	if err := peer.SetDeadline(time.Time{}); err != nil {
+		pending.finish(err)
 		return
 	}
 	err := CopyAtMost(pending.ctx, pending.writer, peer, pending.size, pending.offset, pending.progress)
-	pending.done <- err
+	pending.finish(err)
 }
 
 func (c *Client) incomingSearchResults(query string) []SearchResult {
@@ -1259,7 +1329,17 @@ func (c *Client) serveMessagePeer(peer net.Conn, peerInfo PeerInitMessage) {
 				_ = writeMessage(peer, TransferResponse{Token: request.Token, Accepted: false, Reason: "Cancelled"})
 				continue
 			}
-			_ = c.acceptDownload(peer, pending, request)
+			if err := c.acceptDownload(peer, pending, request); err != nil {
+				pending.finish(err)
+			}
+		case PeerUploadDenied, PeerUploadFailed:
+			filename, err := decodeDownloadFailure(command, payload)
+			c.mu.Lock()
+			pending := c.requested[downloadKey(peerInfo.Username, filename)]
+			c.mu.Unlock()
+			if pending != nil {
+				pending.finish(err)
+			}
 		case PeerQueueUpload:
 			filename, err := parseStringPayload(payload)
 			if err != nil {
