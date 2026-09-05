@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"net/url"
 	"sort"
 	"strings"
@@ -18,6 +19,12 @@ func (m *model) key(k tea.KeyPressMsg) tea.Cmd {
 	}
 	if m.statusMenu {
 		return m.statusMenuKey(k)
+	}
+	if m.uploadStatusMenu {
+		return m.uploadStatusMenuKey(k)
+	}
+	if m.uploadConfirm {
+		return m.uploadConfirmKey(k)
 	}
 	if m.help {
 		if s == "?" || s == "esc" {
@@ -247,6 +254,9 @@ func (m *model) key(k tea.KeyPressMsg) tea.Cmd {
 			return m.queueBrowse()
 		}
 		if m.workspace == workspaceTransfers {
+			if m.transferTab == transferUploads {
+				return m.beginUploadAction("cancel", false)
+			}
 			return m.action("cancel")
 		}
 		if m.workspace == workspaceShares {
@@ -268,7 +278,7 @@ func (m *model) key(k tea.KeyPressMsg) tea.Cmd {
 			if m.transferTab == transferDownloads {
 				return m.action("resume")
 			}
-			return m.action("retry")
+			return m.beginUploadAction("retry", false)
 		}
 		if m.workspace == workspaceShares {
 			return m.rescanShares()
@@ -296,7 +306,18 @@ func (m *model) key(k tea.KeyPressMsg) tea.Cmd {
 			return m.filterSearch(filter)
 		}
 		if m.workspace == workspaceTransfers {
+			if m.transferTab == transferUploads {
+				return m.beginUploadAction("clear", true)
+			}
 			return m.action("clear")
+		}
+	case "D":
+		if m.workspace == workspaceTransfers && m.transferTab == transferUploads {
+			return m.beginUploadAction("cancel", true)
+		}
+	case "C":
+		if m.workspace == workspaceTransfers && m.transferTab == transferUploads {
+			m.openUploadStatusMenu()
 		}
 	case "S":
 		if m.workspace == workspaceTransfers {
@@ -877,6 +898,10 @@ func (m *model) enter() tea.Cmd {
 }
 
 func (m *model) toggle() {
+	if m.workspace == workspaceTransfers && m.transferTab == transferUploads {
+		m.toggleUploadSelection()
+		return
+	}
 	if m.workspace != workspaceSearch && m.workspace != workspaceBrowse {
 		return
 	}
@@ -1000,6 +1025,9 @@ func (m model) transferActionIDs() []string {
 	return ids
 }
 func (m model) action(action string) tea.Cmd {
+	if m.transferTab == transferUploads {
+		return m.uploadAction(daemon.UploadActionRequest{Action: action, IDs: m.uploadActionIDs()})
+	}
 	ids := m.transferActionIDs()
 	if len(ids) == 0 {
 		return nil
@@ -1020,6 +1048,202 @@ func (m model) action(action string) tea.Cmd {
 			first = err
 		}
 		return transferActionMsg{transfers: view, err: first}
+	}
+}
+
+func (m model) uploadActionIDs() []string {
+	ids := make([]string, 0)
+	for _, x := range m.transfers {
+		if x.direction == "upload" && x.id != "" && m.uploadSelected[x.id] {
+			ids = append(ids, x.id)
+		}
+	}
+	if len(ids) > 0 {
+		return ids
+	}
+	tree := &m.transferTrees[transferUploads]
+	_, node := tree.node(m.cursor)
+	if node == nil {
+		return nil
+	}
+	for _, source := range node.leaves {
+		if source >= 0 && source < len(m.transfers) && m.transfers[source].direction == "upload" && m.transfers[source].id != "" {
+			ids = append(ids, m.transfers[source].id)
+		}
+	}
+	return ids
+}
+
+func (m model) uploadActionUsernames() []string {
+	seen := map[string]bool{}
+	users := make([]string, 0)
+	ids := make(map[string]bool)
+	for _, id := range m.uploadActionIDs() {
+		ids[id] = true
+	}
+	for _, x := range m.transfers {
+		if ids[x.id] && x.user != "" && !seen[x.user] {
+			seen[x.user] = true
+			users = append(users, x.user)
+		}
+	}
+	return users
+}
+
+func (m *model) toggleUploadSelection() {
+	if m.uploadSelected == nil {
+		m.uploadSelected = map[string]bool{}
+	}
+	tree := &m.transferTrees[transferUploads]
+	index, node := tree.node(m.cursor)
+	if node == nil {
+		return
+	}
+	chosen, total := 0, 0
+	for _, source := range node.leaves {
+		if source >= 0 && source < len(m.transfers) && m.transfers[source].direction == "upload" {
+			total++
+			if m.uploadSelected[m.transfers[source].id] {
+				chosen++
+			}
+		}
+	}
+	selectAll := chosen != total
+	for _, source := range tree.nodes[index].leaves {
+		if source >= 0 && source < len(m.transfers) {
+			if id := m.transfers[source].id; m.transfers[source].direction == "upload" && id != "" {
+				m.uploadSelected[id] = selectAll
+			}
+		}
+	}
+}
+
+func (m *model) pruneUploadSelection() {
+	if m.uploadSelected == nil {
+		return
+	}
+	present := make(map[string]bool)
+	for _, x := range m.transfers {
+		if x.direction == "upload" && x.id != "" {
+			present[x.id] = true
+		}
+	}
+	for id := range m.uploadSelected {
+		if !present[id] {
+			delete(m.uploadSelected, id)
+		}
+	}
+}
+
+var uploadClearScopes = []struct {
+	label  string
+	states []string
+	all    bool
+}{
+	{"Completed + cancelled + failed", []string{"completed", "cancelled", "failed"}, false},
+	{"Completed + cancelled", []string{"completed", "cancelled"}, false},
+	{"Completed", []string{"completed"}, false},
+	{"Cancelled", []string{"cancelled"}, false},
+	{"Failed", []string{"failed"}, false},
+	{"Queued", []string{"queued"}, false},
+	{"Everything", nil, true},
+}
+
+func (m *model) beginUploadAction(action string, confirm bool) tea.Cmd {
+	req := daemon.UploadActionRequest{Action: action}
+	if action == "cancel" && confirm {
+		req.Usernames = m.uploadActionUsernames()
+		if len(req.Usernames) == 0 {
+			m.setNotice("Select an upload or upload subtree first")
+			return nil
+		}
+		m.uploadPending, m.uploadConfirmLabel = req, "Cancel all current uploads for "+strings.Join(req.Usernames, ", ")
+	} else {
+		req.IDs = m.uploadActionIDs()
+		if len(req.IDs) == 0 {
+			m.setNotice("Select an upload or upload subtree first")
+			return nil
+		}
+		if confirm {
+			m.uploadPending, m.uploadConfirmLabel = req, "Clear selected uploads (live transfers will stop)"
+		}
+	}
+	if confirm {
+		m.uploadConfirm, m.uploadConfirmChoice = true, 0
+		return nil
+	}
+	return m.uploadAction(req)
+}
+
+func (m *model) openUploadStatusMenu() {
+	m.uploadStatusMenu, m.uploadStatusChoice = true, 0
+}
+
+func (m *model) uploadStatusMenuKey(k tea.KeyPressMsg) tea.Cmd {
+	switch k.String() {
+	case "esc", "C":
+		m.uploadStatusMenu = false
+	case "up", "k":
+		m.uploadStatusChoice = max(0, m.uploadStatusChoice-1)
+	case "down", "j":
+		m.uploadStatusChoice = min(len(uploadClearScopes)-1, m.uploadStatusChoice+1)
+	case "enter":
+		scope := uploadClearScopes[m.uploadStatusChoice]
+		m.uploadStatusMenu = false
+		req := daemon.UploadActionRequest{Action: "clear", States: append([]string(nil), scope.states...), All: scope.all}
+		if scope.all || m.uploadStatusChoice == 5 {
+			m.uploadPending, m.uploadConfirmLabel = req, "Clear "+scope.label+" uploads (live transfers will stop)"
+			m.uploadConfirm, m.uploadConfirmChoice = true, 0
+			return nil
+		}
+		return m.uploadAction(req)
+	}
+	return nil
+}
+
+func (m *model) uploadConfirmKey(k tea.KeyPressMsg) tea.Cmd {
+	switch k.String() {
+	case "esc", "n":
+		m.uploadConfirm = false
+	case "left", "up", "right", "down", "j", "k":
+		m.uploadConfirmChoice = 1 - m.uploadConfirmChoice
+	case "y":
+		m.uploadConfirm = false
+		return m.uploadAction(m.uploadPending)
+	case "enter":
+		if m.uploadConfirmChoice == 1 {
+			m.uploadConfirm = false
+			return m.uploadAction(m.uploadPending)
+		}
+		m.uploadConfirm = false
+	}
+	return nil
+}
+
+func (m model) uploadAction(req daemon.UploadActionRequest) tea.Cmd {
+	if len(req.IDs) == 0 && len(req.Usernames) == 0 && len(req.States) == 0 && !req.All {
+		return nil
+	}
+	return func() tea.Msg {
+		result, actionErr := m.client.UploadAction(m.ctx, req)
+		transfers, refreshErr := m.client.Transfers(m.ctx)
+		view := toTransfers(transfers)
+		if refreshErr != nil {
+			view = m.transfers
+		}
+		first := actionErr
+		if first == nil {
+			for _, item := range result.Errors {
+				if item.Error != "" {
+					first = fmt.Errorf("%s", item.Error)
+					break
+				}
+			}
+		}
+		if first == nil {
+			first = refreshErr
+		}
+		return transferActionMsg{transfers: view, result: result, upload: true, err: first}
 	}
 }
 func (m model) active() bool {

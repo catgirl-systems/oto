@@ -187,6 +187,8 @@ type model struct {
 	setup, help, confirm, editing, loading bool
 	choiceChoosing, addingUploadProfile    bool
 	details, folderMenu, statusMenu        bool
+	uploadStatusMenu, uploadConfirm        bool
+	uploadConfirmChoice                    int
 	folderMenuEditing                      bool
 	loadingMore, filterEditing             bool
 	browseFindEditing                      bool
@@ -196,6 +198,9 @@ type model struct {
 	settingsSection                        settingsSection
 	transferTab                            transferTab
 	cursor, statusMenuChoice               int
+	uploadStatusChoice                     int
+	uploadPending                          daemon.UploadActionRequest
+	uploadConfirmLabel                     string
 	searchTotal, searchFound, searchNext   int
 	input, query, browseUser, searchID     string
 	searchFilter, searchFilterUndo         string
@@ -243,6 +248,7 @@ type model struct {
 	spinner, activityFrame                 int
 	activityRunning                        bool
 	transferTrees                          [transferTabCount]treeState
+	uploadSelected                         map[string]bool
 	shares                                 []share
 	shareTree                              treeState
 	shareCursor                            int
@@ -274,7 +280,7 @@ func (m model) rows() int {
 func (m model) pageRows() int { return max(1, m.height-8) }
 
 func newModel(ctx context.Context, c *ipc.Client, path string, transient bool, cfg config.Config) model {
-	m := model{ctx: ctx, client: c, configPath: path, historyPath: config.HistoryPath(), cfg: cfg, activeSearch: cfg.Search, acceptedSearchDefault: cfg.Search.DefaultFilter, transient: transient, width: 80, height: 24, selected: map[int]bool{}, wishlistNotified: map[string]uint64{}, setupVals: [6]string{cfg.Soulseek.Username, cfg.Soulseek.Password, cfg.Soulseek.ListenAddr, cfg.Soulseek.NetworkInterface, cfg.DownloadDir, ""}, inputCursor: utf8.RuneCountInString(cfg.Soulseek.Username), savedBrowseLoading: c != nil}
+	m := model{ctx: ctx, client: c, configPath: path, historyPath: config.HistoryPath(), cfg: cfg, activeSearch: cfg.Search, acceptedSearchDefault: cfg.Search.DefaultFilter, transient: transient, width: 80, height: 24, selected: map[int]bool{}, uploadSelected: map[string]bool{}, wishlistNotified: map[string]uint64{}, setupVals: [6]string{cfg.Soulseek.Username, cfg.Soulseek.Password, cfg.Soulseek.ListenAddr, cfg.Soulseek.NetworkInterface, cfg.DownloadDir, ""}, inputCursor: utf8.RuneCountInString(cfg.Soulseek.Username), savedBrowseLoading: c != nil}
 	m.historyCursor.reset("")
 	return m
 }
