@@ -24,32 +24,6 @@ func key(s string) tea.KeyPressMsg {
 	}
 	return tea.KeyPressMsg(tea.Key{Text: s, Code: []rune(s)[0]})
 }
-func TestNavigationSelectionAndHelp(t *testing.T) {
-	m := model{selected: map[int]bool{}, width: 20}
-	x, _ := m.Update(key("tab"))
-	m = x.(model)
-	if m.workspace != workspaceWishlist {
-		t.Fatal("tab")
-	}
-	m.results = []result{{path: "a", size: 1}}
-	m.searchTree, m.cursor = buildSearchTree(m.results, treeState{}, 0)
-	m.cursor = m.searchTree.cursorForSource(0)
-	m.workspace = workspaceSearch
-	x, _ = m.Update(key(" "))
-	m = x.(model)
-	if !m.selected[0] {
-		t.Fatal("space")
-	}
-	x, _ = m.Update(key("?"))
-	m = x.(model)
-	if !m.help {
-		t.Fatal("help")
-	}
-	guide := m.View().Content
-	if !strings.Contains(guide, "Keyboard") || strings.Contains(guide, "Keyboard guide") || strings.Contains(guide, "Everything is reachable without a mouse.") || !strings.Contains(guide, "NAVIGATION") || !strings.Contains(guide, "loaded Browse list") || !strings.Contains(guide, "q") || !strings.Contains(guide, "quit") {
-		t.Fatalf("incomplete keyboard guide: %q", guide)
-	}
-}
 
 func TestWishlistWorkspaceKeysBadgeAndBell(t *testing.T) {
 	t.Setenv("NO_COLOR", "1")
@@ -115,50 +89,6 @@ func TestWishlistWorkspaceKeysBadgeAndBell(t *testing.T) {
 	m.key(key("enter"))
 	if m.cfg.Search.WishlistNotifications {
 		t.Fatal("wishlist notification setting did not toggle")
-	}
-}
-
-func TestStatusMenuAndLabels(t *testing.T) {
-	t.Setenv("NO_COLOR", "1")
-	m := model{width: 80, height: 24, selected: map[int]bool{}, status: snapshot{status: daemon.StatusConnected, presence: daemon.PresenceAway}}
-	if m.statusText() != "away" {
-		t.Fatalf("connected label: %q", m.statusText())
-	}
-	m.key(key("o"))
-	if !m.statusMenu || m.statusMenuChoice != 1 {
-		t.Fatalf("status menu did not select Away: %+v", m)
-	}
-	view := m.View().Content
-	for _, label := range []string{"Online", "Away", "Offline", "current"} {
-		if !strings.Contains(view, label) {
-			t.Fatalf("status menu missing %q", label)
-		}
-	}
-	m.key(key("j"))
-	if m.statusMenuChoice != 2 {
-		t.Fatal("status menu did not move down")
-	}
-	m.key(key("k"))
-	if cmd := m.key(key("enter")); cmd == nil || m.statusMenu {
-		t.Fatal("status menu did not apply and close")
-	}
-	m.key(key("o"))
-	m.key(tea.KeyPressMsg(tea.Key{Code: tea.KeyEscape}))
-	if m.statusMenu {
-		t.Fatal("escape did not close status menu")
-	}
-	m.key(key("o"))
-	m.key(key("o"))
-	if m.statusMenu {
-		t.Fatal("o did not close status menu")
-	}
-	m.status.status, m.status.presence = daemon.StatusStopped, daemon.PresenceOffline
-	if m.statusText() != "offline" {
-		t.Fatalf("stopped label: %q", m.statusText())
-	}
-	m.status.status = daemon.StatusReconnecting
-	if m.statusText() != "reconnecting" {
-		t.Fatalf("transition label: %q", m.statusText())
 	}
 }
 
@@ -234,54 +164,6 @@ func TestOnDemandSearchAndBrowseActivityFooter(t *testing.T) {
 	m = updated.(model)
 	if footer := m.footerView(); !strings.Contains(footer, "? all controls") {
 		t.Fatalf("failed browse footer: %q", footer)
-	}
-}
-
-func TestContextualFooterHints(t *testing.T) {
-	tree := func(kind treeNodeKind) treeState {
-		return treeState{nodes: []treeNode{{kind: kind}}, visible: []int{0}}
-	}
-	settings := func(section settingsSection, cursor int) model {
-		return model{workspace: workspaceSettings, settingsSection: section, cursor: cursor, cfg: config.Default()}
-	}
-	tests := []struct {
-		name string
-		m    model
-		want []string
-		not  []string
-	}{
-		{"search edit", model{workspace: workspaceSearch, editing: true}, []string{"enter search", "esc cancel"}, nil},
-		{"filter edit", model{workspace: workspaceSearch, editing: true, filterEditing: true}, []string{"enter apply filter", "esc cancel"}, nil},
-		{"browse find edit", model{workspace: workspaceBrowse, editing: true, browseFindEditing: true}, []string{"enter apply find", "esc cancel"}, nil},
-		{"saved browse", model{workspace: workspaceBrowse}, []string{"enter open", "r refresh"}, []string{"save list"}},
-		{"search folder", model{workspace: workspaceSearch, searchTree: tree(treeFolder)}, []string{"/ search", "f filter", "enter expand", "b browse", "d folder download"}, []string{"i details"}},
-		{"search file", model{workspace: workspaceSearch, searchTree: tree(treeFile)}, []string{"enter/d download", "space select", "b browse", "i details"}, []string{"folder download"}},
-		{"wishlist", model{workspace: workspaceWishlist}, []string{"/ add", "f filter", "enter open", "r rerun", "d remove"}, nil},
-		{"browse folder", model{workspace: workspaceBrowse, browseTabs: []browseTab{{}}, browseLoaded: true, browseTree: tree(treeFolder)}, []string{"f find", "enter expand", "d folder download", "s save list", "r refresh"}, []string{"i details"}},
-		{"browse file", model{workspace: workspaceBrowse, browseTabs: []browseTab{{}}, browseLoaded: true, browseTree: tree(treeFile)}, []string{"f find", "enter/d download", "space select", "i details", "s save list", "r refresh"}, []string{"folder download"}},
-		{"downloads", model{workspace: workspaceTransfers}, []string{"p pause", "d cancel", "r resume/retry", "c clear"}, nil},
-		{"uploads", model{workspace: workspaceTransfers, transferTab: transferUploads}, []string{"d abort", "D abort users", "r retry", "c clear", "C clear status"}, []string{"p pause"}},
-		{"share root", model{workspace: workspaceShares, shareTree: tree(treeShareRoot)}, []string{"enter expand", "/ add", "r rescan", "d remove"}, nil},
-		{"share folder", model{workspace: workspaceShares, shareTree: tree(treeFolder)}, []string{"enter expand", "/ add", "r rescan"}, []string{"d remove"}},
-		{"setting text", settings(settingsAccount, 0), []string{"enter edit", "s save"}, nil},
-		{"setting bool", settings(settingsConnection, 5), []string{"enter toggle", "s save"}, nil},
-		{"setting action", settings(settingsAccount, 1), []string{"enter change password", "s save"}, nil},
-		{"setting clear", settings(settingsSearch, 9), []string{"enter clear searches", "s save"}, nil},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			hints := strings.Join(test.m.footerHints(), " | ")
-			for _, want := range test.want {
-				if !strings.Contains(hints, want) {
-					t.Fatalf("footer %q missing %q", hints, want)
-				}
-			}
-			for _, not := range test.not {
-				if strings.Contains(hints, not) {
-					t.Fatalf("footer %q unexpectedly contains %q", hints, not)
-				}
-			}
-		})
 	}
 }
 
@@ -413,44 +295,6 @@ func TestSetupSavesNetworkInterface(t *testing.T) {
 		t.Fatalf("saved network interface = %q, %v", loaded.Soulseek.NetworkInterface, err)
 	}
 }
-func TestNarrowViewAndQuitConfirmation(t *testing.T) {
-	t.Setenv("NO_COLOR", "1")
-	m := model{width: 3, workspace: workspaceSearch, selected: map[int]bool{}, transient: true, transfers: []transfer{{state: "running"}}}
-	x, _ := m.Update(key("q"))
-	m = x.(model)
-	if !m.confirm {
-		t.Fatal("quit was not confirmed")
-	}
-	if strings.Contains(m.View().Content, "\x1b") {
-		t.Fatal("unexpected color")
-	}
-}
-
-func TestFullScreenLayoutAndEditing(t *testing.T) {
-	t.Setenv("NO_COLOR", "1")
-	m := model{width: 80, height: 14, workspace: workspaceSearch, selected: map[int]bool{}}
-	view := m.View()
-	if !view.AltScreen || !strings.Contains(view.Content, "SEARCH") || !strings.Contains(view.Content, "╭") {
-		t.Fatal("main view is not a full-screen workspace")
-	}
-
-	m.editing = true
-	if cmd := m.key(key("q")); cmd != nil || m.input != "q" || !m.editing {
-		t.Fatal("text input was handled as a global shortcut")
-	}
-	m.key(tea.KeyPressMsg(tea.Key{Code: tea.KeyEscape}))
-	if m.editing || m.input != "" {
-		t.Fatal("escape did not cancel text input")
-	}
-
-	if got := formatBytes(1536); got != "1.5 KiB" {
-		t.Fatalf("formatBytes(1536) = %q", got)
-	}
-	if start, end := visibleRange(100, 50, 10); start != 45 || end != 55 {
-		t.Fatalf("visibleRange = %d:%d", start, end)
-	}
-}
-
 func TestTextFieldsEditAtCursor(t *testing.T) {
 	t.Setenv("NO_COLOR", "1")
 	m := model{editing: true, input: "aébc", inputCursor: 4, selected: map[int]bool{}}

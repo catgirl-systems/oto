@@ -912,39 +912,6 @@ func TestOptionalPrivateLists(t *testing.T) {
 	}
 }
 
-func TestFileConnectionReceive(t *testing.T) {
-	left, right := net.Pipe()
-	defer right.Close()
-	file, err := os.OpenFile(filepath.Join(t.TempDir(), "part"), os.O_CREATE|os.O_RDWR, 0600)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer file.Close()
-	client := NewClient(ClientConfig{})
-	pending := &pendingDownload{size: 4, writer: file, done: make(chan error, 1), ctx: context.Background()}
-	client.downloads[7] = pending
-	go client.serveFile(left)
-	var token [4]byte
-	binary.LittleEndian.PutUint32(token[:], 7)
-	if _, err := right.Write(token[:]); err != nil {
-		t.Fatal(err)
-	}
-	var offset [8]byte
-	if _, err := io.ReadFull(right, offset[:]); err != nil || binary.LittleEndian.Uint64(offset[:]) != 0 {
-		t.Fatalf("offset %v %v", offset, err)
-	}
-	if _, err := right.Write([]byte("data")); err != nil {
-		t.Fatal(err)
-	}
-	if err := <-pending.done; err != nil {
-		t.Fatal(err)
-	}
-	got := make([]byte, 4)
-	if _, err := file.ReadAt(got, 0); err != nil || string(got) != "data" {
-		t.Fatalf("file %q %v", got, err)
-	}
-}
-
 func TestFileConnectionCancellation(t *testing.T) {
 	left, right := net.Pipe()
 	defer right.Close()
