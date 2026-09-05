@@ -9,7 +9,27 @@ permissions:
   contents: read
 
 jobs:
+  generated:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install pinned sqlc
+        run: |
+          set -eu
+          archive="$RUNNER_TEMP/sqlc.tar.gz"
+          curl -fsSL "https://github.com/sqlc-dev/sqlc/releases/download/v1.31.1/sqlc_1.31.1_linux_amd64.tar.gz" -o "$archive"
+          printf '%s  %s\n' '497ae4fcdfa64c5b0c311ffe4c2bd991e43991e82e5367792ed78bc2dca27354' "$archive" | sha256sum -c -
+          tar -xzf "$archive" -C "$RUNNER_TEMP"
+          sudo install -m 0755 "$RUNNER_TEMP/sqlc" /usr/local/bin/sqlc
+      - name: Verify generated sqlc output
+        run: |
+          set -eu
+          sqlc generate
+          git diff --exit-code
+          test -z "$(git ls-files --others --exclude-standard internal/storage/db)"
+
   unit:
+    needs: generated
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -51,7 +71,7 @@ jobs:
           [ "$status" = 0 ]
 
   soulfind:
-    needs: unit
+    needs: [generated, unit]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     services:
@@ -89,6 +109,7 @@ jobs:
         run: go test -count=1 -run '^TestSoulfind' -v ./internal/soulseek ./internal/daemon ./internal/ipc
 
   audio-and-static-builds:
+    needs: generated
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
