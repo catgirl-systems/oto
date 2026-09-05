@@ -28,7 +28,13 @@ type ClientConfig struct {
 	Uploads                                                   *UploadManager
 	UploadUpdate                                              func(TransferEvent)
 	UploadStreamStart                                         func(TransferEvent)
-	IncomingSearch                                            *IncomingSearchPolicy
+	// UploadAccepted runs after admission is reserved and before execution.
+	// Returning an error rolls the reservation back.
+	UploadAccepted func(TransferEvent) error
+	UploadRejected func(TransferEvent)
+	// UploadsReady gates new admissions and streaming until recovery is complete.
+	UploadsReady   <-chan struct{}
+	IncomingSearch *IncomingSearchPolicy
 }
 
 type IncomingSearchPolicy struct {
@@ -85,6 +91,7 @@ type peerAddressLookup struct {
 
 // Client owns one server connection; reconnecting creates a fresh lifecycle.
 type Client struct {
+	uploadAdmissionMu     sync.Mutex
 	downloadLimit         downloadLimiter
 	cfg                   ClientConfig
 	mu                    sync.Mutex
@@ -621,8 +628,8 @@ func (c *Client) sendContext(ctx context.Context, m Message) error {
 }
 
 // Search collects token-matched responses for five seconds.
-func (c *Client) Search(ctx context.Context, rawQuery string) ([]SearchResult, error) {
-	return c.collectSearch(ctx, rawQuery, false)
+func (c *Client) Search(ctx context.Context, rawQuery string, users ...string) ([]SearchResult, error) {
+	return c.collectSearch(ctx, rawQuery, false, users...)
 }
 
 // WishlistSearch uses the server's rate-limited automatic-search command.
@@ -630,7 +637,15 @@ func (c *Client) WishlistSearch(ctx context.Context, rawQuery string) ([]SearchR
 	return c.collectSearch(ctx, rawQuery, true)
 }
 
-func (c *Client) collectSearch(ctx context.Context, rawQuery string, wishlist bool) ([]SearchResult, error) {
+func (c *Client) collectSearch(ctx context.Context, rawQuery string, wishlist bool, users ...string) ([]SearchResult, error) {
+	targets, err := NormalizeSearchUsers(users)
+	if err != nil {
+		return nil, err
+	}
+	allowed := make(map[string]bool, len(targets))
+	for _, user := range targets {
+		allowed[user] = true
+	}
 	query, err := parseSearchQuery(rawQuery)
 	if err != nil {
 		return nil, err
@@ -646,8 +661,16 @@ func (c *Client) collectSearch(ctx context.Context, rawQuery string, wishlist bo
 	if wishlist {
 		request = WishlistSearchRequest{Token: token, Query: query.wire}
 	}
-	if err := c.send(request); err != nil {
-		return nil, err
+	if len(targets) == 0 {
+		if err := c.sendContext(ctx, request); err != nil {
+			return nil, err
+		}
+	} else {
+		for _, user := range targets {
+			if err := c.sendContext(ctx, UserSearchRequest{Username: user, Token: token, Query: query.wire}); err != nil {
+				return nil, err
+			}
+		}
 	}
 	timer := time.NewTimer(5 * time.Second)
 	defer timer.Stop()
@@ -659,7 +682,13 @@ func (c *Client) collectSearch(ctx context.Context, rawQuery string, wishlist bo
 		case <-done:
 			return nil, errors.New("soulseek: connection closed during search")
 		case response := <-responses:
+			if len(allowed) > 0 && !allowed[response.Username] {
+				continue
+			}
 			for _, result := range response.Results {
+				if len(allowed) > 0 && !allowed[result.Username] {
+					continue
+				}
 				if query.matches(result) {
 					results = append(results, result)
 				}
@@ -1357,7 +1386,7 @@ func (c *Client) serveMessagePeer(peer net.Conn, peerInfo PeerInitMessage) {
 			if request.Direction == 0 {
 				_, _, err := c.registerUpload(peerInfo.Username, request.Filename, true)
 				if err != nil {
-					_ = writeMessage(peer, TransferResponse{Token: request.Token, Accepted: false, Reason: "File not shared"})
+					_ = writeMessage(peer, TransferResponse{Token: request.Token, Accepted: false, Reason: uploadDenial(err)})
 					continue
 				}
 				_ = writeMessage(peer, TransferResponse{Token: request.Token, Accepted: false, Reason: "Queued"})
@@ -1388,7 +1417,7 @@ func (c *Client) serveMessagePeer(peer net.Conn, peerInfo PeerInitMessage) {
 			}
 			a, _, err := c.registerUpload(peerInfo.Username, filename, true)
 			if err != nil {
-				_ = writeMessage(peer, QueueDenied{Filename: filename, Reason: "File not shared"})
+				_ = writeMessage(peer, QueueDenied{Filename: filename, Reason: uploadDenial(err)})
 				continue
 			}
 			_ = writeMessage(peer, QueuePlace{Filename: a.target.Filename, Place: 1})
@@ -1400,7 +1429,7 @@ func (c *Client) shareEntries() []ShareEntry {
 	files := c.shareIndex().Files()
 	out := make([]ShareEntry, 0, len(files))
 	for _, file := range files {
-		out = append(out, ShareEntry{Name: file.Root + "\\" + strings.ReplaceAll(file.Path, "/", "\\"), Size: file.Size, Directory: file.Directory})
+		out = append(out, file.entry(file.Root+"\\"+strings.ReplaceAll(file.Path, "/", "\\")))
 	}
 	return out
 }
@@ -1417,7 +1446,7 @@ func searchToResults(files []ShareFile, excludedPhrases []string) []SearchResult
 			}
 		}
 		if !excluded {
-			out = append(out, SearchResult{Path: path, Size: file.Size, IsDirectory: file.Directory, Extension: strings.TrimPrefix(strings.ToLower(filepath.Ext(file.Path)), "."), Public: true})
+			out = append(out, SearchResult{Path: path, Size: file.Size, IsDirectory: file.Directory, Bitrate: file.Bitrate, Duration: file.Duration, SampleRate: file.SampleRate, BitDepth: file.BitDepth, Extension: strings.TrimPrefix(strings.ToLower(filepath.Ext(file.Path)), "."), Public: true})
 		}
 	}
 	return out
