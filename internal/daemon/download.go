@@ -155,6 +155,18 @@ func (s *Service) runDownload(ctx context.Context, download Download, slots chan
 	if offset < download.Size {
 		client, err := s.waitClient(ctx)
 		if err == nil {
+			s.mu.Lock()
+			identity := s.cfg
+			identity.Soulseek.Server, identity.Soulseek.Username = client.AccountIdentity()
+			account := accountKey(identity)
+			for i := range s.journal.Downloads {
+				if s.journal.Downloads[i].ID == id {
+					s.journal.Downloads[i].StatsAccount = account
+					break
+				}
+			}
+			s.statsBeginLocked(id, account)
+			s.mu.Unlock()
 			err = client.DownloadWithStart(ctx, download.Username, strings.ReplaceAll(download.Filename, "/", "\\"), download.Size, offset, file, func(progress soulseek.Progress) {
 				s.updateTransferProgress(id, progress)
 			}, func() { s.startTransfer(id, offset) })
@@ -222,6 +234,7 @@ func (s *Service) updateTransferProgress(id string, progress soulseek.Progress) 
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.statsProgressLocked(id, progress.Done)
 	if transfer := s.transfers[id]; transfer.ID != "" && (transfer.State == "running" || transfer.State == "queued") {
 		if state == "queued" && s.transferTiming[id].streamBegan {
 			return
@@ -243,6 +256,12 @@ func (s *Service) updateDownload(id, state string, offset uint64, failure error)
 		if d.State == "paused" || d.State == "cancelled" {
 			state, failure = d.State, nil
 		}
+		if state == "running" && s.telemetry != nil {
+			if s.telemetry.queued == nil {
+				s.telemetry.queued = map[string]time.Time{}
+			}
+			s.telemetry.queued[id] = d.UpdatedAt
+		}
 		d.State, d.Offset, d.Error, d.UpdatedAt = state, offset, errString(failure), time.Now().UTC()
 		d.RetryAt = time.Time{}
 		if state == "failed" {
@@ -257,6 +276,7 @@ func (s *Service) updateDownload(id, state string, offset uint64, failure error)
 				s.stopTransferLocked(id)
 			}
 		}
+		s.statsStateLocked(id, state)
 		if err := s.saveJournalLocked(); err != nil {
 			log.Printf("save download state: %v", err)
 		}

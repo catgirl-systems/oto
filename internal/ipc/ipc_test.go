@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -404,11 +405,11 @@ func TestDownloadPauseResumeAndHookConfigRoutes(t *testing.T) {
 	body, _ := json.Marshal(cfg)
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, httptest.NewRequest(http.MethodPut, "/v1/config", strings.NewReader(string(body))))
-	if w.Code != http.StatusOK || svc.Config().Downloads != cfg.Downloads {
+	if w.Code != http.StatusOK || !reflect.DeepEqual(svc.Config().Downloads, cfg.Downloads) {
 		t.Fatalf("hook config: HTTP %d %s", w.Code, w.Body)
 	}
 	loaded, err := config.Load(configPath)
-	if err != nil || loaded.Downloads != cfg.Downloads {
+	if err != nil || !reflect.DeepEqual(loaded.Downloads, cfg.Downloads) {
 		t.Fatalf("hook config not saved: %+v %v", loaded.Downloads, err)
 	}
 }

@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/user"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"unicode"
@@ -78,9 +79,11 @@ type Bandwidth struct {
 }
 
 type Uploads struct {
-	AutoClearCompleted bool             `json:"auto_clear_completed"`
-	LimitScope         UploadLimitScope `json:"limit_scope"`
-	Scheduling         UploadScheduling `json:"scheduling"`
+	MaxQueuedFilesPerUser uint64           `json:"max_queued_files_per_user"`
+	MaxQueuedBytesPerUser uint64           `json:"max_queued_bytes_per_user"`
+	AutoClearCompleted    bool             `json:"auto_clear_completed"`
+	LimitScope            UploadLimitScope `json:"limit_scope"`
+	Scheduling            UploadScheduling `json:"scheduling"`
 }
 
 type legacyUploadProfile struct {
@@ -102,11 +105,13 @@ func (b Bandwidth) ActiveProfileLimits() BandwidthProfile {
 }
 
 type Downloads struct {
-	AutoClearCompleted  bool   `json:"auto_clear_completed"`
-	AfterFileCommand    string `json:"after_file_command"`
-	AfterFolderCommand  string `json:"after_folder_command"`
-	FileNotifications   bool   `json:"file_notifications"`
-	FolderNotifications bool   `json:"folder_notifications"`
+	FiltersEnabled      bool     `json:"filters_enabled"`
+	FilterPatterns      []string `json:"filter_patterns"`
+	AutoClearCompleted  bool     `json:"auto_clear_completed"`
+	AfterFileCommand    string   `json:"after_file_command"`
+	AfterFolderCommand  string   `json:"after_folder_command"`
+	FileNotifications   bool     `json:"file_notifications"`
+	FolderNotifications bool     `json:"folder_notifications"`
 }
 
 func ValidateBandwidthProfileName(name string) error {
@@ -141,21 +146,30 @@ func validateBandwidth(b Bandwidth) error {
 	return nil
 }
 
+type Statistics struct {
+	LogRetentionDays   int  `json:"log_retention_days" validate:"min=0,max=365000"`
+	DailyRetentionDays int  `json:"daily_retention_days" validate:"min=0,max=365000"`
+	ASCIICharts        bool `json:"ascii_charts"`
+}
 type Config struct {
-	Soulseek        Soulseek  `json:"soulseek"`
-	Search          Search    `json:"search"`
-	Bandwidth       Bandwidth `json:"bandwidth"`
-	Uploads         Uploads   `json:"uploads"`
-	Downloads       Downloads `json:"downloads"`
-	DownloadDir     string    `json:"download_dir" validate:"required"`
-	Shares          []Share   `json:"shares"`
-	ShareExclusions []string  `json:"share_exclusions"`
-	DownloadSlots   int       `json:"download_slots" validate:"min=1"`
-	UploadSlots     int       `json:"upload_slots" validate:"min=1"`
+	Statistics      Statistics `json:"statistics"`
+	AudioMetadata   bool       `json:"audio_metadata"`
+	Soulseek        Soulseek   `json:"soulseek"`
+	Search          Search     `json:"search"`
+	Bandwidth       Bandwidth  `json:"bandwidth"`
+	Uploads         Uploads    `json:"uploads"`
+	Downloads       Downloads  `json:"downloads"`
+	DownloadDir     string     `json:"download_dir" validate:"required"`
+	Shares          []Share    `json:"shares"`
+	ShareExclusions []string   `json:"share_exclusions"`
+	DownloadSlots   int        `json:"download_slots" validate:"min=1"`
+	UploadSlots     int        `json:"upload_slots" validate:"min=1"`
 }
 
 type SafeConfig struct {
-	Soulseek struct {
+	Statistics    Statistics `json:"statistics"`
+	AudioMetadata bool       `json:"audio_metadata"`
+	Soulseek      struct {
 		Username          string `json:"username"`
 		Password          string `json:"-"`
 		Server            string `json:"server"`
@@ -178,19 +192,27 @@ type SafeConfig struct {
 
 func Default() Config {
 	home, _ := os.UserHomeDir()
-	return Config{ShareExclusions: DefaultShareExclusions(), Soulseek: Soulseek{Server: DefaultServer, ListenAddr: DefaultListenAddr, ConnectOnStartup: true, NATPMPPortMapping: true, UPnPPortMapping: true}, Search: Search{RememberSearches: true, SearchHistoryLimit: 200, RememberFilters: true, FilterHistoryLimit: 50, WishlistIntervalMinutes: 15, WishlistNotifications: true, RespondToIncomingSearches: true, MinimumIncomingSearchLength: 3, MaximumIncomingSearchResults: 300}, Bandwidth: defaultBandwidth(), Uploads: Uploads{LimitScope: UploadLimitTotal, Scheduling: UploadSchedulingFIFO}, Downloads: Downloads{FolderNotifications: true}, DownloadDir: filepath.Join(home, DefaultDownloadDir), DownloadSlots: 4, UploadSlots: 2}
+	return Config{AudioMetadata: true, ShareExclusions: DefaultShareExclusions(), Soulseek: Soulseek{Server: DefaultServer, ListenAddr: DefaultListenAddr, ConnectOnStartup: true, NATPMPPortMapping: true, UPnPPortMapping: true}, Search: Search{RememberSearches: true, SearchHistoryLimit: 200, RememberFilters: true, FilterHistoryLimit: 50, WishlistIntervalMinutes: 15, WishlistNotifications: true, RespondToIncomingSearches: true, MinimumIncomingSearchLength: 3, MaximumIncomingSearchResults: 300}, Bandwidth: defaultBandwidth(), Uploads: Uploads{LimitScope: UploadLimitTotal, Scheduling: UploadSchedulingFIFO}, Downloads: Downloads{FolderNotifications: true, FilterPatterns: DefaultDownloadFilters()}, DownloadDir: filepath.Join(home, DefaultDownloadDir), DownloadSlots: 4, UploadSlots: 2}
 }
 
 func (c Config) Redacted() SafeConfig {
 	var out SafeConfig
+	out.Statistics, out.AudioMetadata = c.Statistics, c.AudioMetadata
 	out.Soulseek.Username, out.Soulseek.Password, out.Soulseek.Server, out.Soulseek.ListenAddr, out.Soulseek.NetworkInterface, out.Soulseek.ConnectOnStartup, out.Soulseek.NATPMPPortMapping, out.Soulseek.UPnPPortMapping = c.Soulseek.Username, "[redacted]", c.Soulseek.Server, c.Soulseek.ListenAddr, c.Soulseek.NetworkInterface, c.Soulseek.ConnectOnStartup, c.Soulseek.NATPMPPortMapping, c.Soulseek.UPnPPortMapping
 	out.Search, out.Bandwidth, out.Uploads, out.Downloads, out.DownloadDir, out.Shares, out.DownloadSlots, out.UploadSlots = c.Search, c.Bandwidth, c.Uploads, c.Downloads, c.DownloadDir, append([]Share(nil), c.Shares...), c.DownloadSlots, c.UploadSlots
 	out.Bandwidth.Profiles = append([]BandwidthProfile(nil), c.Bandwidth.Profiles...)
 	out.ShareExclusions = append([]string{}, c.ShareExclusions...)
+	out.Downloads.FilterPatterns = slices.Clone(c.Downloads.FilterPatterns)
 	return out
 }
 
 func (c Config) Validate() error {
+	if _, err := NormalizeDownloadFilters(c.Downloads.FilterPatterns); err != nil {
+		return err
+	}
+	if c.Uploads.MaxQueuedFilesPerUser > 1000000 || c.Uploads.MaxQueuedBytesPerUser > 1<<63-1 {
+		return errors.New("config: upload queue limit out of range")
+	}
 	if _, err := NormalizeShareExclusions(c.ShareExclusions); err != nil {
 		return err
 	}
@@ -275,6 +297,11 @@ func (c *Config) UnmarshalJSON(data []byte) error {
 	if err := validateBandwidth(next.Bandwidth); err != nil {
 		return err
 	}
+	patterns, err := NormalizeDownloadFilters(next.Downloads.FilterPatterns)
+	if err != nil {
+		return err
+	}
+	next.Downloads.FilterPatterns = patterns
 	*c = Config(next)
 	return nil
 }

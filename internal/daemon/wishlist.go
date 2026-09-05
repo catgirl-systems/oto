@@ -203,7 +203,7 @@ func searchResultSignature(results []SearchResult) string {
 func fromSoulseekResults(results []soulseek.SearchResult) []SearchResult {
 	out := make([]SearchResult, len(results))
 	for i, result := range results {
-		out[i] = SearchResult{Username: result.Username, Path: result.Path, Extension: result.Extension, CountryCode: result.CountryCode, Size: result.Size, Directory: result.IsDirectory, SlotFree: result.SlotFree, Speed: result.Speed, Queue: result.QueueLength, Bitrate: result.Bitrate, Duration: result.Duration, VBR: result.VBR, SampleRate: result.SampleRate, BitDepth: result.BitDepth, Public: result.Public}
+		out[i] = SearchResult{Username: result.Username, Path: result.Path, Extension: result.Extension, CountryCode: result.CountryCode, Size: result.Size, Directory: result.IsDirectory, SlotFree: result.SlotFree, Speed: result.Speed, Queue: result.QueueLength, Bitrate: result.Bitrate, Duration: result.Duration, VBR: result.VBR, VBRKnown: result.VBRKnown, SampleRate: result.SampleRate, BitDepth: result.BitDepth, Public: result.Public}
 	}
 	return out
 }

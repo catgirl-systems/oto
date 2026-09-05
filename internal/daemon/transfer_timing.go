@@ -73,6 +73,14 @@ func (t transferTiming) snapshot(x Transfer, now time.Time) Transfer {
 	return x
 }
 
+// Forget accounting only after history removal commits; upload callback guards stay separate.
+func (s *Service) forgetTransferLocked(id string) {
+	delete(s.transferTiming, id)
+	if s.telemetry != nil {
+		delete(s.telemetry.attempts, id)
+		delete(s.telemetry.queued, id)
+	}
+}
 func (s *Service) prepareTransferLocked(id string) {
 	t := s.transferTiming[id]
 	t.stop(time.Now())
@@ -95,6 +103,7 @@ func (s *Service) startTransferLocked(id string, done uint64) {
 	}
 	t := s.transferTiming[id]
 	t.start(time.Now(), done)
+	s.statsStreamLocked(id, done)
 	s.transferTiming[id] = t
 }
 
@@ -105,6 +114,7 @@ func (s *Service) startTransfer(id string, done uint64) {
 }
 
 func (s *Service) progressTransferLocked(id string, done uint64) {
+	s.statsProgressLocked(id, done)
 	t, ok := s.transferTiming[id]
 	if ok {
 		t.progress(time.Now(), done)
@@ -113,6 +123,7 @@ func (s *Service) progressTransferLocked(id string, done uint64) {
 }
 
 func (s *Service) stopTransferLocked(id string) {
+	s.statsStopLocked(id)
 	if t, ok := s.transferTiming[id]; ok {
 		t.stop(time.Now())
 		s.transferTiming[id] = t

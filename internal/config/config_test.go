@@ -164,7 +164,7 @@ func TestUploadConfigRoundTripAndValidation(t *testing.T) {
 func TestDownloadCommandsRoundTripAndRejectNUL(t *testing.T) {
 	cfg := Default()
 	cfg.Soulseek.Username, cfg.Soulseek.Password = "u", "p"
-	cfg.Downloads = Downloads{AfterFileCommand: `echo "$1"`, AfterFolderCommand: `echo folder "$1"`}
+	cfg.Downloads = Downloads{FilterPatterns: DefaultDownloadFilters(), AfterFileCommand: `echo "$1"`, AfterFolderCommand: `echo folder "$1"`}
 	path := filepath.Join(t.TempDir(), "config.json")
 	if err := cfg.Save(path); err != nil {
 		t.Fatal(err)

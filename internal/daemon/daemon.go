@@ -21,6 +21,7 @@ import (
 	"github.com/catgirl-systems/oto/internal/config"
 	"github.com/catgirl-systems/oto/internal/portmap"
 	"github.com/catgirl-systems/oto/internal/soulseek"
+	"github.com/catgirl-systems/oto/internal/stats"
 )
 
 var (
@@ -52,18 +53,20 @@ const (
 const searchPageSize = 100
 
 type ShareScan struct {
-	ID          uint64    `json:"id"`
-	State       string    `json:"state"`
-	Root        string    `json:"root,omitempty"`
-	Files       uint64    `json:"files"`
-	Directories uint64    `json:"directories"`
-	StartedAt   time.Time `json:"started_at"`
-	FinishedAt  time.Time `json:"finished_at,omitempty"`
-	ElapsedMS   int64     `json:"elapsed_ms"`
-	Error       string    `json:"error,omitempty"`
+	Audio       soulseek.AudioScan `json:"audio"`
+	ID          uint64             `json:"id"`
+	State       string             `json:"state"`
+	Root        string             `json:"root,omitempty"`
+	Files       uint64             `json:"files"`
+	Directories uint64             `json:"directories"`
+	StartedAt   time.Time          `json:"started_at"`
+	FinishedAt  time.Time          `json:"finished_at,omitempty"`
+	ElapsedMS   int64              `json:"elapsed_ms"`
+	Error       string             `json:"error,omitempty"`
 }
 
 type Snapshot struct {
+	StatsWarning         string               `json:"stats_warning,omitempty"`
 	Status               Status               `json:"status"`
 	Presence             Presence             `json:"presence"`
 	Error                string               `json:"error,omitempty"`
@@ -97,16 +100,19 @@ type SearchResult struct {
 	Bitrate     uint32 `json:"bitrate,omitempty"`
 	Duration    uint32 `json:"duration,omitempty"`
 	VBR         bool   `json:"vbr,omitempty"`
+	VBRKnown    bool   `json:"vbr_known,omitempty"`
 	SampleRate  uint32 `json:"sample_rate,omitempty"`
 	BitDepth    uint32 `json:"bit_depth,omitempty"`
 	Public      bool   `json:"public"`
 }
 type Search struct {
-	ID      string
-	Query   string
-	Results []SearchResult
+	Usernames []string `json:"usernames,omitempty"`
+	ID        string
+	Query     string
+	Results   []SearchResult
 }
 type SearchPage struct {
+	Usernames  []string       `json:"usernames,omitempty"`
 	ID         string         `json:"id"`
 	Query      string         `json:"query"`
 	Results    []SearchResult `json:"results"`
@@ -132,22 +138,30 @@ type Transfer struct {
 }
 
 type Download struct {
-	ID          string    `json:"id"`
-	Username    string    `json:"username"`
-	Filename    string    `json:"filename"`
-	Size        uint64    `json:"size"`
-	Offset      uint64    `json:"offset"`
-	DownloadDir string    `json:"download_dir,omitempty"`
-	Destination string    `json:"destination"`
-	State       string    `json:"state"` // queued, incomplete, running, finalizing, paused, retrying, completed, cancelled, failed
-	RetryAt     time.Time `json:"retry_at,omitempty"`
-	Error       string    `json:"error,omitempty"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	StatsAccount string    `json:"stats_account,omitempty"`
+	FilterBypass bool      `json:"filter_bypass,omitempty"`
+	ID           string    `json:"id"`
+	Username     string    `json:"username"`
+	Filename     string    `json:"filename"`
+	Size         uint64    `json:"size"`
+	Offset       uint64    `json:"offset"`
+	DownloadDir  string    `json:"download_dir,omitempty"`
+	Destination  string    `json:"destination"`
+	State        string    `json:"state"` // queued, incomplete, running, finalizing, paused, retrying, completed, cancelled, failed
+	RetryAt      time.Time `json:"retry_at,omitempty"`
+	Error        string    `json:"error,omitempty"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
 }
 type Journal struct {
-	DownloadSequence uint64     `json:"download_sequence"`
-	Downloads        []Download `json:"downloads"`
+	UploadQueueSequence uint64        `json:"upload_queue_sequence,omitempty"`
+	StatsSince          time.Time     `json:"stats_since,omitempty"`
+	StatsPending        []stats.Event `json:"stats_pending,omitempty"`
+	StatsActive         []stats.Event `json:"stats_active,omitempty"`
+	UploadSequence      uint64        `json:"upload_sequence"`
+	Uploads             []Upload      `json:"uploads,omitempty"`
+	DownloadSequence    uint64        `json:"download_sequence"`
+	Downloads           []Download    `json:"downloads"`
 }
 
 type DownloadItem struct {
@@ -178,11 +192,14 @@ type portMapping interface {
 type portMappingOpener func(context.Context, uint16, bool, bool, func(uint16)) (portMapping, error)
 
 type Service struct {
+	telemetry              *telemetryState
 	mu                     sync.RWMutex
 	lifecycleMu            sync.Mutex
 	uploadMu               sync.Mutex
 	uploadEpoch            uint64
+	uploadAccounts         map[uint64]string
 	uploadOwners           map[string]uploadOwner
+	uploadKeys             map[string]string
 	cfg                    config.Config
 	configPath             string
 	runCtx                 context.Context
@@ -265,6 +282,10 @@ func New(cfg config.Config, path string) (*Service, error) {
 		return nil, err
 	}
 	cfg.ShareExclusions = rules
+	cfg.Downloads.FilterPatterns, err = config.NormalizeDownloadFilters(cfg.Downloads.FilterPatterns)
+	if err != nil {
+		return nil, err
+	}
 	if err := validateConfig(cfg); err != nil {
 		return nil, err
 	}
@@ -311,6 +332,8 @@ func New(cfg config.Config, path string) (*Service, error) {
 		d := s.journal.Downloads[i]
 		s.transfers[d.ID] = Transfer{ID: d.ID, Username: d.Username, Filename: d.Filename, Direction: "download", State: d.State, Done: d.Offset, Total: d.Size, Error: d.Error}
 	}
+	s.restoreUploadJournal()
+	s.initTelemetry()
 	return s, nil
 }
 
@@ -342,7 +365,11 @@ func (s *Service) Snapshot() Snapshot {
 		}
 		scan = &x
 	}
-	return Snapshot{Status: s.status, Presence: s.presence, Error: s.lastErr, PublicIP: publicIP, PublicPort: publicPort, Config: s.cfg.Redacted(), Shares: append([]config.Share(nil), s.cfg.Shares...), ShareScan: scan, ShareIndexRevision: s.shareIndexRevision, DownloadNotification: s.downloadNotification, Downloads: append([]Download(nil), s.journal.Downloads...), Transfers: s.transferValuesLocked(time.Now())}
+	warning := ""
+	if s.telemetry != nil {
+		warning = s.telemetry.warning
+	}
+	return Snapshot{StatsWarning: warning, Status: s.status, Presence: s.presence, Error: s.lastErr, PublicIP: publicIP, PublicPort: publicPort, Config: s.cfg.Redacted(), Shares: append([]config.Share(nil), s.cfg.Shares...), ShareScan: scan, ShareIndexRevision: s.shareIndexRevision, DownloadNotification: s.downloadNotification, Downloads: append([]Download(nil), s.journal.Downloads...), Transfers: s.transferValuesLocked(time.Now())}
 }
 
 // Start initializes daemon-owned work and optionally starts a Soulseek session.
@@ -398,6 +425,8 @@ func (s *Service) Start(ctx context.Context) error {
 	s.startListenPortWatcherLocked()
 	s.wg.Add(1)
 	go s.wishlistLoop(s.runCtx)
+	s.wg.Add(1)
+	go s.telemetryLoop(s.runCtx)
 	s.mu.Unlock()
 	if connect {
 		return s.setPresenceLocked(PresenceOnline)
@@ -558,7 +587,7 @@ func (s *Service) stopSessionLocked(offline bool) {
 }
 
 func uploadPolicy(c config.Config) soulseek.UploadPolicy {
-	return soulseek.UploadPolicy{Scheduling: string(c.Uploads.Scheduling), BytesPerSecond: int64(c.Bandwidth.ActiveProfileLimits().UploadSpeedLimitKiB) * 1024, PerTransfer: c.Uploads.LimitScope == config.UploadLimitPerTransfer}
+	return soulseek.UploadPolicy{MaxQueuedFilesPerUser: c.Uploads.MaxQueuedFilesPerUser, MaxQueuedBytesPerUser: c.Uploads.MaxQueuedBytesPerUser, Scheduling: string(c.Uploads.Scheduling), BytesPerSecond: int64(c.Bandwidth.ActiveProfileLimits().UploadSpeedLimitKiB) * 1024, PerTransfer: c.Uploads.LimitScope == config.UploadLimitPerTransfer}
 }
 
 func downloadLimit(c config.Config) int64 {
@@ -605,12 +634,21 @@ func (s *Service) connectOnce(ctx context.Context) error {
 	}
 	s.uploadEpoch++
 	epoch := s.uploadEpoch
+	if s.uploadAccounts == nil {
+		s.uploadAccounts = map[uint64]string{}
+	}
+	s.uploadAccounts[epoch] = accountKey(cfg)
 	s.mu.Unlock()
+	uploadsReady := make(chan struct{})
+	defer close(uploadsReady)
 	client := soulseek.NewClient(soulseek.ClientConfig{
 		Address: cfg.Soulseek.Server, Username: cfg.Soulseek.Username, Password: cfg.Soulseek.Password,
 		ListenAddr: cfg.Soulseek.ListenAddr, NetworkInterface: cfg.Soulseek.NetworkInterface,
 		Share: idx, Uploads: newUploadManager(cfg), IncomingSearch: &searchPolicy,
+		UploadsReady:                uploadsReady,
 		DownloadLimitBytesPerSecond: downloadLimit(cfg),
+		UploadAccepted:              func(event soulseek.TransferEvent) error { return s.uploadAccepted(epoch, event) },
+		UploadRejected:              func(event soulseek.TransferEvent) { s.uploadRejected(epoch, event) },
 		UploadUpdate:                func(event soulseek.TransferEvent) { s.uploadUpdate(epoch, event) },
 		UploadStreamStart:           func(event soulseek.TransferEvent) { s.uploadStreamStart(epoch, event) },
 	})
@@ -668,6 +706,7 @@ func (s *Service) connectOnce(ctx context.Context) error {
 	s.status, s.lastErr = StatusConnected, ""
 	s.mu.Unlock()
 	client.SetShareIndex(idx)
+	s.recoverUploads(client, epoch)
 	return nil
 }
 
@@ -815,6 +854,7 @@ func (s *Service) Close() error {
 		s.mu.Unlock()
 		return nil
 	}
+	s.retireUploadsLocked()
 	s.closed = true
 	s.requeueDownloads = s.cancel != nil
 	runCancel, cancel, client, mapping := s.runCancel, s.cancel, s.client, s.mapping
@@ -834,10 +874,25 @@ func (s *Service) Close() error {
 	s.sessionWG.Wait()
 	s.downloadWG.Wait()
 	s.wg.Wait()
-	return nil
+	s.mu.Lock()
+	if s.telemetry != nil {
+		for id := range s.telemetry.attempts {
+			s.statsStateLocked(id, "interrupted")
+		}
+	}
+	s.mu.Unlock()
+	err := s.flushStats()
+	if s.telemetry != nil && s.telemetry.store != nil {
+		err = errors.Join(err, s.telemetry.store.Close())
+	}
+	return err
 }
 
-func (s *Service) Search(ctx context.Context, query, expression string) (SearchPage, error) {
+func (s *Service) Search(ctx context.Context, query, expression string, users ...string) (SearchPage, error) {
+	targets, targetErr := soulseek.NormalizeSearchUsers(users)
+	if targetErr != nil {
+		return SearchPage{}, targetErr
+	}
 	filter, err := parseSearchFilter(expression)
 	if err != nil {
 		return SearchPage{}, err
@@ -848,13 +903,13 @@ func (s *Service) Search(ctx context.Context, query, expression string) (SearchP
 	if c == nil {
 		return SearchPage{}, ErrNotStarted
 	}
-	r, err := c.Search(ctx, query)
+	r, err := c.Search(ctx, query, targets...)
 	if err != nil {
 		return SearchPage{}, err
 	}
 	out := fromSoulseekResults(r)
 	sortSearchResults(out)
-	search := Search{ID: fmt.Sprintf("%d", time.Now().UnixNano()), Query: query, Results: out}
+	search := Search{Usernames: targets, ID: fmt.Sprintf("%d", time.Now().UnixNano()), Query: query, Results: out}
 	s.mu.Lock()
 	s.searches[search.ID] = search
 	s.mu.Unlock()
@@ -888,7 +943,7 @@ func filteredSearchPage(search Search, filter searchFilter, cursor int) SearchPa
 	}
 	cursor = max(0, min(cursor, len(results)))
 	end := min(cursor+searchPageSize, len(results))
-	page := SearchPage{ID: search.ID, Query: search.Query, Results: append([]SearchResult(nil), results[cursor:end]...), Cursor: cursor, Total: len(results), FoundTotal: len(search.Results)}
+	page := SearchPage{Usernames: slices.Clone(search.Usernames), ID: search.ID, Query: search.Query, Results: append([]SearchResult(nil), results[cursor:end]...), Cursor: cursor, Total: len(results), FoundTotal: len(search.Results)}
 	if end < len(results) {
 		page.NextCursor = end
 	}
@@ -1068,54 +1123,73 @@ func (s *Service) QueueDownloads(reqs []DownloadRequest) ([]Download, error) {
 		s.mu.Unlock()
 		return nil, ErrClosed
 	}
+	matcher, err := downloadMatcher(s.cfg)
+	if err != nil {
+		s.mu.Unlock()
+		return nil, err
+	}
 	now := time.Now().UTC()
-	var out []Download
+	out := []Download{}
+	sequence := s.seq
 	for _, req := range reqs {
 		if strings.TrimSpace(req.Username) == "" {
 			s.mu.Unlock()
 			return nil, errors.New("daemon: download username is required")
 		}
-		downloadDir := strings.TrimSpace(req.DownloadDir)
-		if downloadDir == "" {
-			downloadDir = s.cfg.DownloadDir
+		root := strings.TrimSpace(req.DownloadDir)
+		if root == "" {
+			root = s.cfg.DownloadDir
 		}
 		for _, item := range req.Files {
-			safeName, err := soulseek.NormalizePath(item.Filename)
+			name, err := soulseek.NormalizePath(item.Filename)
 			if err != nil {
 				s.mu.Unlock()
 				return nil, err
 			}
-			name := strings.ReplaceAll(safeName, "/", "\\")
 			if item.Offset > item.Size {
 				s.mu.Unlock()
 				return nil, soulseek.ErrMalformed
 			}
 			dest := item.Destination
 			if dest == "" {
-				dest = safeSegment(req.Username) + "/" + safeName
+				dest = safeSegment(req.Username) + "/" + name
 			}
-			if _, err = soulseek.SafeJoin(downloadDir, dest); err != nil {
+			if _, err := soulseek.SafeJoin(root, dest); err != nil {
 				s.mu.Unlock()
 				return nil, err
 			}
-			state := "queued"
+			sequence++
+			state, reason := "queued", ""
 			if item.Offset > 0 {
 				state = "incomplete"
 			}
-			s.seq++
-			d := Download{ID: fmt.Sprintf("d-%d", s.seq), Username: req.Username, Filename: name, Size: item.Size, Offset: item.Offset, DownloadDir: downloadDir, Destination: dest, State: state, CreatedAt: now, UpdatedAt: now}
-			s.journal.Downloads = append(s.journal.Downloads, d)
-			s.transfers[d.ID] = Transfer{ID: d.ID, Username: d.Username, Filename: d.Filename, Direction: "download", State: d.State, Done: d.Offset, Total: d.Size}
-			out = append(out, d)
+			if matcher.DownloadExcluded(name) {
+				state, reason = "filtered", "Matched download filter"
+			}
+			out = append(out, Download{ID: fmt.Sprintf("d-%d", sequence), Username: req.Username, Filename: strings.ReplaceAll(name, "/", "\\"), Size: item.Size, Offset: item.Offset, DownloadDir: root, Destination: dest, State: state, Error: reason, CreatedAt: now, UpdatedAt: now})
 		}
 	}
-	if err := s.saveJournalLocked(); err != nil {
+	next := s.journal
+	next.DownloadSequence = sequence
+	next.Downloads = append(slices.Clone(next.Downloads), out...)
+	if s.telemetry != nil {
+		next.StatsPending = slices.Clone(next.StatsPending)
+		for _, d := range out {
+			event := stats.Event{Account: accountKey(s.cfg), TransferID: d.ID, Peer: d.Username, Direction: "download", Kind: d.State, Filename: d.Filename, Destination: d.Destination}
+			next.StatsPending = append(next.StatsPending, s.statsPrepareEventLocked(event))
+		}
+	}
+	if err := config.SaveJSON(s.journalPath, next); err != nil {
 		s.mu.Unlock()
 		return nil, err
 	}
+	s.journal, s.seq = next, sequence
+	for _, d := range out {
+		s.transfers[d.ID] = Transfer{ID: d.ID, Username: d.Username, Filename: d.Filename, Direction: "download", State: d.State, Done: d.Offset, Total: d.Size, Error: d.Error}
+	}
 	s.mu.Unlock()
-	for _, download := range out {
-		s.startDownload(download.ID)
+	for _, d := range out {
+		s.startDownload(d.ID)
 	}
 	return out, nil
 }
@@ -1148,6 +1222,11 @@ func (s *Service) TransferAction(id, action string) error {
 	// worker must release its file before it can be resumed or cleared.
 	s.lifecycleMu.Lock()
 	defer s.lifecycleMu.Unlock()
+	if strings.EqualFold(action, "clear") {
+		if err := s.flushStats(); err != nil {
+			return err
+		}
+	}
 	s.mu.Lock()
 	if s.closed {
 		s.mu.Unlock()
@@ -1159,6 +1238,7 @@ func (s *Service) TransferAction(id, action string) error {
 			continue
 		}
 		start := false
+		previousState := d.State
 		switch strings.ToLower(action) {
 		case "pause", "cancel":
 			if d.State == "finalizing" {
@@ -1185,27 +1265,42 @@ func (s *Service) TransferAction(id, action string) error {
 				s.mu.Unlock()
 				return nil
 			}
-			if d.State != "paused" && d.State != "cancelled" && d.State != "failed" && d.State != "retrying" {
+			if d.State != "paused" && d.State != "cancelled" && d.State != "failed" && d.State != "retrying" && d.State != "filtered" {
 				s.mu.Unlock()
 				return nil
 			}
+			matcher, err := downloadMatcher(s.cfg)
+			if err != nil {
+				s.mu.Unlock()
+				return err
+			}
 			d.State, d.Error, d.RetryAt = "queued", "", time.Time{}
-			start = true
+			if !d.FilterBypass && matcher.DownloadExcluded(d.Filename) {
+				d.State, d.Error = "filtered", "Matched download filter"
+			} else {
+				start = true
+			}
 		case "clear":
 			if d.State == "running" || d.State == "finalizing" || d.State == "queued" || d.State == "incomplete" || s.downloadCancels[id] != nil {
 				s.mu.Unlock()
 				return errors.New("daemon: active download cannot be cleared")
 			}
-			if err := os.Remove(incompletePath(id)); err != nil && !errors.Is(err, os.ErrNotExist) {
+			next := s.journal
+			next.Downloads = append(slices.Clone(s.journal.Downloads[:i]), s.journal.Downloads[i+1:]...)
+			if err := config.SaveJSON(s.journalPath, next); err != nil {
 				s.mu.Unlock()
 				return err
 			}
-			s.journal.Downloads = append(s.journal.Downloads[:i], s.journal.Downloads[i+1:]...)
+			if err := os.Remove(incompletePath(id)); err != nil && !errors.Is(err, os.ErrNotExist) {
+				rollback := s.saveJournalLocked()
+				s.mu.Unlock()
+				return errors.Join(err, rollback)
+			}
+			s.journal = next
 			delete(s.transfers, id)
-			delete(s.transferTiming, id)
-			err := s.saveJournalLocked()
+			s.forgetTransferLocked(id)
 			s.mu.Unlock()
-			return err
+			return nil
 		default:
 			s.mu.Unlock()
 			return fmt.Errorf("daemon: unsupported transfer action %q", action)
@@ -1217,6 +1312,14 @@ func (s *Service) TransferAction(id, action string) error {
 			s.stopTransferLocked(id)
 		}
 		done := s.downloadDone[id]
+		if done == nil && (strings.EqualFold(action, "pause") || strings.EqualFold(action, "cancel")) {
+			s.statsStateLocked(id, d.State)
+		}
+		if d.State == "filtered" && previousState != "filtered" {
+			event := s.statsTemplateLocked(id)
+			event.Kind = stats.KindFiltered
+			s.statsEventLocked(event)
+		}
 		err := s.saveJournalLocked()
 		s.mu.Unlock()
 		if done != nil {
@@ -1354,6 +1457,10 @@ func (s *Service) UpdateConfig(c config.Config) error {
 		return err
 	}
 	c.ShareExclusions = rules
+	c.Downloads.FilterPatterns, err = config.NormalizeDownloadFilters(c.Downloads.FilterPatterns)
+	if err != nil {
+		return err
+	}
 	if err := validateConfig(c); err != nil {
 		return err
 	}
@@ -1366,7 +1473,7 @@ func (s *Service) UpdateConfig(c config.Config) error {
 		return ErrClosed
 	}
 	reconnect := !hotConfigUpdate(s.cfg, c)
-	if !reconnect && slices.Equal(s.cfg.ShareExclusions, c.ShareExclusions) {
+	if !reconnect && slices.Equal(s.cfg.ShareExclusions, c.ShareExclusions) && s.cfg.AudioMetadata == c.AudioMetadata {
 		oldInterval := s.cfg.Search.WishlistIntervalMinutes
 		uploadsChanged := uploadPolicy(s.cfg) != uploadPolicy(c)
 		client := s.client
@@ -1399,6 +1506,7 @@ func (s *Service) UpdateConfig(c config.Config) error {
 	if runCtx == nil {
 		runCtx = context.Background()
 	}
+	runCtx = context.WithValue(runCtx, audioSettingKey{}, c.AudioMetadata)
 	err = s.runShareScan(runCtx, append([]config.Share(nil), c.Shares...), c.ShareExclusions, generation, false, nil, func(index *soulseek.ShareIndex) error {
 		s.mu.Lock()
 		if s.closed || s.scanCtx.Err() != nil || s.shareWatchGeneration != generation {

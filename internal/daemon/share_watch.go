@@ -22,8 +22,10 @@ import (
 const (
 	DefaultShareRescanDelay = 5 * time.Minute
 	shareRescanMaxDelay     = 30 * time.Minute
-	shareIndexCacheVersion  = 2
+	shareIndexCacheVersion  = 3
 )
+
+type audioSettingKey struct{}
 
 type shareScanResult struct {
 	index    *soulseek.ShareIndex
@@ -74,6 +76,11 @@ func (s *Service) runShareScan(ctx context.Context, shares []config.Share, rules
 		return ErrClosed
 	}
 	s.wg.Add(1)
+	previous, audio := s.shares, s.cfg.AudioMetadata
+	customBuilder := builder != nil || s.shareIndexBuilder != nil
+	if value, ok := ctx.Value(audioSettingKey{}).(bool); ok {
+		audio = value
+	}
 	cancelEpoch := s.shareCancelEpoch
 	if builder == nil {
 		builder = s.shareIndexBuilder
@@ -138,6 +145,15 @@ func (s *Service) runShareScan(ctx context.Context, shares []config.Share, rules
 	index, err := builder(soulseek.WithShareScanProgress(ctx, progress), shares)
 	if err == nil && index == nil {
 		err = errors.New("daemon: share scan returned nil index")
+	}
+	if err == nil && audio && !customBuilder {
+		_, err = index.ExtractAudio(ctx, previous, func(status soulseek.AudioScan) {
+			s.mu.Lock()
+			if s.shareScan != nil && s.shareScan.ID == id {
+				s.shareScan.Audio = status
+			}
+			s.mu.Unlock()
+		})
 	}
 	progressMu.Lock()
 	s.mu.Lock()

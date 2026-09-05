@@ -3,6 +3,7 @@ package daemon
 import (
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"sort"
 	"strings"
@@ -37,40 +38,49 @@ func uploadID(username, filename string) string { return "upload:" + username + 
 func liveUpload(state string) bool              { return state == "queued" || state == "running" }
 
 func (s *Service) uploadUpdate(session uint64, event soulseek.TransferEvent) {
+	if event.State == "queued" {
+		if err := s.uploadAccepted(session, event); err != nil {
+			log.Printf("upload admission: %v", err)
+		}
+		return
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed || session != s.uploadEpoch {
+		s.statsRetiredUploadLocked(session, event)
 		return
 	}
-	id := uploadID(event.Username, event.Filename)
+	id := s.uploadEventIDLocked(event)
 	owner := uploadOwner{session: session, target: soulseek.UploadTarget{Username: event.Username, Filename: event.Filename, Attempt: event.Attempt}}
-	previous, exists := s.uploadOwners[id]
-	if event.State == "queued" {
-		if exists && previous.session == session && previous.target.Attempt >= event.Attempt {
-			return
-		}
-	} else if !exists || previous != owner || !liveUpload(s.transfers[id].State) {
+	if id == "" || s.uploadOwners[id] != owner || !liveUpload(s.transfers[id].State) {
 		return
 	}
-	if s.uploadOwners == nil {
-		s.uploadOwners = make(map[string]uploadOwner)
-	}
-	if event.State == "queued" {
-		if s.transfers[id].State == "completed" {
-			delete(s.transferTiming, id)
-		}
-		s.prepareTransferLocked(id)
-	}
-	s.uploadOwners[id] = owner
 	s.progressTransferLocked(id, event.Done)
+	oldState := s.transfers[id].State
 	s.transfers[id] = Transfer{ID: id, Username: event.Username, Filename: event.Filename, Direction: "upload", State: event.State, Done: event.Done, Total: event.Total, Error: event.Error}
 	if event.State != "running" {
 		s.stopTransferLocked(id)
 	}
+	if oldState != event.State {
+		s.statsStateLocked(id, event.State)
+		if err := s.persistUploadLocked(id); err != nil {
+			log.Printf("save upload: %v", err)
+			return
+		}
+	}
 	if event.State == "completed" && s.cfg.Uploads.AutoClearCompleted {
+		if s.telemetry != nil && s.statsPendingLocked(id) {
+			s.telemetry.clear[id] = true
+			return
+		}
+		tr := s.transfers[id]
 		delete(s.transfers, id)
-		delete(s.transferTiming, id)
-		// Keep this session's attempt watermark to reject delayed callbacks.
+		if err := s.persistUploadLocked(id); err != nil {
+			s.transfers[id] = tr
+			log.Printf("clear upload: %v", err)
+			return
+		}
+		s.forgetTransferLocked(id)
 	}
 }
 
@@ -81,9 +91,10 @@ func (s *Service) uploadStreamStart(session uint64, event soulseek.TransferEvent
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed || session != s.uploadEpoch {
+		s.statsRetiredUploadLocked(session, event)
 		return
 	}
-	id := uploadID(event.Username, event.Filename)
+	id := s.uploadEventIDLocked(event)
 	owner := uploadOwner{session: session, target: soulseek.UploadTarget{Username: event.Username, Filename: event.Filename, Attempt: event.Attempt}}
 	if s.uploadOwners[id] != owner || s.transfers[id].ID == "" {
 		return
@@ -101,9 +112,13 @@ func (s *Service) retireUploadsLocked() {
 	}
 	for id, transfer := range s.transfers {
 		if transfer.Direction == "upload" && liveUpload(transfer.State) {
-			transfer.State, transfer.Error = "failed", "Soulseek connection closed"
+			transfer.State, transfer.Error = "interrupted", "Soulseek connection closed; waiting to recover"
 			s.transfers[id] = transfer
 			s.stopTransferLocked(id)
+			s.statsStateLocked(id, "interrupted")
+			if err := s.persistUploadLocked(id); err != nil {
+				log.Printf("persist interrupted upload: %v", err)
+			}
 		}
 	}
 }
@@ -130,7 +145,7 @@ func validateUploadAction(req UploadActionRequest) error {
 	}
 	for _, state := range req.States {
 		switch state {
-		case "completed", "cancelled", "failed", "queued":
+		case "completed", "cancelled", "failed", "queued", "interrupted":
 		default:
 			return fmt.Errorf("daemon: invalid upload state %q", state)
 		}
@@ -176,6 +191,16 @@ func (s *Service) UploadAction(req UploadActionRequest) (UploadActionResult, err
 		}
 	}
 	client := s.client
+	if req.Action == "retry" {
+		for _, id := range req.IDs {
+			for _, u := range s.journal.Uploads {
+				if u.ID == id && u.Account != s.uploadAccountLocked(s.uploadEpoch) {
+					s.mu.Unlock()
+					return result, errors.New("select this upload's local account before retrying")
+				}
+			}
+		}
+	}
 	if req.Action == "retry" && (client == nil || s.status != StatusConnected) {
 		s.mu.Unlock()
 		return result, ErrUploadUnavailable
@@ -222,6 +247,11 @@ func (s *Service) UploadAction(req UploadActionRequest) (UploadActionResult, err
 		}
 		client.StopUploads(live, req.Action == "cancel")
 	}
+	if req.Action == "clear" {
+		if err := s.flushStats(); err != nil {
+			return result, err
+		}
+	}
 	for _, item := range targets {
 		id := item.transfer.ID
 		s.mu.Lock()
@@ -233,7 +263,7 @@ func (s *Service) UploadAction(req UploadActionRequest) (UploadActionResult, err
 		}
 		switch req.Action {
 		case "retry":
-			if current.State != "failed" && current.State != "cancelled" {
+			if current.State != "failed" && current.State != "cancelled" && current.State != "interrupted" {
 				s.mu.Unlock()
 				result.Skipped++
 				continue
@@ -255,13 +285,23 @@ func (s *Service) UploadAction(req UploadActionRequest) (UploadActionResult, err
 				current.State, current.Error = "cancelled", ""
 				s.transfers[id] = current
 				s.stopTransferLocked(id)
+				s.statsStateLocked(id, "cancelled")
 				result.Changed++
+			}
+			if err := s.persistUploadLocked(id); err != nil {
+				result.Errors = append(result.Errors, UploadActionError{id, err.Error()})
 			}
 			s.mu.Unlock()
 		case "clear":
 			delete(s.transfers, id)
+			if err := s.persistUploadLocked(id); err != nil {
+				s.transfers[id] = current
+				result.Errors = append(result.Errors, UploadActionError{id, err.Error()})
+				s.mu.Unlock()
+				continue
+			}
 			// Retain the attempt watermark until this session is retired.
-			delete(s.transferTiming, id)
+			s.forgetTransferLocked(id)
 			result.Changed++
 			s.mu.Unlock()
 		}

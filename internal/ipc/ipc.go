@@ -98,6 +98,7 @@ func (s *Server) Close() error {
 
 func (s *Server) handler() http.Handler {
 	mux := http.NewServeMux()
+	s.registerStats(mux)
 	mux.HandleFunc("GET /v1/state", s.state)
 	mux.HandleFunc("GET /v1/network/interfaces", s.networkInterfaces)
 	mux.HandleFunc("POST /v1/network/port-check", s.checkListeningPort)
@@ -105,6 +106,7 @@ func (s *Server) handler() http.Handler {
 	mux.HandleFunc("PUT /v1/account/password", s.accountPassword)
 	mux.HandleFunc("GET /v1/searches", s.searches)
 	mux.HandleFunc("POST /v1/search", s.search)
+	mux.HandleFunc("POST /v1/downloads/force", s.forceDownloads)
 	mux.HandleFunc("GET /v1/browse", s.browse)
 	mux.HandleFunc("GET /v1/wishlist", s.wishlist)
 	mux.HandleFunc("PUT /v1/wishlist", s.wishlist)
@@ -240,14 +242,15 @@ func (s *Server) searches(w http.ResponseWriter, r *http.Request) {
 }
 func (s *Server) search(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Query  string `json:"query"`
-		Filter string `json:"filter"`
+		Usernames []string `json:"usernames"`
+		Query     string   `json:"query"`
+		Filter    string   `json:"filter"`
 	}
 	if err := decode(w, r, &req); err != nil {
 		writeErr(w, 400, err)
 		return
 	}
-	out, err := s.service.Search(r.Context(), req.Query, req.Filter)
+	out, err := s.service.Search(r.Context(), req.Query, req.Filter, req.Usernames...)
 	if err != nil {
 		status := http.StatusServiceUnavailable
 		if errors.Is(err, daemon.ErrInvalidFilter) {
@@ -541,9 +544,9 @@ func (c *Client) ChangePassword(ctx context.Context, password string) (daemon.Pa
 	err := c.Do(ctx, "PUT", "/v1/account/password", map[string]string{"password": password}, &result)
 	return result, err
 }
-func (c *Client) Search(ctx context.Context, q, filter string) (daemon.SearchPage, error) {
+func (c *Client) Search(ctx context.Context, q, filter string, users ...string) (daemon.SearchPage, error) {
 	var page daemon.SearchPage
-	err := c.Do(ctx, "POST", "/v1/search", map[string]string{"query": q, "filter": filter}, &page)
+	err := c.Do(ctx, "POST", "/v1/search", map[string]any{"query": q, "filter": filter, "usernames": users}, &page)
 	return page, err
 }
 func (c *Client) SearchPage(ctx context.Context, id string, cursor int, filter string) (daemon.SearchPage, error) {
