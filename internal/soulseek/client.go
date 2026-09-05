@@ -1342,7 +1342,7 @@ func (c *Client) serveMessagePeer(peer net.Conn, peerInfo PeerInitMessage) {
 				continue
 			}
 			if request.Direction == 0 {
-				_, _, err := c.registerUpload(peerInfo.Username, request.Filename)
+				_, _, err := c.registerUpload(peerInfo.Username, request.Filename, true)
 				if err != nil {
 					_ = writeMessage(peer, TransferResponse{Token: request.Token, Accepted: false, Reason: "File not shared"})
 					continue
@@ -1373,7 +1373,7 @@ func (c *Client) serveMessagePeer(peer net.Conn, peerInfo PeerInitMessage) {
 			if err != nil {
 				continue
 			}
-			a, _, err := c.registerUpload(peerInfo.Username, filename)
+			a, _, err := c.registerUpload(peerInfo.Username, filename, true)
 			if err != nil {
 				_ = writeMessage(peer, QueueDenied{Filename: filename, Reason: "File not shared"})
 				continue

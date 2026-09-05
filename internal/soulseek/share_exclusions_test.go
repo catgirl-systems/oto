@@ -125,7 +125,7 @@ func TestQueuedUploadRevalidatesExclusions(t *testing.T) {
 	address, _, received := uploadPeer(t, "normal", 0)
 	c, events, local := uploadClient(t, address, []byte("data"))
 	blocker := c.cfg.Uploads.Enqueue("blocker", TransferRequest{})
-	_, _, err := c.registerUpload("peer", "Music/song") // queued behind the occupied slot
+	_, _, err := c.registerUpload("peer", "Music/song", true) // queued behind the occupied slot
 	if err != nil {
 		t.Fatal(err)
 	}

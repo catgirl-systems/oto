@@ -417,7 +417,10 @@ func TestUploadPeerRequeueJoinsRetiringAttempt(t *testing.T) {
 	}
 	uploadEvent(t, events, "failed")
 	result := make(chan bool, 1)
-	go func() { _, started, err := c.registerUpload("peer", `Music\song`); result <- started && err == nil }()
+	go func() {
+		_, started, err := c.registerUpload("peer", `Music\song`, true)
+		result <- started && err == nil
+	}()
 	select {
 	case <-result:
 		t.Fatal("peer requeue was lost while the old worker retired")

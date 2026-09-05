@@ -37,6 +37,7 @@ type uploadAttempt struct {
 	state          string
 	progress       uint64
 	manual, notify bool
+	fileStarted    bool
 }
 
 func (c *Client) emitUpload(a *uploadAttempt, state string, done uint64, message string) {
@@ -69,7 +70,7 @@ func (c *Client) validateUpload(username, filename string) (string, string, uint
 	return strings.ReplaceAll(clean, "/", "\\"), localPath, uint64(stat.Size()), nil
 }
 
-func (c *Client) registerUpload(username, filename string) (*uploadAttempt, bool, error) {
+func (c *Client) registerUpload(username, filename string, peerRequeue bool) (*uploadAttempt, bool, error) {
 	for {
 		wire, localPath, size, err := c.validateUpload(username, filename)
 		if err != nil {
@@ -85,6 +86,13 @@ func (c *Client) registerUpload(username, filename string) (*uploadAttempt, bool
 			c.mu.Unlock()
 			a.mu.Lock()
 			terminal := a.state != "queued" && a.state != "running"
+			// A peer can retry before we notice its old stream has closed.
+			// Replace running attempts, but keep queued requests deduplicated.
+			if peerRequeue && a.state == "running" {
+				a.manual = true
+				a.cancel()
+				terminal = true
+			}
 			a.mu.Unlock()
 			if !terminal {
 				return a, false, nil
@@ -108,7 +116,7 @@ func (c *Client) registerUpload(username, filename string) (*uploadAttempt, bool
 
 // QueueUpload registers a manual retry; network work belongs to the client.
 func (c *Client) QueueUpload(username, filename string) (bool, error) {
-	_, started, err := c.registerUpload(username, filename)
+	_, started, err := c.registerUpload(username, filename, false)
 	return started, err
 }
 
@@ -143,7 +151,7 @@ func (c *Client) executeUpload(a *uploadAttempt) {
 		progress = a.job.Request.Size
 	}
 	a.state, a.progress = state, progress
-	notify := a.notify
+	notify, fileStarted := a.notify, a.fileStarted
 	a.mu.Unlock()
 	c.mu.Unlock()
 	c.emitUpload(a, state, progress, message)
@@ -151,7 +159,9 @@ func (c *Client) executeUpload(a *uploadAttempt) {
 	if notify {
 		c.notifyUpload(a, QueueDenied{Filename: a.target.Filename, Reason: "Cancelled"})
 	}
-	if state == "failed" {
+	// F closure already reports a token-bound failure. A filename-only message
+	// on a new P connection could abort a replacement download instead.
+	if state == "failed" && !fileStarted {
 		c.notifyUpload(a, QueueFailedMessage{Filename: a.target.Filename})
 	}
 	c.cfg.Uploads.Done(a.job)
@@ -212,6 +222,9 @@ func (c *Client) performUpload(a *uploadAttempt, setupCtx context.Context, setup
 	if err := writeAll(filePeer, token[:]); err != nil {
 		return err
 	}
+	a.mu.Lock()
+	a.fileStarted = true
+	a.mu.Unlock()
 	var offsetBytes [8]byte
 	if _, err := io.ReadFull(filePeer, offsetBytes[:]); err != nil {
 		return err
