@@ -62,6 +62,9 @@ func (m *model) key(k tea.KeyPressMsg) tea.Cmd {
 		}
 		return nil
 	}
+	if m.workspace == workspaceSettings && m.shareExclusions.open && (m.shareExclusions.editing || s != "q" && s != "ctrl+c" && s != "?") {
+		return m.shareExclusionsKey(k)
+	}
 	if m.editing {
 		return m.editKey(k)
 	}
@@ -194,10 +197,8 @@ func (m *model) key(k tea.KeyPressMsg) tea.Cmd {
 				m.restoreDownloadRules = true
 				m.uploadConfirm, m.uploadConfirmChoice = true, 0
 				m.uploadConfirmLabel = "Restore default download filters"
-			case settingRestoreShareExclusions:
-				m.restoreShareExclusions = true
-				m.uploadConfirm, m.uploadConfirmChoice = true, 0
-				m.uploadConfirmLabel = "Restore default share exclusions (staged until s)"
+			case settingManageShareExclusions:
+				m.openShareExclusions()
 			case settingNetworkInterface, settingBandwidthProfile, settingUploadLimitScope, settingUploadScheduling:
 				m.choiceChoosing = true
 				m.choiceSetting = fields[m.cursor].id
@@ -275,13 +276,6 @@ func (m *model) key(k tea.KeyPressMsg) tea.Cmd {
 			if i := m.downloadRuleIndex(); i >= 0 {
 				rules := append([]string{}, m.cfg.Downloads.FilterPatterns...)
 				m.cfg.Downloads.FilterPatterns = append(rules[:i], rules[i+1:]...)
-			}
-			return nil
-		}
-		if m.workspace == workspaceSettings && m.settingsSection == settingsShares {
-			if m.cursor >= 0 && m.cursor < len(m.cfg.ShareExclusions) {
-				rules := append([]string{}, m.cfg.ShareExclusions...)
-				m.cfg.ShareExclusions = append(rules[:m.cursor], rules[m.cursor+1:]...)
 			}
 			return nil
 		}
@@ -1294,7 +1288,7 @@ func (m *model) uploadConfirmKey(k tea.KeyPressMsg) tea.Cmd {
 		m.restoreShareExclusions = false
 		if accepted {
 			m.cfg.ShareExclusions = config.DefaultShareExclusions()
-			m.cursor = min(m.cursor, len(m.settingFields())-1)
+			m.shareExclusions.cursor, m.shareExclusions.err = 0, ""
 		}
 		return nil
 	}

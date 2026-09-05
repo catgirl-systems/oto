@@ -693,15 +693,21 @@ func (m model) footerHints() []string {
 		}
 		return hints
 	case workspaceSettings:
+		if m.shareExclusions.open {
+			if m.shareExclusions.editing {
+				return []string{"enter stage rule", "esc cancel edit", "← → move caret"}
+			}
+			if m.settingsSaving {
+				return []string{"saving settings", "esc back"}
+			}
+			return []string{"a add", "enter edit", "d remove", "s save", "esc back", "R restore defaults"}
+		}
 		hints := []string{"s save"}
 		fields := m.settingFields()
 		if m.cursor < 0 || m.cursor >= len(fields) {
 			return hints
 		}
 		field := fields[m.cursor]
-		if field.id == settingShareExclusion {
-			hints = append(hints, "d remove rule")
-		}
 		action := "edit"
 		switch field.kind {
 		case settingInfo:
@@ -712,8 +718,8 @@ func (m model) footerHints() []string {
 			action = "choose"
 		case settingAction:
 			switch field.id {
-			case settingRestoreShareExclusions:
-				action = "restore defaults"
+			case settingManageShareExclusions:
+				action = "manage exclusions"
 			case settingChangePassword:
 				action = "change password"
 			case settingListeningPortStatus:

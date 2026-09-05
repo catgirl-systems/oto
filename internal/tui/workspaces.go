@@ -540,6 +540,9 @@ func (m model) renderShares(width, height int) string {
 var settingsSectionNames = [settingsSectionCount]string{"Account", "Connection", "Bandwidth", "Downloads", "Uploads", "Search", "Shares", "Statistics"}
 
 func (m model) renderSettings(width, height int) string {
+	if m.shareExclusions.open {
+		return m.renderShareExclusions(width, height)
+	}
 	sections := settingsSectionNames[:]
 	lines := []string{sectionHeader("SETTINGS", "Press s to save changes", width)}
 	sidebarWidth := max(14, min(20, width/4))
@@ -625,14 +628,10 @@ func (m model) settingFields() []settingField {
 			{settingStatsPrune, "Prune now", "Preview and confirm", settingAction},
 		}
 	case settingsShares:
-		fields := make([]settingField, 0, len(m.cfg.ShareExclusions)+2)
-		for i, rule := range m.cfg.ShareExclusions {
-			fields = append(fields, settingField{settingShareExclusion, fmt.Sprintf("Exclusion %d", i+1), rule, settingText})
+		return []settingField{
+			{settingAudioMetadata, "Audio metadata (optional ffprobe)", strconv.FormatBool(m.cfg.AudioMetadata), settingBool},
+			{settingManageShareExclusions, "Excluded content", fmt.Sprintf("%d rules · Enter to manage", len(m.cfg.ShareExclusions)), settingAction},
 		}
-		return append(fields,
-			settingField{settingAddShareExclusion, "Add exclusion", "", settingText},
-			settingField{settingRestoreShareExclusions, "Restore defaults", "Press Enter", settingAction},
-			settingField{settingAudioMetadata, "Audio metadata (optional ffprobe)", strconv.FormatBool(m.cfg.AudioMetadata), settingBool})
 	case settingsAccount:
 		return []settingField{
 			{settingUsername, "Username", m.cfg.Soulseek.Username, settingText},
@@ -738,18 +737,6 @@ func (m *model) setSettingValue(value string) error {
 		m.cfg.Uploads.MaxQueuedBytesPerUser = n
 	case settingDownloadRule, settingAddDownloadRule:
 		return m.setDownloadRule(value, field.id == settingAddDownloadRule)
-	case settingShareExclusion, settingAddShareExclusion:
-		rules := append([]string{}, m.cfg.ShareExclusions...)
-		if field.id == settingAddShareExclusion {
-			rules = append(rules, value)
-		} else {
-			rules[m.cursor] = value
-		}
-		rules, err := config.NormalizeShareExclusions(rules)
-		if err != nil {
-			return err
-		}
-		m.cfg.ShareExclusions = rules
 	case settingUsername:
 		m.cfg.Soulseek.Username = value
 	case settingServer:

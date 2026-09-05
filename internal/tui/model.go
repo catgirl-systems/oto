@@ -174,9 +174,7 @@ const (
 	settingFolderNotifications
 	settingAutoClearDownloads
 	settingAutoClearUploads
-	settingShareExclusion
-	settingAddShareExclusion
-	settingRestoreShareExclusions
+	settingManageShareExclusions
 )
 
 type settingField struct {
@@ -206,6 +204,8 @@ type model struct {
 	uploadStatusMenu, uploadConfirm        bool
 	uploadConfirmChoice                    int
 	restoreShareExclusions                 bool
+	shareExclusions                        shareExclusionsView
+	settingsSaving                         bool
 	restoreDownloadRules                   bool
 	folderMenuEditing                      bool
 	loadingMore, filterEditing             bool
