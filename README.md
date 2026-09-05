@@ -102,6 +102,14 @@ Settings → Shares provides editable rules, **Add exclusion**, `d` removal, and
 
 Matching is case-insensitive against virtual paths including the share name, from a component boundary through the path end. Only `*` is special (including across separators); `?` and brackets are literal. Backslashes normalize to `/`. A trailing `/` or `/*` denotes a folder rule and prunes its subtree; other rules select files. Explicit share roots are exempt from folder rules. Hidden entries and descendant symlinks remain excluded even with `[]`. Empty/whitespace-only rules, controls, absolute paths, and literal `.`/`..` components are rejected; limits are 256 rules and 1024 bytes per rule.
 
+## Share audio metadata
+
+Audio extraction is enabled by default when `ffprobe` is available on the daemon's `PATH`. Native installations can install **ffmpeg**; the Docker runtime includes it. Settings → Shares → Audio metadata (`audio_metadata`) disables extraction. Missing tools, corrupt/unsupported audio, probe failures and timeouts never prevent files from being shared. Shares shows extracted/cached/failed counts and an install hint when ffprobe is unavailable.
+
+Scans probe MP1/2/3, FLAC, WAV, AIFF, Ogg/Opus, AAC/M4A/M4B, WMA, APE, WavPack, MPC, DSF and DFF. Two workers use local-file-only input, bounded JSON output and a ten-second per-file timeout; cancellation terminates probes and never publishes a partial shadow index. Successful metadata is cached by source path, size, nanosecond modification/change times and extractor version. Unchanged results survive restart; changed files/extractor versions invalidate results on the next scan, and failures are retried on later scans.
+
+Bitrate, duration, sample rate and meaningful bit depth appear in local Shares, full/folder browse replies and incoming search replies. Only container duration is used as a fallback. ffprobe does not reliably report universal VBR status: absent encoding mode stays unknown. The additive `vbr_known` field distinguishes missing mode information from explicit CBR/VBR; file properties no longer label unknown mode as CBR.
+
 ## TUI
 
 | Key | Action |
@@ -121,6 +129,8 @@ Matching is case-insensitive against virtual paths including the share name, fro
 | `tab` / `shift+tab` while filtering | complete fields, types, booleans, and comparison operators |
 | `c` | clear/restore search filters or clear the selected transfer subtree |
 | `space` | select a file or every loaded file below a user/folder node |
+| `F` in Downloads | confirm Download anyway for explicitly selected filtered files; folders never imply bypass |
+| `u` in Search, Browse or Transfers | prepare an editable targeted user search |
 | `b` in Search | browse the selected result's user and jump to its folder |
 | `i` in Search or Browse | show the selected file's properties and media metadata |
 | `ctrl+page up` / `ctrl+page down` in Search, Browse, or Transfers | switch result tabs or Downloads/Uploads |
@@ -179,6 +189,12 @@ Older `uploads.profiles` / `uploads.active_profile` settings migrate automatical
 
 Settings → Account can change the currently connected Soulseek account password. Select **Change Soulseek password**, press Enter, and enter the new password twice. The change is sent and saved immediately; it cannot be used while disconnected, while a username change is staged, or when `OTO_PASSWORD` supplies the credential.
 
+## Targeted user search
+
+Press **`u`** in Search to choose Global or Specific users. From a Search result, Browse tab or Transfers row, it prepares a search for that user. Edit the query and individual usernames; Enter submits and Escape cancels without network activity. Targeted tabs retain their scope and are labelled `@user,...: query`. Cached Browse find remains separate.
+
+`POST /v1/search` accepts optional `usernames`, for example `{"query":"album","usernames":["Alice Smith","Bob"]}`. Empty/omitted targets preserve global search. Up to 32 targets are allowed, with surrounding spaces trimmed, duplicates removed, internal spaces preserved and empty/control-containing names rejected. Message 42 requests share one token and use the usual five-second result window, filters and paging. Wrong-user results are discarded; an offline or silent target never triggers a global fallback. Wishlist searches remain global: saving a targeted tab is refused explicitly.
+
 ## Upload controls
 
 In Uploads, `space` marks a file or all files beneath a user/folder. Marks follow transfer IDs across refreshes and tab changes. `r` retries marked failed/cancelled uploads; `d` aborts marked uploads; with no marks, both use the focused subtree. Retry requires an online connection and uses the current upload scheduler and speed profile. There is no automatic upload retry timer.
@@ -187,7 +203,9 @@ In Uploads, `space` marks a file or all files beneath a user/folder. Marks follo
 
 `c` confirms removing selected upload entries, stopping any live attempts first. `C` opens the global clear menu: **Completed / Cancelled / Failed**, **Completed / Cancelled**, **Completed**, **Cancelled**, **Failed**, **Queued**, or **Everything**. Queued and Everything require confirmation; confirmations default to **No**, and Escape cancels. Clearing uploads never deletes shared files.
 
-Upload history lasts for the daemon run only. Going offline or losing the session stops live uploads and records them as failed; reconnect does not automatically restart them. Offline errors use the same failed category as other upload errors.
+Upload queue/history now survives restarts in `downloads.json`. Accepted work is saved before execution and automatically restored after reconnect/restart, only for the same server and local username. Recovery rebuilds FIFO order before accepting new requests, uses fresh handshakes and the receiver's actual offset, and revalidates sharing permission, file size and fingerprint. Changed/missing files fail visibly; completed, cancelled and independently failed uploads remain stopped. Recovery-handshake failures require a manual retry or a new peer request. Stable `upload:` IDs are never reused; retries retain their ID, while a new request after completion gets a new ID.
+
+Settings → Uploads exposes **queued + active** file and byte caps: `uploads.max_queued_files_per_user` and `uploads.max_queued_bytes_per_user`, both `0` (unlimited). Full advertised sizes count once, including active files; duplicates consume no extra allowance and exact equality is allowed. Rejections use **Too many files** / **Too many megabytes**. Lowering a cap never evicts accepted work, including restored work. Byte settings accept binary units such as `MiB`; JSON stores integer bytes.
 
 The owner-only Unix API supports `POST /v1/uploads/actions` with an `action` (`retry`, `cancel`, `clear`) and exactly one selector: `ids`, `usernames`, `states`, or `all: true`. Retry takes IDs; cancel takes IDs or usernames; clear takes IDs, states, or all. Results report `changed`, `skipped`, and per-ID `errors`. The existing single-transfer endpoint also accepts upload IDs. No new CLI commands are required.
 
@@ -199,6 +217,16 @@ Once all bytes arrive, a download briefly enters **finalizing** while moving to 
 
 Transient connection failures automatically enter **retrying**, with another attempt due in **3 minutes**. Local file I/O failures and remote file-read failures retry after **15 minutes**. Retry deadlines survive restarts; attempts wait until connected and respect download slots. There is no retry limit. Unknown errors, malformed protocol messages, changed file sizes, and permanent rejections require manual intervention; `r` also retries immediately instead of waiting for a deadline.
 
+### Download filters
+
+Settings → Downloads offers wildcard filters, Off by default. `downloads.filter_patterns` defaults to `*.DS_Store`, `*.exe`, `*.msi`, `desktop.ini`, and `Thumbs.db`; missing/null selects defaults, while `[]` means no rules. Rules match normalized remote paths case-insensitively from component boundaries; only `*` is special, and trailing `/` or `/*` matches descendants, including remote top-level folders. Rules never inspect the local destination name. Invalid rules cannot be saved.
+
+Matching files become durable **filtered** records, without a worker or partial file. This covers individual, selected and recursive requests; whole batches are validated before committing. Existing accepted automatic retries are unaffected by settings changes. Ordinary `r` applies current rules and never bypasses them.
+
+In Downloads, `space` marks individual files and **`F` Download anyway** confirms the marked filtered files (or the focused filtered file). Confirmation defaults to **No**; folder/user rows never implicitly bypass descendants. The record's bypass survives retries and restart, but does not exempt later requests. Removing a rule or disabling filters permits ordinary Retry. Filtered records are clearable and do not block folder completion; wholly filtered folders produce no completion hook or notification.
+
+The Unix API accepts `POST /v1/downloads/force` with `{"ids":["d-1","d-2"]}` and returns `changed`, `skipped`, and per-ID `errors`. Only existing filtered records are eligible.
+
 ### Transfer timing and completed-history cleanup
 
 Transfer elapsed time and speed are daemon-owned: detaching or changing TUIs does not reset them. Elapsed counts accumulated active file-stream time, including stalls, across retries/resumes in this daemon run. It excludes handshakes, queues, pauses, offline/retry delays, and finalization moves. Restarting the daemon resets timing; restored history shows unknown elapsed time. Wide rows have dedicated elapsed/ETA fields; below 110 inner columns, the focused row has a reserved detail line. Folder/user elapsed is a **cumulative sum**, not wall-clock time.
@@ -206,6 +234,7 @@ Transfer elapsed time and speed are daemon-owned: detaching or changing TUIs doe
 `/v1/transfers`, `/v1/state`, and `oto transfers --json` expose nullable `elapsed_ms` and `eta_seconds`, plus non-null `speed_bps`; CLI text includes labelled timing fields. Rates use progress samples of at least one second; three seconds without new bytes means zero speed and unknown ETA. ETA rounds remaining bytes/speed up, is zero for completed transfers, and is unknown during finalization. Group ETA is unknown while unfinished paused, cancelled, failed, retrying, or finalizing descendants remain. The TUI shows unknown timing as `—`.
 
 Settings → Downloads and Settings → Uploads each offer **Auto-clear new completed** entries (`downloads.auto_clear_completed` / `uploads.auto_clear_completed`, both Off). Saving with `s` hot-applies only to future successful completions, including currently running transfers; existing/restored history is never swept. Files and non-completed entries are untouched. Download cleanup follows successful final move, completed-state journal save, and dispatch of folder/file completion hooks and notifications, without waiting for external delivery. A failed cleanup journal save retains history and logs the failure. Download ID allocation survives an empty-history restart through journal `download_sequence` metadata.
+Completed-history cleanup also waits for durable Stats accounting. Statistics failures retain retryable summaries/history and show a warning; clearing Transfers never clears lifetime Stats or detailed transfer logs.
 
 ### Completion commands
 **Settings → Downloads** provides **After file command** and **After folder command**, saved as `downloads.after_file_command` and `downloads.after_folder_command`. Both default to empty (disabled) and hot-apply when saved. For example:
@@ -229,12 +258,36 @@ The daemon calls `notify-send` asynchronously when available. Delivery has a two
 
 Desktop delivery requires `notify-send` and a usable desktop session in the daemon's environment, including inside Docker. No D-Bus forwarding is provided. Existing completion commands still run independently; disable overlapping notification scripts if using the built-in delivery.
 
+## Persistent Stats and transfer logs
+
+The **Stats** workspace sits beside Transfers. `ctrl+page up/down` switches **Overview / History / Peers / Log**. `a` chooses a remembered local account, `/` filters an exact peer, `[` / `]` edit date bounds, `d` changes direction, and `e` filters log outcomes. History has `r` ranges (7/30/90/365 days or All); Peers has `s` username/traffic sorting; `n` advances a page and `p` returns to the first. Enter opens peer history or full event details; up/down scrolls long summaries and details. Charts use terminal-native bars with units and numeric summaries, need no color, and support `statistics.ascii_charts`.
+
+Overview compares session/lifetime payload bytes and logical completions, attempt outcomes, retries/resumes, filtered/forced downloads, limit rejections, cumulative stream/queue time, average and sampled peak rates, unique peers and first/last times. It also shows active/queued work, uptime, online time, reconnects and upload/download ratios (`—` when undefined). Account rate graphs cover the last five minutes and keep sampling without a frontend. History uses UTC daily traffic/completions; long ranges are binned to the display width. Peers can be sorted by total traffic across all pages. Logs retain filenames, destinations, timestamps and errors.
+
+Account identity is the normalized server plus local username captured from the actual connection/attempt, not subsequently edited Settings. A session is one daemon run, unaffected by reconnects or attached TUIs. Payload counts actual positive transfer deltas: resume offsets, handshakes, browsing and finalization copies are excluded; retransmitted traffic counts. File completions are separate from successful attempts, and downloads count complete only after the final move and journal commit. Cumulative stream time is not wall-clock time.
+
+Private `stats.sqlite3` uses CGO-free SQLite with transactional deduplication and independent lifetime/per-peer/session/daily rollups. Transfer journal changes retain pending terminal accounting until SQLite acknowledges it, so auto-clear cannot discard unrecorded completions. Active traffic checkpoints every **five seconds** and graceful shutdown flushes pending counters. A crash can lose the uncheckpointed interval (or more during persistence failure), but checkpoint replay is idempotent and abandoned attempts become interrupted. Database failures show a warning, retain retryable accounting/history and never silently replace a corrupt database. Back up `downloads.json` and the SQLite database together while the daemon is stopped. Tracking begins at the displayed **Since** date; old completed history is not invented into totals.
+
+`statistics.log_retention_days = 0` and `statistics.daily_retention_days = 0` keep everything indefinitely. Positive values enable hourly age-based pruning. Settings → Statistics or **`P` Prune now** selects logs, daily rollups or both and a cutoff, previews affected records, and requires confirmation defaulting to **No**. Pruning currently spans **all local accounts**. It never removes lifetime/peer totals, dedupe keys, recovery records or shared/downloaded files. Clearing Transfers is independent of Stats retention. The database and sidecars are owner-only; no passwords, peer IP history or social data are stored.
+
+### Stats Unix API
+
+- `GET /v1/stats`: account overview, lifetime/current-session comparisons and bounded live samples.
+- `GET /v1/stats/series`: UTC daily/binned history (`bins` at most 400).
+- `GET /v1/stats/peers`: peer totals, optionally `sort=peer` or `sort=bytes`.
+- `GET /v1/transfer-log`: newest-first event pages, optionally comma-separated `outcome` kinds.
+- `POST /v1/stats/prune/preview` and `/v1/stats/prune`: `{"cutoff":"2026-01-01T00:00:00Z","logs":true,"daily":false}`.
+
+Filters include `account`, `peer`, `direction` (`upload`/`download`), `session`, `from`, and exclusive `to`. Dates accept RFC3339 or `YYYY-MM-DD`; rollups use UTC calendar days. Page limits default to 100, maximum 1000; pass `next_cursor` back unchanged as `cursor`. Detailed logs never ride along in `/v1/state`. Existing diagnostic logging remains separate.
+
 ## Files and environment
 
 Default locations follow XDG:
 
 - config: `${XDG_CONFIG_HOME:-~/.config}/oto/config.json`;
 - state and incomplete downloads: `${XDG_STATE_HOME:-~/.local/state}/oto/`;
+- download/upload recovery journal and Stats outbox: `${XDG_STATE_HOME:-~/.local/state}/oto/downloads.json`;
+- private transfer logs and rollups: `${XDG_STATE_HOME:-~/.local/state}/oto/stats.sqlite3` (with SQLite WAL/SHM sidecars);
 - search and filter history: `${XDG_STATE_HOME:-~/.local/state}/oto/history.json`;
 - wishlist definitions and unread metadata: `${XDG_STATE_HOME:-~/.local/state}/oto/wishlist.json`;
 - explicitly saved remote share lists: `${XDG_STATE_HOME:-~/.local/state}/oto/usershares/`;
@@ -290,7 +343,7 @@ This tracks user-visible Soulseek functionality and meaningful operational quali
 | Partial-word search terms | :white_check_mark: | :white_check_mark: |
 | Search files in joined rooms | :x: | :white_check_mark: |
 | Search files shared by all buddies | :x: | :white_check_mark: |
-| Search files shared by specific users | :x: | :white_check_mark: |
+| Search files shared by specific users | :white_check_mark: | :white_check_mark: |
 | Cache results and refilter without another network search | :white_check_mark: | :white_check_mark: |
 | Include-text result filter | :white_check_mark: | :white_check_mark: |
 | Exclude-text result filter | :white_check_mark: | :white_check_mark: |
@@ -355,8 +408,8 @@ This tracks user-visible Soulseek functionality and meaningful operational quali
 | Avoid overwriting collisions by choosing an unused filename | :white_check_mark: | :white_check_mark: |
 | Separate folder for files manually sent by other users | :x: | :white_check_mark: |
 | Rename a file before downloading | :x: | :white_check_mark: |
-| Automatic filename-based download filters | :x: | :white_check_mark: |
-| Force a filtered download to bypass filters | :x: | :white_check_mark: |
+| Automatic filename-based download filters | :white_check_mark: | :white_check_mark: |
+| Force a filtered download to bypass filters | :white_check_mark: | :white_check_mark: |
 | Global download speed limit | :white_check_mark: | :white_check_mark: |
 | Alternate download speed-limit preset | :fast_forward: | :white_check_mark: |
 | Run a command after a file finishes | :white_check_mark: | :white_check_mark: |
@@ -379,7 +432,8 @@ This tracks user-visible Soulseek functionality and meaningful operational quali
 | Queue competing upload requests | :white_check_mark: | :white_check_mark: |
 | Configurable fixed upload-slot count | :white_check_mark: | :white_check_mark: |
 | Report upload queue positions | :white_check_mark: | :white_check_mark: |
-| Persist the upload queue and history across restarts | :x: | :white_check_mark: |
+| Persist completed upload history across restarts | :white_check_mark: | :white_check_mark: |
+| Automatically recover unfinished uploads after restart | :white_check_mark: | :x: |
 | Retry failed uploads | :white_check_mark: | :white_check_mark: |
 | Abort selected uploads | :white_check_mark: | :white_check_mark: |
 | Abort every upload from selected users | :white_check_mark: | :white_check_mark: |
@@ -399,8 +453,8 @@ This tracks user-visible Soulseek functionality and meaningful operational quali
 | Allocate upload slots until a bandwidth threshold is reached | :x: | :white_check_mark: |
 | Prioritize buddies in the upload queue | :x: | :white_check_mark: |
 | Prioritize Soulseek privileged users | :x: | :white_check_mark: |
-| Per-user queued-file limit | :x: | :white_check_mark: |
-| Per-user queued-byte limit | :x: | :white_check_mark: |
+| Per-user queued-file limit (oto includes active files) | :white_check_mark: | :white_check_mark: |
+| Per-user queued-byte limit (oto includes active files) | :white_check_mark: | :white_check_mark: |
 | Exempt buddies from upload queue limits | :x: | :white_check_mark: |
 | Wait for active uploads to finish before quitting | :x: | :white_check_mark: |
 | Message all users currently downloading | :x: | :white_check_mark: |
@@ -421,7 +475,7 @@ This tracks user-visible Soulseek functionality and meaningful operational quali
 | Force a full share rebuild | :x: | :white_check_mark: |
 | Stop an in-progress share scan | :white_check_mark: | :white_check_mark: |
 | Report share-scan progress | :white_check_mark: | :white_check_mark: |
-| Extract audio metadata while indexing local shares | :x: | :white_check_mark: |
+| Extract audio metadata while indexing local shares | :white_check_mark: | :white_check_mark: |
 | Publish shared folder and file counts | :white_check_mark: | :white_check_mark: |
 | Public shares | :white_check_mark: | :white_check_mark: |
 | Buddy-only shares | :x: | :white_check_mark: |
@@ -492,7 +546,7 @@ This tracks user-visible Soulseek functionality and meaningful operational quali
 | Built-in spam, anti-shout, leech-detection, and automation plugins | :x: | :white_check_mark: |
 | Persistent chat-room logs | :x: | :white_check_mark: |
 | Persistent private-chat logs | :x: | :white_check_mark: |
-| Persistent transfer logs | :x: | :white_check_mark: |
+| Persistent transfer logs | :white_check_mark: | :white_check_mark: |
 | Configurable diagnostic/debug logs | :x: | :white_check_mark: |
-| Current-session and lifetime transfer statistics | :x: | :white_check_mark: |
+| Current-session and lifetime transfer statistics | :white_check_mark: | :white_check_mark: |
 | Now-playing messages from MPRIS, Last.fm, Libre.fm, or ListenBrainz | :x: | :white_check_mark: |

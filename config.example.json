@@ -32,17 +32,27 @@
     ]
   },
   "uploads": {
+    "max_queued_files_per_user": 0,
+    "max_queued_bytes_per_user": 0,
     "auto_clear_completed": false,
     "limit_scope": "total",
     "scheduling": "fifo"
   },
   "downloads": {
+    "filters_enabled": false,
+    "filter_patterns": ["*.DS_Store", "*.exe", "*.msi", "desktop.ini", "Thumbs.db"],
     "auto_clear_completed": false,
     "after_file_command": "",
     "after_folder_command": "",
     "file_notifications": false,
     "folder_notifications": true
   },
+  "statistics": {
+    "log_retention_days": 0,
+    "daily_retention_days": 0,
+    "ascii_charts": false
+  },
+  "audio_metadata": true,
   "download_dir": "/downloads",
   "shares": [
     {
