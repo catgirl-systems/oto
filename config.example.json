@@ -22,6 +22,7 @@
     "maximum_incoming_search_results": 300
   },
   "uploads": {
+    "auto_clear_completed": false,
     "profiles": [
       {
         "name": "Unlimited",
@@ -33,6 +34,7 @@
     "scheduling": "fifo"
   },
   "downloads": {
+    "auto_clear_completed": false,
     "after_file_command": "",
     "after_folder_command": "",
     "file_notifications": false,
@@ -44,6 +46,25 @@
       "name": "Music",
       "path": "/shares/music"
     }
+  ],
+  "share_exclusions": [
+    ".*",
+    ".*/",
+    "@eaDir/",
+    "#recycle/",
+    "#snapshot/",
+    "desktop.ini",
+    "Thumbs.db",
+    "System Volume Information/",
+    "$RECYCLE.BIN/",
+    "lost+found/",
+    "*.part",
+    "*.partial",
+    "*.crdownload",
+    "*.tmp",
+    "*.temp",
+    "*.bak",
+    "*~"
   ],
   "download_slots": 4,
   "upload_slots": 2

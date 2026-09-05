@@ -24,6 +24,7 @@ The first launch asks for the Soulseek credentials, listening address, optional 
 ./oto pause DOWNLOAD_ID
 ./oto resume DOWNLOAD_ID
 ./oto rescan
+./oto rescan --cancel  # explicitly stop the current scan; does not launch a daemon
 ```
 
 ## Docker
@@ -83,11 +84,23 @@ Soulseek permits one login per username. Keeping the session in the daemon preve
 
 Press `o` to choose Online, Away, or Offline without stopping the daemon. Offline stops reconnect attempts and requeues active downloads without deleting partial data; choosing Online or Away resumes them. Away survives automatic reconnects for the current daemon run.
 
-The daemon watches every non-hidden, non-symlink directory under each share root using `fsnotify` (one recursive watch per directory). After filesystem changes stop for five minutes by default, it builds a complete shadow index and atomically publishes it; a fixed 30-minute maximum delay prevents continuous activity from postponing scans forever. Events during a scan discard that result and schedule another scan. Startup and manual rescans remain immediate, and watcher or scan failures keep the last good index available. `/v1/state` reports the current share scan (`scanning`, `publishing`, `completed`, `failed`, `cancelled`, or `discarded`) with root, accepted file/directory counts, and timing; the Shares view displays the same live progress.
+The daemon watches every included non-hidden, non-symlink directory under each share root using `fsnotify` (one recursive watch per directory). After filesystem changes stop for five minutes by default, it builds a complete shadow index and atomically publishes it; a fixed 30-minute maximum delay prevents continuous activity from postponing scans forever. Events during a scan discard that result and schedule another scan. Startup and manual rescans remain immediate, and watcher or scan failures keep the last good index available. `/v1/state` reports the current share scan (`scanning`, `publishing`, `completed`, `failed`, `cancelled`, or `discarded`) with root, accepted file/directory counts, and timing; the Shares view displays the same live progress.
 
 For dynamically forwarded incoming ports, `--listen-port-file` watches the file's parent directory and hot-swaps the listener whenever the file contains a new port. `--listen-port-reconcile-interval` provides a periodic fallback (default `30s`; `0` disables it). Missing or empty files mark the port unavailable until a valid value appears. This interface is provider-neutral; for example, a VPN container can write its current forwarded port into a shared volume. When configured, it takes precedence over and skips automatic NAT-PMP/UPnP forwarding without changing the saved settings.
 
 The headless controls attach only to the daemon's XDG Unix socket; they never launch a daemon or log in themselves. `transfers` lists both directions with full stable IDs, quoted text fields, or `--json` output. `pause ID` and `resume ID` operate on one download and preserve the TUI's partial-file and finalization protections. `rescan` works offline and waits for index publication without the ordinary request timeout. A concurrent manual scan fails with “share scan already in progress” (HTTP 409). Ctrl+C stops waiting, not the daemon-owned scan. Invalid commands, a missing daemon, and service errors exit nonzero.
+
+Use `c` in Shares or `oto rescan --cancel` to request cancellation of the displayed scan. Cancellation is cooperative: status changes from `cancelling` to `cancelled` once outstanding filesystem work returns. The last published index, cache, counts, and any staged configuration stay unchanged. Publication itself is non-cancellable. Pending automatic work is suppressed; later changes or the next polling interval can rescan normally. Cancelling startup with no previous index leaves empty shares and keeps the daemon running.
+
+The Unix API accepts `POST /v1/shares/rescan/cancel` with `{"id": N}`: 202 for an accepted/repeated cancellation, 400 for malformed/zero IDs, and 409 for stale/finished/publishing scans. With no active scan, the CLI cancellation command is a successful no-op. Ctrl+C on ordinary `oto rescan` still stops waiting, not the daemon scan.
+
+### Share exclusions
+
+Settings → Shares provides editable rules, **Add exclusion**, `d` removal, and **Restore defaults** (confirmation defaults to No). Save with `s`. Changes build a shadow index before committing settings; failed or cancelled scans keep the old configuration/index. Exclusion-only changes do not reconnect Soulseek. Browse, incoming search responses, share counts, caches, and directory watches use the same policy. Queued uploads revalidate before streaming; already-streaming uploads finish normally.
+
+`share_exclusions` is a global string array; missing/null uses defaults, explicit `[]` disables configurable rules, and custom lists replace defaults. Defaults are `.*`, `.*/`, `@eaDir/`, `#recycle/`, `#snapshot/`, `desktop.ini`, `Thumbs.db`, `System Volume Information/`, `$RECYCLE.BIN/`, `lost+found/`, `*.part`, `*.partial`, `*.crdownload`, `*.tmp`, `*.temp`, `*.bak`, and `*~`. Artwork, playlists, lyrics, logs, and music formats are not broadly excluded.
+
+Matching is case-insensitive against virtual paths including the share name, from a component boundary through the path end. Only `*` is special (including across separators); `?` and brackets are literal. Backslashes normalize to `/`. A trailing `/` or `/*` denotes a folder rule and prunes its subtree; other rules select files. Explicit share roots are exempt from folder rules. Hidden entries and descendant symlinks remain excluded even with `[]`. Empty/whitespace-only rules, controls, absolute paths, and literal `.`/`..` components are rejected; limits are 256 rules and 1024 bytes per rule.
 
 ## TUI
 
@@ -116,6 +129,8 @@ The headless controls attach only to the daemon's XDG Unix socket; they never la
 | `D` in Uploads | confirm aborting all current uploads for selected users |
 | `C` in Uploads | clear uploads by status, independently of selection |
 | `r` | rerun a wishlist item, refresh a user browse or saved-user list, resume/retry a transfer subtree, or rescan shares |
+| `c` in Shares | request cancellation of the displayed scan before publication |
+| `d` in Settings → Shares | remove the selected staged exclusion rule |
 | `p` in Downloads | pause the selected transfer subtree without deleting partial data |
 | `o` | choose Online, Away, or Offline without quitting |
 | `s` in Browse or Settings | explicitly save the active remote share list, or save Settings |
@@ -178,6 +193,15 @@ Once all bytes arrive, a download briefly enters **finalizing** while moving to 
 
 Transient connection failures automatically enter **retrying**, with another attempt due in **3 minutes**. Local file I/O failures and remote file-read failures retry after **15 minutes**. Retry deadlines survive restarts; attempts wait until connected and respect download slots. There is no retry limit. Unknown errors, malformed protocol messages, changed file sizes, and permanent rejections require manual intervention; `r` also retries immediately instead of waiting for a deadline.
 
+### Transfer timing and completed-history cleanup
+
+Transfer elapsed time and speed are daemon-owned: detaching or changing TUIs does not reset them. Elapsed counts accumulated active file-stream time, including stalls, across retries/resumes in this daemon run. It excludes handshakes, queues, pauses, offline/retry delays, and finalization moves. Restarting the daemon resets timing; restored history shows unknown elapsed time. Wide rows have dedicated elapsed/ETA fields; below 110 inner columns, the focused row has a reserved detail line. Folder/user elapsed is a **cumulative sum**, not wall-clock time.
+
+`/v1/transfers`, `/v1/state`, and `oto transfers --json` expose nullable `elapsed_ms` and `eta_seconds`, plus non-null `speed_bps`; CLI text includes labelled timing fields. Rates use progress samples of at least one second; three seconds without new bytes means zero speed and unknown ETA. ETA rounds remaining bytes/speed up, is zero for completed transfers, and is unknown during finalization. Group ETA is unknown while unfinished paused, cancelled, failed, retrying, or finalizing descendants remain. The TUI shows unknown timing as `—`.
+
+Settings → Downloads and Settings → Uploads each offer **Auto-clear new completed** entries (`downloads.auto_clear_completed` / `uploads.auto_clear_completed`, both Off). Saving with `s` hot-applies only to future successful completions, including currently running transfers; existing/restored history is never swept. Files and non-completed entries are untouched. Download cleanup follows successful final move, completed-state journal save, and dispatch of folder/file completion hooks and notifications, without waiting for external delivery. A failed cleanup journal save retains history and logs the failure. Download ID allocation survives an empty-history restart through journal `download_sequence` metadata.
+
+### Completion commands
 **Settings → Downloads** provides **After file command** and **After folder command**, saved as `downloads.after_file_command` and `downloads.after_folder_command`. Both default to empty (disabled) and hot-apply when saved. For example:
 
 ```json
@@ -332,11 +356,12 @@ This tracks user-visible Soulseek functionality and meaningful operational quali
 | Run a command after a file finishes | :white_check_mark: | :white_check_mark: |
 | Run a command after a folder finishes | :white_check_mark: | :white_check_mark: |
 | Notify when a file or folder finishes | :white_check_mark: | :white_check_mark: |
-| Automatically clear finished or filtered downloads | :x: | :white_check_mark: |
+| Automatically clear finished downloads | :white_check_mark: | :white_check_mark: |
+| Automatically clear filtered downloads | :x: | :white_check_mark: |
 | Allow selected users to send unsolicited files | :x: | :white_check_mark: |
 | Request and track remote queue position | :white_check_mark: | :white_check_mark: |
 | Show transfer speed and progress | :white_check_mark: | :white_check_mark: |
-| Estimate elapsed and remaining transfer time | :x: | :white_check_mark: |
+| Estimate elapsed and remaining transfer time | :white_check_mark: | :white_check_mark: |
 | Search the network for a transfer's file or folder name | :white_check_mark: | :white_check_mark: |
 | Remove the associated incomplete file when deleting a transfer | :white_check_mark: | :white_check_mark: |
 
@@ -353,7 +378,8 @@ This tracks user-visible Soulseek functionality and meaningful operational quali
 | Abort selected uploads | :white_check_mark: | :white_check_mark: |
 | Abort every upload from selected users | :white_check_mark: | :white_check_mark: |
 | Clear uploads by status | :white_check_mark: | :white_check_mark: |
-| Automatically clear finished or cancelled uploads | :x: | :white_check_mark: |
+| Automatically clear finished uploads | :white_check_mark: | :white_check_mark: |
+| Automatically clear cancelled uploads | :x: | :white_check_mark: |
 | Manually send a file to another user | :x: | :white_check_mark: |
 | Manually send a folder to another user | :x: | :white_check_mark: |
 | Global upload speed limit | :white_check_mark: | :white_check_mark: |
@@ -383,11 +409,11 @@ This tracks user-visible Soulseek functionality and meaningful operational quali
 | Manual share rescan | :white_check_mark: | :white_check_mark: |
 | Scan shares on startup | :white_check_mark: | :white_check_mark: |
 | Exclude hidden files and folders | :white_check_mark: | :white_check_mark: |
-| Configurable share exclusion patterns | :x: | :white_check_mark: |
+| Configurable share exclusion patterns | :white_check_mark: | :white_check_mark: |
 | Persistent on-disk share index | :white_check_mark: | :white_check_mark: |
 | Scheduled daily share rescans | :fast_forward: | :white_check_mark: |
 | Force a full share rebuild | :x: | :white_check_mark: |
-| Stop an in-progress share scan | :x: | :white_check_mark: |
+| Stop an in-progress share scan | :white_check_mark: | :white_check_mark: |
 | Report share-scan progress | :white_check_mark: | :white_check_mark: |
 | Extract audio metadata while indexing local shares | :x: | :white_check_mark: |
 | Publish shared folder and file counts | :white_check_mark: | :white_check_mark: |
