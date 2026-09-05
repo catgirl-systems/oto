@@ -59,6 +59,52 @@ func TestCodecMalformedAndCompressionLimit(t *testing.T) {
 	}
 }
 
+func TestFrameTransportErrors(t *testing.T) {
+	for _, init := range []bool{false, true} {
+		var wire bytes.Buffer
+		if init {
+			_ = WriteInitFrame(&wire, byte(PeerInit), []byte("abc"))
+		} else {
+			_ = WriteFrame(&wire, PeerTransferRequest, []byte("abc"))
+		}
+		data := wire.Bytes()
+		timeout := &net.OpError{Op: "read", Net: "tcp", Err: os.ErrDeadlineExceeded}
+		for _, tc := range []struct {
+			name string
+			data []byte
+			tail error
+			want error
+		}{
+			{"complete", data, nil, nil},
+			{"closed", nil, nil, io.EOF},
+			{"partial_length", data[:2], nil, io.ErrUnexpectedEOF},
+			{"missing_body", data[:4], nil, io.ErrUnexpectedEOF},
+			{"partial_body", data[:len(data)-1], nil, io.ErrUnexpectedEOF},
+			{"header_timeout", nil, timeout, timeout},
+			{"body_timeout", data[:len(data)-1], timeout, timeout},
+			{"header_closed", nil, net.ErrClosed, net.ErrClosed},
+			{"body_closed", data[:len(data)-1], net.ErrClosed, net.ErrClosed},
+		} {
+			t.Run(fmt.Sprintf("init=%t/%s", init, tc.name), func(t *testing.T) {
+				var reader io.Reader = bytes.NewReader(tc.data)
+				if tc.tail != nil {
+					reader = io.MultiReader(reader, iotest.ErrReader(tc.tail))
+				}
+				reader = iotest.OneByteReader(reader)
+				var err error
+				if init {
+					_, _, err = ReadInitFrame(reader)
+				} else {
+					_, _, err = ReadFrameWithProgress(reader, func(uint64, uint64) {})
+				}
+				if !errors.Is(err, tc.want) || errors.Is(err, ErrTruncated) {
+					t.Fatalf("transport error: got %v, want %v", err, tc.want)
+				}
+			})
+		}
+	}
+}
+
 func TestReadFrameWithProgress(t *testing.T) {
 	var wire bytes.Buffer
 	if err := WriteFrame(&wire, PeerSharedList, []byte("abc")); err != nil {

@@ -183,10 +183,8 @@ func WriteInitFrame(w io.Writer, command byte, payload []byte) error {
 func readBody(r io.Reader, header int, progress func(received, total uint64)) ([]byte, error) {
 	var n uint32
 	if err := binary.Read(r, binary.LittleEndian, &n); err != nil {
-		if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
-			return nil, ErrTruncated
-		}
-		return nil, err
+		// EOF between frames is a connection close, not an invalid payload.
+		return nil, fmt.Errorf("soulseek: read frame length: %w", err)
 	}
 	if n < uint32(header) {
 		return nil, fmt.Errorf("%w: short frame header", ErrMalformed)
@@ -207,7 +205,10 @@ func readBody(r io.Reader, header int, progress func(received, total uint64)) ([
 		}))
 	}
 	if _, err := io.ReadFull(reader, body); err != nil {
-		return nil, ErrTruncated
+		if errors.Is(err, io.EOF) {
+			err = io.ErrUnexpectedEOF // The frame length was already received.
+		}
+		return nil, fmt.Errorf("soulseek: read frame body: %w", err)
 	}
 	return body, nil
 }

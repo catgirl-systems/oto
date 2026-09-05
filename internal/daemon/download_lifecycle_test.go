@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -103,12 +104,21 @@ func TestDownloadPauseResumeLifecycle(t *testing.T) {
 }
 
 func TestDownloadRetryClassification(t *testing.T) {
+	var wire bytes.Buffer
+	if err := soulseek.WriteFrame(&wire, soulseek.PeerTransferRequest, []byte("abc")); err != nil {
+		t.Fatal(err)
+	}
+	_, _, closed := soulseek.ReadFrame(bytes.NewReader(nil))
+	_, _, interrupted := soulseek.ReadFrame(bytes.NewReader(wire.Bytes()[:wire.Len()-1]))
 	for _, tc := range []struct {
 		err  error
 		want time.Duration
 	}{
 		{nil, 0}, {context.Canceled, 0}, {soulseek.ErrTransferCancelled, 0},
 		{soulseek.ErrMalformed, 0}, {errors.New("remote file size changed"), 0},
+		{soulseek.ErrTruncated, 0}, {soulseek.ErrTooLarge, 0},
+		{fmt.Errorf("payload: %w", soulseek.ErrTruncated), 0},
+		{closed, 3 * time.Minute}, {interrupted, 3 * time.Minute},
 		{&soulseek.DownloadRejectedError{Reason: "File not shared."}, 0},
 		{&soulseek.DownloadRejectedError{Reason: "Banned"}, 0},
 		{io.EOF, 3 * time.Minute}, {io.ErrUnexpectedEOF, 3 * time.Minute},
