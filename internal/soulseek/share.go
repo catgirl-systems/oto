@@ -41,9 +41,33 @@ type ShareIndex struct {
 	roots       map[string]string
 	files       []ShareFile
 	searchPaths []string // Case-folded once, in the same order as files.
+	exclusions  *ShareExclusions
 }
 
-func NewShareIndex() *ShareIndex { return &ShareIndex{roots: make(map[string]string)} }
+func NewShareIndex() *ShareIndex {
+	index, _ := NewShareIndexWithExclusions(nil)
+	return index
+}
+
+func NewShareIndexWithExclusions(rules []string) (*ShareIndex, error) {
+	exclusions, err := NewShareExclusions(rules)
+	if err != nil {
+		return nil, err
+	}
+	return &ShareIndex{roots: make(map[string]string), exclusions: exclusions}, nil
+}
+
+func (s *ShareIndex) Exclusions() []string { return append([]string{}, s.exclusions.rules...) }
+
+func (s *ShareIndex) Excluded(virtual string, directory bool) bool {
+	parts := strings.Split(strings.ReplaceAll(virtual, `\`, "/"), "/")
+	for _, part := range parts[1:] {
+		if hidden(part) {
+			return true
+		}
+	}
+	return s.exclusions.Excluded(virtual, directory)
+}
 func (s *ShareIndex) AddRoot(name, path string) error {
 	if s == nil {
 		return errors.New("nil share index")
@@ -73,7 +97,14 @@ func (s *ShareIndex) AddRoot(name, path string) error {
 
 // RestoreShareIndex reconstructs a scanned index after validating cached entries.
 func RestoreShareIndex(roots []ShareRoot, files []ShareFile) (*ShareIndex, error) {
-	index := NewShareIndex()
+	return RestoreShareIndexWithExclusions(roots, files, nil)
+}
+
+func RestoreShareIndexWithExclusions(roots []ShareRoot, files []ShareFile, rules []string) (*ShareIndex, error) {
+	index, err := NewShareIndexWithExclusions(rules)
+	if err != nil {
+		return nil, err
+	}
 	for _, root := range roots {
 		if err := index.AddRoot(root.Name, root.Path); err != nil {
 			return nil, err
@@ -93,8 +124,11 @@ func RestoreShareIndex(roots []ShareRoot, files []ShareFile) (*ShareIndex, error
 		if err != nil || normalized != file.Path {
 			return nil, errors.New("share index contains an invalid path")
 		}
+		if index.Excluded(file.Root+"/"+file.Path, file.Directory) {
+			return nil, errors.New("share index contains an excluded path")
+		}
 	}
-	err := index.setFiles(context.Background(), append([]ShareFile(nil), files...))
+	err = index.setFiles(context.Background(), append([]ShareFile(nil), files...))
 	return index, err
 }
 func (s *ShareIndex) Roots() []ShareRoot {
@@ -164,6 +198,12 @@ func (s *ShareIndex) ScanContext(ctx context.Context) error {
 			if rel == "." {
 				rel = ""
 			}
+			if rel != "" && s.Excluded(r.Name+"/"+filepath.ToSlash(rel), d.IsDir()) {
+				if d.IsDir() {
+					return filepath.SkipDir
+				}
+				return nil
+			}
 			size := uint64(0)
 			if !d.IsDir() {
 				info, e := d.Info()
@@ -220,7 +260,18 @@ func (s *ShareIndex) Resolve(virtual string) (string, error) {
 	if len(parts) == 1 {
 		return root, nil
 	}
-	return SafeJoin(root, strings.Join(parts[1:], "/"))
+	local, err := SafeJoin(root, strings.Join(parts[1:], "/"))
+	if err != nil {
+		return "", err
+	}
+	info, err := os.Lstat(local)
+	if err != nil {
+		return "", err
+	}
+	if s.Excluded(strings.Join(parts, "/"), info.IsDir()) {
+		return "", os.ErrNotExist
+	}
+	return local, nil
 }
 
 // Browse returns immediate children from the last completed share scan.

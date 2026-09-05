@@ -26,6 +26,7 @@ type ClientConfig struct {
 	Share                                                     *ShareIndex
 	Uploads                                                   *UploadManager
 	UploadUpdate                                              func(TransferEvent)
+	UploadStreamStart                                         func(TransferEvent)
 	IncomingSearch                                            *IncomingSearchPolicy
 }
 
@@ -62,6 +63,7 @@ type pendingDownload struct {
 	size, offset       uint64
 	writer             io.WriterAt
 	progress           ProgressFunc
+	start              func()
 	done               chan error
 	ctx                context.Context
 }
@@ -874,12 +876,17 @@ func downloadKey(username, filename string) string {
 
 // Download queues one remote file and receives its F connection into dst.
 func (c *Client) Download(ctx context.Context, username, filename string, size, offset uint64, dst io.WriterAt, progress ProgressFunc) error {
+	return c.DownloadWithStart(ctx, username, filename, size, offset, dst, progress, nil)
+}
+
+// DownloadWithStart is Download with a callback at the exact start of the data stream.
+func (c *Client) DownloadWithStart(ctx context.Context, username, filename string, size, offset uint64, dst io.WriterAt, progress ProgressFunc, start func()) error {
 	if dst == nil || offset > size {
 		return ErrMalformed
 	}
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	pending := &pendingDownload{username: username, filename: filename, size: size, offset: offset, writer: dst, progress: progress, done: make(chan error, 1), ctx: ctx}
+	pending := &pendingDownload{username: username, filename: filename, size: size, offset: offset, writer: dst, progress: progress, start: start, done: make(chan error, 1), ctx: ctx}
 	key := downloadKey(username, filename)
 	c.mu.Lock()
 	if _, exists := c.requested[key]; exists {
@@ -1070,6 +1077,9 @@ func (c *Client) serveFile(peer net.Conn) {
 	if err := peer.SetDeadline(time.Time{}); err != nil {
 		pending.finish(err)
 		return
+	}
+	if pending.start != nil {
+		pending.start()
 	}
 	err := CopyAtMost(pending.ctx, pending.writer, peer, pending.size, pending.offset, pending.progress)
 	pending.finish(err)
