@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"io"
 	"net"
-	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -26,6 +25,7 @@ type ClientConfig struct {
 	Address, Username, Password, ListenAddr, NetworkInterface string
 	Share                                                     *ShareIndex
 	Uploads                                                   *UploadManager
+	UploadUpdate                                              func(TransferEvent)
 	IncomingSearch                                            *IncomingSearchPolicy
 }
 
@@ -50,12 +50,6 @@ type Event struct {
 	Command uint32
 	Message any
 	Err     error
-}
-
-type TransferEvent struct {
-	Direction, Username, Filename, State string
-	Done, Total                          uint64
-	Error                                string
 }
 
 const downloadSetupTimeout = 45 * time.Second
@@ -90,7 +84,13 @@ type peerAddressLookup struct {
 type Client struct {
 	cfg                   ClientConfig
 	mu                    sync.Mutex
-	writeMu               sync.Mutex
+	writeMu               chan struct{}
+	uploads               map[string]*uploadAttempt
+	uploadSeq             uint64
+	uploadRoot            context.Context
+	uploadCancel          context.CancelFunc
+	uploadWG              sync.WaitGroup
+	closing               bool
 	browseSlot            chan struct{}
 	searchSlots           chan struct{}
 	conn                  net.Conn
@@ -131,7 +131,8 @@ func NewClient(cfg ClientConfig) *Client {
 		policy = *cfg.IncomingSearch
 	}
 	control := bindToDevice(cfg.NetworkInterface)
-	return &Client{cfg: cfg, dialer: net.Dialer{Control: control}, listenConfig: net.ListenConfig{Control: control}, events: make(chan Event, 32), pending: make(map[uint32]chan SearchResponse), addresses: make(map[string]*peerAddressLookup), pierce: make(map[uint32]chan net.Conn), requested: make(map[string]*pendingDownload), downloads: make(map[uint32]*pendingDownload), distributed: NewDistributedNode(), incomingSearch: policy, browseSlot: make(chan struct{}, 1), searchSlots: make(chan struct{}, 2)}
+	uploadRoot, uploadCancel := context.WithCancel(context.Background())
+	return &Client{cfg: cfg, writeMu: make(chan struct{}, 1), dialer: net.Dialer{Control: control}, listenConfig: net.ListenConfig{Control: control}, events: make(chan Event, 32), pending: make(map[uint32]chan SearchResponse), addresses: make(map[string]*peerAddressLookup), pierce: make(map[uint32]chan net.Conn), requested: make(map[string]*pendingDownload), downloads: make(map[uint32]*pendingDownload), uploads: make(map[string]*uploadAttempt), uploadRoot: uploadRoot, uploadCancel: uploadCancel, distributed: NewDistributedNode(), incomingSearch: policy, browseSlot: make(chan struct{}, 1), searchSlots: make(chan struct{}, 2)}
 }
 
 func bindToDevice(name string) func(string, string, syscall.RawConn) error {
@@ -575,7 +576,9 @@ func (c *Client) nextToken() uint32 {
 	}
 	return c.token
 }
-func (c *Client) send(m Message) error {
+func (c *Client) send(m Message) error { return c.sendContext(c.baseContext(), m) }
+
+func (c *Client) sendContext(ctx context.Context, m Message) error {
 	c.mu.Lock()
 	conn := c.conn
 	c.mu.Unlock()
@@ -586,8 +589,20 @@ func (c *Client) send(m Message) error {
 	if e != nil {
 		return e
 	}
-	c.writeMu.Lock()
-	defer c.writeMu.Unlock()
+	select {
+	case c.writeMu <- struct{}{}:
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	done := make(chan struct{})
+	stop := context.AfterFunc(ctx, func() { _ = conn.SetWriteDeadline(time.Now()); close(done) })
+	defer func() {
+		if !stop() {
+			<-done
+		}
+		_ = conn.SetWriteDeadline(time.Time{})
+		<-c.writeMu
+	}()
 	return writeAll(conn, b)
 }
 
@@ -775,7 +790,7 @@ func (c *Client) lookupPeerAddress(ctx context.Context, username string) (PeerAd
 	c.mu.Unlock()
 
 	if owner {
-		if err := c.send(PeerAddressRequest{Username: username}); err != nil {
+		if err := c.sendContext(ctx, PeerAddressRequest{Username: username}); err != nil {
 			c.mu.Lock()
 			if c.addresses[username] == lookup {
 				delete(c.addresses, username)
@@ -800,7 +815,7 @@ func (c *Client) connectIndirect(ctx context.Context, username, kind string) (ne
 	c.pierce[token] = connection
 	c.mu.Unlock()
 	defer func() { c.mu.Lock(); delete(c.pierce, token); c.mu.Unlock() }()
-	if err := c.send(ConnectPeer{Token: token, Username: username, Kind: kind}); err != nil {
+	if err := c.sendContext(ctx, ConnectPeer{Token: token, Username: username, Kind: kind}); err != nil {
 		return nil, err
 	}
 	select {
@@ -849,7 +864,13 @@ func (c *Client) BrowseUserWithProgress(ctx context.Context, username, path stri
 	return c.BrowseWithProgress(ctx, peer, path, progress)
 }
 
-func downloadKey(username, filename string) string { return username + "\x00" + filename }
+func downloadKey(username, filename string) string {
+	clean, err := NormalizePath(filename)
+	if err != nil {
+		clean = filename
+	}
+	return username + "\x00" + clean
+}
 
 // Download queues one remote file and receives its F connection into dst.
 func (c *Client) Download(ctx context.Context, username, filename string, size, offset uint64, dst io.WriterAt, progress ProgressFunc) error {
@@ -946,17 +967,27 @@ func (c *Client) Download(ctx context.Context, username, filename string, size, 
 					pending.progress(Progress{Done: offset, Total: size, State: "queued", Queue: place})
 				}
 				continue
-			case PeerUploadDenied, PeerUploadFailed:
-				name, err := decodeDownloadFailure(message.command, message.payload)
-				if name == "" || name == filename {
-					return err
+			case PeerUploadDenied:
+				denied, decodeErr := DecodeQueueDenied(message.payload)
+				if decodeErr != nil || downloadKey(username, denied.Filename) != downloadKey(username, filename) {
+					continue
+				}
+				reason := denied.Reason
+				if reason == "" {
+					reason = "upload denied"
+				}
+				return &DownloadRejectedError{Reason: reason}
+			case PeerUploadFailed:
+				failed, decodeErr := DecodeQueueFailed(message.payload)
+				if decodeErr == nil && downloadKey(username, failed.Filename) == downloadKey(username, filename) {
+					return ErrUploadFailed
 				}
 			case PeerTransferRequest:
 				request, err := DecodeTransferRequest(message.payload)
 				if err != nil {
 					return err
 				}
-				if request.Direction != 1 || request.Filename != filename {
+				if request.Direction != 1 || downloadKey(username, request.Filename) != downloadKey(username, filename) {
 					continue
 				}
 				if err := c.acceptDownload(peer, pending, request); err != nil {
@@ -965,29 +996,6 @@ func (c *Client) Download(ctx context.Context, username, filename string, size, 
 			}
 		}
 	}
-}
-
-func decodeDownloadFailure(command uint32, payload []byte) (string, error) {
-	d := NewDecoder(payload)
-	filename, err := d.String()
-	if err != nil {
-		return "", err
-	}
-	failure := ErrUploadFailed
-	if command == PeerUploadDenied {
-		reason, err := d.String()
-		if err != nil {
-			return filename, err
-		}
-		if reason == "" {
-			reason = "upload denied"
-		}
-		failure = &DownloadRejectedError{Reason: reason}
-	}
-	if err := d.Done(); err != nil {
-		return filename, err
-	}
-	return filename, failure
 }
 
 func (c *Client) acceptDownload(peer net.Conn, pending *pendingDownload, request TransferRequest) error {
@@ -1271,6 +1279,8 @@ func countryCodeForAddress(addr net.Addr) string {
 }
 
 func (c *Client) serveMessagePeer(peer net.Conn, peerInfo PeerInitMessage) {
+	stop := context.AfterFunc(c.uploadRoot, func() { _ = peer.Close() })
+	defer stop()
 	for {
 		command, payload, err := ReadFrame(peer)
 		if err != nil {
@@ -1302,28 +1312,44 @@ func (c *Client) serveMessagePeer(peer net.Conn, peerInfo PeerInitMessage) {
 				}
 				c.route(command, response)
 			}
+		case PeerUploadDenied:
+			message, err := DecodeQueueDenied(payload)
+			if err == nil {
+				reason := message.Reason
+				if reason == "" {
+					reason = "upload denied"
+				}
+				c.failPendingDownload(peerInfo.Username, message.Filename, &DownloadRejectedError{Reason: reason})
+			}
+		case PeerUploadFailed:
+			message, err := DecodeQueueFailed(payload)
+			if err == nil {
+				c.failPendingDownload(peerInfo.Username, message.Filename, ErrUploadFailed)
+			}
 		case PeerTransferRequest:
 			request, err := DecodeTransferRequest(payload)
 			if err != nil {
 				continue
 			}
 			if request.Direction == 0 {
-				localPath, job := c.enqueueUpload(peerInfo.Username, request.Filename)
-				if job == nil {
+				_, _, err := c.registerUpload(peerInfo.Username, request.Filename)
+				if err != nil {
 					_ = writeMessage(peer, TransferResponse{Token: request.Token, Accepted: false, Reason: "File not shared"})
 					continue
 				}
 				_ = writeMessage(peer, TransferResponse{Token: request.Token, Accepted: false, Reason: "Queued"})
-				if err := c.upload(peer, peerInfo.Username, localPath, job); err != nil {
-					_ = writeMessage(peer, QueueFailedMessage{Filename: request.Filename})
-				}
 				continue
 			}
 			if request.Direction != 1 {
 				continue
 			}
+			clean, cleanErr := NormalizePath(request.Filename)
+			if cleanErr != nil {
+				_ = writeMessage(peer, TransferResponse{Token: request.Token, Accepted: false, Reason: "Cancelled"})
+				continue
+			}
 			c.mu.Lock()
-			pending := c.requested[downloadKey(peerInfo.Username, request.Filename)]
+			pending := c.requested[downloadKey(peerInfo.Username, clean)]
 			c.mu.Unlock()
 			if pending == nil {
 				_ = writeMessage(peer, TransferResponse{Token: request.Token, Accepted: false, Reason: "Cancelled"})
@@ -1332,111 +1358,21 @@ func (c *Client) serveMessagePeer(peer net.Conn, peerInfo PeerInitMessage) {
 			if err := c.acceptDownload(peer, pending, request); err != nil {
 				pending.finish(err)
 			}
-		case PeerUploadDenied, PeerUploadFailed:
-			filename, err := decodeDownloadFailure(command, payload)
-			c.mu.Lock()
-			pending := c.requested[downloadKey(peerInfo.Username, filename)]
-			c.mu.Unlock()
-			if pending != nil {
-				pending.finish(err)
-			}
 		case PeerQueueUpload:
 			filename, err := parseStringPayload(payload)
 			if err != nil {
 				continue
 			}
-			localPath, job := c.enqueueUpload(peerInfo.Username, filename)
-			if job == nil {
+			a, _, err := c.registerUpload(peerInfo.Username, filename)
+			if err != nil {
 				_ = writeMessage(peer, QueueDenied{Filename: filename, Reason: "File not shared"})
 				continue
 			}
-			_ = writeMessage(peer, QueuePlace{Filename: filename, Place: 1})
-			if err := c.upload(peer, peerInfo.Username, localPath, job); err != nil {
-				_ = writeMessage(peer, QueueFailedMessage{Filename: filename})
-			}
+			_ = writeMessage(peer, QueuePlace{Filename: a.target.Filename, Place: 1})
 		}
 	}
 }
 
-func (c *Client) enqueueUpload(username, filename string) (string, *UploadJob) {
-	localPath, err := c.shareIndex().Resolve(filename)
-	if err != nil {
-		return "", nil
-	}
-	stat, err := os.Stat(localPath)
-	if err != nil || !stat.Mode().IsRegular() {
-		return "", nil
-	}
-	job := c.cfg.Uploads.Enqueue(username, TransferRequest{Direction: 1, Token: randomToken(), Filename: filename, Size: uint64(stat.Size())})
-	return localPath, job
-}
-
-func (c *Client) upload(messagePeer net.Conn, username, localPath string, job *UploadJob) (result error) {
-	streamCtx := c.baseContext()
-	setupCtx, cancel := context.WithTimeout(streamCtx, 30*time.Minute)
-	defer cancel()
-	if err := c.cfg.Uploads.Wait(setupCtx, job); err != nil {
-		return err
-	}
-	defer c.cfg.Uploads.Done(username)
-	request := job.Request
-	c.emit(Event{Command: PeerTransferRequest, Message: TransferEvent{Direction: "upload", Username: username, Filename: request.Filename, State: "running", Total: request.Size}})
-	defer func() {
-		state, message, done := "completed", "", request.Size
-		if result != nil {
-			state, message, done = "failed", result.Error(), 0
-		}
-		c.emit(Event{Command: PeerTransferRequest, Message: TransferEvent{Direction: "upload", Username: username, Filename: request.Filename, State: state, Done: done, Total: request.Size, Error: message}})
-	}()
-	if err := writeMessage(messagePeer, request); err != nil {
-		return err
-	}
-	command, payload, err := readFrameContext(setupCtx, messagePeer)
-	if err != nil {
-		return err
-	}
-	if command != PeerTransferResponse {
-		return fmt.Errorf("%w: expected transfer response", ErrMalformed)
-	}
-	response, err := DecodeTransferResponse(payload)
-	if err != nil {
-		return err
-	}
-	if response.Token != request.Token || !response.Accepted {
-		if response.Reason == "" {
-			response.Reason = "upload denied"
-		}
-		return errors.New(response.Reason)
-	}
-	filePeer, err := c.connectUserType(setupCtx, username, "F")
-	if err != nil {
-		return err
-	}
-	defer filePeer.Close()
-	if deadline, ok := setupCtx.Deadline(); ok {
-		if err := filePeer.SetDeadline(deadline); err != nil {
-			return err
-		}
-	}
-	var token [4]byte
-	binary.LittleEndian.PutUint32(token[:], request.Token)
-	if _, err := filePeer.Write(token[:]); err != nil {
-		return err
-	}
-	var offsetBytes [8]byte
-	if _, err := io.ReadFull(filePeer, offsetBytes[:]); err != nil {
-		return err
-	}
-	offset := binary.LittleEndian.Uint64(offsetBytes[:])
-	cancel()
-	if err := filePeer.SetDeadline(time.Time{}); err != nil {
-		return err
-	}
-	writer := c.cfg.Uploads.LimitWriter(streamCtx, job, filePeer)
-	return SendFile(streamCtx, filepath.Dir(localPath), filepath.Base(localPath), writer, request.Size, offset, func(progress Progress) {
-		c.emit(Event{Command: PeerTransferRequest, Message: TransferEvent{Direction: "upload", Username: username, Filename: request.Filename, State: "running", Done: progress.Done, Total: progress.Total}})
-	})
-}
 func (c *Client) shareEntries() []ShareEntry {
 	files := c.shareIndex().Files()
 	out := make([]ShareEntry, 0, len(files))
@@ -1464,24 +1400,31 @@ func searchToResults(files []ShareFile, excludedPhrases []string) []SearchResult
 	return out
 }
 
-// Close stops listener and connection; it is safe to call repeatedly.
+// Close stops listener and connection, then waits for every upload attempt.
 func (c *Client) Close() error {
 	c.mu.Lock()
-	ln, conn, cancel := c.listener, c.conn, c.cancel
+	ln, conn, cancel, uploadCancel := c.listener, c.conn, c.cancel, c.uploadCancel
 	c.listener = nil
 	c.conn = nil
 	c.cancel = nil
+	c.uploadCancel = nil
+	c.closing = true
 	c.loggedIn, c.advertisedPort, c.publicIP = false, 0, ""
 	c.excludedSearchPhrases = nil
 	c.mu.Unlock()
+	if uploadCancel != nil {
+		uploadCancel()
+	}
 	if cancel != nil {
 		cancel()
 	}
 	if ln != nil {
 		_ = ln.Close()
 	}
+	var closeErr error
 	if conn != nil {
-		return conn.Close()
+		closeErr = conn.Close()
 	}
-	return nil
+	c.uploadWG.Wait()
+	return closeErr
 }
