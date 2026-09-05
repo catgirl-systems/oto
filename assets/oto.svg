@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" role="img" aria-label="oto" shape-rendering="crispEdges">
+  <path d="M64 32h384v32h32v384h-32v32H64v-32H32V64h32Z" fill="#18152d"/>
+  <path d="M80 64h352v16H80ZM64 80h16v352H64Z" fill="#444064"/>
+  <g fill="#8374e9">
+    <path d="M88 96h56v40H88Zm8 8v24h40v-24ZM368 96h56v40h-56Zm8 8v24h40v-24Z" fill-rule="evenodd"/>
+    <path d="M112 136h8v8h16v8H96v-8h16ZM392 136h8v8h16v8h-40v-8h16Z"/>
+  </g>
+  <path d="M176 104h136v-8h8v8h8v8h-8v8h-8v-8H176Z" fill="#79f5dc"/>
+  <path d="M336 128H192v-8h-8v8h-8v8h8v8h8v-8h144Z" fill="#ff88c6"/>
+  <path d="M96 176h64v16h16v96h-16v16H96v-16H80v-96h16Zm16 32v64h32v-64Z" fill="#79f5dc" fill-rule="evenodd"/>
+  <path d="M240 144h32v48h32v32h-32v48h32v32h-48v-16h-16v-64h-32v-32h32Z" fill="#79f5dc"/>
+  <path d="M352 176h64v16h16v96h-16v16h-64v-16h-16v-96h16Zm16 32v64h32v-64Z" fill="#79f5dc" fill-rule="evenodd"/>
+  <path d="M128 336h32v16h-16v40h-8v8h-32v-8h-8v-16h8v-8h24Z" fill="#ff88c6"/>
+  <path d="M192 360h24v40h-24ZM240 344h24v56h-24ZM288 328h24v72h-24ZM336 344h24v56h-24ZM384 368h24v32h-24Z" fill="#8374e9"/>
+  <path d="M240 344h24v8h-24ZM288 328h24v8h-24ZM336 344h24v8h-24Z" fill="#79f5dc"/>
+</svg>
