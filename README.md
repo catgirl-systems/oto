@@ -1,13 +1,13 @@
 <p align="center">
+  <img src="assets/oto.svg" width="256" height="256" alt="oto">
+</p>
+
+<p align="center">
   <a href="https://github.com/catgirl-systems/oto/releases/latest"><img src="https://img.shields.io/github/v/release/catgirl-systems/oto" alt="Latest release"></a>
   <a href="https://github.com/catgirl-systems/oto/actions/workflows/release.yml"><img src="https://github.com/catgirl-systems/oto/actions/workflows/release.yml/badge.svg" alt="Release CI"></a>
   <a href="https://github.com/catgirl-systems/oto/releases/tag/v0.2.0"><img src="https://img.shields.io/badge/coverage%20v0.2.0-72.4%25-green" alt="Statement coverage: 72.4% at v0.2.0"></a>
   <a href="https://github.com/catgirl-systems/oto/pkgs/container/oto"><img src="https://img.shields.io/badge/GHCR-oto-blue?logo=docker" alt="Container image"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0--only-blue" alt="License: AGPL-3.0-only"></a>
-</p>
-
-<p align="center">
-  <img src="assets/oto.svg" width="256" height="256" alt="oto">
 </p>
 
 **Soulseek in your terminal.** Search, share and transfer files on Linux. No slskd required.
