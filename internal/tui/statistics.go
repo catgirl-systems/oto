@@ -7,6 +7,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/catgirl-systems/oto/internal/config"
 	"github.com/catgirl-systems/oto/internal/daemon"
 	"github.com/catgirl-systems/oto/internal/ipc"
@@ -293,62 +294,152 @@ func statsRatio(upload, download uint64) string {
 	}
 	return fmt.Sprintf("%.3f", float64(upload)/float64(download))
 }
-func totalsSummary(label string, t stats.Totals) []string {
-	average := "—"
-	if t.ActiveMillis > 0 {
-		rate := float64(t.Bytes) / (float64(t.ActiveMillis) / 1000)
-		n := ^uint64(0)
-		if rate < float64(n) {
-			n = uint64(rate)
+func statsAverage(t stats.Totals) string {
+	if t.ActiveMillis == 0 {
+		return "—"
+	}
+	rate := float64(t.Bytes) / (float64(t.ActiveMillis) / 1000)
+	n := ^uint64(0)
+	if rate < float64(n) {
+		n = uint64(rate)
+	}
+	return formatBytes(n) + "/s"
+}
+
+func statsComparison(a, b stats.Totals, left, right string, width int) []string {
+	rows := []struct {
+		label string
+		a, b  any
+	}{
+		{"Payload", formatBytes(a.Bytes), formatBytes(b.Bytes)},
+		{"Completed files", a.CompletedFiles, b.CompletedFiles},
+		{"Completed bytes", formatBytes(a.CompletedBytes), formatBytes(b.CompletedBytes)},
+		{"Attempts", a.AttemptsStarted, b.AttemptsStarted},
+		{"Successful", a.AttemptsCompleted, b.AttemptsCompleted},
+		{"Failed", a.AttemptsFailed, b.AttemptsFailed},
+		{"Cancelled", a.AttemptsCancelled, b.AttemptsCancelled},
+		{"Interrupted", a.AttemptsInterrupted, b.AttemptsInterrupted},
+		{"Retries / resumes", fmt.Sprintf("%d / %d", a.Retries, a.Resumes), fmt.Sprintf("%d / %d", b.Retries, b.Resumes)},
+		{"Filtered / forced", fmt.Sprintf("%d / %d", a.Filtered, a.Forced), fmt.Sprintf("%d / %d", b.Filtered, b.Forced)},
+		{"Rejected", a.Rejected, b.Rejected},
+		{"Cumul. stream time", formatDuration(a.ActiveMillis / 1000), formatDuration(b.ActiveMillis / 1000)},
+		{"Queue wait", formatDuration(a.WaitMillis / 1000), formatDuration(b.WaitMillis / 1000)},
+		{"Average rate", statsAverage(a), statsAverage(b)},
+		{"Peak rate", formatBytes(a.Peak) + "/s", formatBytes(b.Peak) + "/s"},
+		{"Unique peers", a.UniquePeers, b.UniquePeers},
+		{"First (UTC)", statsDate(a.First), statsDate(b.First)},
+		{"Last (UTC)", statsDate(a.Last), statsDate(b.Last)},
+	}
+	column := max(1, (width-21)/2)
+	lines := []string{strong(fmt.Sprintf("%-19s %*s %*s", "", column, left, column, right)), muted(strings.Repeat("─", max(1, width)))}
+	for _, row := range rows {
+		av, bv := fmt.Sprint(row.a), fmt.Sprint(row.b)
+		if width < 43 || ansi.StringWidth(av) > column || ansi.StringWidth(bv) > column {
+			lines = append(lines, muted(row.label), "  "+left+": "+av, "  "+right+": "+bv)
+		} else {
+			lines = append(lines, muted(fmt.Sprintf("%-19s", row.label))+fmt.Sprintf(" %*s %*s", column, av, column, bv))
 		}
-		average = formatBytes(n) + "/s"
 	}
-	return []string{
-		fmt.Sprintf("%s: %s payload · %d files / %s", label, formatBytes(t.Bytes), t.CompletedFiles, formatBytes(t.CompletedBytes)),
-		fmt.Sprintf("  attempts %d: %d OK / %d failed / %d cancelled / %d interrupted", t.AttemptsStarted, t.AttemptsCompleted, t.AttemptsFailed, t.AttemptsCancelled, t.AttemptsInterrupted),
-		fmt.Sprintf("  retries %d · resumes %d · filtered %d · forced %d · rejected %d", t.Retries, t.Resumes, t.Filtered, t.Forced, t.Rejected),
-		fmt.Sprintf("  cumulative stream %.1fs · queue wait %.1fs · avg %s · peak %s/s", float64(t.ActiveMillis)/1000, float64(t.WaitMillis)/1000, average, formatBytes(t.Peak)),
-		fmt.Sprintf("  unique peers %d · first %s · last %s", t.UniquePeers, statsDate(t.First), statsDate(t.Last)),
-	}
+	return lines
 }
 func statsDate(t time.Time) string {
 	if t.IsZero() {
 		return "—"
 	}
-	return t.UTC().Format(time.RFC3339)
+	return t.UTC().Format("2006-01-02 15:04Z")
 }
 
 // Charts need no color and aggregate long series to the available columns.
 func statsChart(label string, values []uint64, width int, ascii bool) []string {
 	width = max(1, width)
-	if len(values) == 0 {
-		return []string{label + ": no data"}
-	}
-	bins := min(width, len(values))
-	heights := make([]float64, bins)
 	var peak uint64
 	for _, n := range values {
 		peak = max(peak, n)
 	}
-	for i := range heights {
-		start, end := i*len(values)/bins, (i+1)*len(values)/bins
-		for _, n := range values[start:end] {
-			heights[i] += float64(n) / float64(end-start)
-		}
+	title := fmt.Sprintf("%s · peak %s", label, formatBytes(peak))
+	if len(values) == 0 {
+		title = label + ": no data yet"
+	} else if peak == 0 {
+		title = label + ": no activity"
 	}
-	glyphs := []rune("▁▂▃▄▅▆▇█")
+	lines := []string{muted(title)}
+	glyphs := []rune(" ▁▂▃▄▅▆▇█")
 	if ascii {
-		glyphs = []rune(" .:-=+*#")
+		glyphs = []rune(" .:-=+*#@")
 	}
-	var line strings.Builder
-	for _, n := range heights {
-		i := 0
-		if peak > 0 {
-			i = min(len(glyphs)-1, int(n/float64(peak)*float64(len(glyphs)-1)))
+	heights := make([]float64, width)
+	if peak > 0 {
+		for i := range heights {
+			start := i * len(values) / width
+			end := min(len(values), max(start+1, (i+1)*len(values)/width))
+			for _, n := range values[start:end] {
+				heights[i] += float64(n) / float64(end-start) / float64(peak) * 4
+			}
 		}
-		line.WriteRune(glyphs[i])
 	}
-	return []string{fmt.Sprintf("%s · peak %s", label, formatBytes(peak)), line.String(), "0 " + strings.Repeat("-", max(0, bins-2))}
+	for row := 3; row >= 0; row-- {
+		var line strings.Builder
+		for _, h := range heights {
+			level := max(0, min(8, int((h-float64(row))*8)))
+			line.WriteRune(glyphs[level])
+		}
+		lines = append(lines, accent(line.String()))
+	}
+	axis := "─"
+	if ascii {
+		axis = "-"
+	}
+	return append(lines, muted("0"+strings.Repeat(axis, width-1)))
+}
+
+func (m model) statsOverview(width int) []string {
+	o := m.stats.overview
+	lines := []string{
+		muted(fmt.Sprintf("Tracking since %s · uptime %s · online %s · reconnects %d", statsDate(o.Since), formatDuration(o.UptimeSeconds), formatDuration(o.OnlineSeconds), o.Reconnects)),
+		fmt.Sprintf("%s %d / %s     %s %d / %s", strong("Active"), o.ActiveFiles, formatBytes(o.ActiveBytes), strong("Queued"), o.QueuedFiles, formatBytes(o.QueuedBytes)),
+		muted(fmt.Sprintf("Upload/download ratio   session %s · lifetime %s", statsRatio(o.SessionTotals.Upload.Bytes, o.SessionTotals.Download.Bytes), statsRatio(o.Lifetime.Upload.Bytes, o.Lifetime.Download.Bytes))),
+		"",
+	}
+	if m.stats.filter.Peer != "" {
+		lines = append(lines, muted("Live activity is account-wide; totals are for the selected peer."), "")
+	}
+	panelWidth := width
+	if width >= 124 {
+		panelWidth = (width - 4) / 2
+	}
+	var panels []string
+	for _, direction := range []struct {
+		name              string
+		session, lifetime stats.Totals
+	}{{"Download", o.SessionTotals.Download, o.Lifetime.Download}, {"Upload", o.SessionTotals.Upload, o.Lifetime.Upload}} {
+		values := make([]uint64, 0, len(o.Samples))
+		for _, sample := range o.Samples {
+			n := sample.Download
+			if direction.name == "Upload" {
+				n = sample.Upload
+			}
+			values = append(values, n)
+		}
+		rate := "—"
+		if len(values) > 0 {
+			rate = formatBytes(values[len(values)-1]) + "/s"
+		}
+		panel := []string{spread(accent(direction.name), strong(rate), panelWidth)}
+		panel = append(panel, statsChart("Live B/s · up to 5m", values, panelWidth, m.cfg.Statistics.ASCIICharts)...)
+		if len(o.Samples) > 0 {
+			panel = append(panel, muted(spread(o.Samples[0].At.UTC().Format("15:04:05"), o.Samples[len(o.Samples)-1].At.UTC().Format("15:04:05 UTC"), panelWidth)))
+		} else {
+			panel = append(panel, muted("Waiting for rate samples"))
+		}
+		panel = append(panel, "")
+		panel = append(panel, statsComparison(direction.session, direction.lifetime, "Session", "Lifetime", panelWidth)...)
+		panels = append(panels, strings.Join(panel, "\n"))
+	}
+	body := strings.Join(panels, "\n\n")
+	if width >= 124 {
+		body = lipgloss.JoinHorizontal(lipgloss.Top, lipgloss.NewStyle().Width(panelWidth).Render(panels[0]), "    ", panels[1])
+	}
+	return append(lines, strings.Split(body, "\n")...)
 }
 func (m model) renderStats(width, height int) string {
 	v := m.stats
@@ -363,32 +454,48 @@ func (m model) renderStats(width, height int) string {
 		return strings.Join(wrapped[start:min(len(wrapped), start+max(1, height))], "\n")
 	}
 	tabs := slices.Clone(statsPages)
-	tabs[v.page] = "[" + tabs[v.page] + "]"
-	lines := []string{strings.Join(tabs, "  "), "Account: " + v.overview.Account + "  (a change)", "Peer: " + v.filter.Peer + " · " + v.filter.Direction + " · " + strings.Join(v.filter.Kinds, ",")}
+	for i, tab := range tabs {
+		if i == v.page {
+			tabs[i] = accent("[" + tab + "]")
+		} else {
+			tabs[i] = muted(tab)
+		}
+	}
+	lines := []string{strings.Join(tabs, "   "), muted("Account  ") + strong(v.overview.Account) + muted("  (a change)")}
+	var filters []string
+	if v.filter.Peer != "" {
+		filters = append(filters, "Peer: "+v.filter.Peer)
+	}
+	if v.page >= 2 && v.filter.Direction != "" {
+		filters = append(filters, v.filter.Direction)
+	}
+	if v.page == 3 && len(v.filter.Kinds) > 0 {
+		filters = append(filters, strings.Join(v.filter.Kinds, ","))
+	}
+	if v.page != 0 {
+		if !v.filter.From.IsZero() {
+			filters = append(filters, "From: "+v.filter.From.Format(time.DateOnly))
+		}
+		if !v.filter.To.IsZero() {
+			filters = append(filters, "Before: "+v.filter.To.Format(time.DateOnly))
+		}
+	}
+	if len(filters) > 0 {
+		lines = append(lines, accent(strings.Join(filters, " · ")))
+	}
+	lines = append(lines, "")
 	if v.err != "" {
-		lines = append(lines, v.err)
+		lines = append(lines, danger(v.err))
 	}
 	if v.overview.Warning != "" {
-		lines = append(lines, v.overview.Warning)
+		lines = append(lines, danger(v.overview.Warning))
 	}
 	if v.edit != "" {
 		lines = append(lines, "Edit "+v.edit+": "+v.value+"▏  (enter apply, esc cancel)")
 	}
 	switch v.page {
 	case 0:
-		lines = append(lines, fmt.Sprintf("Since %s · uptime %ds · online %ds · reconnects %d", statsDate(v.overview.Since), v.overview.UptimeSeconds, v.overview.OnlineSeconds, v.overview.Reconnects), fmt.Sprintf("Active %d / %s · queued %d / %s", v.overview.ActiveFiles, formatBytes(v.overview.ActiveBytes), v.overview.QueuedFiles, formatBytes(v.overview.QueuedBytes)))
-		lines = append(lines, fmt.Sprintf("Session: down %s / up %s · ratio %s", formatBytes(v.overview.SessionTotals.Download.Bytes), formatBytes(v.overview.SessionTotals.Upload.Bytes), statsRatio(v.overview.SessionTotals.Upload.Bytes, v.overview.SessionTotals.Download.Bytes)), "Lifetime ratio: "+statsRatio(v.overview.Lifetime.Upload.Bytes, v.overview.Lifetime.Download.Bytes))
-		down, up := []uint64{}, []uint64{}
-		for _, sample := range v.overview.Samples {
-			down = append(down, sample.Download)
-			up = append(up, sample.Upload)
-		}
-		lines = append(lines, statsChart("Download B/s (-5m → now)", down, width-2, m.cfg.Statistics.ASCIICharts)...)
-		lines = append(lines, statsChart("Upload B/s (-5m → now)", up, width-2, m.cfg.Statistics.ASCIICharts)...)
-		lines = append(lines, totalsSummary("Session download", v.overview.SessionTotals.Download)...)
-		lines = append(lines, totalsSummary("Session upload", v.overview.SessionTotals.Upload)...)
-		lines = append(lines, totalsSummary("Lifetime download", v.overview.Lifetime.Download)...)
-		lines = append(lines, totalsSummary("Lifetime upload", v.overview.Lifetime.Upload)...)
+		lines = append(lines, m.statsOverview(width)...)
 	case 1:
 		period := "All"
 		if n := statsRanges[v.rangeIndex]; n > 0 {
@@ -413,8 +520,8 @@ func (m model) renderStats(width, height int) string {
 			}
 		}
 		if v.filter.Peer != "" {
-			lines = append(lines, totalsSummary("Peer download", v.overview.Lifetime.Download)...)
-			lines = append(lines, totalsSummary("Peer upload", v.overview.Lifetime.Upload)...)
+			lines = append(lines, "", accent("Peer lifetime totals"))
+			lines = append(lines, statsComparison(v.overview.Lifetime.Download, v.overview.Lifetime.Upload, "Download", "Upload", width)...)
 		}
 	case 2:
 		peers := v.peers.Peers
@@ -442,7 +549,6 @@ func (m model) renderStats(width, height int) string {
 			lines = append(lines, selectedRow(fmt.Sprintf("%s %-11s %-12s %9s %s", e.At.UTC().Format("01-02 15:04"), e.Kind, e.Peer, formatBytes(e.Bytes), e.Filename), i == m.cursor))
 		}
 	}
-	lines = append(lines, "ctrl+pgup/down pages · / peer · d direction · e outcome · [ ] dates · n next · p first · s sort · P prune")
 	if v.page < 2 {
 		lines = strings.Split(ansi.Hardwrap(strings.Join(lines, "\n"), max(1, width), false), "\n")
 	} else {
