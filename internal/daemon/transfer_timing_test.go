@@ -65,7 +65,7 @@ func TestTimingLifecycleGuards(t *testing.T) {
 	s.uploadUpdate(1, event)
 	event.State = "running"
 	s.uploadUpdate(1, event)
-	id := uploadID("peer", "song")
+	id := s.uploadEventIDLocked(event)
 	if s.transferTiming[id].known {
 		t.Fatal("upload setup started timing")
 	}
@@ -94,7 +94,7 @@ func TestTimingLifecycleGuards(t *testing.T) {
 	event.Attempt++
 	event.State = "queued"
 	s.uploadUpdate(1, event)
-	if s.transferTiming[id].known {
+	if next := s.uploadEventIDLocked(event); next == id || s.transferTiming[next].known {
 		t.Fatal("new successful-file request reused old timing")
 	}
 }

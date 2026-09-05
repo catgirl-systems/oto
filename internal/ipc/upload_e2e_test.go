@@ -224,7 +224,7 @@ func TestUploadControlsEndToEnd(t *testing.T) {
 			t.Fatalf("action %+v: %+v %v", req, result, err)
 		}
 	}
-	one, two := `upload:receiver:Music\one`, `upload:receiver:Music\two`
+	one, two := "upload:1", "upload:2"
 	queue("one")
 	state(one, "failed")
 	action(daemon.UploadActionRequest{Action: "retry", IDs: []string{one}}, 1)

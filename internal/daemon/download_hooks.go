@@ -74,6 +74,7 @@ func (s *Service) completeDownload(id, root, partPath string) {
 	folder := filepath.Dir(target)
 	folderFinished := folder != root && s.folderCompleteLocked(download.Username, folder)
 	closed := s.closed
+	s.statsStateLocked(id, "completed")
 	err = s.saveJournalLocked()
 	if err == nil && !closed {
 		s.notifyDownloadLocked(download.Username, target, folderFinished)
@@ -83,6 +84,7 @@ func (s *Service) completeDownload(id, root, partPath string) {
 		log.Printf("save completed download (commands and notifications skipped): %v", err)
 		return
 	}
+	_ = s.flushStats()
 	if commands.AutoClearCompleted {
 		defer func() {
 			if err := s.clearCompletedDownload(id); err != nil {
@@ -110,7 +112,7 @@ func (s *Service) folderCompleteLocked(username, folder string) bool {
 	// Completion covers the currently known files in this exact destination,
 	// not a recursive job. Paused, cancelled and failed files still block it.
 	for _, d := range s.journal.Downloads {
-		if !strings.EqualFold(d.Username, username) || d.State == "completed" {
+		if !strings.EqualFold(d.Username, username) || d.State == "completed" || d.State == "filtered" {
 			continue
 		}
 		root := d.DownloadDir

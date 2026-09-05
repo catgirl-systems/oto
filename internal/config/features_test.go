@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 )
 
@@ -27,11 +28,11 @@ func TestFeatureDefaultsAndRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if loaded.Search.DefaultFilter != cfg.Search.DefaultFilter || loaded.Downloads != cfg.Downloads {
+	if loaded.Search.DefaultFilter != cfg.Search.DefaultFilter || !reflect.DeepEqual(loaded.Downloads, cfg.Downloads) {
 		t.Fatal("feature settings did not persist")
 	}
 	safe := loaded.Redacted()
-	if safe.Search.DefaultFilter != cfg.Search.DefaultFilter || safe.Downloads != cfg.Downloads {
+	if safe.Search.DefaultFilter != cfg.Search.DefaultFilter || !reflect.DeepEqual(safe.Downloads, cfg.Downloads) {
 		t.Fatal("feature settings missing from safe config")
 	}
 }

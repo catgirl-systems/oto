@@ -113,6 +113,9 @@ func TestAutoClearJournalFailuresAndNonCompleted(t *testing.T) {
 	if err := s.saveJournalLocked(); err != nil {
 		t.Fatal(err)
 	}
+	if err := s.flushStats(); err != nil {
+		t.Fatal(err)
+	}
 	if err := s.clearCompletedDownload(d.ID); err != nil || len(s.Downloads()) != 0 {
 		t.Fatalf("cleanup: %v", err)
 	}
@@ -136,6 +139,9 @@ func TestAutoClearUploadsKeepsAttemptGuards(t *testing.T) {
 	for _, state := range []string{"running", "completed", "queued", "failed"} {
 		event.State = state
 		s.uploadUpdate(s.uploadEpoch, event)
+	}
+	if err := s.flushStats(); err != nil {
+		t.Fatal(err)
 	}
 	if len(s.Transfers()) != 1 || s.Transfers()[0].Filename != "one" {
 		t.Fatalf("cleared old history or resurrected completion: %+v", s.Transfers())

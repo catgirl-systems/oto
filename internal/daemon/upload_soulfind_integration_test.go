@@ -53,7 +53,7 @@ func TestSoulfindDaemonUploadControls(t *testing.T) {
 	go func() {
 		done <- receiver.client.Download(ctx, cfg.Soulseek.Username, `Music\song`, uint64(len(contents)), 0, file, nil)
 	}()
-	id := uploadID(receiver.username, `Music\song`)
+	id := "upload:1"
 	waitForIntegration(t, func() bool { tr := integrationTransfer(svc, id); return tr.State == "running" && tr.Done > 0 })
 	result, err := svc.UploadAction(UploadActionRequest{Action: "cancel", Usernames: []string{receiver.username}})
 	if err != nil || result.Changed != 1 {

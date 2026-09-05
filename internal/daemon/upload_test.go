@@ -35,13 +35,12 @@ func uploadService(t *testing.T) (*Service, *soulseek.UploadManager, *soulseek.U
 }
 func uploadRow(t *testing.T, s *Service, user, file string) Transfer {
 	t.Helper()
-	id := uploadID(user, file)
 	for _, row := range s.Transfers() {
-		if row.ID == id {
+		if row.Username == user && row.Filename == file {
 			return row
 		}
 	}
-	t.Fatalf("missing %s", id)
+	t.Fatalf("missing %s %s", user, file)
 	return Transfer{}
 }
 
@@ -56,7 +55,7 @@ func TestUploadActionsLifecycle(t *testing.T) {
 	s.mu.Lock()
 	s.transfers[download.ID] = download
 	s.mu.Unlock()
-	one := uploadID("alice", `Music\one`)
+	one := uploadRow(t, s, "alice", `Music\one`).ID
 	result, err := s.UploadAction(UploadActionRequest{Action: "cancel", Usernames: []string{"alice", "alice"}})
 	if err != nil || result.Changed != 2 {
 		t.Fatalf("abort users: %+v %v", result, err)
@@ -103,7 +102,7 @@ func TestUploadActionValidationAndStates(t *testing.T) {
 	if _, err := s.client.QueueUpload("a", `Music\one`); err != nil {
 		t.Fatal(err)
 	}
-	id := uploadID("a", `Music\one`)
+	id := uploadRow(t, s, "a", `Music\one`).ID
 	s.mu.Lock()
 	s.transfers["d-1"] = Transfer{ID: "d-1", Direction: "download"}
 	s.mu.Unlock()
@@ -153,7 +152,7 @@ func TestUploadRetirementAndStaleUpdates(t *testing.T) {
 	if _, err := c.QueueUpload("a", `Music\one`); err != nil {
 		t.Fatal(err)
 	}
-	id := uploadID("a", `Music\one`)
+	id := uploadRow(t, s, "a", `Music\one`).ID
 	s.mu.RLock()
 	old := s.uploadOwners[id]
 	s.mu.RUnlock()
@@ -175,13 +174,13 @@ func TestUploadRetirementAndStaleUpdates(t *testing.T) {
 	s.lifecycleMu.Lock()
 	s.stopSessionLocked(true)
 	s.lifecycleMu.Unlock()
-	if uploadRow(t, s, "a", `Music\one`).State != "failed" {
+	if uploadRow(t, s, "a", `Music\one`).State != "interrupted" {
 		t.Fatal("offline left a live upload")
 	}
 	stale.State = "queued"
 	stale.Attempt += 100
 	s.uploadUpdate(1, stale)
-	if uploadRow(t, s, "a", `Music\one`).State != "failed" {
+	if uploadRow(t, s, "a", `Music\one`).State != "interrupted" {
 		t.Fatal("retired session update accepted")
 	}
 }
