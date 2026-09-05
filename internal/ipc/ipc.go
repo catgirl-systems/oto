@@ -123,6 +123,7 @@ func (s *Server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/shares", s.shares)
 	mux.HandleFunc("GET /v1/shares/browse", s.shares)
 	mux.HandleFunc("POST /v1/shares/rescan", s.shares)
+	mux.HandleFunc("POST /v1/shares/rescan/cancel", s.cancelShareScan)
 	mux.HandleFunc("DELETE /v1/shares/{name}", s.shares)
 	mux.HandleFunc("PUT /v1/config", s.updateConfig)
 	mux.HandleFunc("PATCH /v1/config", s.updateConfig)
@@ -422,7 +423,7 @@ func (s *Server) shares(w http.ResponseWriter, r *http.Request) {
 	case r.URL.Path == "/v1/shares/rescan":
 		if err := s.service.Rescan(); err != nil {
 			status := http.StatusBadRequest
-			if errors.Is(err, daemon.ErrScanBusy) {
+			if errors.Is(err, daemon.ErrScanBusy) || errors.Is(err, daemon.ErrScanCancelled) {
 				status = http.StatusConflict
 			}
 			writeErr(w, status, err)
@@ -661,6 +662,8 @@ func (c *Client) NetworkInterfaces(ctx context.Context) ([]string, error) {
 }
 func (c *Client) UpdateConfig(ctx context.Context, cfg config.Config) (config.SafeConfig, error) {
 	var x config.SafeConfig
-	err := c.Do(ctx, "PUT", "/v1/config", cfg, &x)
+	client := *c.http
+	client.Timeout = 0 // Settings may stage a complete share scan, like Rescan.
+	err := c.doWith(ctx, "PUT", "/v1/config", cfg, &x, MaxBodySize, &client)
 	return x, err
 }

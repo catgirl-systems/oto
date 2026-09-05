@@ -168,6 +168,10 @@ func (m *model) key(k tea.KeyPressMsg) tea.Cmd {
 				return nil
 			}
 			switch fields[m.cursor].id {
+			case settingRestoreShareExclusions:
+				m.restoreShareExclusions = true
+				m.uploadConfirm, m.uploadConfirmChoice = true, 0
+				m.uploadConfirmLabel = "Restore default share exclusions (staged until s)"
 			case settingNetworkInterface, settingUploadProfile, settingUploadLimitScope, settingUploadScheduling:
 				m.choiceChoosing = true
 				m.choiceSetting = fields[m.cursor].id
@@ -208,6 +212,10 @@ func (m *model) key(k tea.KeyPressMsg) tea.Cmd {
 				m.cfg.Downloads.FileNotifications = !m.cfg.Downloads.FileNotifications
 			case settingFolderNotifications:
 				m.cfg.Downloads.FolderNotifications = !m.cfg.Downloads.FolderNotifications
+			case settingAutoClearDownloads:
+				m.cfg.Downloads.AutoClearCompleted = !m.cfg.Downloads.AutoClearCompleted
+			case settingAutoClearUploads:
+				m.cfg.Uploads.AutoClearCompleted = !m.cfg.Uploads.AutoClearCompleted
 			case settingChangePassword:
 				m.openPasswordForm()
 			case settingClearSearchHistory:
@@ -237,6 +245,13 @@ func (m *model) key(k tea.KeyPressMsg) tea.Cmd {
 			m.details = node != nil && node.kind == treeFile && node.source >= 0
 		}
 	case "d":
+		if m.workspace == workspaceSettings && m.settingsSection == settingsShares {
+			if m.cursor >= 0 && m.cursor < len(m.cfg.ShareExclusions) {
+				rules := append([]string{}, m.cfg.ShareExclusions...)
+				m.cfg.ShareExclusions = append(rules[:m.cursor], rules[m.cursor+1:]...)
+			}
+			return nil
+		}
 		if m.workspace == workspaceWishlist && m.cursor >= 0 && m.cursor < len(m.wishlist) {
 			m.wishlistCursor = m.cursor
 			return m.removeWishlist(m.wishlist[m.cursor].ID)
@@ -288,6 +303,9 @@ func (m *model) key(k tea.KeyPressMsg) tea.Cmd {
 			return m.action("pause")
 		}
 	case "c":
+		if m.workspace == workspaceShares {
+			return m.cancelShareScan()
+		}
 		if m.workspace == workspaceSearch {
 			filter := m.searchFilterUndo
 			if m.searchFilter != "" {
@@ -1202,20 +1220,30 @@ func (m *model) uploadStatusMenuKey(k tea.KeyPressMsg) tea.Cmd {
 }
 
 func (m *model) uploadConfirmKey(k tea.KeyPressMsg) tea.Cmd {
+	accepted := false
 	switch k.String() {
 	case "esc", "n":
-		m.uploadConfirm = false
 	case "left", "up", "right", "down", "j", "k":
 		m.uploadConfirmChoice = 1 - m.uploadConfirmChoice
+		return nil
 	case "y":
-		m.uploadConfirm = false
-		return m.uploadAction(m.uploadPending)
+		accepted = true
 	case "enter":
-		if m.uploadConfirmChoice == 1 {
-			m.uploadConfirm = false
-			return m.uploadAction(m.uploadPending)
+		accepted = m.uploadConfirmChoice == 1
+	default:
+		return nil
+	}
+	m.uploadConfirm = false
+	if m.restoreShareExclusions {
+		m.restoreShareExclusions = false
+		if accepted {
+			m.cfg.ShareExclusions = config.DefaultShareExclusions()
+			m.cursor = min(m.cursor, len(m.settingFields())-1)
 		}
-		m.uploadConfirm = false
+		return nil
+	}
+	if accepted {
+		return m.uploadAction(m.uploadPending)
 	}
 	return nil
 }

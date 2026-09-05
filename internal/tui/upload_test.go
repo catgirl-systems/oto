@@ -9,7 +9,6 @@ import (
 	"reflect"
 	"strings"
 	"testing"
-	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -48,7 +47,7 @@ func TestUploadSelectionAndPolling(t *testing.T) {
 		t.Fatalf("marks must override cursor %v", ids)
 	}
 	before := m.transfers
-	next, _ := m.Update(transferMsg{transfers: []transfer{before[2], before[1], before[0], before[3]}, at: time.Now()})
+	next, _ := m.Update(transferMsg{transfers: []transfer{before[2], before[1], before[0], before[3]}})
 	m = next.(model)
 	if ids := m.uploadActionIDs(); !reflect.DeepEqual(ids, []string{"upload:a:one"}) {
 		t.Fatalf("mark moved after sort %v", ids)
@@ -58,7 +57,7 @@ func TestUploadSelectionAndPolling(t *testing.T) {
 	if !m.uploadSelected["upload:a:one"] {
 		t.Fatal("tab switch removed mark")
 	}
-	next, _ = m.Update(transferMsg{transfers: []transfer{before[2]}, at: time.Now()})
+	next, _ = m.Update(transferMsg{transfers: []transfer{before[2]}})
 	m = next.(model)
 	if len(m.uploadSelected) != 0 {
 		t.Fatal("removed selection not pruned")

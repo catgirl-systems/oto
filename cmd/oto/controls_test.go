@@ -74,6 +74,9 @@ func TestCLIControls(t *testing.T) {
 	if output, err := commandOutput(t, "transfers", "--json"); err != nil || output != "[]\n" {
 		t.Fatalf("empty transfers %q %v", output, err)
 	}
+	if output, err := commandOutput(t, "rescan", "--cancel"); err != nil || !strings.Contains(output, "No share scan") {
+		t.Fatalf("idle cancel: %s %v", output, err)
+	}
 	ds, err := svc.QueueDownloads([]daemon.DownloadRequest{{Username: "peer", Files: []daemon.DownloadItem{{Filename: "Album/song.flac", Size: 9}}}})
 	if err != nil {
 		t.Fatal(err)
@@ -95,6 +98,11 @@ func TestCLIControls(t *testing.T) {
 	var transfers []daemon.Transfer
 	if err := json.Unmarshal([]byte(output), &transfers); err != nil || len(transfers) != 1 || transfers[0].ID != id {
 		t.Fatalf("JSON %s %v", output, err)
+	}
+	for _, field := range []string{`"elapsed_ms":null`, `"speed_bps":0`, `"eta_seconds":null`} {
+		if !strings.Contains(output, field) {
+			t.Fatalf("missing timing %s: %s", field, output)
+		}
 	}
 	if _, err := commandOutput(t, "resume", id); err != nil {
 		t.Fatal(err)

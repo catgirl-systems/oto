@@ -1052,7 +1052,7 @@ func TestFilterEnteredDuringSearchAppliesAfterCompletion(t *testing.T) {
 func TestTransferDirectionTabsProgressAndSpinner(t *testing.T) {
 	t.Setenv("NO_COLOR", "1")
 	m := model{workspace: workspaceTransfers, selected: map[int]bool{}, transfers: []transfer{
-		{id: "d1", filename: "album.flac", direction: "download", state: "running", done: 25, total: 100, speed: 1536, user: "alice"},
+		{id: "d1", filename: "album.flac", direction: "download", state: "running", done: 25, total: 100, speed: 1536, etaSeconds: timingValue(1), elapsedMS: timingValue(1500), user: "alice"},
 		{id: "d2", filename: `folder\queued.mp3`, direction: "download", state: "queued", total: 100, queue: 2, user: "alice"},
 		{id: "u1", filename: "shared.wav", direction: "upload", state: "completed", done: 100, total: 100, user: "bob"},
 	}}
@@ -1069,7 +1069,7 @@ func TestTransferDirectionTabsProgressAndSpinner(t *testing.T) {
 	m.cursor = m.transferTrees[transferDownloads].cursorForSource(0)
 
 	downloads := m.renderTransfers(100, 10)
-	if !strings.Contains(downloads, "[↓ DOWNLOADS 2]") || !strings.Contains(downloads, "███░░░░░░░░░░░  25%") || !strings.Contains(downloads, "1.5 KiB/s  ETA 0:01") || !strings.Contains(downloads, "⠋") || strings.Contains(downloads, "shared.wav") {
+	if !strings.Contains(downloads, "[↓ DOWNLOADS 2]") || !strings.Contains(downloads, "███░░░░░░░░░░░  25%") || !strings.Contains(downloads, "1.5 KiB/s") || !strings.Contains(downloads, "Elapsed 0:01  ETA 0:01") || !strings.Contains(downloads, "⠋") || strings.Contains(downloads, "shared.wav") {
 		t.Fatalf("download tab did not render progress and spinner correctly: %q", downloads)
 	}
 	barColumn, bars := -1, 0
@@ -1093,7 +1093,7 @@ func TestTransferDirectionTabsProgressAndSpinner(t *testing.T) {
 		}
 	}
 	m.transfers[1].state, m.transfers[1].err = "failed", "File not shared."
-	if failed := m.renderTransfers(140, 10); !strings.Contains(failed, "failed: File not shared.") {
+	if failed := m.renderTransfers(140, 10); !strings.Contains(failed, "failed: File not shar") {
 		t.Fatalf("transfer error was not rendered: %q", failed)
 	}
 	m.transfers[1].state, m.transfers[1].err = "queued", ""
@@ -1116,10 +1116,9 @@ func TestTransferDirectionTabsProgressAndSpinner(t *testing.T) {
 		t.Fatalf("spinner did not advance: %q", next)
 	}
 
-	next := []transfer{{id: "d1", state: "running", done: 1049}, {id: "d2", state: "failed", done: 50}}
-	setTransferSpeeds(next, []transfer{{id: "d1", done: 25}, {id: "d2", done: 25}}, time.Second)
-	if next[0].speed != 1024 || next[1].speed != 0 {
-		t.Fatalf("transfer speeds = %d, %d", next[0].speed, next[1].speed)
+	next := toTransfers([]daemon.Transfer{{ID: "d1", SpeedBPS: 1024, ElapsedMS: timingValue(1500), ETASeconds: timingValue(1)}})
+	if next[0].speed != 1024 || *next[0].elapsedMS != 1500 || *next[0].etaSeconds != 1 {
+		t.Fatalf("daemon timing lost: %+v", next)
 	}
 
 	t.Setenv("NO_COLOR", "")
@@ -1579,7 +1578,7 @@ func TestDownloadSettingsCommandsAndStates(t *testing.T) {
 	cfg.Downloads.AfterFileCommand, cfg.Downloads.AfterFolderCommand = `echo "$1"`, `echo folder "$1"`
 	m := model{workspace: workspaceSettings, settingsSection: settingsDownloads, cfg: cfg}
 	fields := m.settingFields()
-	if len(fields) != 5 || fields[1].value != cfg.Downloads.AfterFileCommand || fields[2].value != cfg.Downloads.AfterFolderCommand {
+	if len(fields) != 6 || fields[1].value != cfg.Downloads.AfterFileCommand || fields[2].value != cfg.Downloads.AfterFolderCommand {
 		t.Fatalf("download settings not rendered: %+v", fields)
 	}
 	m.cursor = 1

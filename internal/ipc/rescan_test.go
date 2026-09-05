@@ -5,6 +5,9 @@ import (
 	"errors"
 	"net"
 	"net/http"
+	"net/http/httptest"
+
+	"github.com/catgirl-systems/oto/internal/config"
 	"path/filepath"
 	"testing"
 	"time"
@@ -62,5 +65,31 @@ func TestRescanRequestTimeoutIsolation(t *testing.T) {
 	cancel()
 	if _, err := client.Rescan(ctx); !errors.Is(err, context.Canceled) {
 		t.Fatalf("rescan context ignored: %v", err)
+	}
+}
+
+func TestSettingsRequestTimeoutIsolation(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/config" {
+			<-r.Context().Done()
+			return
+		}
+		time.Sleep(40 * time.Millisecond)
+		w.Write([]byte("{}"))
+	}))
+	defer server.Close()
+	client := NewClient("")
+	client.http.Transport = &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+		return (&net.Dialer{}).DialContext(ctx, "tcp", server.Listener.Addr().String())
+	}}
+	client.http.Timeout = 10 * time.Millisecond
+	if _, err := client.UpdateConfig(context.Background(), config.Default()); err != nil {
+		t.Fatal(err)
+	}
+	if client.http.Timeout != 10*time.Millisecond {
+		t.Fatal("shared timeout changed")
+	}
+	if _, err := client.Status(context.Background()); err == nil {
+		t.Fatal("interactive timeout lost")
 	}
 }
