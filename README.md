@@ -1,310 +1,112 @@
 # oto
 
-A Linux Soulseek client with a keyboard-first terminal UI. It logs in directly to Soulseek—no slskd process or web dashboard required.
+[![Latest release](https://img.shields.io/github/v/release/catgirl-systems/oto)](https://github.com/catgirl-systems/oto/releases/latest)
+[![Release CI](https://github.com/catgirl-systems/oto/actions/workflows/release.yml/badge.svg)](https://github.com/catgirl-systems/oto/actions/workflows/release.yml)
+[![Statement coverage: 72.4% at v0.2.0](https://img.shields.io/badge/coverage%20v0.2.0-72.4%25-green)](https://github.com/catgirl-systems/oto/releases/tag/v0.2.0)
+[![Container image](https://img.shields.io/badge/GHCR-oto-blue?logo=docker)](https://github.com/catgirl-systems/oto/pkgs/container/oto)
+[![License: AGPL-3.0-only](https://img.shields.io/badge/license-AGPL--3.0--only-blue)](LICENSE)
 
-## Build and run
+**Soulseek in your terminal.** Search, share and transfer files on Linux. No slskd required.
 
-Requires Go 1.25 or newer.
+Linux **amd64 / arm64** · Persistent transfers · Wishlist searches · Headless daemon
+
+[Without Docker](#without-docker) · [With Docker](#with-docker) · [Basics](#basics) · [Nicotine+ comparison](#nicotine-comparison)
+
+## Without Docker
+
+Download the [latest binary](https://github.com/catgirl-systems/oto/releases/latest) for your architecture, rename it to `oto`, then:
 
 ```sh
+chmod +x oto
+./oto
+```
+
+First launch asks for your Soulseek credentials, download directory and shares. Install **ffmpeg** if you want audio metadata; it is optional.
+
+To build instead, with Go 1.25+:
+
+```sh
+git clone https://github.com/catgirl-systems/oto.git
+cd oto
 go build -o oto ./cmd/oto
 ./oto
 ```
 
-The first launch asks for the Soulseek credentials, listening address, optional network interface, download path, and an optional `name:path` share. Leave the interface blank for automatic OS routing, or enter a device such as `wg0`; currently-down VPN interfaces may be configured. The password is masked and the JSON config is created with mode `0600`.
+For an always-on session, run `./oto daemon` under systemd or in tmux after setup. Start `./oto` in another terminal to attach; quitting an attached UI leaves that daemon running. Otherwise, the UI starts its own daemon and stops it on exit.
 
-```sh
-./oto daemon          # foreground; use systemd, tmux, or Docker to keep it running
-./oto daemon --share-rescan-delay 30s  # default 5m; use 0 to disable watching
-./oto daemon --listen-port-file /run/oto/forwarded-port --listen-port-reconcile-interval 30s
-./oto status
-./oto status --json
-./oto transfers
-./oto transfers --json
-./oto pause DOWNLOAD_ID
-./oto resume DOWNLOAD_ID
-./oto rescan
-./oto rescan --cancel  # explicitly stop the current scan; does not launch a daemon
-```
+## With Docker
 
-## Docker
-
-Stable releases publish a multi-architecture image for amd64 and arm64 at `ghcr.io/catgirl-systems/oto`.
+Save as `compose.yaml`. Change the credentials, set `PUID`/`PGID` to your `id -u`/`id -g`, and point `./music` at the folder you want to share.
 
 ```yaml
 services:
   oto:
     image: ghcr.io/catgirl-systems/oto:latest
-    container_name: oto
     environment:
       PUID: "1000"
       PGID: "1000"
-      TZ: Etc/UTC
-      UMASK: "022"
       OTO_USERNAME: your-soulseek-username
       OTO_PASSWORD: your-soulseek-password
-      OTO_DOWNLOAD_DIR: /downloads
     volumes:
       - ./oto-config:/config
       - ./downloads:/downloads
       - ./music:/shares/music:ro
     ports:
-      - "50300:50300"
+      - "50300:50300/tcp"
     restart: unless-stopped
 ```
 
-The equivalent Docker CLI command is:
-
 ```sh
-docker run -d \
-  --name oto \
-  -e PUID=1000 -e PGID=1000 -e TZ=Etc/UTC -e UMASK=022 \
-  -e OTO_USERNAME=your-soulseek-username \
-  -e OTO_PASSWORD=your-soulseek-password \
-  -e OTO_DOWNLOAD_DIR=/downloads \
-  -v "$PWD/oto-config:/config" \
-  -v "$PWD/downloads:/downloads" \
-  -v "$PWD/music:/shares/music:ro" \
-  -p 50300:50300 \
-  --restart unless-stopped \
-  ghcr.io/catgirl-systems/oto:latest
+chmod 600 compose.yaml
+mkdir -p oto-config downloads music
+docker compose up -d
+docker compose exec --user abc oto oto --config /config/config.json
 ```
 
-The image runs `oto daemon` as the LinuxServer `abc` user. `PUID` and `PGID` should match the owner of the mounted directories. On first start it copies the example to `/config/config.json`; edit that file for shares or other settings, or use the existing `OTO_*` overrides. Configuration and daemon state persist under `/config`.
+The last command opens the TUI; quitting it leaves transfers running. The image includes ffmpeg and supports amd64/arm64. Pin `:0.2.0` instead of `:latest` to avoid automatic version changes when pulling.
 
-Release downloads include `oto-linux-amd64`, `oto-linux-arm64`, and `SHA256SUMS`. Verify them from the same directory with:
+Configuration is created at `./oto-config/config.json`; state also lives under `./oto-config`. The default share is `/shares/music`. Edit settings in the TUI, or stop the container before editing the file and start it again afterward. Environment values override the file. Treat the Compose file as a secret; don't commit it.
 
-```sh
-sha256sum -c SHA256SUMS
-```
-
-The TUI uses an owner-only Unix socket. If no standalone daemon exists, it starts a child daemon whose lifetime is tied to the TUI. Exiting the TUI asks for confirmation when that would pause active transfers. An attached standalone daemon and its transfers continue running.
-
-Soulseek permits one login per username. Keeping the session in the daemon prevents the TUI from kicking it off the network.
-
-Press `o` to choose Online, Away, or Offline without stopping the daemon. Offline stops reconnect attempts and requeues active downloads without deleting partial data; choosing Online or Away resumes them. Away survives automatic reconnects for the current daemon run.
-
-The daemon watches every included non-hidden, non-symlink directory under each share root using `fsnotify` (one recursive watch per directory). After filesystem changes stop for five minutes by default, it builds a complete shadow index and atomically publishes it; a fixed 30-minute maximum delay prevents continuous activity from postponing scans forever. Events during a scan discard that result and schedule another scan. Startup and manual rescans remain immediate, and watcher or scan failures keep the last good index available. `/v1/state` reports the current share scan (`scanning`, `publishing`, `completed`, `failed`, `cancelled`, or `discarded`) with root, accepted file/directory counts, and timing; the Shares view displays the same live progress.
-
-For dynamically forwarded incoming ports, `--listen-port-file` watches the file's parent directory and hot-swaps the listener whenever the file contains a new port. `--listen-port-reconcile-interval` provides a periodic fallback (default `30s`; `0` disables it). Missing or empty files mark the port unavailable until a valid value appears. This interface is provider-neutral; for example, a VPN container can write its current forwarded port into a shared volume. When configured, it takes precedence over and skips automatic NAT-PMP/UPnP forwarding without changing the saved settings.
-
-The headless controls attach only to the daemon's XDG Unix socket; they never launch a daemon or log in themselves. `transfers` lists both directions with full stable IDs, quoted text fields, or `--json` output. `pause ID` and `resume ID` operate on one download and preserve the TUI's partial-file and finalization protections. `rescan` works offline and waits for index publication without the ordinary request timeout. A concurrent manual scan fails with “share scan already in progress” (HTTP 409). Ctrl+C stops waiting, not the daemon-owned scan. Invalid commands, a missing daemon, and service errors exit nonzero.
-
-Use `c` in Shares or `oto rescan --cancel` to request cancellation of the displayed scan. Cancellation is cooperative: status changes from `cancelling` to `cancelled` once outstanding filesystem work returns. The last published index, cache, counts, and any staged configuration stay unchanged. Publication itself is non-cancellable. Pending automatic work is suppressed; later changes or the next polling interval can rescan normally. Cancelling startup with no previous index leaves empty shares and keeps the daemon running.
-
-The Unix API accepts `POST /v1/shares/rescan/cancel` with `{"id": N}`: 202 for an accepted/repeated cancellation, 400 for malformed/zero IDs, and 409 for stale/finished/publishing scans. With no active scan, the CLI cancellation command is a successful no-op. Ctrl+C on ordinary `oto rescan` still stops waiting, not the daemon scan.
-
-### Share exclusions
-
-Settings → Shares shows audio metadata and an **Excluded content** rule count. Press Enter on Excluded content to open its dedicated manager: patterns and matching explanations, `a` add, Enter edit, `d` remove, and `R` **Restore defaults** (confirmation defaults to No). The focused editor provides examples and validation; Escape cancels an edit, or returns from the list without discarding staged rules. Save all staged Settings with `s`. The manager distinguishes unsaved rules, saving/scan progress, errors, and applied rules. Changes build a shadow index before committing settings; failed or cancelled scans keep the old configuration/index and leave the draft available to correct or retry. Exclusion-only changes do not reconnect Soulseek. Browse, incoming search responses, share counts, caches, and directory watches use the same policy. Queued uploads revalidate before streaming; already-streaming uploads finish normally.
-
-`share_exclusions` is a global string array; missing/null uses defaults, explicit `[]` disables configurable rules, and custom lists replace defaults. Defaults are `.*`, `.*/`, `@eaDir/`, `#recycle/`, `#snapshot/`, `desktop.ini`, `Thumbs.db`, `System Volume Information/`, `$RECYCLE.BIN/`, `lost+found/`, `*.part`, `*.partial`, `*.crdownload`, `*.tmp`, `*.temp`, `*.bak`, and `*~`. Artwork, playlists, lyrics, logs, and music formats are not broadly excluded.
-
-Matching is case-insensitive against virtual paths including the share name, from a component boundary through the path end. Only `*` is special (including across separators); `?` and brackets are literal. Backslashes normalize to `/`. A trailing `/` or `/*` denotes a folder rule and prunes its subtree; other rules select files. Explicit share roots are exempt from folder rules. Hidden entries and descendant symlinks remain excluded even with `[]`. Empty/whitespace-only rules, controls, absolute paths, and literal `.`/`..` components are rejected; limits are 256 rules and 1024 bytes per rule.
-
-## Share audio metadata
-
-Audio extraction is enabled by default when `ffprobe` is available on the daemon's `PATH`. Native installations can install **ffmpeg**; the Docker runtime includes it. Settings → Shares → Audio metadata (`audio_metadata`) disables extraction. Missing tools, corrupt/unsupported audio, probe failures and timeouts never prevent files from being shared. Shares shows extracted/cached/failed counts and an install hint when ffprobe is unavailable.
-
-Scans probe MP1/2/3, FLAC, WAV, AIFF, Ogg/Opus, AAC/M4A/M4B, WMA, APE, WavPack, MPC, DSF and DFF. Two workers use local-file-only input, bounded JSON output and a ten-second per-file timeout; cancellation terminates probes and never publishes a partial shadow index. Successful metadata is cached by source path, size, nanosecond modification/change times and extractor version. Unchanged results survive restart; changed files/extractor versions invalidate results on the next scan, and failures are retried on later scans.
-
-Bitrate, duration, sample rate and meaningful bit depth appear in local Shares, full/folder browse replies and incoming search replies. Only container duration is used as a fallback. ffprobe does not reliably report universal VBR status: absent encoding mode stays unknown. The additive `vbr_known` field distinguishes missing mode information from explicit CBR/VBR; file properties no longer label unknown mode as CBR.
-
-## TUI
+## Basics
 
 | Key | Action |
 | --- | --- |
-| `tab` / `shift+tab` | Search, Wishlist, Browse, Transfers, Shares, Settings |
-| up/down or `j` / `k` | move through visible rows; up/down recalls search or filter history while editing |
-| `page up` / `page down` | move through visible rows by one screen |
-| left/right | collapse/expand a tree node; switch Settings sections; cycle an active choice |
-| `home` / `end` | jump to the first/last row, or start/end of a text field while editing |
-| `ctrl+left` / `ctrl+right` | move by word in any text field (`alt` also works) |
-| `ctrl+backspace` / `ctrl+delete` | delete by word (`ctrl+w`, `alt+backspace`, and `alt+delete` also work) |
-| `ctrl+a` / `ctrl+e`, `ctrl+u` / `ctrl+k` | jump to start/end; delete before/after the caret |
-| `/` | edit search, add a wishlist item, enter a username or `name:path` share, or edit a setting |
-| `enter` | open wishlist or saved Browse results; toggle a folder; download a Search/Browse file |
-| `f` | edit cached Search filters, a wishlist item's stored filter, or find within a loaded Browse list |
-| `w` in Search | save or update the active query and filter as a wishlist item |
-| `tab` / `shift+tab` while filtering | complete fields, types, booleans, and comparison operators |
-| `c` | clear/restore search filters or clear the selected transfer subtree |
-| `space` | select a file or every loaded file below a user/folder node |
-| `F` in Downloads | confirm Download anyway for explicitly selected filtered files; folders never imply bypass |
-| `u` in Search, Browse or Transfers | prepare an editable targeted user search |
-| `b` in Search | browse the selected result's user and jump to its folder |
-| `i` in Search or Browse | show the selected file's properties and media metadata |
-| `ctrl+page up` / `ctrl+page down` in Search, Browse, or Transfers | switch result tabs or Downloads/Uploads |
-| `ctrl+w` in Search or Browse | close the active result tab |
-| `d` | download selected files; choose a folder download mode and destination; remove a wishlist/share item; or cancel a transfer subtree |
-| `D` in Uploads | confirm aborting all current uploads for selected users |
-| `C` in Uploads | clear uploads by status, independently of selection |
-| `r` | rerun a wishlist item, refresh a user browse or saved-user list, resume/retry a transfer subtree, or rescan shares |
-| `c` in Shares | request cancellation of the displayed scan before publication |
-| `a` / Enter / `d` / `R` in Excluded content | add / edit / remove a staged rule / confirm restoring defaults |
-| `p` in Downloads | pause the selected transfer subtree without deleting partial data |
-| `o` | choose Online, Away, or Offline without quitting |
-| `s` in Browse or Settings | explicitly save the active remote share list, or save Settings |
-| `s` / `S` in Transfers | prepare a file/folder-name search / containing-folder search; Enter submits |
-| `?` | keyboard guide |
-| `q` | quit |
+| `Tab` / `Shift+Tab` | Switch workspaces |
+| `/` | Search or add an item |
+| `f` | Filter results / find in a browse list |
+| `Space` | Select files |
+| `d` | Download; cancel in Transfers |
+| `p` / `r` in Downloads | Pause / resume |
+| `s` in Settings | Save changes |
+| `?` | Full keyboard guide |
+| `q` | Quit |
 
-Set `NO_COLOR=1` to suppress terminal styling.
+Headless controls, with a daemon running:
 
-Search groups results as user → folders → files; Browse shows remote folders; Transfers groups each direction as user → folders → files; Shares lazily shows the daemon's scanned public-share index. Expansion and selection are session-local. Selection-based Search/Browse actions include only currently loaded files; using `d` on a folder can request that complete remote folder recursively without fetching the user's full share list. In the folder download dialog, press `/` to override the configured download root for that folder; the user and remote folder hierarchy is preserved below it.
-
-Pending network searches and remote share-list requests temporarily replace the bottom keyboard hints with an activity bar. Share-list requests switch to byte and percentage progress once the peer's response size is known; the normal footer returns immediately when the operation finishes.
-
-Press `s` in a loaded Browse tab to save that user's complete share list. With no Browse tabs open, saved users are listed for selection with the arrow keys and Enter. Opening remains network-first while connected, but falls back to the saved list when offline or when the peer cannot be reached; cached tabs are labeled `(cached)`, and `r` retries the live list. Press `f` in a loaded Browse tab to filter its files and folders locally by a case-insensitive path substring; enter an empty find to restore the complete tree. Finds are kept separately per open tab and work with live or saved lists without contacting the peer.
-
-Searches support quoted phrases, excluded words (`-remix`), and partial terms (`*radio`). Filter cached results without another network search using fields such as:
-
-```text
-in:"live|radio session" out:remix type:audio,!mp3 size:>=20MiB bitrate:>=320 duration:>2:00 free:true public:true country:US,CA
+```sh
+./oto status
+./oto transfers
+./oto pause DOWNLOAD_ID
+./oto resume DOWNLOAD_ID
+./oto rescan
 ```
 
-`in` and `out` are case-insensitive regular expressions. `type` accepts extensions or `audio`, `video`, `image`, `document`, `text`, `archive`, and `executable`. Size units may be binary (`MiB`) or decimal (`MB`); duration accepts seconds, `MM:SS`, or `HH:MM:SS`. Repeat numeric fields to form ranges. Comparisons support `<`, `<=`, `=`, `==`, `!=`, `>=`, and `>`. While editing filters, use `tab` and `shift+tab` to complete or cycle fields and special values.
+- **Configuration:** `~/.config/oto/config.json`; **state:** `~/.local/state/oto/` (XDG overrides supported). See [config.example.json](config.example.json) for settings; its paths are Docker defaults.
+- **Connectivity:** allow incoming TCP **50300** for best results. NAT-PMP/UPnP forwarding is attempted automatically. VPN users can select a network interface in Settings.
+- **Accounts:** Soulseek allows one session per username—don't run oto and another client on the same account simultaneously.
+- **Privacy:** Soulseek traffic is not encrypted. Only share files you intend to make public.
+- **Backups:** stop oto before copying its state directory, including SQLite sidecars. Unsupported database schemas are rejected, not migrated.
 
-`country` accepts case-insensitive, comma-separated two-letter codes. Positive codes are alternatives (`country:US,CA`); prefix exclusions with `!` (`country:!GB,!DE`). Unknown locations match exclusion-only filters but not positive codes.
-Search queries and complete filter expressions are kept as separate most-recent-first histories. Press up/down while editing to recall entries. The Settings → Search section independently enables each history, sets its retention limit (`0` means unlimited), and clears it immediately.
+[AGPL-3.0-only](LICENSE). Offline country data: [ip-location-db](https://github.com/sapics/ip-location-db), PDDL.
 
-**Settings → Search → Default result filter** (`search.default_filter`, empty by default) initializes every new ordinary search with the last successfully saved expression. Existing result tabs keep their filters; unsaved Settings edits do not apply. A filter explicitly entered in an empty Search workspace overrides the default for the next search only. Wishlist filters remain independent, including an empty stored filter; `w` saves the current tab's actual filter. Explicit empty IPC filters still mean unfiltered.
+## Nicotine+ comparison
 
-In either transfer direction, `s` fills the Search editor from the focused file (minus its final extension) or folder name. `S` uses a file's containing folder instead. Enter starts the search; Escape cancels the draft without creating a result tab or contacting the network. User-only rows do not select an arbitrary descendant.
+oto focuses on file sharing and a detachable terminal UI. [Nicotine+](https://nicotine-plus.org/) also has a desktop GUI, chat, buddies, user profiles and plugins.
 
-Settings → Search also controls incoming search responses with `search.respond_to_incoming_searches`, `search.minimum_incoming_search_length` (`0` means no minimum), and `search.maximum_incoming_search_results`. Defaults match Nicotine+: On, 3 characters, and 300 results; the editable ranges are 0–50 characters and 50–10000 results. Saved changes hot-apply without reconnecting. Paths containing case-insensitive phrases prohibited by Soulseek server message 160 are always omitted from responses; this does not affect local browsing or exact-path uploads.
+<details>
+<summary>Full feature comparison</summary>
 
-Wishlist searches are daemon-owned and survive TUI and daemon restarts in the shared state database. Press `w` in Search to save the active query and filter. The Wishlist workspace uses `/` to add, `f` to edit the selected item's stored filter, Enter to open its latest cached results, `r` to rerun it immediately, and `d` to remove it. Automatic searches rotate one item at a time, so each item repeats after roughly item count × effective interval; **Settings → Search → Wishlist interval** (`search.wishlist_interval_minutes`) controls the delay between requests (`0` is Off), clamped to the minimum interval advertised by the Soulseek server. `search.wishlist_notifications` controls bells and desktop notifications. With notifications enabled, changed nonempty filtered results mark the item unread, ring an attached TUI once, and invoke `notify-send` when available. The unread badge remains available when notifications are disabled or desktop delivery fails. Result payloads stay in daemon memory, so after a daemon restart an item must run again before it can be opened.
-
-Settings → Connection shows the public IPv4 address reported by the Soulseek server at login and controls **Connect on startup** (`soulseek.connect_on_startup`), **Network interface** (`soulseek.network_interface`), **NAT-PMP port forwarding** (`soulseek.nat_pmp_port_mapping`), and **UPnP port forwarding** (`soulseek.upnp_port_mapping`). The displayed address itself does not use a third-party lookup. Selecting **Listening port status** and pressing Enter explicitly sends one HTTPS request to the Soulseek website at `www.slsknet.org/porttest.php`; the daemon checks its current advertised TCP port, including a mapped or `--listen-port-file` port, and reports open, closed, or unknown after a maximum of five seconds. No check runs at startup or in the background. All three switches default to On and the forwarding protocols can be enabled independently. With both forwarding protocols enabled, oto tries NAT-PMP before UPnP. It maps only the incoming TCP listener through an IPv4 router, requests a 12-hour lease, and renews it every two hours. Discovery and mapping are best effort: failures do not prevent Soulseek login or its server-mediated firewall-piercing fallback.
-
-The network-interface picker cycles through **Automatic**, interfaces visible in the daemon's network namespace, and **Custom…** for a name that is currently unavailable. Saving a changed interface reconnects the Soulseek session. A selected interface binds every Soulseek TCP socket with Linux `SO_BINDTODEVICE`; binding is fail-closed, so a missing interface or permission error leaves the session reconnecting instead of allowing traffic over another route. Automatic NAT-PMP/UPnP is skipped without changing its saved switches while interface binding is active; use `--listen-port-file` for a VPN-assigned forwarded port.
-
-Settings → Bandwidth manages ordered named profiles containing both `upload_speed_limit_kib` and `download_speed_limit_kib`. `bandwidth.active_profile` selects one profile for both directions. Each limit accepts 0–1000000 KiB/s; `0` means unlimited in that direction. New profiles start unlimited. Select `New…` to add a profile, edit its name and limits, or delete it (the last profile cannot be deleted). Selection and edits are staged until `s`, then saved and hot-applied to active transfers without reconnecting.
-
-Download limits apply once across **all active downloads combined**, not once per peer. Only file payload reads are limited: searching, browsing, handshakes, uploads, and local finalization copies are unaffected. Credit is capped at one chunk (1–32 KiB); this shapes application payload throughput, not instantaneous network-interface traffic. TCP buffering and already-issued reads can briefly exceed a newly selected limit. Idle peers do not reserve equal shares, and there is no per-peer fairness guarantee.
-
-Settings → Uploads retains `uploads.limit_scope` (`total` or `per_transfer`) and `uploads.scheduling` (`fifo`, `round_robin`, `random`, or `smallest_first`). These remain independent of profiles. FIFO, user-fair round-robin, user-uniform random, and smallest-file-first scheduling affect queued uploads only; saved scope and scheduler changes hot-apply.
-
-Older `uploads.profiles` / `uploads.active_profile` settings migrate automatically, preserving profile names, order, upload rates, and the active selection; download rates start unlimited. An explicit `bandwidth` object takes precedence. Loading does not rewrite the file; the next successful save emits only the new format. Both `PUT` and `PATCH /v1/config` still take a full configuration, not a partial patch.
-
-Settings → Account can change the currently connected Soulseek account password. Select **Change Soulseek password**, press Enter, and enter the new password twice. The change is sent and saved immediately; it cannot be used while disconnected, while a username change is staged, or when `OTO_PASSWORD` supplies the credential.
-
-## Targeted user search
-
-Press **`u`** in Search to choose Global or Specific users. From a Search result, Browse tab or Transfers row, it prepares a search for that user. Edit the query and individual usernames; Enter submits and Escape cancels without network activity. Targeted tabs retain their scope and are labelled `@user,...: query`. Cached Browse find remains separate.
-
-`POST /v1/search` accepts optional `usernames`, for example `{"query":"album","usernames":["Alice Smith","Bob"]}`. Empty/omitted targets preserve global search. Up to 32 targets are allowed, with surrounding spaces trimmed, duplicates removed, internal spaces preserved and empty/control-containing names rejected. Message 42 requests share one token and use the usual five-second result window, filters and paging. Wrong-user results are discarded; an offline or silent target never triggers a global fallback. Wishlist searches remain global: saving a targeted tab is refused explicitly.
-
-## Upload controls
-
-In Uploads, `space` marks a file or all files beneath a user/folder. Marks follow transfer IDs across refreshes and tab changes. `r` retries marked failed/cancelled uploads; `d` aborts marked uploads; with no marks, both use the focused subtree. Retry requires an online connection and uses the current upload scheduler and speed profile. There is no automatic upload retry timer.
-
-`D` confirms aborting every current upload for the marked files' users (or the focused subtree's user), including other folders. Aborted entries retain their progress as **cancelled**. This does not ban users or prevent future requests.
-
-`c` confirms removing selected upload entries, stopping any live attempts first. `C` opens the global clear menu: **Completed / Cancelled / Failed**, **Completed / Cancelled**, **Completed**, **Cancelled**, **Failed**, **Queued**, or **Everything**. Queued and Everything require confirmation; confirmations default to **No**, and Escape cancels. Clearing uploads never deletes shared files.
-
-Upload queue/history now survives restarts in the shared state database. Accepted work is saved before execution and automatically restored after reconnect/restart, only for the same server and local username. Recovery rebuilds FIFO order before accepting new requests, uses fresh handshakes and the receiver's actual offset, and revalidates sharing permission, file size and fingerprint. Changed/missing files fail visibly; completed, cancelled and independently failed uploads remain stopped. Recovery-handshake failures require a manual retry or a new peer request. Stable `upload:` IDs are never reused; retries retain their ID, while a new request after completion gets a new ID.
-
-Settings → Uploads exposes **queued + active** file and byte caps: `uploads.max_queued_files_per_user` and `uploads.max_queued_bytes_per_user`, both `0` (unlimited). Full advertised sizes count once, including active files; duplicates consume no extra allowance and exact equality is allowed. Rejections use **Too many files** / **Too many megabytes**. Lowering a cap never evicts accepted work, including restored work. Byte settings accept binary units such as `MiB`; JSON stores integer bytes.
-
-The owner-only Unix API supports `POST /v1/uploads/actions` with an `action` (`retry`, `cancel`, `clear`) and exactly one selector: `ids`, `usernames`, `states`, or `all: true`. Retry takes IDs; cancel takes IDs or usernames; clear takes IDs, states, or all. Results report `changed`, `skipped`, and per-ID `errors`. The existing single-transfer endpoint also accepts upload IDs. No new CLI commands are required.
-
-## Download controls and completion commands
-
-Downloads have a persistent **paused** state. `p` stops selected downloads, including ones waiting for a slot; `r` resumes them from the actual partial-file length. Resume is an action that returns a download to the queue, not a separate state. Paused and cancelled downloads stay stopped across reconnects and restarts. `d` still cancels; `c` clears inactive entries and removes their partial data.
-
-Once all bytes arrive, a download briefly enters **finalizing** while moving to its destination. Pause, cancel, and clear cannot interrupt that move; status and other transfers remain responsive, including during cross-filesystem copies.
-
-Transient connection failures automatically enter **retrying**, with another attempt due in **3 minutes**. Local file I/O failures and remote file-read failures retry after **15 minutes**. Retry deadlines survive restarts; attempts wait until connected and respect download slots. There is no retry limit. Unknown errors, malformed protocol messages, changed file sizes, and permanent rejections require manual intervention; `r` also retries immediately instead of waiting for a deadline.
-
-### Download filters
-
-Settings → Downloads offers wildcard filters, Off by default. `downloads.filter_patterns` defaults to `*.DS_Store`, `*.exe`, `*.msi`, `desktop.ini`, and `Thumbs.db`; missing/null selects defaults, while `[]` means no rules. Rules match normalized remote paths case-insensitively from component boundaries; only `*` is special, and trailing `/` or `/*` matches descendants, including remote top-level folders. Rules never inspect the local destination name. Invalid rules cannot be saved.
-
-Matching files become durable **filtered** records, without a worker or partial file. This covers individual, selected and recursive requests; whole batches are validated before committing. Existing accepted automatic retries are unaffected by settings changes. Ordinary `r` applies current rules and never bypasses them.
-
-In Downloads, `space` marks individual files and **`F` Download anyway** confirms the marked filtered files (or the focused filtered file). Confirmation defaults to **No**; folder/user rows never implicitly bypass descendants. The record's bypass survives retries and restart, but does not exempt later requests. Removing a rule or disabling filters permits ordinary Retry. Filtered records are clearable and do not block folder completion; wholly filtered folders produce no completion hook or notification.
-
-The Unix API accepts `POST /v1/downloads/force` with `{"ids":["d-1","d-2"]}` and returns `changed`, `skipped`, and per-ID `errors`. Only existing filtered records are eligible.
-
-### Transfer timing and completed-history cleanup
-
-Transfer elapsed time and speed are daemon-owned: detaching or changing TUIs does not reset them. Elapsed counts accumulated active file-stream time, including stalls, across retries/resumes in this daemon run. It excludes handshakes, queues, pauses, offline/retry delays, and finalization moves. Restarting the daemon resets timing; restored history shows unknown elapsed time. Wide rows have dedicated elapsed/ETA fields; below 110 inner columns, the focused row has a reserved detail line. Folder/user elapsed is a **cumulative sum**, not wall-clock time.
-
-`/v1/transfers`, `/v1/state`, and `oto transfers --json` expose nullable `elapsed_ms` and `eta_seconds`, plus non-null `speed_bps`; CLI text includes labelled timing fields. Rates use progress samples of at least one second; three seconds without new bytes means zero speed and unknown ETA. ETA rounds remaining bytes/speed up, is zero for completed transfers, and is unknown during finalization. Group ETA is unknown while unfinished paused, cancelled, failed, retrying, or finalizing descendants remain. The TUI shows unknown timing as `—`.
-
-Settings → Downloads and Settings → Uploads each offer **Auto-clear new completed** entries (`downloads.auto_clear_completed` / `uploads.auto_clear_completed`, both Off). Saving with `s` hot-applies only to future successful completions, including currently running transfers; existing/restored history is never swept. Files and non-completed entries are untouched. Download cleanup follows successful final move, completed-state journal save, and dispatch of folder/file completion hooks and notifications, without waiting for external delivery. A failed cleanup journal save retains history and logs the failure. Download ID allocation survives an empty-history restart through journal `download_sequence` metadata.
-Completed-history cleanup also waits for durable Stats accounting. Statistics failures retain retryable summaries/history and show a warning; clearing Transfers never clears lifetime Stats or detailed transfer logs.
-
-### Completion commands
-**Settings → Downloads** provides **After file command** and **After folder command**, saved as `downloads.after_file_command` and `downloads.after_folder_command`. Both default to empty (disabled) and hot-apply when saved. For example:
-
-```json
-"downloads": {
-  "after_file_command": "/usr/local/bin/process-file \"$1\"",
-  "after_folder_command": "/usr/local/bin/process-folder \"$1\""
-}
-```
-
-Commands are trusted local POSIX shell snippets, run with `/bin/sh -c` as the daemon user. Use **`"$1"`** for the final file/folder path (not Nicotine+'s bare `$` placeholder). Paths are passed separately as an argument, never substituted into shell source. Scripts must be installed in the daemon's environment, including inside the container when using Docker. Commands launch asynchronously, with output discarded unless redirected; failures are logged without failing the download or retrying the command. The folder command does not wait for file commands. Running command process groups are cancelled when the daemon stops.
-
-Hooks run only after a successful final move and journal save, not on restoring completed downloads. Folder completion covers all currently known files from the same user in the **exact destination directory**, excluding the download root itself. Paused, cancelled, failed, and retrying entries block it until completed or cleared. Subfolders finish independently; this is not a recursive folder-job hook. Adding more files later can trigger it again. Hooks are best effort, not a crash-safe exactly-once job queue.
-
-### Completion notifications
-
-Settings → Downloads has independent **File notifications** (`downloads.file_notifications`, Off) and **Folder notifications** (`downloads.folder_notifications`, On) switches. Saved changes hot-apply. Notifications use the same successful move-and-journal-save boundary and exact-directory grouping as completion commands. Clearing entries alone does not send a notification; restoring completed downloads does not replay them.
-
-The daemon calls `notify-send` asynchronously when available. Delivery has a two-second timeout; failure is logged without failing or retrying the download. Attached TUIs display the latest message and ring once per poll containing new enabled completions. Initial attachment and daemon restart do not replay old bells. These signals are session-local and best effort, not a durable notification queue. When both switches are enabled, the final file can produce both file and folder desktop notifications.
-
-Desktop delivery requires `notify-send` and a usable desktop session in the daemon's environment, including inside Docker. No D-Bus forwarding is provided. Existing completion commands still run independently; disable overlapping notification scripts if using the built-in delivery.
-
-## Persistent Stats and transfer logs
-
-The **Stats** workspace sits beside Transfers. `ctrl+page up/down` switches **Overview / History / Peers / Log**. `a` chooses a remembered local account, `/` filters an exact peer, `[` / `]` edit date bounds, `d` changes direction, and `e` filters log outcomes. History has `r` ranges (7/30/90/365 days or All); Peers has `s` username/traffic sorting; `n` advances a page and `p` returns to the first. Enter opens peer history or full event details; up/down scrolls long summaries and details. Charts use terminal-native bars with units and numeric summaries, need no color, and support `statistics.ascii_charts`.
-
-Overview compares session/lifetime payload bytes and logical completions, attempt outcomes, retries/resumes, filtered/forced downloads, limit rejections, cumulative stream/queue time, average and sampled peak rates, unique peers and first/last times. It also shows active/queued work, uptime, online time, reconnects and upload/download ratios (`—` when undefined). Account rate graphs cover the last five minutes and keep sampling without a frontend. History uses UTC daily traffic/completions; long ranges are binned to the display width. Peers can be sorted by total traffic across all pages. Logs retain filenames, destinations, timestamps and errors.
-
-Account identity is the normalized server plus local username captured from the actual connection/attempt, not subsequently edited Settings. A session is one daemon run, unaffected by reconnects or attached TUIs. Payload counts actual positive transfer deltas: resume offsets, handshakes, browsing and finalization copies are excluded; retransmitted traffic counts. File completions are separate from successful attempts, and downloads count complete only after the final move and database commit. Cumulative stream time is not wall-clock time.
-
-The shared `state.sqlite3` uses CGO-free SQLite with transactional deduplication and independent lifetime/per-peer/session/daily rollups. It contains all operational records: downloads, uploads, transfer history, search/filter history, wishlist state, the local share index, saved remote inventories, and Stats. Transfer changes and their accounting commit in one transaction; failed writes retain retryable work in memory and suppress dependent completion side effects. Active traffic checkpoints every **five seconds** and graceful shutdown flushes pending counters. A crash can lose the uncheckpointed interval (or more during persistence failure), but checkpoint replay is idempotent and abandoned attempts become interrupted. Shared-database failures are surfaced to affected domains while retryable accounting/history and pending counters are retained; a corrupt database is never silently replaced. Tracking begins at the displayed **Since** date; old completed history is not invented into totals.
-
-`statistics.log_retention_days = 0` and `statistics.daily_retention_days = 0` keep everything indefinitely. Positive values enable hourly age-based pruning. **Settings → Statistics → Prune** or **`P` in Stats** opens an age-in-days input (initially 30), with logs, daily rollups or both selectable. Enter previews records older than midnight UTC that many days ago; **Enter again confirms deletion**, and Escape cancels before deletion starts. Manual pruning requires a positive day count and spans **all local accounts**. It never removes lifetime/peer totals, dedupe keys, recovery records or shared/downloaded files. Clearing Transfers is independent of Stats retention. The database and sidecars are owner-only; no passwords, peer IP history or social data are stored.
-
-### Stats Unix API
-
-- `GET /v1/stats`: account overview, lifetime/current-session comparisons and bounded live samples.
-- `GET /v1/stats/series`: UTC daily/binned history (`bins` at most 400).
-- `GET /v1/stats/peers`: peer totals, optionally `sort=peer` or `sort=bytes`.
-- `GET /v1/transfer-log`: newest-first event pages, optionally comma-separated `outcome` kinds.
-- `POST /v1/stats/prune/preview` and `/v1/stats/prune`: `{"cutoff":"2026-01-01T00:00:00Z","logs":true,"daily":false}`.
-
-Filters include `account`, `peer`, `direction` (`upload`/`download`), `session`, `from`, and exclusive `to`. Dates accept RFC3339 or `YYYY-MM-DD`; rollups use UTC calendar days. Page limits default to 100, maximum 1000; pass `next_cursor` back unchanged as `cursor`. Detailed logs never ride along in `/v1/state`. Existing diagnostic logging remains separate.
-
-## Files and environment
-
-Default locations follow XDG:
-
-- config: `${XDG_CONFIG_HOME:-~/.config}/oto/config.json`;
-- operational state database: `${XDG_STATE_HOME:-~/.local/state}/oto/state.sqlite3`;
-- incomplete download files: `${XDG_STATE_HOME:-~/.local/state}/oto/incomplete/`;
-- SQLite WAL/SHM files and the owner-only daemon lock are private sidecars beside the database;
-- socket: `${XDG_RUNTIME_DIR:-/tmp/oto-$UID}/oto/oto.sock`;
-- downloads: `~/Downloads/oto`.
-
-`OTO_USERNAME`, `OTO_PASSWORD`, `OTO_SERVER`, `OTO_LISTEN_ADDR`, `OTO_NETWORK_INTERFACE`, and `OTO_DOWNLOAD_DIR` override JSON values. The daemon never returns or logs the password.
-
-Configuration is JSON only: user choices and bandwidth settings live in `config.json`; operational state is stored in the shared database and does not rewrite configuration.
-
-The database is schema version 1 and fresh-only: unsupported schemas are rejected and no migrations are provided. SQLite WAL/SHM sidecars and the daemon lock are private; stop the daemon and TUI before copying the complete database, or use SQLite's backup mechanism. The daemon lock prevents concurrent daemon ownership. A shared-database failure is reported by the affected domain; pending counters remain retryable and active traffic is durably checkpointed every five seconds.
-
-Generated sqlc output is committed under `internal/storage/db`; normal builds do not require sqlc. Install the pinned sqlc v1.31.1 release, then run `sqlc generate` from the repository root. CI regenerates it and rejects both tracked diffs and unexpected untracked files.
-
-Incoming TCP port `50300` must be reachable for best peer connectivity. Automatic NAT-PMP/UPnP forwarding can make it reachable when supported by the IPv4 router and no network interface is selected; otherwise configure the router or use `--listen-port-file` for a VPN-assigned port. Direct connections are attempted first and server-mediated firewall piercing is used as fallback. The Soulseek protocol itself is not encrypted; do not treat usernames, searches, or transferred data as private.
-
-Search-result country codes are approximate IP geolocation, not identity or residence data. oto performs the lookup offline using an embedded table generated from a pinned [sapics/ip-location-db](https://github.com/sapics/ip-location-db) `user-country-ipv4` snapshot released under the PDDL; peer IP addresses are not exposed or persisted.
-## Feature comparison with Nicotine+
-
-This tracks user-visible Soulseek functionality and meaningful operational quality-of-life features for a terminal client. Cosmetic GUI details, desktop integration, deep links, themes, layout customization, and similar presentation-only features are intentionally excluded. :white_check_mark: means the feature works end to end, :x: means it is unavailable, and :fast_forward: means oto supersedes the same user need with a different approach; internal scaffolding alone is not counted.
+:white_check_mark: supported · :x: unavailable · :fast_forward: different approach
 
 ### Network and session
 
@@ -551,3 +353,5 @@ This tracks user-visible Soulseek functionality and meaningful operational quali
 | Configurable diagnostic/debug logs | :x: | :white_check_mark: |
 | Current-session and lifetime transfer statistics | :white_check_mark: | :white_check_mark: |
 | Now-playing messages from MPRIS, Last.fm, Libre.fm, or ListenBrainz | :x: | :white_check_mark: |
+
+</details>
