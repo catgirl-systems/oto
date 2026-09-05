@@ -664,7 +664,7 @@ func (m *model) openBrowse(user, target string, refresh bool) tea.Cmd {
 func (m model) saveSettings() tea.Cmd {
 	cfg := m.cfg
 	cfg.ShareExclusions = append([]string{}, m.cfg.ShareExclusions...)
-	cfg.Uploads.Profiles = append([]config.UploadProfile(nil), m.cfg.Uploads.Profiles...)
+	cfg.Bandwidth.Profiles = append([]config.BandwidthProfile(nil), m.cfg.Bandwidth.Profiles...)
 	return func() tea.Msg {
 		_, err := m.client.UpdateConfig(m.ctx, cfg)
 		return settingsMsg{search: cfg.Search, err: err}

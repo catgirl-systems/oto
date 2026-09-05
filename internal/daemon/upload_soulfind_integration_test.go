@@ -32,7 +32,7 @@ func TestSoulfindDaemonUploadControls(t *testing.T) {
 	cfg.Soulseek.NATPMPPortMapping, cfg.Soulseek.UPnPPortMapping = false, false
 	cfg.Shares = []config.Share{{Name: "Music", Path: root}}
 	cfg.UploadSlots = 1
-	cfg.Uploads.Profiles[0].SpeedLimitKiB = 1
+	cfg.Bandwidth.Profiles[0].UploadSpeedLimitKiB = 1
 	svc, err := New(cfg, filepath.Join(t.TempDir(), "journal.json"))
 	if err != nil {
 		t.Fatal(err)

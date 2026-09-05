@@ -259,6 +259,7 @@ func validateConfig(cfg config.Config) error {
 }
 
 func New(cfg config.Config, path string) (*Service, error) {
+	cfg.Bandwidth.Profiles = slices.Clone(cfg.Bandwidth.Profiles)
 	rules, err := config.NormalizeShareExclusions(cfg.ShareExclusions)
 	if err != nil {
 		return nil, err
@@ -557,7 +558,11 @@ func (s *Service) stopSessionLocked(offline bool) {
 }
 
 func uploadPolicy(c config.Config) soulseek.UploadPolicy {
-	return soulseek.UploadPolicy{Scheduling: string(c.Uploads.Scheduling), BytesPerSecond: int64(c.Uploads.ActiveSpeedLimitKiB()) * 1024, PerTransfer: c.Uploads.LimitScope == config.UploadLimitPerTransfer}
+	return soulseek.UploadPolicy{Scheduling: string(c.Uploads.Scheduling), BytesPerSecond: int64(c.Bandwidth.ActiveProfileLimits().UploadSpeedLimitKiB) * 1024, PerTransfer: c.Uploads.LimitScope == config.UploadLimitPerTransfer}
+}
+
+func downloadLimit(c config.Config) int64 {
+	return int64(c.Bandwidth.ActiveProfileLimits().DownloadSpeedLimitKiB) * 1024
 }
 
 func incomingSearchPolicy(c config.Config) soulseek.IncomingSearchPolicy {
@@ -605,8 +610,9 @@ func (s *Service) connectOnce(ctx context.Context) error {
 		Address: cfg.Soulseek.Server, Username: cfg.Soulseek.Username, Password: cfg.Soulseek.Password,
 		ListenAddr: cfg.Soulseek.ListenAddr, NetworkInterface: cfg.Soulseek.NetworkInterface,
 		Share: idx, Uploads: newUploadManager(cfg), IncomingSearch: &searchPolicy,
-		UploadUpdate:      func(event soulseek.TransferEvent) { s.uploadUpdate(epoch, event) },
-		UploadStreamStart: func(event soulseek.TransferEvent) { s.uploadStreamStart(epoch, event) },
+		DownloadLimitBytesPerSecond: downloadLimit(cfg),
+		UploadUpdate:                func(event soulseek.TransferEvent) { s.uploadUpdate(epoch, event) },
+		UploadStreamStart:           func(event soulseek.TransferEvent) { s.uploadStreamStart(epoch, event) },
 	})
 	if err := client.Connect(ctx); err != nil {
 		return err
@@ -653,6 +659,10 @@ func (s *Service) connectOnce(ctx context.Context) error {
 			return err
 		}
 	}
+	// Login may have overlapped a successful Settings save.
+	client.ConfigureUploads(uploadPolicy(s.cfg))
+	client.ConfigureDownloadLimit(downloadLimit(s.cfg))
+	client.ConfigureIncomingSearch(incomingSearchPolicy(s.cfg))
 	s.client, s.mapping = client, mapping
 	idx = s.shares
 	s.status, s.lastErr = StatusConnected, ""
@@ -1337,11 +1347,8 @@ func hotConfigUpdate(old, next config.Config) bool {
 		old.UploadSlots == next.UploadSlots
 }
 
-func sameUploadConfig(a, b config.Uploads) bool {
-	return a.ActiveProfile == b.ActiveProfile && a.LimitScope == b.LimitScope && a.Scheduling == b.Scheduling && slices.Equal(a.Profiles, b.Profiles)
-}
-
 func (s *Service) UpdateConfig(c config.Config) error {
+	c.Bandwidth.Profiles = slices.Clone(c.Bandwidth.Profiles)
 	rules, err := config.NormalizeShareExclusions(c.ShareExclusions)
 	if err != nil {
 		return err
@@ -1361,7 +1368,7 @@ func (s *Service) UpdateConfig(c config.Config) error {
 	reconnect := !hotConfigUpdate(s.cfg, c)
 	if !reconnect && slices.Equal(s.cfg.ShareExclusions, c.ShareExclusions) {
 		oldInterval := s.cfg.Search.WishlistIntervalMinutes
-		uploadsChanged := !sameUploadConfig(s.cfg.Uploads, c.Uploads)
+		uploadsChanged := uploadPolicy(s.cfg) != uploadPolicy(c)
 		client := s.client
 		err := c.Save(s.configPath)
 		if err == nil {
@@ -1372,6 +1379,7 @@ func (s *Service) UpdateConfig(c config.Config) error {
 			client.ConfigureUploads(uploadPolicy(c))
 		}
 		if err == nil && client != nil {
+			client.ConfigureDownloadLimit(downloadLimit(c))
 			client.ConfigureIncomingSearch(incomingSearchPolicy(c))
 		}
 		if err == nil && oldInterval != c.Search.WishlistIntervalMinutes {
@@ -1415,7 +1423,10 @@ func (s *Service) UpdateConfig(c config.Config) error {
 		s.mu.Unlock()
 		if client != nil {
 			client.SetShareIndex(index)
-			client.ConfigureUploads(uploadPolicy(c))
+			if client.UploadPolicy() != uploadPolicy(c) {
+				client.ConfigureUploads(uploadPolicy(c))
+			}
+			client.ConfigureDownloadLimit(downloadLimit(c))
 			client.ConfigureIncomingSearch(incomingSearchPolicy(c))
 		}
 		s.persistShareIndex(index)

@@ -331,6 +331,7 @@ func (m model) helpView() string {
 			{"share scan", "Shares: r rescan, c cancel before publication; last index stays available"},
 			{"elapsed / ETA", "daemon stream time; folder/user elapsed is cumulative"},
 			{"Settings → Shares", "edit/add rules, d remove, restore defaults; s saves"},
+			{"Settings → Bandwidth", "named upload + download limits; s saves both"},
 			{"auto-clear completed", "Downloads / Uploads: opt in for future completions only"},
 			{"ctrl+w (results)", "close the active search or user tab"},
 			{"? / esc", "open / close this guide"},

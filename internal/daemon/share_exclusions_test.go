@@ -30,6 +30,9 @@ func TestExclusionSettingsPublishAndRollback(t *testing.T) {
 		t.Fatal("default not applied")
 	}
 	cfg := s.cfg
+	client := soulseek.NewClient(soulseek.ClientConfig{Uploads: newUploadManager(cfg)})
+	s.client = client
+	cfg.Bandwidth = config.Bandwidth{ActiveProfile: "Both", Profiles: []config.BandwidthProfile{{Name: "Both", UploadSpeedLimitKiB: 7, DownloadSpeedLimitKiB: 11}}}
 	cfg.ShareExclusions = []string{}
 	// An exclusion-only update must not tear down a running session.
 	s.cancel = func() { t.Error("exclusions reconnected Soulseek") }
@@ -37,6 +40,9 @@ func TestExclusionSettingsPublishAndRollback(t *testing.T) {
 		t.Fatal(err)
 	}
 	s.cancel = nil
+	if client.DownloadLimit() != 11*1024 || client.UploadPolicy().BytesPerSecond != 7*1024 {
+		t.Fatal("share-scan publication lost bandwidth update")
+	}
 	if !hasLocalFile(s, "Music", "song.tmp", 1) || s.Snapshot().Config.ShareExclusions == nil {
 		t.Fatal("empty policy was not published")
 	}
@@ -56,6 +62,7 @@ func TestExclusionSettingsPublishAndRollback(t *testing.T) {
 	for _, failure := range []string{"validation", "scan", "save", "cancel"} {
 		t.Run(failure, func(t *testing.T) {
 			next := cfg
+			next.Bandwidth = config.Bandwidth{ActiveProfile: "Other", Profiles: []config.BandwidthProfile{{Name: "Other", UploadSpeedLimitKiB: 99, DownloadSpeedLimitKiB: 99}}}
 			next.ShareExclusions = []string{"*.tmp"}
 			path := s.configPath
 			defer func() { s.shareIndexBuilder = nil; s.configPath = path }()
@@ -91,6 +98,9 @@ func TestExclusionSettingsPublishAndRollback(t *testing.T) {
 				}
 			}
 			gotDisk, _ := os.ReadFile(path)
+			if s.Config().Bandwidth.ActiveProfile != "Both" || client.DownloadLimit() != 11*1024 || client.UploadPolicy().BytesPerSecond != 7*1024 {
+				t.Fatal("failed staged scan changed bandwidth")
+			}
 			gotCache, _ := os.ReadFile(s.shareIndexPath)
 			if s.shares != index || !slices.Equal(s.cfg.ShareExclusions, cfg.ShareExclusions) || !bytes.Equal(disk, gotDisk) || !bytes.Equal(cache, gotCache) {
 				t.Fatal("failed edit changed active or persisted configuration/index")

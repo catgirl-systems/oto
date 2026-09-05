@@ -607,6 +607,7 @@ func TestSettingsSidebarEditsAccountWithoutLeakingPassword(t *testing.T) {
 	m.key(tea.KeyPressMsg(tea.Key{Code: tea.KeyRight}))
 	m.key(tea.KeyPressMsg(tea.Key{Code: tea.KeyRight}))
 	m.key(tea.KeyPressMsg(tea.Key{Code: tea.KeyRight}))
+	m.key(tea.KeyPressMsg(tea.Key{Code: tea.KeyRight}))
 	if m.settingsSection != settingsSearch || !strings.Contains(m.View().Content, "Remember searches") {
 		t.Fatal("settings sidebar did not navigate to search settings")
 	}
@@ -673,7 +674,7 @@ func TestNetworkInterfaceChoiceAndCustomEntry(t *testing.T) {
 	}
 
 	m.key(key("right"))
-	if m.settingsSection != settingsDownloads {
+	if m.settingsSection != settingsBandwidth {
 		t.Fatal("right arrow did not navigate sections outside choice mode")
 	}
 	m.settingsSection, m.cursor = settingsConnection, 2
@@ -728,81 +729,100 @@ func TestNetworkInterfaceChoiceAndCustomEntry(t *testing.T) {
 func TestUploadSettingsProfilesAndChoices(t *testing.T) {
 	t.Setenv("NO_COLOR", "1")
 	m := newModel(context.Background(), nil, filepath.Join(t.TempDir(), "config.json"), false, config.Default())
-	m.width, m.height, m.workspace, m.settingsSection = 90, 18, workspaceSettings, settingsUploads
-	view := m.View().Content
-	for _, want := range []string{"Uploads", "Active profile", "Unlimited", "Profile name", "Speed limit (KiB/s)", "Limit applies to", "Scheduling", "FIFO"} {
-		if !strings.Contains(view, want) {
-			t.Fatalf("upload settings missing %q: %s", want, view)
+	m.width, m.height, m.workspace, m.settingsSection = 90, 18, workspaceSettings, settingsBandwidth
+	for _, want := range []string{"Bandwidth", "Active profile", "Unlimited", "Profile name", "Upload speed limit (KiB/s)", "Download speed limit (KiB/s)"} {
+		if !strings.Contains(m.View().Content, want) {
+			t.Fatalf("missing %q: %s", want, m.View().Content)
 		}
 	}
-
 	m.key(key("enter"))
 	m.key(key("right"))
 	if !m.choiceChoosing || !strings.Contains(m.View().Content, "New…") {
-		t.Fatal("profile picker did not include New")
+		t.Fatal("missing New choice")
 	}
 	m.key(key("esc"))
-	if m.choiceChoosing || len(m.cfg.Uploads.Profiles) != 1 {
-		t.Fatal("escape changed upload profiles")
+	if m.choiceChoosing || len(m.cfg.Bandwidth.Profiles) != 1 {
+		t.Fatal("escape changed profiles")
 	}
-
 	m.key(key("enter"))
 	m.key(key("right"))
 	m.key(key("enter"))
-	if !m.editing || !m.addingUploadProfile {
-		t.Fatal("New did not open inline profile-name editing")
+	if !m.editing || !m.addingBandwidthProfile {
+		t.Fatal("New did not open editor")
 	}
 	m.input = "Night"
 	m.editKey(key("enter"))
-	if len(m.cfg.Uploads.Profiles) != 2 || m.cfg.Uploads.ActiveProfile != "Night" {
-		t.Fatalf("new profile was not staged: %+v", m.cfg.Uploads)
+	if len(m.cfg.Bandwidth.Profiles) != 2 || m.cfg.Bandwidth.ActiveProfile != "Night" {
+		t.Fatal("new profile not staged")
 	}
-
 	m.cursor = 1
 	m.key(key("enter"))
 	m.input = "Unlimited"
 	m.editKey(key("enter"))
-	if m.err == "" || m.cfg.Uploads.ActiveProfile != "Night" {
-		t.Fatal("duplicate profile rename was accepted")
+	if m.err == "" || m.cfg.Bandwidth.ActiveProfile != "Night" {
+		t.Fatal("duplicate rename accepted")
 	}
 	m.key(key("enter"))
 	m.input = "Night cap"
 	m.editKey(key("enter"))
-	if m.cfg.Uploads.ActiveProfile != "Night cap" {
-		t.Fatal("active profile rename did not update selection")
+	if m.cfg.Bandwidth.ActiveProfile != "Night cap" {
+		t.Fatal("rename lost selection")
 	}
-
-	m.cursor = 2
-	m.key(key("enter"))
-	m.input = "64"
-	m.editKey(key("enter"))
-	if m.cfg.Uploads.Profiles[m.activeUploadProfileIndex()].SpeedLimitKiB != 64 {
-		t.Fatal("profile speed limit was not staged")
+	for i, value := range []string{"64", "128"} {
+		m.cursor = i + 2
+		m.key(key("enter"))
+		m.input = value
+		m.editKey(key("enter"))
 	}
-
-	m.cursor = 4
+	profile := m.cfg.Bandwidth.ActiveProfileLimits()
+	if profile.UploadSpeedLimitKiB != 64 || profile.DownloadSpeedLimitKiB != 128 {
+		t.Fatalf("limits not staged: %+v", profile)
+	}
+	for _, value := range []string{"-1", "1000001", "oops"} {
+		m.cursor = 3
+		m.key(key("enter"))
+		m.input = value
+		m.editKey(key("enter"))
+		if m.err == "" || m.cfg.Bandwidth.ActiveProfileLimits() != profile {
+			t.Fatal("invalid limit accepted")
+		}
+	}
+	m.settingsSection, m.cursor = settingsUploads, 0
 	m.key(key("enter"))
 	m.key(key("right"))
 	m.key(key("enter"))
-	m.cursor = 5
+	m.cursor = 1
 	m.key(key("enter"))
 	m.key(key("left"))
 	m.key(key("enter"))
 	if m.cfg.Uploads.LimitScope != config.UploadLimitPerTransfer || m.cfg.Uploads.Scheduling != config.UploadSchedulingSmallestFirst {
-		t.Fatalf("upload choices were not staged: %+v", m.cfg.Uploads)
+		t.Fatal("upload choices not staged")
 	}
-
-	m.cursor = 3
+	m.settingsSection, m.cursor = settingsBandwidth, 4
 	m.key(key("enter"))
-	if len(m.cfg.Uploads.Profiles) != 1 || m.cfg.Uploads.ActiveProfile != "Unlimited" {
-		t.Fatalf("profile deletion did not select adjacent profile: %+v", m.cfg.Uploads)
+	if len(m.cfg.Bandwidth.Profiles) != 1 || m.cfg.Bandwidth.ActiveProfile != "Unlimited" {
+		t.Fatal("delete lost adjacent selection")
 	}
 	m.key(key("enter"))
-	if len(m.cfg.Uploads.Profiles) != 1 || m.notice == "" {
-		t.Fatal("last upload profile deletion was not blocked")
+	if len(m.cfg.Bandwidth.Profiles) != 1 || m.notice == "" {
+		t.Fatal("last profile deleted")
 	}
 	if _, err := os.Stat(m.configPath); !os.IsNotExist(err) {
-		t.Fatal("staged upload settings were persisted before save")
+		t.Fatal("staged settings saved prematurely")
+	}
+	m.cursor = 0
+	m.key(key("left"))
+	if m.settingsSection != settingsConnection {
+		t.Fatal("Bandwidth not after Connection")
+	}
+	m.key(key("right"))
+	m.key(key("right"))
+	if m.settingsSection != settingsDownloads {
+		t.Fatal("Downloads not after Bandwidth")
+	}
+	m.settingsSection, m.width, m.height = settingsBandwidth, 50, 12
+	if !strings.Contains(m.View().Content, "Bandwidth") {
+		t.Fatal("narrow view lost section")
 	}
 }
 

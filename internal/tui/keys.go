@@ -172,18 +172,18 @@ func (m *model) key(k tea.KeyPressMsg) tea.Cmd {
 				m.restoreShareExclusions = true
 				m.uploadConfirm, m.uploadConfirmChoice = true, 0
 				m.uploadConfirmLabel = "Restore default share exclusions (staged until s)"
-			case settingNetworkInterface, settingUploadProfile, settingUploadLimitScope, settingUploadScheduling:
+			case settingNetworkInterface, settingBandwidthProfile, settingUploadLimitScope, settingUploadScheduling:
 				m.choiceChoosing = true
 				m.choiceSetting = fields[m.cursor].id
 				m.choiceIndex = m.configuredChoice(m.choiceSetting)
-			case settingDeleteUploadProfile:
-				if len(m.cfg.Uploads.Profiles) == 1 {
-					m.setNotice("At least one upload profile is required")
+			case settingDeleteBandwidthProfile:
+				if len(m.cfg.Bandwidth.Profiles) == 1 {
+					m.setNotice("At least one bandwidth profile is required")
 					break
 				}
-				i := m.activeUploadProfileIndex()
-				m.cfg.Uploads.Profiles = append(m.cfg.Uploads.Profiles[:i], m.cfg.Uploads.Profiles[i+1:]...)
-				m.cfg.Uploads.ActiveProfile = m.cfg.Uploads.Profiles[min(i, len(m.cfg.Uploads.Profiles)-1)].Name
+				i := m.activeBandwidthProfileIndex()
+				m.cfg.Bandwidth.Profiles = append(m.cfg.Bandwidth.Profiles[:i], m.cfg.Bandwidth.Profiles[i+1:]...)
+				m.cfg.Bandwidth.ActiveProfile = m.cfg.Bandwidth.Profiles[min(i, len(m.cfg.Bandwidth.Profiles)-1)].Name
 			case settingListeningPortStatus:
 				if m.status.status != daemon.StatusConnected || m.status.publicPort == 0 {
 					m.setNotice("Connect to check listening port")
@@ -656,12 +656,12 @@ func (m *model) settingChoiceKey(k tea.KeyPressMsg) tea.Cmd {
 				}
 				m.inputCursor = len([]rune(m.input))
 			}
-		case settingUploadProfile:
-			if choice == len(m.cfg.Uploads.Profiles) {
-				m.editing, m.addingUploadProfile = true, true
+		case settingBandwidthProfile:
+			if choice == len(m.cfg.Bandwidth.Profiles) {
+				m.editing, m.addingBandwidthProfile = true, true
 				m.input, m.inputCursor = "", 0
 			} else {
-				m.cfg.Uploads.ActiveProfile = m.cfg.Uploads.Profiles[choice].Name
+				m.cfg.Bandwidth.ActiveProfile = m.cfg.Bandwidth.Profiles[choice].Name
 			}
 		case settingUploadLimitScope:
 			if choice == 0 {
@@ -719,7 +719,7 @@ func (m *model) editKey(k tea.KeyPressMsg) tea.Cmd {
 		return nil
 	}
 	if s == "esc" {
-		m.editing, m.filterEditing, m.browseFindEditing, m.addingUploadProfile = false, false, false, false
+		m.editing, m.filterEditing, m.browseFindEditing, m.addingBandwidthProfile = false, false, false, false
 		m.input = ""
 		return nil
 	}
@@ -791,7 +791,7 @@ func (m *model) editKey(k tea.KeyPressMsg) tea.Cmd {
 			value := strings.TrimSpace(m.input)
 			if err := m.setSettingValue(value); err != nil {
 				m.err = err.Error()
-				m.addingUploadProfile = false
+				m.addingBandwidthProfile = false
 				m.editing = m.settingFields()[m.cursor].id == settingNetworkInterface
 			} else {
 				m.err = ""
