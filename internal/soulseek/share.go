@@ -31,9 +31,12 @@ type ShareRoot struct{ Name, Path string }
 
 // ShareFile is a file or directory visible in the public share index.
 type ShareFile struct {
-	Root, Path string
-	Size       uint64
-	Directory  bool
+	AudioMetadata
+	AudioFingerprint AudioFingerprint `json:"audio_fingerprint,omitempty"`
+	AudioSource      string           `json:"audio_source,omitempty"`
+	Root, Path       string
+	Size             uint64
+	Directory        bool
 }
 
 // ShareIndex is a deterministic, read-only snapshot of shared files.
@@ -313,7 +316,7 @@ func (s *ShareIndex) Browse(virtual string) ([]ShareEntry, error) {
 			parent, name = file.Path[:split], file.Path[split+1:]
 		}
 		if parent == relative {
-			out = append(out, ShareEntry{Name: name, Size: file.Size, Directory: file.Directory})
+			out = append(out, file.entry(name))
 		}
 	}
 	sort.SliceStable(out, func(i, j int) bool {
@@ -345,11 +348,7 @@ func (s *ShareIndex) Subtree(virtual string) ([]ShareEntry, error) {
 		if file.Root != root || file.Path == "" || file.Path == relative || (prefix != "" && !strings.HasPrefix(file.Path, prefix)) {
 			continue
 		}
-		out = append(out, ShareEntry{
-			Name:      root + "\\" + strings.ReplaceAll(file.Path, "/", "\\"),
-			Size:      file.Size,
-			Directory: file.Directory,
-		})
+		out = append(out, file.entry(root+"\\"+strings.ReplaceAll(file.Path, "/", "\\")))
 	}
 	return out, nil
 }

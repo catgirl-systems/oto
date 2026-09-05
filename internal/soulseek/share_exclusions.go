@@ -37,6 +37,15 @@ func NewShareExclusions(rules []string) (*ShareExclusions, error) {
 
 // Excluded checks the entry and folder ancestors, never the explicit share root.
 func (e *ShareExclusions) Excluded(virtual string, directory bool) bool {
+	return e.excluded(virtual, directory, true)
+}
+
+// DownloadExcluded also applies folder rules to remote top-level folders.
+func (e *ShareExclusions) DownloadExcluded(virtual string) bool {
+	return e.excluded(virtual, false, false)
+}
+
+func (e *ShareExclusions) excluded(virtual string, directory, exemptRoot bool) bool {
 	if e == nil || e.pattern == nil {
 		return false
 	}
@@ -56,6 +65,9 @@ func (e *ShareExclusions) Excluded(virtual string, directory bool) bool {
 			return true
 		}
 		virtual = virtual[:i]
+	}
+	if !exemptRoot && virtual != "" {
+		return e.pattern.MatchString("D" + virtual)
 	}
 	return false
 }

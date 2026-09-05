@@ -531,6 +531,7 @@ type SearchResult struct {
 	Bitrate     uint32 `json:"bitrate,omitempty"`
 	Duration    uint32 `json:"duration,omitempty"`
 	VBR         bool   `json:"vbr,omitempty"`
+	VBRKnown    bool   `json:"vbr_known,omitempty"`
 	SampleRate  uint32 `json:"sample_rate,omitempty"`
 	BitDepth    uint32 `json:"bit_depth,omitempty"`
 	Public      bool   `json:"public"`
@@ -552,8 +553,12 @@ func (r SearchResult) encode(e *Encoder) error {
 	if r.Duration != 0 {
 		attributes = append(attributes, [2]uint32{FileAttributeDuration, r.Duration})
 	}
-	if r.VBR {
-		attributes = append(attributes, [2]uint32{FileAttributeVBR, 1})
+	if r.VBR || r.VBRKnown {
+		value := uint32(0)
+		if r.VBR {
+			value = 1
+		}
+		attributes = append(attributes, [2]uint32{FileAttributeVBR, value})
 	}
 	if r.SampleRate != 0 {
 		attributes = append(attributes, [2]uint32{FileAttributeSampleRate, r.SampleRate})
@@ -609,7 +614,7 @@ func decodeSearchResult(d *Decoder) (SearchResult, error) {
 		case FileAttributeDuration:
 			result.Duration = value
 		case FileAttributeVBR:
-			result.VBR = value != 0
+			result.VBR, result.VBRKnown = value != 0, true
 		case FileAttributeSampleRate:
 			result.SampleRate = value
 		case FileAttributeBitDepth:
@@ -851,17 +856,18 @@ type ShareEntry struct {
 	Name                    string
 	Size                    uint64
 	Directory, Private, VBR bool
+	VBRKnown                bool `json:"vbr_known,omitempty"`
 	Extension               string
 	Bitrate, Duration       uint32
 	SampleRate, BitDepth    uint32
 }
 
 func shareEntryFromSearch(path string, file SearchResult, private bool) ShareEntry {
-	return ShareEntry{Name: path, Size: file.Size, Private: private, Extension: file.Extension, Bitrate: file.Bitrate, Duration: file.Duration, VBR: file.VBR, SampleRate: file.SampleRate, BitDepth: file.BitDepth}
+	return ShareEntry{Name: path, Size: file.Size, Private: private, Extension: file.Extension, Bitrate: file.Bitrate, Duration: file.Duration, VBR: file.VBR, VBRKnown: file.VBRKnown, SampleRate: file.SampleRate, BitDepth: file.BitDepth}
 }
 
 func searchResultFromShare(file ShareEntry, path string) SearchResult {
-	return SearchResult{Path: path, Size: file.Size, Extension: file.Extension, Bitrate: file.Bitrate, Duration: file.Duration, VBR: file.VBR, SampleRate: file.SampleRate, BitDepth: file.BitDepth}
+	return SearchResult{Path: path, Size: file.Size, Extension: file.Extension, Bitrate: file.Bitrate, Duration: file.Duration, VBR: file.VBR, VBRKnown: file.VBRKnown, SampleRate: file.SampleRate, BitDepth: file.BitDepth}
 }
 
 type FolderRequest struct {

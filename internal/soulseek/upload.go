@@ -10,13 +10,16 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 )
 
 type TransferEvent struct {
+	Restored                             bool
 	Direction, Username, Filename, State string
 	Attempt                              uint64
 	Done, Total                          uint64
+	Fingerprint                          string
 	Error                                string
 }
 
@@ -29,6 +32,7 @@ type UploadTarget struct {
 type uploadAttempt struct {
 	target         UploadTarget
 	key, localPath string
+	fingerprint    string
 	job            *UploadJob
 	ctx            context.Context
 	cancel         context.CancelFunc
@@ -42,10 +46,10 @@ type uploadAttempt struct {
 
 func (c *Client) emitUpload(a *uploadAttempt, state string, done uint64, message string) {
 	if callback := c.cfg.UploadUpdate; callback != nil {
-		callback(TransferEvent{Direction: "upload", Username: a.target.Username, Filename: a.target.Filename, Attempt: a.target.Attempt, State: state, Done: done, Total: a.job.Request.Size, Error: message})
+		callback(TransferEvent{Direction: "upload", Username: a.target.Username, Filename: a.target.Filename, Attempt: a.target.Attempt, State: state, Done: done, Total: a.job.Request.Size, Fingerprint: a.fingerprint, Error: message})
 	}
 	// Events are informational; the callback above owns authoritative bookkeeping.
-	c.emit(Event{Command: PeerTransferRequest, Message: TransferEvent{Direction: "upload", Username: a.target.Username, Filename: a.target.Filename, Attempt: a.target.Attempt, State: state, Done: done, Total: a.job.Request.Size, Error: message}})
+	c.emit(Event{Command: PeerTransferRequest, Message: TransferEvent{Direction: "upload", Username: a.target.Username, Filename: a.target.Filename, Attempt: a.target.Attempt, State: state, Done: done, Total: a.job.Request.Size, Fingerprint: a.fingerprint, Error: message}})
 }
 
 func (c *Client) validateUpload(username, filename string) (string, string, uint64, error) {
@@ -70,11 +74,43 @@ func (c *Client) validateUpload(username, filename string) (string, string, uint
 	return strings.ReplaceAll(clean, "/", "\\"), localPath, uint64(stat.Size()), nil
 }
 
+func fileFingerprint(path string) (string, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return "", err
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return "", errors.New("soulseek: file fingerprint unavailable")
+	}
+	return fmt.Sprintf("%d:%d:%d:%d:%d", stat.Dev, stat.Ino, info.Size(), info.ModTime().UnixNano(), stat.Ctim.Sec*1e9+stat.Ctim.Nsec), nil
+}
+
 func (c *Client) registerUpload(username, filename string, peerRequeue bool) (*uploadAttempt, bool, error) {
+	return c.registerUploadWithOptions(username, filename, peerRequeue, false, "")
+}
+
+func (c *Client) registerUploadWithOptions(username, filename string, peerRequeue, restored bool, expectedFingerprint string) (*uploadAttempt, bool, error) {
+	if !restored && c.cfg.UploadsReady != nil {
+		select {
+		case <-c.cfg.UploadsReady:
+		case <-c.uploadRoot.Done():
+			return nil, false, c.uploadRoot.Err()
+		}
+	}
+	c.uploadAdmissionMu.Lock()
+	defer c.uploadAdmissionMu.Unlock()
 	for {
 		wire, localPath, size, err := c.validateUpload(username, filename)
 		if err != nil {
 			return nil, false, err
+		}
+		fingerprint, err := fileFingerprint(localPath)
+		if err != nil {
+			return nil, false, err
+		}
+		if expectedFingerprint != "" && fingerprint != expectedFingerprint {
+			return nil, false, errors.New("soulseek: shared file changed")
 		}
 		key := downloadKey(username, wire)
 		c.mu.Lock()
@@ -104,14 +140,56 @@ func (c *Client) registerUpload(username, filename string, peerRequeue bool) (*u
 		c.uploadSeq++
 		ctx, cancel := context.WithCancel(c.uploadRoot)
 		a := &uploadAttempt{target: UploadTarget{Username: username, Filename: wire, Attempt: c.uploadSeq}, key: key, localPath: localPath, ctx: ctx, cancel: cancel, done: make(chan struct{}), state: "queued"}
-		a.job = c.cfg.Uploads.Enqueue(username, TransferRequest{Direction: 1, Token: randomToken(), Filename: wire, Size: size})
+		a.fingerprint = fingerprint
+		request := TransferRequest{Direction: 1, Token: randomToken(), Filename: wire, Size: size}
+		if restored {
+			a.job = c.cfg.Uploads.EnqueueRestored(username, request)
+		} else {
+			a.job, err = c.cfg.Uploads.TryEnqueue(username, request)
+		}
+		if err != nil || a.job == nil {
+			c.mu.Unlock()
+			cancel()
+			if err == nil {
+				err = ErrTooManyUploadBytes
+			}
+			if reject := c.cfg.UploadRejected; reject != nil {
+				reject(TransferEvent{Direction: "upload", Username: username, Filename: wire, Total: size, Error: err.Error()})
+			}
+			return nil, false, err
+		}
 		c.uploads[key] = a
 		c.uploadWG.Add(1)
 		c.mu.Unlock()
+		if accept := c.cfg.UploadAccepted; accept != nil {
+			if err := accept(TransferEvent{Restored: restored, Direction: "upload", Username: username, Filename: wire, Attempt: a.target.Attempt, State: "queued", Total: size, Fingerprint: fingerprint}); err != nil {
+				cancel()
+				c.cfg.Uploads.Done(a.job)
+				c.mu.Lock()
+				delete(c.uploads, key)
+				close(a.done)
+				c.mu.Unlock()
+				c.uploadWG.Done()
+				return nil, false, err
+			}
+		}
 		c.emitUpload(a, "queued", 0, "")
 		go c.executeUpload(a)
 		return a, true, nil
 	}
+}
+
+// RestoreUpload re-admits previously accepted work with fresh protocol tokens.
+func (c *Client) RestoreUpload(username, filename, fingerprint string) (bool, error) {
+	_, started, err := c.registerUploadWithOptions(username, filename, false, true, fingerprint)
+	return started, err
+}
+
+func uploadDenial(err error) string {
+	if errors.Is(err, ErrTooManyUploadFiles) || errors.Is(err, ErrTooManyUploadBytes) {
+		return err.Error()
+	}
+	return "File not shared"
 }
 
 // QueueUpload registers a manual retry; network work belongs to the client.
@@ -123,6 +201,12 @@ func (c *Client) QueueUpload(username, filename string) (bool, error) {
 func (c *Client) executeUpload(a *uploadAttempt) {
 	defer c.uploadWG.Done()
 	setupCtx, setupCancel := context.WithTimeout(a.ctx, 30*time.Minute)
+	if c.cfg.UploadsReady != nil {
+		select {
+		case <-c.cfg.UploadsReady:
+		case <-setupCtx.Done():
+		}
+	}
 	err := c.cfg.Uploads.Wait(setupCtx, a.job)
 	if err == nil {
 		err = a.ctx.Err()
@@ -238,7 +322,8 @@ func (c *Client) performUpload(a *uploadAttempt, setupCtx context.Context, setup
 	if err != nil {
 		return err
 	}
-	if local != a.localPath || size != a.job.Request.Size {
+	fingerprint, fingerprintErr := fileFingerprint(local)
+	if fingerprintErr != nil || fingerprint != a.fingerprint || local != a.localPath || size != a.job.Request.Size {
 		return errors.New("soulseek: shared file changed before stream start")
 	}
 	setupCancel()

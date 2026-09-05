@@ -189,9 +189,11 @@ const (
 )
 
 type UploadPolicy struct {
-	Scheduling     string
-	BytesPerSecond int64
-	PerTransfer    bool
+	Scheduling            string
+	BytesPerSecond        int64
+	PerTransfer           bool
+	MaxQueuedFilesPerUser uint64
+	MaxQueuedBytesPerUser uint64
 }
 
 // UploadManager schedules passive uploads with global slots and one slot per user.
@@ -199,6 +201,8 @@ type UploadManager struct {
 	mu                    sync.Mutex
 	max, active           int
 	byUser                map[string]int
+	outstandingFiles      map[string]uint64
+	outstandingBytes      map[string]uint64
 	q                     []*UploadJob
 	policy                UploadPolicy
 	sequence, paceVersion uint64
@@ -212,7 +216,7 @@ func NewUploadManager(maxSlots int) *UploadManager {
 	if maxSlots < 1 {
 		maxSlots = 1
 	}
-	return &UploadManager{max: maxSlots, byUser: make(map[string]int), policy: UploadPolicy{Scheduling: UploadScheduleFIFO}, served: make(map[string]uint64), paceChanged: make(chan struct{}), chooseRandom: rand.IntN}
+	return &UploadManager{max: maxSlots, byUser: make(map[string]int), outstandingFiles: make(map[string]uint64), outstandingBytes: make(map[string]uint64), policy: UploadPolicy{Scheduling: UploadScheduleFIFO}, served: make(map[string]uint64), paceChanged: make(chan struct{}), chooseRandom: rand.IntN}
 }
 
 func (m *UploadManager) Configure(policy UploadPolicy) {
@@ -240,13 +244,47 @@ func (m *UploadManager) Policy() UploadPolicy {
 	return m.policy
 }
 
-func (m *UploadManager) Enqueue(user string, r TransferRequest) *UploadJob {
-	j := &UploadJob{User: user, Request: r, Ready: make(chan struct{})}
-	m.mu.Lock()
-	m.q = append(m.q, j)
-	m.promote()
-	m.mu.Unlock()
+var (
+	ErrTooManyUploadFiles = errors.New("Too many files")
+	ErrTooManyUploadBytes = errors.New("Too many megabytes")
+	// Short aliases keep callers independent of the wire wording.
+	ErrUploadTooManyFiles = ErrTooManyUploadFiles
+	ErrUploadTooManyBytes = ErrTooManyUploadBytes
+)
+
+// Enqueue is the historical test/internal API. Production admission uses TryEnqueue.
+// EnqueueRestored reserves an already accepted upload without applying the current caps.
+func (m *UploadManager) EnqueueRestored(user string, r TransferRequest) *UploadJob {
+	j, _ := m.enqueue(user, r, false)
 	return j
+}
+func (m *UploadManager) Enqueue(user string, r TransferRequest) *UploadJob {
+	j, _ := m.enqueue(user, r, false)
+	return j
+}
+
+// TryEnqueue atomically reserves one outstanding file and its full wire size.
+func (m *UploadManager) TryEnqueue(user string, r TransferRequest) (*UploadJob, error) {
+	return m.enqueue(user, r, true)
+}
+
+func (m *UploadManager) enqueue(user string, r TransferRequest, enforce bool) (*UploadJob, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if enforce {
+		if max := m.policy.MaxQueuedFilesPerUser; max != 0 && m.outstandingFiles[user]+1 > max {
+			return nil, ErrTooManyUploadFiles
+		}
+		if max := m.policy.MaxQueuedBytesPerUser; max != 0 && (m.outstandingBytes[user] > max || r.Size > max-m.outstandingBytes[user]) {
+			return nil, ErrTooManyUploadBytes
+		}
+	}
+	j := &UploadJob{User: user, Request: r, Ready: make(chan struct{})}
+	m.q = append(m.q, j)
+	m.outstandingFiles[user]++
+	m.outstandingBytes[user] += r.Size
+	m.promote()
+	return j, nil
 }
 
 func (m *UploadManager) nextIndex() int {
@@ -326,6 +364,14 @@ func (m *UploadManager) Done(job *UploadJob) {
 		m.active--
 		m.byUser[job.User]--
 		job.active = false
+	}
+	if m.outstandingFiles[job.User] > 0 {
+		m.outstandingFiles[job.User]--
+	}
+	if m.outstandingBytes[job.User] >= job.Request.Size {
+		m.outstandingBytes[job.User] -= job.Request.Size
+	} else {
+		m.outstandingBytes[job.User] = 0
 	}
 	for i, queued := range m.q {
 		if queued == job {
