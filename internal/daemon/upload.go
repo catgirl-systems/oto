@@ -49,23 +49,61 @@ func (s *Service) uploadUpdate(session uint64, event soulseek.TransferEvent) {
 		if exists && previous.session == session && previous.target.Attempt >= event.Attempt {
 			return
 		}
-	} else if !exists || previous != owner {
+	} else if !exists || previous != owner || !liveUpload(s.transfers[id].State) {
 		return
 	}
 	if s.uploadOwners == nil {
 		s.uploadOwners = make(map[string]uploadOwner)
 	}
+	if event.State == "queued" {
+		if s.transfers[id].State == "completed" {
+			delete(s.transferTiming, id)
+		}
+		s.prepareTransferLocked(id)
+	}
 	s.uploadOwners[id] = owner
+	s.progressTransferLocked(id, event.Done)
 	s.transfers[id] = Transfer{ID: id, Username: event.Username, Filename: event.Filename, Direction: "upload", State: event.State, Done: event.Done, Total: event.Total, Error: event.Error}
+	if event.State != "running" {
+		s.stopTransferLocked(id)
+	}
+	if event.State == "completed" && s.cfg.Uploads.AutoClearCompleted {
+		delete(s.transfers, id)
+		delete(s.transferTiming, id)
+		// Keep this session's attempt watermark to reject delayed callbacks.
+	}
+}
+
+func (s *Service) uploadStreamStart(session uint64, event soulseek.TransferEvent) {
+	if event.Direction != "upload" {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed || session != s.uploadEpoch {
+		return
+	}
+	id := uploadID(event.Username, event.Filename)
+	owner := uploadOwner{session: session, target: soulseek.UploadTarget{Username: event.Username, Filename: event.Filename, Attempt: event.Attempt}}
+	if s.uploadOwners[id] != owner || s.transfers[id].ID == "" {
+		return
+	}
+	s.startTransferLocked(id, event.Done)
 }
 
 // Retire callbacks before closing a session. History remains available offline.
 func (s *Service) retireUploadsLocked() {
 	s.uploadEpoch++
+	for id := range s.uploadOwners {
+		if _, exists := s.transfers[id]; !exists {
+			delete(s.uploadOwners, id)
+		}
+	}
 	for id, transfer := range s.transfers {
 		if transfer.Direction == "upload" && liveUpload(transfer.State) {
 			transfer.State, transfer.Error = "failed", "Soulseek connection closed"
 			s.transfers[id] = transfer
+			s.stopTransferLocked(id)
 		}
 	}
 }
@@ -216,12 +254,14 @@ func (s *Service) UploadAction(req UploadActionRequest) (UploadActionResult, err
 			} else {
 				current.State, current.Error = "cancelled", ""
 				s.transfers[id] = current
+				s.stopTransferLocked(id)
 				result.Changed++
 			}
 			s.mu.Unlock()
 		case "clear":
 			delete(s.transfers, id)
-			delete(s.uploadOwners, id)
+			// Retain the attempt watermark until this session is retired.
+			delete(s.transferTiming, id)
 			result.Changed++
 			s.mu.Unlock()
 		}

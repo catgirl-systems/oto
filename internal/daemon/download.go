@@ -45,6 +45,7 @@ func (s *Service) startDownload(id string) {
 			!(download.State == "retrying" && !download.RetryAt.After(time.Now()))) {
 			continue
 		}
+		s.prepareTransferLocked(id)
 		ctx, cancel := context.WithCancel(s.ctx)
 		done := make(chan struct{})
 		s.downloadCancels[id], s.downloadDone[id] = cancel, done
@@ -154,9 +155,12 @@ func (s *Service) runDownload(ctx context.Context, download Download, slots chan
 	if offset < download.Size {
 		client, err := s.waitClient(ctx)
 		if err == nil {
-			err = client.Download(ctx, download.Username, strings.ReplaceAll(download.Filename, "/", "\\"), download.Size, offset, file, func(progress soulseek.Progress) {
+			err = client.DownloadWithStart(ctx, download.Username, strings.ReplaceAll(download.Filename, "/", "\\"), download.Size, offset, file, func(progress soulseek.Progress) {
 				s.updateTransferProgress(id, progress)
-			})
+			}, func() { s.startTransfer(id, offset) })
+			s.mu.Lock()
+			s.stopTransferLocked(id)
+			s.mu.Unlock()
 		}
 		if current, statErr := file.Stat(); statErr == nil && current.Size() >= 0 {
 			offset = uint64(current.Size())
@@ -217,11 +221,15 @@ func (s *Service) updateTransferProgress(id string, progress soulseek.Progress) 
 		state = "running"
 	}
 	s.mu.Lock()
+	defer s.mu.Unlock()
 	if transfer := s.transfers[id]; transfer.ID != "" && (transfer.State == "running" || transfer.State == "queued") {
+		if state == "queued" && s.transferTiming[id].streamBegan {
+			return
+		}
 		transfer.Done, transfer.Total, transfer.State, transfer.Queue = progress.Done, progress.Total, state, progress.Queue
 		s.transfers[id] = transfer
+		s.progressTransferLocked(id, progress.Done)
 	}
-	s.mu.Unlock()
 }
 
 func (s *Service) updateDownload(id, state string, offset uint64, failure error) {
@@ -245,6 +253,9 @@ func (s *Service) updateDownload(id, state string, offset uint64, failure error)
 		if transfer := s.transfers[id]; transfer.ID != "" {
 			transfer.State, transfer.Done, transfer.Error, transfer.Queue = d.State, d.Offset, d.Error, 0
 			s.transfers[id] = transfer
+			if state != "running" {
+				s.stopTransferLocked(id)
+			}
 		}
 		if err := s.saveJournalLocked(); err != nil {
 			log.Printf("save download state: %v", err)
