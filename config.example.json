@@ -21,15 +21,18 @@
     "minimum_incoming_search_length": 3,
     "maximum_incoming_search_results": 300
   },
-  "uploads": {
-    "auto_clear_completed": false,
+  "bandwidth": {
+    "active_profile": "Unlimited",
     "profiles": [
       {
         "name": "Unlimited",
-        "speed_limit_kib": 0
+        "upload_speed_limit_kib": 0,
+        "download_speed_limit_kib": 0
       }
-    ],
-    "active_profile": "Unlimited",
+    ]
+  },
+  "uploads": {
+    "auto_clear_completed": false,
     "limit_scope": "total",
     "scheduling": "fifo"
   },

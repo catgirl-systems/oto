@@ -169,7 +169,13 @@ Settings → Connection shows the public IPv4 address reported by the Soulseek s
 
 The network-interface picker cycles through **Automatic**, interfaces visible in the daemon's network namespace, and **Custom…** for a name that is currently unavailable. Saving a changed interface reconnects the Soulseek session. A selected interface binds every Soulseek TCP socket with Linux `SO_BINDTODEVICE`; binding is fail-closed, so a missing interface or permission error leaves the session reconnecting instead of allowing traffic over another route. Automatic NAT-PMP/UPnP is skipped without changing its saved switches while interface binding is active; use `--listen-port-file` for a VPN-assigned forwarded port.
 
-Settings → Uploads manages ordered named speed-limit profiles. `uploads.active_profile` selects a profile; `speed_limit_kib` is KiB/s and `0` means unlimited. `limit_scope` accepts `total` or `per_transfer`; `scheduling` accepts `fifo`, `round_robin`, `random`, or `smallest_first`. Limits can apply once across all active uploads or independently to each transfer. FIFO, user-fair round-robin, user-uniform random, and smallest-file-first scheduling affect queued uploads only. Profile, scope, and scheduler changes are staged until `s`, then hot-applied without reconnecting; active transfers keep running.
+Settings → Bandwidth manages ordered named profiles containing both `upload_speed_limit_kib` and `download_speed_limit_kib`. `bandwidth.active_profile` selects one profile for both directions. Each limit accepts 0–1000000 KiB/s; `0` means unlimited in that direction. New profiles start unlimited. Select `New…` to add a profile, edit its name and limits, or delete it (the last profile cannot be deleted). Selection and edits are staged until `s`, then saved and hot-applied to active transfers without reconnecting.
+
+Download limits apply once across **all active downloads combined**, not once per peer. Only file payload reads are limited: searching, browsing, handshakes, uploads, and local finalization copies are unaffected. Credit is capped at one chunk (1–32 KiB); this shapes application payload throughput, not instantaneous network-interface traffic. TCP buffering and already-issued reads can briefly exceed a newly selected limit. Idle peers do not reserve equal shares, and there is no per-peer fairness guarantee.
+
+Settings → Uploads retains `uploads.limit_scope` (`total` or `per_transfer`) and `uploads.scheduling` (`fifo`, `round_robin`, `random`, or `smallest_first`). These remain independent of profiles. FIFO, user-fair round-robin, user-uniform random, and smallest-file-first scheduling affect queued uploads only; saved scope and scheduler changes hot-apply.
+
+Older `uploads.profiles` / `uploads.active_profile` settings migrate automatically, preserving profile names, order, upload rates, and the active selection; download rates start unlimited. An explicit `bandwidth` object takes precedence. Loading does not rewrite the file; the next successful save emits only the new format. Both `PUT` and `PATCH /v1/config` still take a full configuration, not a partial patch.
 
 Settings → Account can change the currently connected Soulseek account password. Select **Change Soulseek password**, press Enter, and enter the new password twice. The change is sent and saved immediately; it cannot be used while disconnected, while a username change is staged, or when `OTO_PASSWORD` supplies the credential.
 
@@ -237,7 +243,7 @@ Default locations follow XDG:
 
 `OTO_USERNAME`, `OTO_PASSWORD`, `OTO_SERVER`, `OTO_LISTEN_ADDR`, `OTO_NETWORK_INTERFACE`, and `OTO_DOWNLOAD_DIR` override JSON values. The daemon never returns or logs the password.
 
-History, wishlist, and upload settings are user choices in `config.json`; mutable history and wishlist entries live in private state files so searches do not continually rewrite daemon configuration.
+History, wishlist, and bandwidth settings are user choices in `config.json`; mutable history and wishlist entries live in private state files so searches do not continually rewrite daemon configuration.
 
 Incoming TCP port `50300` must be reachable for best peer connectivity. Automatic NAT-PMP/UPnP forwarding can make it reachable when supported by the IPv4 router and no network interface is selected; otherwise configure the router or use `--listen-port-file` for a VPN-assigned port. Direct connections are attempted first and server-mediated firewall piercing is used as fallback. The Soulseek protocol itself is not encrypted; do not treat usernames, searches, or transferred data as private.
 
@@ -351,8 +357,8 @@ This tracks user-visible Soulseek functionality and meaningful operational quali
 | Rename a file before downloading | :x: | :white_check_mark: |
 | Automatic filename-based download filters | :x: | :white_check_mark: |
 | Force a filtered download to bypass filters | :x: | :white_check_mark: |
-| Global download speed limit | :x: | :white_check_mark: |
-| Alternate download speed-limit preset | :x: | :white_check_mark: |
+| Global download speed limit | :white_check_mark: | :white_check_mark: |
+| Alternate download speed-limit preset | :fast_forward: | :white_check_mark: |
 | Run a command after a file finishes | :white_check_mark: | :white_check_mark: |
 | Run a command after a folder finishes | :white_check_mark: | :white_check_mark: |
 | Notify when a file or folder finishes | :white_check_mark: | :white_check_mark: |
@@ -383,8 +389,8 @@ This tracks user-visible Soulseek functionality and meaningful operational quali
 | Manually send a file to another user | :x: | :white_check_mark: |
 | Manually send a folder to another user | :x: | :white_check_mark: |
 | Global upload speed limit | :white_check_mark: | :white_check_mark: |
-| Named upload speed-limit profiles | :white_check_mark: | :x: |
-| Alternate upload speed-limit preset | :white_check_mark: | :white_check_mark: |
+| Named combined upload/download bandwidth profiles | :white_check_mark: | :x: |
+| Alternate upload speed-limit preset | :fast_forward: | :white_check_mark: |
 | Limit upload speed per transfer or across all transfers | :white_check_mark: | :white_check_mark: |
 | FIFO upload scheduling | :white_check_mark: | :white_check_mark: |
 | Round-robin upload scheduling | :white_check_mark: | :white_check_mark: |
