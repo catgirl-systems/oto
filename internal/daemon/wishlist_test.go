@@ -3,7 +3,6 @@ package daemon
 import (
 	"context"
 	"errors"
-	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -13,7 +12,7 @@ import (
 
 func newWishlistService(t *testing.T) *Service {
 	t.Helper()
-	s, err := New(testConfig(t), filepath.Join(t.TempDir(), "downloads.json"))
+	s, err := New(testConfig(t), filepath.Join(t.TempDir(), "state.sqlite3"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -23,7 +22,7 @@ func newWishlistService(t *testing.T) *Service {
 
 func TestWishlistStateRoundTripAndUpsert(t *testing.T) {
 	dir := t.TempDir()
-	journal := filepath.Join(dir, "downloads.json")
+	journal := filepath.Join(dir, "state.sqlite3")
 	s, err := New(testConfig(t), journal)
 	if err != nil {
 		t.Fatal(err)
@@ -36,8 +35,9 @@ func TestWishlistStateRoundTripAndUpsert(t *testing.T) {
 	if err != nil || updated.ID != item.ID || len(s.Wishlist()) != 1 {
 		t.Fatalf("upsert: %+v %v", updated, err)
 	}
-	if st, err := os.Stat(filepath.Join(dir, "wishlist.json")); err != nil || st.Mode().Perm() != 0600 {
-		t.Fatalf("wishlist mode: %v %v", st, err)
+	row, err := s.stateDB.Queries().GetWishlist(context.Background(), "w-1")
+	if err != nil || row.Query != "rare album" {
+		t.Fatalf("wishlist row: %+v %v", row, err)
 	}
 	_ = s.Close()
 
@@ -57,12 +57,6 @@ func TestWishlistStateRoundTripAndUpsert(t *testing.T) {
 		t.Fatalf("remove: %v %+v", err, reloaded.Wishlist())
 	}
 
-	if err := os.WriteFile(filepath.Join(dir, "wishlist.json"), []byte("{"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := New(testConfig(t), journal); err == nil {
-		t.Fatal("corrupt wishlist state accepted")
-	}
 }
 
 func TestWishlistRunsFilterNotifyAndReplace(t *testing.T) {
@@ -90,8 +84,8 @@ func TestWishlistRunsFilterNotifyAndReplace(t *testing.T) {
 	if got.ResultCount != 1 || !got.Unread || got.NotificationSequence != 1 || notifications != 1 || page.ID != wishlistSearchID(item.ID) {
 		t.Fatalf("automatic state: %+v notifications=%d", got, notifications)
 	}
-	persisted, err := loadWishlist(s.wishlistPath)
-	if err != nil || len(persisted.Items) != 1 || !persisted.Items[0].Unread || persisted.Items[0].ResultSignature == "" {
+	persisted, err := s.stateDB.Queries().GetWishlist(context.Background(), item.ID)
+	if err != nil || persisted.Unread != 1 || persisted.ResultSignature == "" {
 		t.Fatalf("result metadata was not persisted: %+v %v", persisted, err)
 	}
 	if _, err := s.runWishlist(context.Background(), item.ID, true); err != nil || notifications != 1 {

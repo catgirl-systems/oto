@@ -13,7 +13,7 @@ func TestFinalizePartRenamesCollision(t *testing.T) {
 	cfg := config.Default()
 	cfg.Soulseek.Username, cfg.Soulseek.Password = "u", "p"
 	cfg.DownloadDir = t.TempDir()
-	service, err := New(cfg, filepath.Join(t.TempDir(), "state.json"))
+	service, err := New(cfg, filepath.Join(t.TempDir(), "state.sqlite3"))
 	if err != nil {
 		t.Fatal(err)
 	}

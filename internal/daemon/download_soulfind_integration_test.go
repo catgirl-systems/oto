@@ -3,7 +3,6 @@ package daemon
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -118,7 +117,7 @@ func TestSoulfindDaemonDownloadLifecycle(t *testing.T) {
 	secondContents := []byte("second download")
 	firstPeer := startIntegrationUploader(t, address, "a"+stamp, map[string][]byte{firstName: firstContents}, 32<<10)
 	secondPeer := startIntegrationUploader(t, address, "b"+stamp, map[string][]byte{secondName: secondContents}, 0)
-	downloadRoot, journalPath := t.TempDir(), filepath.Join(t.TempDir(), "downloads.json")
+	downloadRoot, journalPath := t.TempDir(), filepath.Join(t.TempDir(), "state.sqlite3")
 	service := startIntegrationDownloadService(t, address, "c"+stamp, downloadRoot, journalPath, 1)
 	t.Cleanup(func() { _ = service.Close() })
 
@@ -140,13 +139,9 @@ func TestSoulfindDaemonDownloadLifecycle(t *testing.T) {
 		return transfer.State == "running" && transfer.Done > 0 && err == nil && stat.Size() > 0
 	})
 
-	data, err := os.ReadFile(journalPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var journal Journal
-	if err := json.Unmarshal(data, &journal); err != nil || len(journal.Downloads) != 1 || journal.Downloads[0].ID != firstID {
-		t.Fatalf("queued journal: %+v %v", journal, err)
+	rows, err := service.stateDB.Queries().ListDownloads(context.Background())
+	if err != nil || len(rows) != 1 || rows[0].ID != firstID {
+		t.Fatalf("queued database rows: %+v %v", rows, err)
 	}
 	second, err := service.QueueDownloads([]DownloadRequest{{Username: secondPeer.username, Files: []DownloadItem{{Filename: "Music/" + secondName, Size: uint64(len(secondContents))}}}})
 	if err != nil {
@@ -211,7 +206,7 @@ func TestSoulfindDaemonRestartsAndResumesDownload(t *testing.T) {
 	filename := "restart-" + stamp + ".flac"
 	contents := bytes.Repeat([]byte("restart resume\n"), 8192)
 	peer := startIntegrationUploader(t, address, "r"+stamp, map[string][]byte{filename: contents}, 32<<10)
-	downloadRoot, journalPath := t.TempDir(), filepath.Join(t.TempDir(), "downloads.json")
+	downloadRoot, journalPath := t.TempDir(), filepath.Join(t.TempDir(), "state.sqlite3")
 	username := "s" + stamp
 	service := startIntegrationDownloadService(t, address, username, downloadRoot, journalPath, 2)
 	downloads, err := service.QueueDownloads([]DownloadRequest{{Username: peer.username, Files: []DownloadItem{{Filename: "Music/" + filename, Size: uint64(len(contents))}}}})

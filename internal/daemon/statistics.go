@@ -44,7 +44,7 @@ func (s *Service) Statistics(f stats.Filter) (StatsOverview, error) {
 	f = s.statsFilter(f)
 	s.mu.RLock()
 	t := s.telemetry
-	out := StatsOverview{Account: f.Account, Session: t.session, Since: s.journal.StatsSince, UptimeSeconds: uint64(max(0, time.Since(t.started).Seconds())), Warning: t.warning, Samples: slices.Clone(t.samples[f.Account])}
+	out := StatsOverview{Account: f.Account, Session: t.session, Since: t.statsSince, UptimeSeconds: uint64(max(0, time.Since(t.started).Seconds())), Warning: t.warning, Samples: slices.Clone(t.samples[f.Account])}
 	out.OnlineSeconds = uint64(max(0, t.online[f.Account].Seconds()))
 	if n := t.connections[f.Account]; n > 0 {
 		out.Reconnects = n - 1

@@ -72,13 +72,29 @@ func (s *Service) resumeDownloads() {
 	var ids []string
 	for i := range s.journal.Downloads {
 		if state := s.journal.Downloads[i].State; state == "queued" || state == "incomplete" || state == "running" || state == "finalizing" {
-			s.journal.Downloads[i].State = "queued"
 			ids = append(ids, s.journal.Downloads[i].ID)
 		}
 	}
-	_ = s.saveJournalLocked()
-	s.mu.Unlock()
+	starts := make([]string, 0, len(ids))
 	for _, id := range ids {
+		for i := range s.journal.Downloads {
+			if s.journal.Downloads[i].ID != id {
+				continue
+			}
+			previous := s.snapshotLocked(id)
+			s.journal.Downloads[i].State = "queued"
+			s.journal.Downloads[i].UpdatedAt = time.Now().UTC()
+			if err := s.persistDownloadLocked(s.journal.Downloads[i]); err != nil {
+				s.restoreLocked(previous)
+				log.Printf("resume download: %v", err)
+			} else {
+				starts = append(starts, id)
+			}
+			break
+		}
+	}
+	s.mu.Unlock()
+	for _, id := range starts {
 		s.startDownload(id)
 	}
 }
@@ -149,7 +165,9 @@ func (s *Service) runDownload(ctx context.Context, download Download, slots chan
 		return
 	}
 	offset = uint64(stat.Size())
-	s.updateDownload(id, "running", offset, nil)
+	if err := s.updateDownload(id, "running", offset, nil); err != nil {
+		return
+	}
 
 	// A previous attempt may have downloaded everything but failed to move it.
 	if offset < download.Size {
@@ -159,14 +177,23 @@ func (s *Service) runDownload(ctx context.Context, download Download, slots chan
 			identity := s.cfg
 			identity.Soulseek.Server, identity.Soulseek.Username = client.AccountIdentity()
 			account := accountKey(identity)
+			var accountErr error
 			for i := range s.journal.Downloads {
 				if s.journal.Downloads[i].ID == id {
+					previous := s.snapshotLocked(id)
 					s.journal.Downloads[i].StatsAccount = account
+					s.statsBeginLocked(id, account)
+					accountErr = s.persistDownloadLocked(s.journal.Downloads[i])
+					if accountErr != nil {
+						s.restoreLocked(previous)
+					}
 					break
 				}
 			}
-			s.statsBeginLocked(id, account)
 			s.mu.Unlock()
+			if accountErr != nil {
+				return
+			}
 			err = client.DownloadWithStart(ctx, download.Username, strings.ReplaceAll(download.Filename, "/", "\\"), download.Size, offset, file, func(progress soulseek.Progress) {
 				s.updateTransferProgress(id, progress)
 			}, func() { s.startTransfer(id, offset) })
@@ -241,11 +268,21 @@ func (s *Service) updateTransferProgress(id string, progress soulseek.Progress) 
 		}
 		transfer.Done, transfer.Total, transfer.State, transfer.Queue = progress.Done, progress.Total, state, progress.Queue
 		s.transfers[id] = transfer
+		for i := range s.journal.Downloads {
+			if s.journal.Downloads[i].ID == id {
+				s.journal.Downloads[i].Offset = progress.Done
+				s.journal.Downloads[i].UpdatedAt = time.Now().UTC()
+				if s.telemetry != nil {
+					s.telemetry.dirtyDownloads[id] = true
+				}
+				break
+			}
+		}
 		s.progressTransferLocked(id, progress.Done)
 	}
 }
 
-func (s *Service) updateDownload(id, state string, offset uint64, failure error) {
+func (s *Service) updateDownload(id, state string, offset uint64, failure error) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for i := range s.journal.Downloads {
@@ -253,6 +290,7 @@ func (s *Service) updateDownload(id, state string, offset uint64, failure error)
 		if d.ID != id || d.State == "completed" {
 			continue
 		}
+		previous := s.snapshotLocked(id)
 		if d.State == "paused" || d.State == "cancelled" {
 			state, failure = d.State, nil
 		}
@@ -277,15 +315,25 @@ func (s *Service) updateDownload(id, state string, offset uint64, failure error)
 			}
 		}
 		s.statsStateLocked(id, state)
-		if err := s.saveJournalLocked(); err != nil {
+		if err := s.persistDownloadLocked(*d); err != nil {
+			if state == "running" {
+				s.restoreLocked(previous)
+			}
+			// Worker outcomes cannot be undone; retain their dirty row and
+			// accounting for the next checkpoint instead of losing the result.
+			if s.telemetry != nil {
+				s.telemetry.warning = "Persistence: " + err.Error()
+			}
 			log.Printf("save download state: %v", err)
+			return err
 		}
-		return
+		return nil
 	}
+	return os.ErrNotExist
 }
 
 func (s *Service) finishDownload(id, state string, offset uint64, failure error) {
-	s.updateDownload(id, state, offset, failure)
+	_ = s.updateDownload(id, state, offset, failure)
 }
 
 func (s *Service) finalizePart(downloadRoot, partPath, relative, id string) (string, error) {

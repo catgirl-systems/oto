@@ -53,7 +53,7 @@ func TestBandwidthSaveDuringConnect(t *testing.T) {
 		t.Fatal(err)
 	}
 	// The next daemon/client lifecycle derives the same two rates from disk.
-	restarted, err := New(loaded, filepath.Join(t.TempDir(), "journal.json"))
+	restarted, err := New(loaded, filepath.Join(t.TempDir(), "state.sqlite3"))
 	if err != nil {
 		t.Fatal(err)
 	}

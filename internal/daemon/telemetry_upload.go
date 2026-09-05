@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"context"
 	"github.com/catgirl-systems/oto/internal/soulseek"
 	"github.com/catgirl-systems/oto/internal/stats"
 	"time"
@@ -35,7 +36,7 @@ func (s *Service) uploadRejected(epoch uint64, event soulseek.TransferEvent) {
 		return
 	}
 	s.statsEventLocked(stats.Event{Account: s.uploadAccountLocked(epoch), Peer: event.Username, Direction: "upload", Kind: stats.KindRejected, Filename: event.Filename, Error: event.Error})
-	if err := s.saveJournalLocked(); err != nil {
+	if err := s.commitLockedFor(context.Background(), map[string]bool{"": true}, nil); err != nil {
 		s.telemetry.warning = "Statistics persistence: " + err.Error()
 	}
 	select {

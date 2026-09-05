@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/catgirl-systems/oto/internal/config"
 	"github.com/catgirl-systems/oto/internal/soulseek"
 )
 
@@ -74,35 +75,62 @@ func (s *Service) completeDownload(id, root, partPath string) {
 	folder := filepath.Dir(target)
 	folderFinished := folder != root && s.folderCompleteLocked(download.Username, folder)
 	closed := s.closed
-	s.statsStateLocked(id, "completed")
-	err = s.saveJournalLocked()
-	if err == nil && !closed {
-		s.notifyDownloadLocked(download.Username, target, folderFinished)
+	var completed Download
+	for _, item := range s.journal.Downloads {
+		if item.ID == id {
+			completed = item
+			break
+		}
 	}
-	s.mu.Unlock()
+	s.statsStateLocked(id, "completed")
+	err = s.persistDownloadLocked(completed)
 	if err != nil {
+		// Never move a completed file back: EXDEV and partial moves make that
+		// rollback unsafe. Keep terminal state and retry the durable write.
+		if s.completionRetries == nil {
+			s.completionRetries = make(map[string]completionRetry)
+		}
+		s.completionRetries[id] = completionRetry{id: id, username: download.Username, target: target, folder: folder, folderFinished: folderFinished, commands: commands, closed: closed, ctx: ctx}
+		s.mu.Unlock()
 		log.Printf("save completed download (commands and notifications skipped): %v", err)
 		return
 	}
-	_ = s.flushStats()
-	if commands.AutoClearCompleted {
-		defer func() {
-			if err := s.clearCompletedDownload(id); err != nil {
-				log.Printf("clear completed download %s (history retained): %v", id, err)
-			}
-		}()
+	s.mu.Unlock()
+	s.runCompletionEffects(completionRetry{id: id, username: download.Username, target: target, folder: folder, folderFinished: folderFinished, commands: commands, closed: closed, ctx: ctx})
+}
+
+type completionRetry struct {
+	id, username, target, folder string
+	folderFinished               bool
+	commands                     config.Downloads
+	closed                       bool
+	ctx                          context.Context
+}
+
+func (s *Service) runCompletionEffects(r completionRetry) {
+	s.mu.Lock()
+	r.closed = r.closed || s.closed
+	if !r.closed {
+		s.notifyDownloadLocked(r.username, r.target, r.folderFinished)
 	}
-	if closed {
+	s.mu.Unlock()
+	if r.commands.AutoClearCompleted {
+		if err := s.clearCompletedDownload(r.id); err != nil {
+			log.Printf("clear completed download %s (history retained): %v", r.id, err)
+		}
+	}
+	if r.closed {
 		return
 	}
+	ctx := r.ctx
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	if err := startDownloadCommand(ctx, commands.AfterFileCommand, target); err != nil {
+	if err := startDownloadCommand(ctx, r.commands.AfterFileCommand, r.target); err != nil {
 		log.Printf("start file download command: %v", err)
 	}
-	if folderFinished {
-		if err := startDownloadCommand(ctx, commands.AfterFolderCommand, folder); err != nil {
+	if r.folderFinished {
+		if err := startDownloadCommand(ctx, r.commands.AfterFolderCommand, r.folder); err != nil {
 			log.Printf("start folder download command: %v", err)
 		}
 	}

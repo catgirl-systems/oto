@@ -3,7 +3,6 @@ package daemon
 import (
 	"context"
 	"crypto/rand"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -13,7 +12,6 @@ import (
 	"path/filepath"
 	"slices"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -22,6 +20,8 @@ import (
 	"github.com/catgirl-systems/oto/internal/portmap"
 	"github.com/catgirl-systems/oto/internal/soulseek"
 	"github.com/catgirl-systems/oto/internal/stats"
+	"github.com/catgirl-systems/oto/internal/storage"
+	"github.com/catgirl-systems/oto/internal/storage/db"
 )
 
 var (
@@ -154,14 +154,12 @@ type Download struct {
 	UpdatedAt    time.Time `json:"updated_at"`
 }
 type Journal struct {
-	UploadQueueSequence uint64        `json:"upload_queue_sequence,omitempty"`
-	StatsSince          time.Time     `json:"stats_since,omitempty"`
-	StatsPending        []stats.Event `json:"stats_pending,omitempty"`
-	StatsActive         []stats.Event `json:"stats_active,omitempty"`
-	UploadSequence      uint64        `json:"upload_sequence"`
-	Uploads             []Upload      `json:"uploads,omitempty"`
-	DownloadSequence    uint64        `json:"download_sequence"`
-	Downloads           []Download    `json:"downloads"`
+	UploadQueueSequence uint64     `json:"upload_queue_sequence,omitempty"`
+	StatsSince          time.Time  `json:"stats_since,omitempty"`
+	UploadSequence      uint64     `json:"upload_sequence"`
+	Uploads             []Upload   `json:"uploads,omitempty"`
+	DownloadSequence    uint64     `json:"download_sequence"`
+	Downloads           []Download `json:"downloads"`
 }
 
 type DownloadItem struct {
@@ -212,7 +210,6 @@ type Service struct {
 	journal                Journal
 	searches               map[string]Search
 	wishlist               []wishlistEntry
-	wishlistPath           string
 	wishlistNextID         uint64
 	wishlistCursor         int
 	wishlistServerInterval time.Duration
@@ -224,7 +221,6 @@ type Service struct {
 	fullBrowse             fullBrowseFunc
 	browseSeq              uint64
 	browseProgressSeq      uint64
-	remoteSharesDir        string
 	transfers              map[string]Transfer
 	transferTiming         map[string]transferTiming
 	downloadSlots          chan struct{}
@@ -246,7 +242,6 @@ type Service struct {
 	shareScanID            uint64
 	shareScan              *ShareScan
 	shareIndexRevision     uint64
-	shareIndexPath         string
 	shareRescanDelay       time.Duration
 	shareWatchGeneration   uint64
 	listenPortFile         string
@@ -260,6 +255,9 @@ type Service struct {
 	lastErr                string
 	seq                    uint64
 	journalPath            string
+	stateDB                *storage.DB
+	completionRetries      map[string]completionRetry
+	shareStorageMu         sync.Mutex
 	wg                     sync.WaitGroup
 	sessionWG              sync.WaitGroup
 	downloadWG             sync.WaitGroup
@@ -301,39 +299,33 @@ func New(cfg config.Config, path string) (*Service, error) {
 		return client.Search(ctx, query)
 	}, wishlistNotify: notifyWishlist, browses: make(map[string]loadedBrowse), browseProgress: make(map[string]trackedBrowse), fullBrowse: func(ctx context.Context, client *soulseek.Client, username string, progress func(received, total uint64)) ([]soulseek.ShareEntry, error) {
 		return client.BrowseUserWithProgress(ctx, username, "", progress)
-	}, transfers: make(map[string]Transfer), downloadSlots: make(chan struct{}, cfg.DownloadSlots), downloadCancels: make(map[string]context.CancelFunc), downloadDone: make(map[string]chan struct{}), downloadPeers: make(map[string]chan struct{}), shareScanGate: make(chan struct{}, 1), shareRescanDelay: DefaultShareRescanDelay, listenPortInterval: DefaultListenPortReconcileInterval, portMapOpen: func(ctx context.Context, port uint16, natPMP, upnp bool, changed func(uint16)) (portMapping, error) {
+	}, transfers: make(map[string]Transfer), completionRetries: make(map[string]completionRetry), downloadSlots: make(chan struct{}, cfg.DownloadSlots), downloadCancels: make(map[string]context.CancelFunc), downloadDone: make(map[string]chan struct{}), downloadPeers: make(map[string]chan struct{}), shareScanGate: make(chan struct{}, 1), shareRescanDelay: DefaultShareRescanDelay, listenPortInterval: DefaultListenPortReconcileInterval, portMapOpen: func(ctx context.Context, port uint16, natPMP, upnp bool, changed func(uint16)) (portMapping, error) {
 		return portmap.Open(ctx, port, natPMP, upnp, changed)
 	}, portCheck: defaultListeningPortCheck, reconnectWake: make(chan struct{}, 1), status: StatusStopped, presence: PresenceOffline, journalPath: path}
-	s.shareIndexPath = filepath.Join(filepath.Dir(path), "shares.json")
-	s.remoteSharesDir = filepath.Join(filepath.Dir(path), "usershares")
-	s.wishlistPath = filepath.Join(filepath.Dir(path), "wishlist.json")
-	wishlist, err := loadWishlist(s.wishlistPath)
+	s.stateDB, err = storage.OpenDaemon(path)
 	if err != nil {
-		return nil, fmt.Errorf("daemon: load wishlist: %w", err)
-	}
-	s.wishlist, s.wishlistNextID = wishlist.Items, wishlist.NextID
-	if b, err := os.ReadFile(path); err == nil {
-		if err := json.Unmarshal(b, &s.journal); err != nil {
-			return nil, fmt.Errorf("daemon: load journal: %w", err)
-		}
-	} else if !errors.Is(err, os.ErrNotExist) {
+		scanCancel()
 		return nil, err
 	}
-	s.seq = s.journal.DownloadSequence
-	for i := range s.journal.Downloads {
-		if s.journal.Downloads[i].State == "" {
-			s.journal.Downloads[i].State = "queued"
-		}
-		if n := strings.TrimPrefix(s.journal.Downloads[i].ID, "d-"); n != s.journal.Downloads[i].ID {
-			if v, err := strconv.ParseUint(n, 10, 64); err == nil && v > s.seq {
-				s.seq = v
-			}
-		}
-		d := s.journal.Downloads[i]
-		s.transfers[d.ID] = Transfer{ID: d.ID, Username: d.Username, Filename: d.Filename, Direction: "download", State: d.State, Done: d.Offset, Total: d.Size, Error: d.Error}
+	fail := func(err error) (*Service, error) { scanCancel(); _ = s.stateDB.Close(); return nil, err }
+	if err = s.loadState(); err != nil {
+		return fail(fmt.Errorf("daemon: load state: %w", err))
+	}
+	// Load durable records before recovering abandoned attempts.
+	if err = s.loadWishlist(); err != nil {
+		return fail(fmt.Errorf("daemon: load wishlist: %w", err))
+	}
+	if err = s.initShareStorage(); err != nil {
+		return fail(fmt.Errorf("daemon: init share storage: %w", err))
+	}
+	s.initTelemetry()
+	if err = s.ensureStatsSince(); err != nil {
+		return fail(fmt.Errorf("daemon: save statistics start: %w", err))
+	}
+	if err = s.recoverActiveAttempts(); err != nil {
+		return fail(fmt.Errorf("daemon: recover active attempts: %w", err))
 	}
 	s.restoreUploadJournal()
-	s.initTelemetry()
 	return s, nil
 }
 
@@ -395,7 +387,7 @@ func (s *Service) Start(ctx context.Context) error {
 	connect := s.cfg.Soulseek.ConnectOnStartup
 	s.mu.Unlock()
 
-	if idx, err := loadShareIndexCache(s.shareIndexPath, shares, rules); err == nil {
+	if idx, err := s.loadShareIndexCache(shares, rules); err == nil {
 		s.mu.Lock()
 		// A manual scan may have published while the cache was loading.
 		if !s.closed && runCtx.Err() == nil && s.shareIndexRevision == revision {
@@ -881,9 +873,11 @@ func (s *Service) Close() error {
 		}
 	}
 	s.mu.Unlock()
-	err := s.flushStats()
-	if s.telemetry != nil && s.telemetry.store != nil {
-		err = errors.Join(err, s.telemetry.store.Close())
+	flushCtx, flushCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	err := s.flushStatsContext(flushCtx)
+	flushCancel()
+	if s.stateDB != nil {
+		err = errors.Join(err, s.stateDB.Close())
 	}
 	return err
 }
@@ -1158,6 +1152,10 @@ func (s *Service) QueueDownloads(reqs []DownloadRequest) ([]Download, error) {
 				s.mu.Unlock()
 				return nil, err
 			}
+			if sequence == ^uint64(0) {
+				s.mu.Unlock()
+				return nil, errors.New("download ID sequence exhausted")
+			}
 			sequence++
 			state, reason := "queued", ""
 			if item.Offset > 0 {
@@ -1169,21 +1167,38 @@ func (s *Service) QueueDownloads(reqs []DownloadRequest) ([]Download, error) {
 			out = append(out, Download{ID: fmt.Sprintf("d-%d", sequence), Username: req.Username, Filename: strings.ReplaceAll(name, "/", "\\"), Size: item.Size, Offset: item.Offset, DownloadDir: root, Destination: dest, State: state, Error: reason, CreatedAt: now, UpdatedAt: now})
 		}
 	}
-	next := s.journal
-	next.DownloadSequence = sequence
-	next.Downloads = append(slices.Clone(next.Downloads), out...)
+	previous := s.journal
+	previousSeq := s.seq
+	previousPending := []stats.Event(nil)
 	if s.telemetry != nil {
-		next.StatsPending = slices.Clone(next.StatsPending)
-		for _, d := range out {
-			event := stats.Event{Account: accountKey(s.cfg), TransferID: d.ID, Peer: d.Username, Direction: "download", Kind: d.State, Filename: d.Filename, Destination: d.Destination}
-			next.StatsPending = append(next.StatsPending, s.statsPrepareEventLocked(event))
-		}
+		previousPending = slices.Clone(s.telemetry.pending)
 	}
-	if err := config.SaveJSON(s.journalPath, next); err != nil {
+	s.seq, s.journal.DownloadSequence = sequence, sequence
+	s.journal.Downloads = append(slices.Clone(s.journal.Downloads), out...)
+	for _, d := range out {
+		event := stats.Event{Account: accountKey(s.cfg), TransferID: d.ID, Peer: d.Username, Direction: "download", Kind: d.State, Filename: d.Filename, Destination: d.Destination}
+		s.statsEventLocked(event)
+	}
+	dirty := make(map[string]bool, len(out))
+	for _, d := range out {
+		dirty[d.ID] = true
+	}
+	err = s.commitLockedFor(context.Background(), dirty, func(q *db.Queries) error {
+		for _, d := range out {
+			if err := q.UpsertDownload(context.Background(), downloadParams(d)); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		s.journal, s.seq = previous, previousSeq
+		if s.telemetry != nil {
+			s.telemetry.pending = previousPending
+		}
 		s.mu.Unlock()
 		return nil, err
 	}
-	s.journal, s.seq = next, sequence
 	for _, d := range out {
 		s.transfers[d.ID] = Transfer{ID: d.ID, Username: d.Username, Filename: d.Filename, Direction: "download", State: d.State, Done: d.Offset, Total: d.Size, Error: d.Error}
 	}
@@ -1193,10 +1208,8 @@ func (s *Service) QueueDownloads(reqs []DownloadRequest) ([]Download, error) {
 	}
 	return out, nil
 }
-func (s *Service) saveJournalLocked() error {
-	s.journal.DownloadSequence = s.seq
-	return config.SaveJSON(s.journalPath, s.journal)
-}
+
+// Persistence is row-oriented; there is intentionally no JSON journal writer.
 func (s *Service) Downloads() []Download {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -1239,6 +1252,7 @@ func (s *Service) TransferAction(id, action string) error {
 		}
 		start := false
 		previousState := d.State
+		previous := s.snapshotLocked(id)
 		switch strings.ToLower(action) {
 		case "pause", "cancel":
 			if d.State == "finalizing" {
@@ -1257,9 +1271,6 @@ func (s *Service) TransferAction(id, action string) error {
 				d.State = "cancelled"
 			}
 			d.Error, d.RetryAt = "", time.Time{}
-			if cancel := s.downloadCancels[id]; cancel != nil {
-				cancel()
-			}
 		case "retry", "resume":
 			if s.downloadCancels[id] != nil {
 				s.mu.Unlock()
@@ -1285,18 +1296,16 @@ func (s *Service) TransferAction(id, action string) error {
 				s.mu.Unlock()
 				return errors.New("daemon: active download cannot be cleared")
 			}
-			next := s.journal
-			next.Downloads = append(slices.Clone(s.journal.Downloads[:i]), s.journal.Downloads[i+1:]...)
-			if err := config.SaveJSON(s.journalPath, next); err != nil {
+			if err := os.Remove(incompletePath(id)); err != nil && !errors.Is(err, os.ErrNotExist) {
 				s.mu.Unlock()
 				return err
 			}
-			if err := os.Remove(incompletePath(id)); err != nil && !errors.Is(err, os.ErrNotExist) {
-				rollback := s.saveJournalLocked()
+			if err := s.deleteDownloadLocked(id); err != nil {
+				s.restoreLocked(previous)
 				s.mu.Unlock()
-				return errors.Join(err, rollback)
+				return err
 			}
-			s.journal = next
+			s.journal.Downloads = append(s.journal.Downloads[:i], s.journal.Downloads[i+1:]...)
 			delete(s.transfers, id)
 			s.forgetTransferLocked(id)
 			s.mu.Unlock()
@@ -1320,7 +1329,14 @@ func (s *Service) TransferAction(id, action string) error {
 			event.Kind = stats.KindFiltered
 			s.statsEventLocked(event)
 		}
-		err := s.saveJournalLocked()
+		err := s.persistDownloadLocked(*d)
+		if err != nil {
+			s.restoreLocked(previous)
+		} else if strings.EqualFold(action, "pause") || strings.EqualFold(action, "cancel") {
+			if cancel := s.downloadCancels[id]; cancel != nil {
+				cancel()
+			}
+		}
 		s.mu.Unlock()
 		if done != nil {
 			<-done

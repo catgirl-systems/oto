@@ -412,8 +412,7 @@ func ConfigPath() string {
 func DataDir() string {
 	return filepath.Join(xdg("XDG_STATE_HOME", filepath.Join(".local", "state")), "oto")
 }
-func StatePath() string   { return filepath.Join(DataDir(), "downloads.json") }
-func HistoryPath() string { return filepath.Join(DataDir(), "history.json") }
+func StatePath() string { return filepath.Join(DataDir(), "state.sqlite3") }
 func SocketPath() string {
 	if p := os.Getenv("XDG_RUNTIME_DIR"); p != "" {
 		return filepath.Join(p, "oto", "oto.sock")

@@ -43,12 +43,6 @@ func (s *Service) uploadAccountLocked(epoch uint64) string {
 func (s *Service) uploadEventIDLocked(e soulseek.TransferEvent) string {
 	return s.uploadKeys[uploadKey(s.uploadAccountLocked(s.uploadEpoch), e.Username, e.Filename)]
 }
-func (s *Service) saveUploadsLocked() error {
-	if s.journalPath == "" {
-		return nil
-	} // In-memory service fixtures.
-	return s.saveJournalLocked()
-}
 
 // uploadAccepted commits admission before the client starts network work.
 func (s *Service) uploadAccepted(session uint64, e soulseek.TransferEvent) error {
@@ -71,7 +65,10 @@ func (s *Service) uploadAccepted(session uint64, e soulseek.TransferEvent) error
 	}
 	old := slices.Clone(s.journal.Uploads)
 	sequence := s.journal.UploadSequence
-	pending := slices.Clone(s.journal.StatsPending)
+	pending := []stats.Event(nil)
+	if s.telemetry != nil {
+		pending = slices.Clone(s.telemetry.pending)
+	}
 	queueSequence := s.journal.UploadQueueSequence
 	at := time.Now().UTC()
 	index := -1
@@ -102,14 +99,14 @@ func (s *Service) uploadAccepted(session uint64, e soulseek.TransferEvent) error
 		s.journal.UploadQueueSequence++
 		u.QueueOrder = s.journal.UploadQueueSequence
 	}
-	if s.telemetry != nil {
-		event := stats.Event{Account: u.Account, TransferID: id, Peer: e.Username, Filename: e.Filename, Direction: "upload", Kind: stats.KindQueued}
-		s.journal.StatsPending = append(s.journal.StatsPending, s.statsPrepareEventLocked(event))
-	}
-	if err := s.saveUploadsLocked(); err != nil {
+	event := stats.Event{Account: u.Account, TransferID: id, Peer: e.Username, Filename: e.Filename, Direction: "upload", Kind: stats.KindQueued}
+	s.statsEventLocked(event)
+	if err := s.persistUploadRowLocked(*u); err != nil {
 		s.journal.Uploads, s.journal.UploadSequence = old, sequence
 		s.journal.UploadQueueSequence = queueSequence
-		s.journal.StatsPending = pending
+		if s.telemetry != nil {
+			s.telemetry.pending = pending
+		}
 		return err
 	}
 	s.uploadKeys[key] = id
@@ -125,19 +122,17 @@ func (s *Service) persistUploadLocked(id string) error {
 		if s.journal.Uploads[i].ID != id {
 			continue
 		}
-		previous := slices.Clone(s.journal.Uploads)
 		if !exists {
+			if err := s.deleteUploadRowLocked(id); err != nil {
+				return err
+			}
 			s.journal.Uploads = slices.Delete(s.journal.Uploads, i, i+1)
-		} else {
-			u := &s.journal.Uploads[i]
-			u.Transfer, u.UpdatedAt = tr, time.Now().UTC()
-			u.Recoverable = liveUpload(tr.State) || tr.State == "interrupted"
+			return nil
 		}
-		err := s.saveUploadsLocked()
-		if err != nil && !exists {
-			s.journal.Uploads = previous
-		}
-		return err
+		u := &s.journal.Uploads[i]
+		u.Transfer, u.UpdatedAt = tr, time.Now().UTC()
+		u.Recoverable = liveUpload(tr.State) || tr.State == "interrupted"
+		return s.persistUploadRowLocked(*u)
 	}
 	return nil
 }

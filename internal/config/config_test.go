@@ -182,10 +182,10 @@ func TestDownloadCommandsRoundTripAndRejectNUL(t *testing.T) {
 	}
 }
 
-func TestHistoryPathUsesXDGStateHome(t *testing.T) {
+func TestStatePathUsesXDGStateHome(t *testing.T) {
 	d := t.TempDir()
 	t.Setenv("XDG_STATE_HOME", d)
-	if got, want := HistoryPath(), filepath.Join(d, "oto", "history.json"); got != want {
-		t.Fatalf("HistoryPath() = %q, want %q", got, want)
+	if got, want := StatePath(), filepath.Join(d, "oto", "state.sqlite3"); got != want {
+		t.Fatalf("StatePath() = %q, want %q", got, want)
 	}
 }

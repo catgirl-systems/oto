@@ -148,7 +148,7 @@ func TestUploadControlsEndToEnd(t *testing.T) {
 	cfg.Shares = []config.Share{{Name: "Music", Path: root}}
 	cfg.UploadSlots = 1
 	cfg.Bandwidth.Profiles[0].UploadSpeedLimitKiB = 1
-	svc, err := daemon.New(cfg, filepath.Join(t.TempDir(), "journal.json"))
+	svc, err := daemon.New(cfg, filepath.Join(t.TempDir(), "state.sqlite3"))
 	if err != nil {
 		t.Fatal(err)
 	}

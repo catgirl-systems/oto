@@ -58,6 +58,9 @@ func (s *Service) uploadUpdate(session uint64, event soulseek.TransferEvent) {
 	s.progressTransferLocked(id, event.Done)
 	oldState := s.transfers[id].State
 	s.transfers[id] = Transfer{ID: id, Username: event.Username, Filename: event.Filename, Direction: "upload", State: event.State, Done: event.Done, Total: event.Total, Error: event.Error}
+	if s.telemetry != nil {
+		s.telemetry.dirtyUploads[id] = true
+	}
 	if event.State != "running" {
 		s.stopTransferLocked(id)
 	}
@@ -65,14 +68,13 @@ func (s *Service) uploadUpdate(session uint64, event soulseek.TransferEvent) {
 		s.statsStateLocked(id, event.State)
 		if err := s.persistUploadLocked(id); err != nil {
 			log.Printf("save upload: %v", err)
+			if s.telemetry != nil {
+				s.telemetry.warning = "Persistence: " + err.Error()
+			}
 			return
 		}
 	}
 	if event.State == "completed" && s.cfg.Uploads.AutoClearCompleted {
-		if s.telemetry != nil && s.statsPendingLocked(id) {
-			s.telemetry.clear[id] = true
-			return
-		}
 		tr := s.transfers[id]
 		delete(s.transfers, id)
 		if err := s.persistUploadLocked(id); err != nil {
@@ -282,14 +284,17 @@ func (s *Service) UploadAction(req UploadActionRequest) (UploadActionResult, err
 			if current.State == "completed" || item.transfer.State == "cancelled" {
 				result.Skipped++
 			} else {
+				previousState := s.snapshotLocked(id)
 				current.State, current.Error = "cancelled", ""
 				s.transfers[id] = current
 				s.stopTransferLocked(id)
 				s.statsStateLocked(id, "cancelled")
 				result.Changed++
-			}
-			if err := s.persistUploadLocked(id); err != nil {
-				result.Errors = append(result.Errors, UploadActionError{id, err.Error()})
+				if err := s.persistUploadLocked(id); err != nil {
+					s.restoreLocked(previousState)
+					result.Changed--
+					result.Errors = append(result.Errors, UploadActionError{id, err.Error()})
+				}
 			}
 			s.mu.Unlock()
 		case "clear":

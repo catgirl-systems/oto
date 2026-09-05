@@ -225,7 +225,7 @@ func daemonCommand(args []string) error {
 	if err != nil {
 		return err
 	}
-	service, err := daemon.New(cfg, config.StatePath())
+	service, err := daemon.New(cfg, filepath.Join(config.DataDir(), "state.sqlite3"))
 	if err != nil {
 		return err
 	}

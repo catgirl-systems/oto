@@ -20,7 +20,7 @@ func TestFilterForceAndStatisticsEndpoints(t *testing.T) {
 	cfg.Soulseek.Username, cfg.Soulseek.Password = "local-test", "pw"
 	cfg.DownloadDir = t.TempDir()
 	cfg.Downloads.FiltersEnabled = true
-	path := filepath.Join(t.TempDir(), "downloads.json")
+	path := filepath.Join(t.TempDir(), "state.sqlite3")
 	svc, err := daemon.New(cfg, path)
 	if err != nil {
 		t.Fatal(err)

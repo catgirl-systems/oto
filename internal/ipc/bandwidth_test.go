@@ -18,7 +18,7 @@ func TestBandwidthConfigIPC(t *testing.T) {
 	cfg.Soulseek.Username, cfg.Soulseek.Password = "u", "secret"
 	cfg.Soulseek.ConnectOnStartup = false
 	cfg.DownloadDir = t.TempDir()
-	svc, err := daemon.New(cfg, filepath.Join(t.TempDir(), "journal.json"))
+	svc, err := daemon.New(cfg, filepath.Join(t.TempDir(), "state.sqlite3"))
 	if err != nil {
 		t.Fatal(err)
 	}

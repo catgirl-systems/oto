@@ -40,7 +40,7 @@ func TestSoulfindShareWatcherPublishesWithoutReconnect(t *testing.T) {
 	cfg.DownloadDir = t.TempDir()
 	cfg.Shares = []config.Share{{Name: "Music", Path: root}}
 
-	service, err := New(cfg, filepath.Join(t.TempDir(), "downloads.json"))
+	service, err := New(cfg, filepath.Join(t.TempDir(), "state.sqlite3"))
 	if err != nil {
 		t.Fatal(err)
 	}

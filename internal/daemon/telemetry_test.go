@@ -13,7 +13,7 @@ import (
 func TestAccountingOffsetsRetriesReplayAndAccounts(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		cfg := testConfig(t)
-		s, err := New(cfg, filepath.Join(t.TempDir(), "downloads.json"))
+		s, err := New(cfg, filepath.Join(t.TempDir(), "state.sqlite3"))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -38,7 +38,7 @@ func TestAccountingOffsetsRetriesReplayAndAccounts(t *testing.T) {
 		time.Sleep(time.Second)
 		s.mu.Lock()
 		s.statsStateLocked("d-1", "completed")
-		pending := slices.Clone(s.journal.StatsPending)
+		pending := slices.Clone(s.telemetry.pending)
 		s.mu.Unlock()
 		if err = s.flushStats(); err != nil {
 			t.Fatal(err)
@@ -52,7 +52,7 @@ func TestAccountingOffsetsRetriesReplayAndAccounts(t *testing.T) {
 			t.Fatalf("second account: %+v %v", b, err)
 		}
 		s.mu.Lock()
-		s.journal.StatsPending = append(s.journal.StatsPending, pending...)
+		s.telemetry.pending = append(s.telemetry.pending, pending...)
 		s.mu.Unlock()
 		if err = s.flushStats(); err != nil {
 			t.Fatal(err)

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -19,7 +20,7 @@ func TestCancelScanOwners(t *testing.T) {
 		t.Run(kind, func(t *testing.T) {
 			cfg := testConfig(t)
 			cfg.Soulseek.ConnectOnStartup = false
-			s, err := New(cfg, filepath.Join(t.TempDir(), "journal.json"))
+			s, err := New(cfg, filepath.Join(t.TempDir(), "state.sqlite3"))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -29,14 +30,27 @@ func TestCancelScanOwners(t *testing.T) {
 			if err := cfg.Save(s.configPath); err != nil {
 				t.Fatal(err)
 			}
-			if kind != "startup" {
-				if err := s.Rescan(); err != nil {
+			if kind == "startup" {
+				index, err := buildShareIndex(context.Background(), cfg.Shares)
+				if err != nil {
 					t.Fatal(err)
 				}
+				s.mu.Lock()
+				s.shares = index
+				s.mu.Unlock()
+				s.persistShareIndex(index)
+			} else if err := s.Rescan(); err != nil {
+				t.Fatal(err)
 			}
 			before := s.Snapshot()
-			cache, _ := os.ReadFile(s.shareIndexPath)
+			cache, err := s.loadShareIndexCache(s.cfg.Shares, s.cfg.ShareExclusions)
+			if err != nil {
+				t.Fatal(err)
+			}
 			configuration, _ := os.ReadFile(s.configPath)
+			if kind == "startup" {
+				s.cfg.ShareExclusions = []string{"*.startup"}
+			}
 			entered, release := make(chan struct{}), make(chan struct{})
 			s.shareIndexBuilder = func(ctx context.Context, _ []config.Share) (*soulseek.ShareIndex, error) {
 				close(entered)
@@ -88,10 +102,10 @@ func TestCancelScanOwners(t *testing.T) {
 			if after.ShareScan.State != "cancelled" || after.ShareScan.Error != "" || before.ShareIndexRevision != after.ShareIndexRevision || s.cfg.DownloadSlots != cfg.DownloadSlots {
 				t.Fatalf("cancelled scan changed state: %+v", after.ShareScan)
 			}
-			gotCache, _ := os.ReadFile(s.shareIndexPath)
+			gotCache, err := s.loadShareIndexCache(cfg.Shares, cfg.ShareExclusions)
 			gotConfig, _ := os.ReadFile(s.configPath)
-			if !bytes.Equal(cache, gotCache) || !bytes.Equal(configuration, gotConfig) {
-				t.Fatal("cancel changed disk state")
+			if err != nil || !reflect.DeepEqual(cache.Files(), gotCache.Files()) || !bytes.Equal(configuration, gotConfig) {
+				t.Fatal("cancel changed persisted state")
 			}
 			s.shareIndexBuilder = buildShareIndex
 			if err := s.Rescan(); err != nil {

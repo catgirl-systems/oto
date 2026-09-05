@@ -7,7 +7,7 @@ import (
 )
 
 // net.OpError strings can contain both local and peer endpoints. Strip them
-// before errors enter the durable Stats outbox, not just at display time.
+// before errors enter durable statistics, not just at display time.
 var statsAddresses = regexp.MustCompile(`\[[0-9a-fA-F:.]+(?:%[a-zA-Z0-9_.-]+)?\](?::[0-9]+)?|[0-9a-fA-F:.]*:[0-9a-fA-F:.]+(?:%[a-zA-Z0-9_.-]+)?|\b[0-9]{1,3}(?:\.[0-9]{1,3}){3}\b`)
 
 func statsError(message string) string {
