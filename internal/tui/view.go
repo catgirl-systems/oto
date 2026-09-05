@@ -658,7 +658,24 @@ func (m model) footerHints() []string {
 		}
 		return append(hints, "space mark", "r retry", "d abort", "D abort users", "c clear selected", "C clear status")
 	case workspaceStats:
-		return []string{"ctrl+pgup/down pages", "a account", "/ peer", "[ / ] dates", "d direction", "e log outcome", "r range", "n next", "p first", "s sort", "P prune", "enter details"}
+		if m.stats.edit != "" {
+			return []string{"enter apply", "esc cancel"}
+		}
+		if m.stats.detail != nil {
+			return []string{"up/down scroll", "esc close"}
+		}
+		hints := []string{"ctrl+pgup/down pages", "a account", "/ peer"}
+		switch m.stats.page {
+		case 0:
+			hints = append(hints, "up/down scroll", "esc clear peer")
+		case 1:
+			hints = append(hints, "r range", "[ / ] dates", "up/down scroll", "esc clear peer")
+		case 2:
+			hints = append(hints, "s sort", "d direction", "enter details", "n next", "p first")
+		case 3:
+			hints = append(hints, "d direction", "e outcome", "[ / ] dates", "enter details", "n next", "p first")
+		}
+		return append(hints, "P prune")
 	case workspaceShares:
 		hints := []string{"/ add", "r rescan"}
 		if scan := m.status.shareScan; scan != nil && scan.State == "scanning" {
