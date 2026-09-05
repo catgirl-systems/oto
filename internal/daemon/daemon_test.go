@@ -469,7 +469,6 @@ func TestUpdateConfigHotAppliesUploadsAfterSave(t *testing.T) {
 	defer s.Close()
 	configPath := filepath.Join(t.TempDir(), "config.json")
 	s.SetConfigPath(configPath)
-
 	client := soulseek.NewClient(soulseek.ClientConfig{Uploads: newUploadManager(cfg)})
 	s.mu.Lock()
 	s.client = client
@@ -479,34 +478,35 @@ func TestUpdateConfigHotAppliesUploadsAfterSave(t *testing.T) {
 		builderCalled = true
 		return nil, errors.New("share builder called")
 	}
-
 	next := cfg
-	next.Uploads.Profiles = []config.UploadProfile{{Name: "Limited", SpeedLimitKiB: 64}}
-	next.Uploads.ActiveProfile = "Limited"
+	next.Bandwidth = config.Bandwidth{Profiles: []config.BandwidthProfile{{Name: "Limited", UploadSpeedLimitKiB: 64, DownloadSpeedLimitKiB: 128}}, ActiveProfile: "Limited"}
 	next.Uploads.LimitScope = config.UploadLimitPerTransfer
 	next.Uploads.Scheduling = config.UploadSchedulingRoundRobin
 	if err := s.UpdateConfig(next); err != nil {
 		t.Fatal(err)
 	}
 	want := soulseek.UploadPolicy{Scheduling: soulseek.UploadScheduleRoundRobin, BytesPerSecond: 64 * 1024, PerTransfer: true}
-	if builderCalled || s.client != client || client.UploadPolicy() != want {
-		t.Fatalf("upload update rebuilt or reconnected: builder=%v sameClient=%v policy=%+v", builderCalled, s.client == client, client.UploadPolicy())
+	if builderCalled || s.client != client || client.UploadPolicy() != want || client.DownloadLimit() != 128*1024 {
+		t.Fatalf("update rebuilt/reconnected or lost limits: builder=%v upload=%+v download=%d", builderCalled, client.UploadPolicy(), client.DownloadLimit())
 	}
 	loaded, err := config.Load(configPath)
-	if err != nil || !sameUploadConfig(loaded.Uploads, next.Uploads) {
-		t.Fatalf("saved upload config: %+v %v", loaded.Uploads, err)
+	if err != nil || loaded.Bandwidth.ActiveProfileLimits() != next.Bandwidth.ActiveProfileLimits() || loaded.Uploads != next.Uploads {
+		t.Fatalf("saved config: %+v %v", loaded, err)
 	}
-
-	before := client.UploadPolicy()
 	failed := next
-	failed.Uploads.Profiles = append([]config.UploadProfile(nil), next.Uploads.Profiles...)
-	failed.Uploads.Profiles[0].SpeedLimitKiB = 32
+	failed.Bandwidth.Profiles = append([]config.BandwidthProfile(nil), next.Bandwidth.Profiles...)
+	failed.Bandwidth.Profiles[0].UploadSpeedLimitKiB = 32
+	failed.Bandwidth.Profiles[0].DownloadSpeedLimitKiB = 16
 	s.SetConfigPath(t.TempDir())
 	if err := s.UpdateConfig(failed); err == nil {
-		t.Fatal("upload update unexpectedly saved to a directory")
+		t.Fatal("saved to a directory")
 	}
-	if client.UploadPolicy() != before || !sameUploadConfig(s.cfg.Uploads, next.Uploads) {
-		t.Fatalf("failed save altered runtime: policy=%+v config=%+v", client.UploadPolicy(), s.cfg.Uploads)
+	if client.UploadPolicy() != want || client.DownloadLimit() != 128*1024 || s.Config().Bandwidth.ActiveProfileLimits() != next.Bandwidth.ActiveProfileLimits() {
+		t.Fatal("failed save altered runtime")
+	}
+	next.Bandwidth.Profiles[0].DownloadSpeedLimitKiB = 999
+	if s.Config().Bandwidth.ActiveProfileLimits().DownloadSpeedLimitKiB != 128 {
+		t.Fatal("accepted config aliases caller profile slice")
 	}
 }
 

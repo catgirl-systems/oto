@@ -62,6 +62,7 @@ type settingsSection int
 const (
 	settingsAccount settingsSection = iota
 	settingsConnection
+	settingsBandwidth
 	settingsDownloads
 	settingsUploads
 	settingsSearch
@@ -147,10 +148,11 @@ const (
 	settingDownloadPath
 	settingAfterFileCommand
 	settingAfterFolderCommand
-	settingUploadProfile
-	settingUploadProfileName
+	settingBandwidthProfile
+	settingBandwidthProfileName
 	settingUploadSpeedLimit
-	settingDeleteUploadProfile
+	settingDownloadSpeedLimit
+	settingDeleteBandwidthProfile
 	settingUploadLimitScope
 	settingUploadScheduling
 	settingRespondToIncomingSearches
@@ -192,7 +194,7 @@ type model struct {
 	historyCursor                          historyCursor
 	transient                              bool
 	setup, help, confirm, editing, loading bool
-	choiceChoosing, addingUploadProfile    bool
+	choiceChoosing, addingBandwidthProfile bool
 	details, folderMenu, statusMenu        bool
 	uploadStatusMenu, uploadConfirm        bool
 	uploadConfirmChoice                    int

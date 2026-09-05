@@ -1,6 +1,7 @@
 package config
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -65,17 +66,39 @@ const (
 	UploadSchedulingSmallestFirst UploadScheduling = "smallest_first"
 )
 
-type UploadProfile struct {
-	Name          string `json:"name"`
-	SpeedLimitKiB int    `json:"speed_limit_kib"`
+type BandwidthProfile struct {
+	Name                  string `json:"name"`
+	UploadSpeedLimitKiB   int    `json:"upload_speed_limit_kib"`
+	DownloadSpeedLimitKiB int    `json:"download_speed_limit_kib"`
+}
+
+type Bandwidth struct {
+	Profiles      []BandwidthProfile `json:"profiles"`
+	ActiveProfile string             `json:"active_profile"`
 }
 
 type Uploads struct {
 	AutoClearCompleted bool             `json:"auto_clear_completed"`
-	Profiles           []UploadProfile  `json:"profiles"`
-	ActiveProfile      string           `json:"active_profile"`
 	LimitScope         UploadLimitScope `json:"limit_scope"`
 	Scheduling         UploadScheduling `json:"scheduling"`
+}
+
+type legacyUploadProfile struct {
+	Name          string `json:"name"`
+	SpeedLimitKiB int    `json:"speed_limit_kib"`
+}
+
+func defaultBandwidth() Bandwidth {
+	return Bandwidth{Profiles: []BandwidthProfile{{Name: "Unlimited"}}, ActiveProfile: "Unlimited"}
+}
+
+func (b Bandwidth) ActiveProfileLimits() BandwidthProfile {
+	for _, profile := range b.Profiles {
+		if profile.Name == b.ActiveProfile {
+			return profile
+		}
+	}
+	return BandwidthProfile{}
 }
 
 type Downloads struct {
@@ -86,18 +109,34 @@ type Downloads struct {
 	FolderNotifications bool   `json:"folder_notifications"`
 }
 
-func (u Uploads) ActiveSpeedLimitKiB() int {
-	for _, profile := range u.Profiles {
-		if profile.Name == u.ActiveProfile {
-			return profile.SpeedLimitKiB
-		}
+func ValidateBandwidthProfileName(name string) error {
+	if name == "" || strings.TrimSpace(name) != name || utf8.RuneCountInString(name) > 64 || strings.IndexFunc(name, unicode.IsControl) >= 0 {
+		return fmt.Errorf("invalid bandwidth profile name %q", name)
 	}
-	return 0
+	return nil
 }
 
-func ValidateUploadProfileName(name string) error {
-	if name == "" || strings.TrimSpace(name) != name || utf8.RuneCountInString(name) > 64 || strings.IndexFunc(name, unicode.IsControl) >= 0 {
-		return fmt.Errorf("invalid upload profile name %q", name)
+func validateBandwidth(b Bandwidth) error {
+	if len(b.Profiles) == 0 {
+		return errors.New("config: at least one bandwidth profile is required")
+	}
+	active := false
+	for i, profile := range b.Profiles {
+		if err := ValidateBandwidthProfileName(profile.Name); err != nil {
+			return fmt.Errorf("config: %w", err)
+		}
+		for _, previous := range b.Profiles[:i] {
+			if strings.EqualFold(previous.Name, profile.Name) {
+				return fmt.Errorf("config: duplicate bandwidth profile name %q", profile.Name)
+			}
+		}
+		if profile.UploadSpeedLimitKiB < 0 || profile.UploadSpeedLimitKiB > 1000000 || profile.DownloadSpeedLimitKiB < 0 || profile.DownloadSpeedLimitKiB > 1000000 {
+			return fmt.Errorf("config: invalid speed limit for bandwidth profile %q", profile.Name)
+		}
+		active = active || profile.Name == b.ActiveProfile
+	}
+	if !active {
+		return fmt.Errorf("config: active bandwidth profile %q does not exist", b.ActiveProfile)
 	}
 	return nil
 }
@@ -105,6 +144,7 @@ func ValidateUploadProfileName(name string) error {
 type Config struct {
 	Soulseek        Soulseek  `json:"soulseek"`
 	Search          Search    `json:"search"`
+	Bandwidth       Bandwidth `json:"bandwidth"`
 	Uploads         Uploads   `json:"uploads"`
 	Downloads       Downloads `json:"downloads"`
 	DownloadDir     string    `json:"download_dir" validate:"required"`
@@ -126,6 +166,7 @@ type SafeConfig struct {
 		UPnPPortMapping   bool   `json:"upnp_port_mapping"`
 	} `json:"soulseek"`
 	Search          Search    `json:"search"`
+	Bandwidth       Bandwidth `json:"bandwidth"`
 	Uploads         Uploads   `json:"uploads"`
 	Downloads       Downloads `json:"downloads"`
 	DownloadDir     string    `json:"download_dir"`
@@ -137,14 +178,14 @@ type SafeConfig struct {
 
 func Default() Config {
 	home, _ := os.UserHomeDir()
-	return Config{ShareExclusions: DefaultShareExclusions(), Soulseek: Soulseek{Server: DefaultServer, ListenAddr: DefaultListenAddr, ConnectOnStartup: true, NATPMPPortMapping: true, UPnPPortMapping: true}, Search: Search{RememberSearches: true, SearchHistoryLimit: 200, RememberFilters: true, FilterHistoryLimit: 50, WishlistIntervalMinutes: 15, WishlistNotifications: true, RespondToIncomingSearches: true, MinimumIncomingSearchLength: 3, MaximumIncomingSearchResults: 300}, Uploads: Uploads{Profiles: []UploadProfile{{Name: "Unlimited"}}, ActiveProfile: "Unlimited", LimitScope: UploadLimitTotal, Scheduling: UploadSchedulingFIFO}, Downloads: Downloads{FolderNotifications: true}, DownloadDir: filepath.Join(home, DefaultDownloadDir), DownloadSlots: 4, UploadSlots: 2}
+	return Config{ShareExclusions: DefaultShareExclusions(), Soulseek: Soulseek{Server: DefaultServer, ListenAddr: DefaultListenAddr, ConnectOnStartup: true, NATPMPPortMapping: true, UPnPPortMapping: true}, Search: Search{RememberSearches: true, SearchHistoryLimit: 200, RememberFilters: true, FilterHistoryLimit: 50, WishlistIntervalMinutes: 15, WishlistNotifications: true, RespondToIncomingSearches: true, MinimumIncomingSearchLength: 3, MaximumIncomingSearchResults: 300}, Bandwidth: defaultBandwidth(), Uploads: Uploads{LimitScope: UploadLimitTotal, Scheduling: UploadSchedulingFIFO}, Downloads: Downloads{FolderNotifications: true}, DownloadDir: filepath.Join(home, DefaultDownloadDir), DownloadSlots: 4, UploadSlots: 2}
 }
 
 func (c Config) Redacted() SafeConfig {
 	var out SafeConfig
 	out.Soulseek.Username, out.Soulseek.Password, out.Soulseek.Server, out.Soulseek.ListenAddr, out.Soulseek.NetworkInterface, out.Soulseek.ConnectOnStartup, out.Soulseek.NATPMPPortMapping, out.Soulseek.UPnPPortMapping = c.Soulseek.Username, "[redacted]", c.Soulseek.Server, c.Soulseek.ListenAddr, c.Soulseek.NetworkInterface, c.Soulseek.ConnectOnStartup, c.Soulseek.NATPMPPortMapping, c.Soulseek.UPnPPortMapping
-	out.Search, out.Uploads, out.Downloads, out.DownloadDir, out.Shares, out.DownloadSlots, out.UploadSlots = c.Search, c.Uploads, c.Downloads, c.DownloadDir, append([]Share(nil), c.Shares...), c.DownloadSlots, c.UploadSlots
-	out.Uploads.Profiles = append([]UploadProfile(nil), c.Uploads.Profiles...)
+	out.Search, out.Bandwidth, out.Uploads, out.Downloads, out.DownloadDir, out.Shares, out.DownloadSlots, out.UploadSlots = c.Search, c.Bandwidth, c.Uploads, c.Downloads, c.DownloadDir, append([]Share(nil), c.Shares...), c.DownloadSlots, c.UploadSlots
+	out.Bandwidth.Profiles = append([]BandwidthProfile(nil), c.Bandwidth.Profiles...)
 	out.ShareExclusions = append([]string{}, c.ShareExclusions...)
 	return out
 }
@@ -177,27 +218,8 @@ func (c Config) Validate() error {
 	default:
 		return fmt.Errorf("config: invalid upload scheduling %q", c.Uploads.Scheduling)
 	}
-	if len(c.Uploads.Profiles) == 0 {
-		return errors.New("config: at least one upload profile is required")
-	}
-	active, names := false, make([]string, 0, len(c.Uploads.Profiles))
-	for _, profile := range c.Uploads.Profiles {
-		if err := ValidateUploadProfileName(profile.Name); err != nil {
-			return fmt.Errorf("config: %w", err)
-		}
-		for _, name := range names {
-			if strings.EqualFold(name, profile.Name) {
-				return fmt.Errorf("config: duplicate upload profile name %q", profile.Name)
-			}
-		}
-		names = append(names, profile.Name)
-		if profile.SpeedLimitKiB < 0 || profile.SpeedLimitKiB > 1000000 {
-			return fmt.Errorf("config: invalid speed limit for upload profile %q", profile.Name)
-		}
-		active = active || profile.Name == c.Uploads.ActiveProfile
-	}
-	if !active {
-		return fmt.Errorf("config: active upload profile %q does not exist", c.Uploads.ActiveProfile)
+	if err := validateBandwidth(c.Bandwidth); err != nil {
+		return err
 	}
 	seen := map[string]bool{}
 	for _, sh := range c.Shares {
@@ -212,6 +234,50 @@ func (c Config) Validate() error {
 	return nil
 }
 
+func (c *Config) UnmarshalJSON(data []byte) error {
+	type plainConfig Config
+	next := plainConfig(*c)
+	next.Bandwidth = Bandwidth{}
+	if err := json.Unmarshal(data, &next); err != nil {
+		return err
+	}
+	var raw struct {
+		Bandwidth json.RawMessage `json:"bandwidth"`
+		Uploads   struct {
+			Profiles      json.RawMessage `json:"profiles"`
+			ActiveProfile json.RawMessage `json:"active_profile"`
+		} `json:"uploads"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	if raw.Bandwidth == nil {
+		next.Bandwidth = defaultBandwidth()
+		if raw.Uploads.Profiles != nil {
+			var profiles []legacyUploadProfile
+			if err := json.Unmarshal(raw.Uploads.Profiles, &profiles); err != nil {
+				return fmt.Errorf("config: invalid legacy upload profiles: %w", err)
+			}
+			next.Bandwidth.Profiles = make([]BandwidthProfile, len(profiles))
+			for i, profile := range profiles {
+				next.Bandwidth.Profiles[i] = BandwidthProfile{Name: profile.Name, UploadSpeedLimitKiB: profile.SpeedLimitKiB}
+			}
+		}
+		if raw.Uploads.ActiveProfile != nil {
+			if bytes.Equal(bytes.TrimSpace(raw.Uploads.ActiveProfile), []byte("null")) {
+				return errors.New("config: legacy active upload profile cannot be null")
+			}
+			if err := json.Unmarshal(raw.Uploads.ActiveProfile, &next.Bandwidth.ActiveProfile); err != nil {
+				return err
+			}
+		}
+	}
+	if err := validateBandwidth(next.Bandwidth); err != nil {
+		return err
+	}
+	*c = Config(next)
+	return nil
+}
 func applyEnv(c *Config) {
 	for k, dst := range map[string]*string{"OTO_USERNAME": &c.Soulseek.Username, "OTO_PASSWORD": &c.Soulseek.Password, "OTO_SERVER": &c.Soulseek.Server, "OTO_LISTEN_ADDR": &c.Soulseek.ListenAddr, "OTO_NETWORK_INTERFACE": &c.Soulseek.NetworkInterface, "OTO_DOWNLOAD_DIR": &c.DownloadDir} {
 		if v, ok := os.LookupEnv(k); ok && v != "" {

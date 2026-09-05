@@ -528,7 +528,7 @@ func (m model) renderShares(width, height int) string {
 	return strings.Join(lines, "\n")
 }
 
-var settingsSectionNames = [settingsSectionCount]string{"Account", "Connection", "Downloads", "Uploads", "Search", "Shares"}
+var settingsSectionNames = [settingsSectionCount]string{"Account", "Connection", "Bandwidth", "Downloads", "Uploads", "Search", "Shares"}
 
 func (m model) renderSettings(width, height int) string {
 	sections := settingsSectionNames[:]
@@ -659,13 +659,17 @@ func (m model) settingFields() []settingField {
 			{settingFolderNotifications, "Folder notifications", strconv.FormatBool(m.cfg.Downloads.FolderNotifications), settingBool},
 			{settingAutoClearDownloads, "Auto-clear new completed downloads", strconv.FormatBool(m.cfg.Downloads.AutoClearCompleted), settingBool},
 		}
-	case settingsUploads:
-		profile := m.cfg.Uploads.Profiles[m.activeUploadProfileIndex()]
+	case settingsBandwidth:
+		profile := m.cfg.Bandwidth.ActiveProfileLimits()
 		return []settingField{
-			{settingUploadProfile, "Active profile", m.choiceValue(settingUploadProfile, profile.Name), settingChoice},
-			{settingUploadProfileName, "Profile name", profile.Name, settingText},
-			{settingUploadSpeedLimit, "Speed limit (KiB/s)", strconv.Itoa(profile.SpeedLimitKiB), settingInt},
-			{settingDeleteUploadProfile, "Delete profile", "Press Enter", settingAction},
+			{settingBandwidthProfile, "Active profile", m.choiceValue(settingBandwidthProfile, profile.Name), settingChoice},
+			{settingBandwidthProfileName, "Profile name", profile.Name, settingText},
+			{settingUploadSpeedLimit, "Upload speed limit (KiB/s)", strconv.Itoa(profile.UploadSpeedLimitKiB), settingInt},
+			{settingDownloadSpeedLimit, "Download speed limit (KiB/s)", strconv.Itoa(profile.DownloadSpeedLimitKiB), settingInt},
+			{settingDeleteBandwidthProfile, "Delete profile", "Press Enter", settingAction},
+		}
+	case settingsUploads:
+		return []settingField{
 			{settingUploadLimitScope, "Limit applies to", m.choiceValue(settingUploadLimitScope, uploadScopeLabel(m.cfg.Uploads.LimitScope)), settingChoice},
 			{settingUploadScheduling, "Scheduling", m.choiceValue(settingUploadScheduling, uploadSchedulingLabel(m.cfg.Uploads.Scheduling)), settingChoice},
 			{settingAutoClearUploads, "Auto-clear new completed uploads", strconv.FormatBool(m.cfg.Uploads.AutoClearCompleted), settingBool},
@@ -725,34 +729,38 @@ func (m *model) setSettingValue(value string) error {
 			return err
 		}
 		m.cfg.Search.DefaultFilter = value
-	case settingUploadProfile:
-		if !m.addingUploadProfile {
+	case settingBandwidthProfile:
+		if !m.addingBandwidthProfile {
 			return nil
 		}
-		if err := m.validateUploadProfileName(value, -1); err != nil {
+		if err := m.validateBandwidthProfileName(value, -1); err != nil {
 			return err
 		}
-		m.cfg.Uploads.Profiles = append(m.cfg.Uploads.Profiles, config.UploadProfile{Name: value})
-		m.cfg.Uploads.ActiveProfile = value
-		m.addingUploadProfile = false
-	case settingUploadProfileName:
-		i := m.activeUploadProfileIndex()
-		if err := m.validateUploadProfileName(value, i); err != nil {
+		m.cfg.Bandwidth.Profiles = append(m.cfg.Bandwidth.Profiles, config.BandwidthProfile{Name: value})
+		m.cfg.Bandwidth.ActiveProfile = value
+		m.addingBandwidthProfile = false
+	case settingBandwidthProfileName:
+		i := m.activeBandwidthProfileIndex()
+		if err := m.validateBandwidthProfileName(value, i); err != nil {
 			return err
 		}
-		m.cfg.Uploads.Profiles[i].Name = value
-		m.cfg.Uploads.ActiveProfile = value
-	case settingUploadSpeedLimit, settingMinimumIncomingSearchLength, settingMaximumIncomingSearchResults, settingSearchHistoryLimit, settingFilterHistoryLimit, settingWishlistInterval:
+		m.cfg.Bandwidth.Profiles[i].Name = value
+		m.cfg.Bandwidth.ActiveProfile = value
+	case settingUploadSpeedLimit, settingDownloadSpeedLimit, settingMinimumIncomingSearchLength, settingMaximumIncomingSearchResults, settingSearchHistoryLimit, settingFilterHistoryLimit, settingWishlistInterval:
 		limit, err := strconv.Atoi(value)
 		if err != nil || limit < 0 {
 			return errors.New("value must be a nonnegative integer")
 		}
 		switch field.id {
-		case settingUploadSpeedLimit:
+		case settingUploadSpeedLimit, settingDownloadSpeedLimit:
 			if limit > 1000000 {
-				return errors.New("upload speed limit must be at most 1000000 KiB/s")
+				return errors.New("speed limit must be at most 1000000 KiB/s")
 			}
-			m.cfg.Uploads.Profiles[m.activeUploadProfileIndex()].SpeedLimitKiB = limit
+			if field.id == settingDownloadSpeedLimit {
+				m.cfg.Bandwidth.Profiles[m.activeBandwidthProfileIndex()].DownloadSpeedLimitKiB = limit
+			} else {
+				m.cfg.Bandwidth.Profiles[m.activeBandwidthProfileIndex()].UploadSpeedLimitKiB = limit
+			}
 		case settingMinimumIncomingSearchLength:
 			if limit > 50 {
 				return errors.New("minimum incoming search length must be at most 50")
@@ -777,22 +785,22 @@ func (m *model) setSettingValue(value string) error {
 	return nil
 }
 
-func (m model) activeUploadProfileIndex() int {
-	for i, profile := range m.cfg.Uploads.Profiles {
-		if profile.Name == m.cfg.Uploads.ActiveProfile {
+func (m model) activeBandwidthProfileIndex() int {
+	for i, profile := range m.cfg.Bandwidth.Profiles {
+		if profile.Name == m.cfg.Bandwidth.ActiveProfile {
 			return i
 		}
 	}
 	return 0
 }
 
-func (m model) validateUploadProfileName(name string, except int) error {
-	if err := config.ValidateUploadProfileName(name); err != nil {
+func (m model) validateBandwidthProfileName(name string, except int) error {
+	if err := config.ValidateBandwidthProfileName(name); err != nil {
 		return err
 	}
-	for i, profile := range m.cfg.Uploads.Profiles {
+	for i, profile := range m.cfg.Bandwidth.Profiles {
 		if i != except && strings.EqualFold(profile.Name, name) {
-			return fmt.Errorf("upload profile %q already exists", name)
+			return fmt.Errorf("bandwidth profile %q already exists", name)
 		}
 	}
 	return nil
@@ -822,9 +830,9 @@ func (m model) choiceOptions(id settingID) []string {
 	switch id {
 	case settingNetworkInterface:
 		return append(append([]string{"Automatic"}, m.networkInterfaces...), "Custom…")
-	case settingUploadProfile:
-		options := make([]string, 0, len(m.cfg.Uploads.Profiles)+1)
-		for _, profile := range m.cfg.Uploads.Profiles {
+	case settingBandwidthProfile:
+		options := make([]string, 0, len(m.cfg.Bandwidth.Profiles)+1)
+		for _, profile := range m.cfg.Bandwidth.Profiles {
 			options = append(options, profile.Name)
 		}
 		return append(options, "New…")
@@ -857,8 +865,8 @@ func (m model) configuredChoice(id settingID) int {
 		} else {
 			current = m.cfg.Soulseek.NetworkInterface
 		}
-	case settingUploadProfile:
-		current = m.cfg.Uploads.ActiveProfile
+	case settingBandwidthProfile:
+		current = m.cfg.Bandwidth.ActiveProfile
 	case settingUploadLimitScope:
 		current = uploadScopeLabel(m.cfg.Uploads.LimitScope)
 	case settingUploadScheduling:
