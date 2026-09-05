@@ -71,13 +71,15 @@ type UploadProfile struct {
 }
 
 type Uploads struct {
-	Profiles      []UploadProfile  `json:"profiles"`
-	ActiveProfile string           `json:"active_profile"`
-	LimitScope    UploadLimitScope `json:"limit_scope"`
-	Scheduling    UploadScheduling `json:"scheduling"`
+	AutoClearCompleted bool             `json:"auto_clear_completed"`
+	Profiles           []UploadProfile  `json:"profiles"`
+	ActiveProfile      string           `json:"active_profile"`
+	LimitScope         UploadLimitScope `json:"limit_scope"`
+	Scheduling         UploadScheduling `json:"scheduling"`
 }
 
 type Downloads struct {
+	AutoClearCompleted  bool   `json:"auto_clear_completed"`
 	AfterFileCommand    string `json:"after_file_command"`
 	AfterFolderCommand  string `json:"after_folder_command"`
 	FileNotifications   bool   `json:"file_notifications"`
@@ -101,14 +103,15 @@ func ValidateUploadProfileName(name string) error {
 }
 
 type Config struct {
-	Soulseek      Soulseek  `json:"soulseek"`
-	Search        Search    `json:"search"`
-	Uploads       Uploads   `json:"uploads"`
-	Downloads     Downloads `json:"downloads"`
-	DownloadDir   string    `json:"download_dir" validate:"required"`
-	Shares        []Share   `json:"shares"`
-	DownloadSlots int       `json:"download_slots" validate:"min=1"`
-	UploadSlots   int       `json:"upload_slots" validate:"min=1"`
+	Soulseek        Soulseek  `json:"soulseek"`
+	Search          Search    `json:"search"`
+	Uploads         Uploads   `json:"uploads"`
+	Downloads       Downloads `json:"downloads"`
+	DownloadDir     string    `json:"download_dir" validate:"required"`
+	Shares          []Share   `json:"shares"`
+	ShareExclusions []string  `json:"share_exclusions"`
+	DownloadSlots   int       `json:"download_slots" validate:"min=1"`
+	UploadSlots     int       `json:"upload_slots" validate:"min=1"`
 }
 
 type SafeConfig struct {
@@ -122,18 +125,19 @@ type SafeConfig struct {
 		NATPMPPortMapping bool   `json:"nat_pmp_port_mapping"`
 		UPnPPortMapping   bool   `json:"upnp_port_mapping"`
 	} `json:"soulseek"`
-	Search        Search    `json:"search"`
-	Uploads       Uploads   `json:"uploads"`
-	Downloads     Downloads `json:"downloads"`
-	DownloadDir   string    `json:"download_dir"`
-	Shares        []Share   `json:"shares"`
-	DownloadSlots int       `json:"download_slots"`
-	UploadSlots   int       `json:"upload_slots"`
+	Search          Search    `json:"search"`
+	Uploads         Uploads   `json:"uploads"`
+	Downloads       Downloads `json:"downloads"`
+	DownloadDir     string    `json:"download_dir"`
+	Shares          []Share   `json:"shares"`
+	ShareExclusions []string  `json:"share_exclusions"`
+	DownloadSlots   int       `json:"download_slots"`
+	UploadSlots     int       `json:"upload_slots"`
 }
 
 func Default() Config {
 	home, _ := os.UserHomeDir()
-	return Config{Soulseek: Soulseek{Server: DefaultServer, ListenAddr: DefaultListenAddr, ConnectOnStartup: true, NATPMPPortMapping: true, UPnPPortMapping: true}, Search: Search{RememberSearches: true, SearchHistoryLimit: 200, RememberFilters: true, FilterHistoryLimit: 50, WishlistIntervalMinutes: 15, WishlistNotifications: true, RespondToIncomingSearches: true, MinimumIncomingSearchLength: 3, MaximumIncomingSearchResults: 300}, Uploads: Uploads{Profiles: []UploadProfile{{Name: "Unlimited"}}, ActiveProfile: "Unlimited", LimitScope: UploadLimitTotal, Scheduling: UploadSchedulingFIFO}, Downloads: Downloads{FolderNotifications: true}, DownloadDir: filepath.Join(home, DefaultDownloadDir), DownloadSlots: 4, UploadSlots: 2}
+	return Config{ShareExclusions: DefaultShareExclusions(), Soulseek: Soulseek{Server: DefaultServer, ListenAddr: DefaultListenAddr, ConnectOnStartup: true, NATPMPPortMapping: true, UPnPPortMapping: true}, Search: Search{RememberSearches: true, SearchHistoryLimit: 200, RememberFilters: true, FilterHistoryLimit: 50, WishlistIntervalMinutes: 15, WishlistNotifications: true, RespondToIncomingSearches: true, MinimumIncomingSearchLength: 3, MaximumIncomingSearchResults: 300}, Uploads: Uploads{Profiles: []UploadProfile{{Name: "Unlimited"}}, ActiveProfile: "Unlimited", LimitScope: UploadLimitTotal, Scheduling: UploadSchedulingFIFO}, Downloads: Downloads{FolderNotifications: true}, DownloadDir: filepath.Join(home, DefaultDownloadDir), DownloadSlots: 4, UploadSlots: 2}
 }
 
 func (c Config) Redacted() SafeConfig {
@@ -141,10 +145,14 @@ func (c Config) Redacted() SafeConfig {
 	out.Soulseek.Username, out.Soulseek.Password, out.Soulseek.Server, out.Soulseek.ListenAddr, out.Soulseek.NetworkInterface, out.Soulseek.ConnectOnStartup, out.Soulseek.NATPMPPortMapping, out.Soulseek.UPnPPortMapping = c.Soulseek.Username, "[redacted]", c.Soulseek.Server, c.Soulseek.ListenAddr, c.Soulseek.NetworkInterface, c.Soulseek.ConnectOnStartup, c.Soulseek.NATPMPPortMapping, c.Soulseek.UPnPPortMapping
 	out.Search, out.Uploads, out.Downloads, out.DownloadDir, out.Shares, out.DownloadSlots, out.UploadSlots = c.Search, c.Uploads, c.Downloads, c.DownloadDir, append([]Share(nil), c.Shares...), c.DownloadSlots, c.UploadSlots
 	out.Uploads.Profiles = append([]UploadProfile(nil), c.Uploads.Profiles...)
+	out.ShareExclusions = append([]string{}, c.ShareExclusions...)
 	return out
 }
 
 func (c Config) Validate() error {
+	if _, err := NormalizeShareExclusions(c.ShareExclusions); err != nil {
+		return err
+	}
 	if strings.IndexByte(c.Downloads.AfterFileCommand, 0) >= 0 || strings.IndexByte(c.Downloads.AfterFolderCommand, 0) >= 0 {
 		return errors.New("config: download commands must not contain NUL bytes")
 	}
@@ -225,6 +233,10 @@ func Load(path string) (Config, error) {
 		return c, err
 	}
 	applyEnv(&c)
+	c.ShareExclusions, err = NormalizeShareExclusions(c.ShareExclusions)
+	if err != nil {
+		return c, err
+	}
 	if missing && c.Soulseek.Username == "" && c.Soulseek.Password == "" {
 		return c, nil
 	}
@@ -232,6 +244,11 @@ func Load(path string) (Config, error) {
 }
 
 func (c Config) Save(path string) error {
+	rules, err := NormalizeShareExclusions(c.ShareExclusions)
+	if err != nil {
+		return err
+	}
+	c.ShareExclusions = rules
 	if err := c.Validate(); err != nil {
 		return err
 	}

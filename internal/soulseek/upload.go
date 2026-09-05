@@ -220,6 +220,14 @@ func (c *Client) performUpload(a *uploadAttempt, setupCtx context.Context, setup
 	if offset > a.job.Request.Size {
 		return ErrMalformed
 	}
+	// A queued/setup attempt may outlive a share-policy publication.
+	_, local, size, err := c.validateUpload(a.target.Username, a.target.Filename)
+	if err != nil {
+		return err
+	}
+	if local != a.localPath || size != a.job.Request.Size {
+		return errors.New("soulseek: shared file changed before stream start")
+	}
 	setupCancel()
 	if err := filePeer.SetDeadline(time.Time{}); err != nil {
 		return err
@@ -227,6 +235,9 @@ func (c *Client) performUpload(a *uploadAttempt, setupCtx context.Context, setup
 	a.mu.Lock()
 	a.progress = offset
 	a.mu.Unlock()
+	if callback := c.cfg.UploadStreamStart; callback != nil {
+		callback(TransferEvent{Direction: "upload", Username: a.target.Username, Filename: a.target.Filename, Attempt: a.target.Attempt, State: "running", Done: offset, Total: a.job.Request.Size})
+	}
 	c.emitUpload(a, "running", offset, "")
 	writer := c.cfg.Uploads.LimitWriter(a.ctx, a.job, uploadProgressWriter{Writer: filePeer, client: c, attempt: a})
 	return SendFile(a.ctx, filepath.Dir(a.localPath), filepath.Base(a.localPath), writer, a.job.Request.Size, offset, nil)
