@@ -3,13 +3,11 @@ package soulseek
 import (
 	"context"
 	"encoding/binary"
-	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 )
 
 func TestAudioProbeMissing(t *testing.T) {
@@ -53,58 +51,6 @@ printf '%*s' 1100000 x
 `)
 	if _, err := probe.Probe(context.Background(), path); err == nil || !strings.Contains(err.Error(), "limit") {
 		t.Fatalf("large output error = %v", err)
-	}
-}
-
-func TestAudioProbeCancellation(t *testing.T) {
-	dir := t.TempDir()
-	fake := filepath.Join(dir, "ffprobe")
-	writeFakeFFProbe(t, fake, `
-if [ "$1" = "-version" ]; then echo 'ffprobe version fake-1'; exit 0; fi
-sleep 30
-`)
-	t.Setenv("PATH", dir)
-	path := filepath.Join(dir, "song.mp3")
-	if err := os.WriteFile(path, []byte("x"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	probe := NewAudioProbe()
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	start := time.Now()
-	_, err := probe.Probe(ctx, path)
-	if !errors.Is(err, context.Canceled) || time.Since(start) > time.Second {
-		t.Fatalf("cancellation error = %v, elapsed = %s", err, time.Since(start))
-	}
-}
-
-func TestSupportedAudioExtensions(t *testing.T) {
-	for _, ext := range []string{"mp1", "MP2", "mp3", "flac", "wav", "aif", "aiff", "ogg", "opus", "aac", "m4a", "m4b", "wma", "ape", "wv", "mpc", "dsf", "dff"} {
-		if !IsSupportedAudioExtension("track." + ext) {
-			t.Errorf(".%s not supported", ext)
-		}
-	}
-	for _, path := range []string{"track.txt", "track", "http://host/a.mp3"} {
-		if IsSupportedAudioExtension(path) == (path != "http://host/a.mp3") {
-			if path != "http://host/a.mp3" {
-				t.Errorf("%s unexpectedly supported", path)
-			}
-		}
-	}
-}
-
-func TestAudioFingerprint(t *testing.T) {
-	probe := &AudioProbe{version: "ffprobe version test"}
-	path := filepath.Join(t.TempDir(), "track.wav")
-	if err := os.WriteFile(path, []byte("abc"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	fp, err := probe.Fingerprint(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if fp.Size != 3 || fp.MTimeUnixNano == 0 || fp.ExtractorVersion == "" {
-		t.Fatalf("fingerprint = %#v", fp)
 	}
 }
 

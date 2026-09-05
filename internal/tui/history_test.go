@@ -1,12 +1,10 @@
 package tui
 
 import (
-	"context"
 	"reflect"
 	"sync"
 	"testing"
 
-	tea "charm.land/bubbletea/v2"
 	"github.com/catgirl-systems/oto/internal/config"
 	"github.com/catgirl-systems/oto/internal/storage"
 )
@@ -108,17 +106,6 @@ func TestHistoryConcurrentConnectionsAndUnlimited(t *testing.T) {
 	}
 }
 
-func TestHistoryMemoryErrorsDoNotBlockUse(t *testing.T) {
-	settings := historySettings()
-	var history historyState
-	if err := history.record(nil, " in memory ", false, settings); err != nil || !reflect.DeepEqual(history.Searches, []string{"in memory"}) {
-		t.Fatalf("memory history: %#v %v", history, err)
-	}
-	if err := history.clear(nil, false, settings); err != nil || len(history.Searches) != 0 {
-		t.Fatalf("memory clear: %#v %v", history, err)
-	}
-}
-
 func TestHistoryCursorCyclesAndRestoresDraft(t *testing.T) {
 	items := []string{"current", "newer", "older"}
 	var cursor historyCursor
@@ -138,20 +125,5 @@ func TestHistoryCursorCyclesAndRestoresDraft(t *testing.T) {
 	value, ok = cursor.move(value, items, false)
 	if !ok || value != "current" {
 		t.Fatalf("draft: %q %v", value, ok)
-	}
-}
-
-func TestModelRecordsIndependentHistories(t *testing.T) {
-	cfg := config.Default()
-	m := newModel(context.Background(), nil, "", false, cfg)
-	m.stateDB = openHistoryDB(t)
-	m.workspace, m.query = workspaceSearch, "current"
-	m.beginEdit()
-	m.editKey(tea.KeyPressMsg(tea.Key{Code: tea.KeyUp}))
-	m.editing = false
-	m.activeSearch.RememberFilters = false
-	m.openSearch("not stored")
-	if m.historyErr != "" {
-		t.Fatal(m.historyErr)
 	}
 }

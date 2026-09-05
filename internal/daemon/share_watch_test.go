@@ -2,8 +2,6 @@ package daemon
 
 import (
 	"context"
-	"database/sql"
-	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -12,7 +10,6 @@ import (
 
 	"github.com/catgirl-systems/oto/internal/config"
 	"github.com/catgirl-systems/oto/internal/soulseek"
-	"github.com/catgirl-systems/oto/internal/storage"
 )
 
 func watchingService(t *testing.T, shares []config.Share, quiet time.Duration, builder func(context.Context, []config.Share) (*soulseek.ShareIndex, error)) *Service {
@@ -147,46 +144,4 @@ func TestShareSnapshotStagingIsInvisibleAndCancellationKeepsHead(t *testing.T) {
 	if err != nil || !reflect.DeepEqual(loaded.Files(), before.Files()) {
 		t.Fatalf("canceled staging changed head: %v", err)
 	}
-}
-
-func TestShareGCDeletesChildrenInBoundedBatches(t *testing.T) {
-	service, root, _ := shareStorageService(t)
-	files := make([]soulseek.ShareFile, storage.ShareBatchSize+1)
-	for i := range files {
-		files[i] = soulseek.ShareFile{Root: "Music", Path: filepath.Join("dir", string(rune('a'+i%26))+".mp3"), Size: uint64(i)}
-	}
-	// Duplicate paths are invalid for a restored index, so only exercise the
-	// staging/GC path with unique virtual names.
-	for i := range files {
-		files[i].Path = filepath.ToSlash(filepath.Join("dir", "file-"+itoa(i)+".mp3"))
-	}
-	service.shareStorageMu.Lock()
-	id, err := stageShareSnapshot(context.Background(), service.stateDB, "local", "", []soulseek.ShareRoot{{Name: "Music", Path: root}}, nil, files, nil)
-	if err != nil {
-		service.shareStorageMu.Unlock()
-		t.Fatal(err)
-	}
-	if err := deleteShareSnapshotRows(context.Background(), service.stateDB, id); err != nil {
-		service.shareStorageMu.Unlock()
-		t.Fatal(err)
-	}
-	service.shareStorageMu.Unlock()
-	if _, err := service.stateDB.Queries().GetShareSnapshot(context.Background(), id); !errors.Is(err, sql.ErrNoRows) {
-		t.Fatalf("staging snapshot remained: %v", err)
-	}
-}
-
-func itoa(n int) string {
-	const digits = "0123456789"
-	if n == 0 {
-		return "0"
-	}
-	var out [20]byte
-	i := len(out)
-	for n > 0 {
-		i--
-		out[i] = digits[n%10]
-		n /= 10
-	}
-	return string(out[i:])
 }

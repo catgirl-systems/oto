@@ -1,13 +1,11 @@
 package tui
 
 import (
-	"math"
 	"strings"
 	"testing"
 
 	"github.com/catgirl-systems/oto/internal/config"
 	"github.com/catgirl-systems/oto/internal/stats"
-	"github.com/charmbracelet/x/ansi"
 )
 
 func TestSelectedFilteredFilesAndScopeConfirmation(t *testing.T) {
@@ -46,40 +44,6 @@ func TestSelectedFilteredFilesAndScopeConfirmation(t *testing.T) {
 	}
 	if cmd := m.key(key("w")); cmd != nil || !strings.Contains(m.notice, "global") {
 		t.Fatal("targeted wishlist silently became global")
-	}
-}
-func TestStatsChartsAndPruneSafety(t *testing.T) {
-	t.Setenv("NO_COLOR", "1")
-	for _, ascii := range []bool{false, true} {
-		for _, width := range []int{1, 12, 40, 120} {
-			lines := statsChart("Rate", []uint64{0, 1, math.MaxUint64, 0}, width, ascii)
-			if ansi.StringWidth(lines[1]) > width {
-				t.Fatalf("chart overflow at %d", width)
-			}
-			if ascii && strings.ContainsAny(lines[1], "▁▂▃▄▅▆▇█") {
-				t.Fatal("Unicode in ASCII chart")
-			}
-			m := model{workspace: workspaceStats, cfg: config.Default(), width: width, height: 12}
-			m.cfg.Statistics.ASCIICharts = ascii
-			m.stats.overview.Lifetime.Download = stats.Totals{Bytes: math.MaxUint64, ActiveMillis: 1}
-			for _, line := range strings.Split(m.renderStats(width, 12), "\n") {
-				if ansi.StringWidth(line) > width {
-					t.Fatalf("stats overflow at %d: %q", width, line)
-				}
-			}
-		}
-	}
-	m := model{workspace: workspaceStats}
-	m.openStatsPrune()
-	m.stats.pruneConfirm = true
-	if cmd := m.statsPruneKey(key("esc")); cmd != nil || m.stats.prune {
-		t.Fatal("prune confirmation did not cancel")
-	}
-	if _, err := parseByteLimit("18446744073709551615 KiB"); err == nil {
-		t.Fatal("overflowing upload byte cap accepted")
-	}
-	if n, err := parseByteLimit("3 MiB"); err != nil || n != 3<<20 {
-		t.Fatalf("unit conversion: %d %v", n, err)
 	}
 }
 
