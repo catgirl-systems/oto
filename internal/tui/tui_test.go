@@ -260,7 +260,7 @@ func TestContextualFooterHints(t *testing.T) {
 		{"browse folder", model{workspace: workspaceBrowse, browseTabs: []browseTab{{}}, browseLoaded: true, browseTree: tree(treeFolder)}, []string{"f find", "enter expand", "d folder download", "s save list", "r refresh"}, []string{"i details"}},
 		{"browse file", model{workspace: workspaceBrowse, browseTabs: []browseTab{{}}, browseLoaded: true, browseTree: tree(treeFile)}, []string{"f find", "enter/d download", "space select", "i details", "s save list", "r refresh"}, []string{"folder download"}},
 		{"downloads", model{workspace: workspaceTransfers}, []string{"p pause", "d cancel", "r resume/retry", "c clear"}, nil},
-		{"uploads", model{workspace: workspaceTransfers, transferTab: transferUploads}, []string{"d cancel", "r retry", "c clear"}, []string{"p pause"}},
+		{"uploads", model{workspace: workspaceTransfers, transferTab: transferUploads}, []string{"d abort", "D abort users", "r retry", "c clear", "C clear status"}, []string{"p pause"}},
 		{"share root", model{workspace: workspaceShares, shareTree: tree(treeShareRoot)}, []string{"enter expand", "/ add", "r rescan", "d remove"}, nil},
 		{"share folder", model{workspace: workspaceShares, shareTree: tree(treeFolder)}, []string{"enter expand", "/ add", "r rescan"}, []string{"d remove"}},
 		{"setting text", settings(settingsAccount, 0), []string{"enter edit", "s save"}, nil},

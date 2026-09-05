@@ -143,6 +143,8 @@ type presenceMsg struct {
 }
 type transferActionMsg struct {
 	transfers []transfer
+	result    daemon.UploadActionResult
+	upload    bool
 	err       error
 }
 
@@ -947,7 +949,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			setTransferSpeeds(x.transfers, m.transfers, x.at.Sub(m.transferSampleAt))
 			m.transferSampleAt = x.at
 		}
-		m.transfers, m.err = x.transfers, errText(x.err)
+		m.err = errText(x.err)
+		if x.err != nil {
+			break
+		}
+		m.transfers = x.transfers
+		m.pruneUploadSelection()
 		for tab, direction := range transferDirections {
 			m.transferTrees[tab], m.transferCursors[tab] = buildTransferTree(m.transfers, direction, m.transferTrees[tab], m.transferCursors[tab])
 		}
@@ -1025,10 +1032,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case transferActionMsg:
 		m.err = errText(x.err)
+		if x.upload {
+			m.setNotice(fmt.Sprintf("Uploads: %d changed, %d skipped, %d errors", x.result.Changed, x.result.Skipped, len(x.result.Errors)))
+		}
 		if m.workspace == workspaceTransfers {
 			m.transferCursors[m.transferTab] = m.cursor
 		}
 		m.transfers = x.transfers
+		m.pruneUploadSelection()
 		for tab, direction := range transferDirections {
 			m.transferTrees[tab], m.transferCursors[tab] = buildTransferTree(m.transfers, direction, m.transferTrees[tab], m.transferCursors[tab])
 		}

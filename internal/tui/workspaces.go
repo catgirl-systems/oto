@@ -464,6 +464,11 @@ func (m model) renderTransfers(width, height int) string {
 		nameWidth := max(4, width-lipgloss.Width(status)-10)
 		label := treeLabel(tree, nodeIndex)
 		row := fmt.Sprintf("%s %s %s %s  %s", spinner, direction, treeGlyph(tree, node), searchTextColumn(label, nameWidth), status)
+		if m.transferTab == transferUploads {
+			nameWidth = max(4, width-lipgloss.Width(status)-12)
+			mark := treeSelectionIDs(tree, nodeIndex, m.transfers, m.uploadSelected)
+			row = fmt.Sprintf("%s %s %s %s %s  %s", mark, spinner, direction, treeGlyph(tree, node), searchTextColumn(label, nameWidth), status)
+		}
 		lines = append(lines, transferResultRow(trunc(row, max(4, width-2)), rowIndex == m.cursor, m.transferTab == transferUploads, failed))
 	}
 	return strings.Join(lines, "\n")

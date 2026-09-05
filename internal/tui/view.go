@@ -22,6 +22,10 @@ func (m model) View() tea.View {
 		content = m.folderMenuView()
 	} else if m.statusMenu {
 		content = m.statusMenuView()
+	} else if m.uploadStatusMenu {
+		content = m.uploadStatusMenuView()
+	} else if m.uploadConfirm {
+		content = m.uploadConfirmView()
 	} else if m.help {
 		content = m.helpView()
 	} else if m.details {
@@ -248,6 +252,38 @@ func (m model) statusMenuView() string {
 	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, card)
 }
 
+func (m model) uploadStatusMenuView() string {
+	var b strings.Builder
+	b.WriteString(strong("Clear uploads by status") + "\n\n")
+	for i, scope := range uploadClearScopes {
+		marker, label := "  ", scope.label
+		if i == m.uploadStatusChoice {
+			marker, label = accent("› "), strong(label)
+		}
+		b.WriteString(marker + label + "\n")
+	}
+	b.WriteString("\n" + muted("↑↓ / j k choose  •  enter clear  •  esc cancel"))
+	card := panelStyle().Width(max(1, min(64, m.width-4))).Padding(1, 2).Render(b.String())
+	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, card)
+}
+
+func (m model) uploadConfirmView() string {
+	var b strings.Builder
+	b.WriteString(strong("Confirm upload action") + "\n\n")
+	b.WriteString(trunc(m.uploadConfirmLabel+"?", max(4, m.width-12)) + "\n\n")
+	for i, label := range []string{"No", "Yes"} {
+		marker := "  "
+		if i == m.uploadConfirmChoice {
+			marker = accent("› ")
+			label = strong(label)
+		}
+		b.WriteString(marker + label + "\n")
+	}
+	b.WriteString("\n" + muted("↑↓ / j k choose  •  enter accept  •  esc cancel"))
+	card := panelStyle().Width(max(1, min(64, m.width-4))).Padding(1, 2).Render(b.String())
+	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, card)
+}
+
 func (m model) helpView() string {
 	var b strings.Builder
 	b.WriteString(accent("Keyboard"))
@@ -280,6 +316,8 @@ func (m model) helpView() string {
 			{"space", "select item or loaded folder contents"},
 			{"d", "download / choose folder mode and destination"},
 			{"r", "refresh browse / resume or retry transfer / rescan shares"},
+			{"d / D (uploads)", "abort selected / confirm abort all for selected users"},
+			{"c / C (uploads)", "confirm clear selected / clear by status"},
 			{"p", "pause download subtree"},
 			{"b (search)", "browse the selected user's folder"},
 			{"s", "save Browse list or Settings"},
@@ -466,6 +504,25 @@ func treeSelection(tree *treeState, index int, selected map[int]bool) string {
 	return "◐"
 }
 
+func treeSelectionIDs(tree *treeState, index int, transfers []transfer, selected map[string]bool) string {
+	chosen, total := 0, 0
+	for _, source := range tree.nodes[index].leaves {
+		if source >= 0 && source < len(transfers) && transfers[source].direction == "upload" {
+			total++
+			if selected[transfers[source].id] {
+				chosen++
+			}
+		}
+	}
+	if chosen == 0 {
+		return "○"
+	}
+	if chosen == total {
+		return "●"
+	}
+	return "◐"
+}
+
 func treeLabel(tree *treeState, index int) string {
 	return strings.Repeat("  ", tree.depth(index)) + tree.nodes[index].label
 }
@@ -579,7 +636,7 @@ func (m model) footerHints() []string {
 		if m.transferTab == transferDownloads {
 			return append(hints, "p pause", "r resume/retry", "d cancel", "c clear")
 		}
-		return append(hints, "r retry", "d cancel", "c clear")
+		return append(hints, "space mark", "r retry", "d abort", "D abort users", "c clear selected", "C clear status")
 	case workspaceShares:
 		hints := []string{"/ add", "r rescan"}
 		_, node := m.shareTree.node(m.cursor)
