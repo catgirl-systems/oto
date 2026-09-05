@@ -118,6 +118,7 @@ func (s *Server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/folder-downloads", s.folderDownloads)
 	mux.HandleFunc("GET /v1/transfers", s.transfers)
 	mux.HandleFunc("POST /v1/transfers/{id}", s.transfers)
+	mux.HandleFunc("POST /v1/uploads/actions", s.uploadAction)
 	mux.HandleFunc("GET /v1/shares", s.shares)
 	mux.HandleFunc("POST /v1/shares", s.shares)
 	mux.HandleFunc("GET /v1/shares/browse", s.shares)
@@ -373,6 +374,24 @@ func (s *Server) folderDownloads(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, 200, map[string]int{"queued": len(out)})
 }
+func (s *Server) uploadAction(w http.ResponseWriter, r *http.Request) {
+	var req daemon.UploadActionRequest
+	if err := decode(w, r, &req); err != nil {
+		writeErr(w, 400, err)
+		return
+	}
+	result, err := s.service.UploadAction(req)
+	if err != nil {
+		status := http.StatusBadRequest
+		if errors.Is(err, daemon.ErrClosed) || errors.Is(err, daemon.ErrUploadUnavailable) {
+			status = http.StatusServiceUnavailable
+		}
+		writeErr(w, status, err)
+		return
+	}
+	writeJSON(w, 200, result)
+}
+
 func (s *Server) transfers(w http.ResponseWriter, r *http.Request) {
 	if id := r.PathValue("id"); id != "" {
 		var req struct {
@@ -603,6 +622,12 @@ func (c *Client) Transfers(ctx context.Context) ([]daemon.Transfer, error) {
 }
 func (c *Client) TransferAction(ctx context.Context, id, action string) error {
 	return c.Do(ctx, "POST", "/v1/transfers/"+url.QueryEscape(id), map[string]string{"action": action}, nil)
+}
+
+func (c *Client) UploadAction(ctx context.Context, req daemon.UploadActionRequest) (daemon.UploadActionResult, error) {
+	var result daemon.UploadActionResult
+	err := c.Do(ctx, "POST", "/v1/uploads/actions", req, &result)
+	return result, err
 }
 func (c *Client) Shares(ctx context.Context) ([]config.Share, error) {
 	var x []config.Share
