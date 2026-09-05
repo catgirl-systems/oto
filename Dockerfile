@@ -18,6 +18,8 @@ RUN CGO_ENABLED=0 GOOS="$TARGETOS" GOARCH="$TARGETARCH" \
 
 FROM ghcr.io/linuxserver/baseimage-alpine:3.23
 
+RUN apk add --no-cache ffmpeg
+
 ARG BUILD_DATE
 ARG REVISION
 ARG VERSION=dev
