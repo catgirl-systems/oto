@@ -701,7 +701,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.stats.downloads, m.stats.uploads, m.stats.peers, m.stats.log = x.view.downloads, x.view.uploads, x.view.peers, x.view.log
 		}
 	case statsPruneMsg:
-		if m.stats.prune {
+		if m.stats.prune && m.stats.prunePending && x.request == m.stats.pruneGeneration {
+			m.stats.prunePending = false
 			m.stats.err = errText(x.err)
 			if x.err == nil {
 				if x.apply {
@@ -710,8 +711,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				} else {
 					m.stats.preview = x.result
 					m.stats.pruneConfirm = true
-					m.stats.pruneChoice = 0
 				}
+			} else {
+				m.stats.pruneConfirm = false
 			}
 		}
 	case tea.WindowSizeMsg:

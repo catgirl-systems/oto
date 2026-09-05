@@ -72,8 +72,8 @@ func TestStatsChartsAndPruneSafety(t *testing.T) {
 	m := model{workspace: workspaceStats}
 	m.openStatsPrune()
 	m.stats.pruneConfirm = true
-	if cmd := m.statsPruneKey(key("enter")); cmd != nil || m.stats.prune {
-		t.Fatal("pruning defaulted to Yes")
+	if cmd := m.statsPruneKey(key("esc")); cmd != nil || m.stats.prune {
+		t.Fatal("prune confirmation did not cancel")
 	}
 	if _, err := parseByteLimit("18446744073709551615 KiB"); err == nil {
 		t.Fatal("overflowing upload byte cap accepted")

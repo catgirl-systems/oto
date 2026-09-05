@@ -14,7 +14,7 @@ import (
 
 func (m *model) key(k tea.KeyPressMsg) tea.Cmd {
 	s := k.String()
-	if m.workspace == workspaceStats && (m.stats.prune || m.stats.edit != "" || m.stats.detail != nil) {
+	if m.stats.prune || m.workspace == workspaceStats && (m.stats.edit != "" || m.stats.detail != nil) {
 		return m.statsKey(k)
 	}
 	if m.searchScope != nil {
@@ -189,7 +189,6 @@ func (m *model) key(k tea.KeyPressMsg) tea.Cmd {
 			case settingStatsASCII:
 				m.cfg.Statistics.ASCIICharts = !m.cfg.Statistics.ASCIICharts
 			case settingStatsPrune:
-				m.switchWorkspace(workspaceStats)
 				m.openStatsPrune()
 			case settingDownloadFilters:
 				m.cfg.Downloads.FiltersEnabled = !m.cfg.Downloads.FiltersEnabled

@@ -595,6 +595,18 @@ func (m model) statusView() string {
 }
 
 func (m model) footerHints() []string {
+	if m.stats.prune {
+		if m.stats.prunePending {
+			if m.stats.pruneConfirm {
+				return []string{"pruning…"}
+			}
+			return []string{"loading preview…", "esc cancel"}
+		}
+		if m.stats.pruneConfirm {
+			return []string{"enter confirm prune", "esc cancel"}
+		}
+		return []string{"enter preview", "l logs", "d daily", "esc cancel"}
+	}
 	if m.choiceChoosing {
 		return []string{"← → choose", "enter accept", "esc cancel"}
 	}
@@ -718,6 +730,8 @@ func (m model) footerHints() []string {
 			action = "choose"
 		case settingAction:
 			switch field.id {
+			case settingStatsPrune:
+				action = "edit prune days"
 			case settingManageShareExclusions:
 				action = "manage exclusions"
 			case settingChangePassword:
