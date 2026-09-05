@@ -35,6 +35,7 @@ func (s *Service) completeDownload(id, root, partPath string) {
 		d := &s.journal.Downloads[i]
 		if d.ID == id && d.State == "running" {
 			d.State, d.Offset = "finalizing", d.Size
+			s.stopTransferLocked(id)
 			download = *d
 			tr := s.transfers[id]
 			tr.State, tr.Done = d.State, d.Size
@@ -66,6 +67,7 @@ func (s *Service) completeDownload(id, root, partPath string) {
 		tr := s.transfers[id]
 		tr.State, tr.Done, tr.Error, tr.Queue = d.State, d.Size, "", 0
 		s.transfers[id] = tr
+		s.stopTransferLocked(id)
 		break
 	}
 	commands, ctx := s.cfg.Downloads, s.runCtx
@@ -80,6 +82,13 @@ func (s *Service) completeDownload(id, root, partPath string) {
 	if err != nil {
 		log.Printf("save completed download (commands and notifications skipped): %v", err)
 		return
+	}
+	if commands.AutoClearCompleted {
+		defer func() {
+			if err := s.clearCompletedDownload(id); err != nil {
+				log.Printf("clear completed download %s (history retained): %v", id, err)
+			}
+		}()
 	}
 	if closed {
 		return

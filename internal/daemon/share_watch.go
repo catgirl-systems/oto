@@ -22,7 +22,7 @@ import (
 const (
 	DefaultShareRescanDelay = 5 * time.Minute
 	shareRescanMaxDelay     = 30 * time.Minute
-	shareIndexCacheVersion  = 1
+	shareIndexCacheVersion  = 2
 )
 
 type shareScanResult struct {
@@ -60,28 +60,35 @@ func (s *Service) finishShareScan(id uint64, state string, started time.Time, er
 	s.shareScan.State = state
 	s.shareScan.FinishedAt = time.Now().UTC()
 	s.shareScan.ElapsedMS = time.Since(started).Milliseconds()
-	if err != nil {
+	s.activeScanCancel = nil
+	if err != nil && !errors.Is(err, ErrScanCancelled) {
 		s.shareScan.Error = err.Error()
 	}
 }
 
 // runShareScan owns the single scan gate through building and publication.
-func (s *Service) runShareScan(ctx context.Context, shares []config.Share, generation uint64, manual bool, builder func(context.Context, []config.Share) (*soulseek.ShareIndex, error), publish func(*soulseek.ShareIndex) error) error {
+func (s *Service) runShareScan(ctx context.Context, shares []config.Share, rules []string, generation uint64, manual bool, builder func(context.Context, []config.Share) (*soulseek.ShareIndex, error), publish func(*soulseek.ShareIndex) error) error {
 	s.mu.Lock()
 	if s.closed {
 		s.mu.Unlock()
 		return ErrClosed
 	}
 	s.wg.Add(1)
+	cancelEpoch := s.shareCancelEpoch
 	if builder == nil {
 		builder = s.shareIndexBuilder
 	}
+	if builder == nil {
+		builder = func(ctx context.Context, roots []config.Share) (*soulseek.ShareIndex, error) {
+			return buildFilteredShareIndex(ctx, roots, rules)
+		}
+	}
 	s.mu.Unlock()
 	defer s.wg.Done()
-	ctx, cancel := context.WithCancel(ctx)
-	stop := context.AfterFunc(s.scanCtx, cancel)
+	ctx, cancel := context.WithCancelCause(ctx)
+	stop := context.AfterFunc(s.scanCtx, func() { cancel(context.Canceled) })
 	defer stop()
-	defer cancel()
+	defer cancel(context.Canceled)
 	if err := s.acquireShareScan(ctx, manual); err != nil {
 		return err
 	}
@@ -91,6 +98,10 @@ func (s *Service) runShareScan(ctx context.Context, shares []config.Share, gener
 	}
 	started := time.Now()
 	s.mu.Lock()
+	if cancelEpoch != s.shareCancelEpoch {
+		s.mu.Unlock()
+		return ErrScanCancelled
+	}
 	if s.closed || s.scanCtx.Err() != nil || generation != s.shareWatchGeneration {
 		s.mu.Unlock()
 		return errShareScanDiscarded
@@ -98,6 +109,7 @@ func (s *Service) runShareScan(ctx context.Context, shares []config.Share, gener
 	s.shareScanID++
 	id := s.shareScanID
 	s.shareScan = &ShareScan{ID: id, State: "scanning", StartedAt: started}
+	s.activeScanCancel = cancel
 	s.mu.Unlock()
 
 	var progressMu sync.Mutex
@@ -124,14 +136,15 @@ func (s *Service) runShareScan(ctx context.Context, shares []config.Share, gener
 		s.mu.Unlock()
 	}
 	index, err := builder(soulseek.WithShareScanProgress(ctx, progress), shares)
-	if err == nil {
-		err = ctx.Err()
-	}
 	if err == nil && index == nil {
 		err = errors.New("daemon: share scan returned nil index")
 	}
 	progressMu.Lock()
 	s.mu.Lock()
+	// Cancellation and the publication commitment share the same mutex.
+	if ctx.Err() != nil {
+		err = context.Cause(ctx)
+	}
 	if s.shareScan != nil && s.shareScan.ID == id {
 		s.shareScan.Files, s.shareScan.Directories = files, directories
 		if err == nil {
@@ -148,7 +161,7 @@ func (s *Service) runShareScan(ctx context.Context, shares []config.Share, gener
 		switch {
 		case errors.Is(err, errShareScanDiscarded):
 			state = "discarded"
-		case ctx.Err() != nil:
+		case ctx.Err() != nil || errors.Is(err, ErrScanCancelled):
 			state = "cancelled"
 		default:
 			state = "failed"
@@ -159,12 +172,13 @@ func (s *Service) runShareScan(ctx context.Context, shares []config.Share, gener
 }
 
 type shareIndexCache struct {
-	Version int                  `json:"version"`
-	Roots   []soulseek.ShareRoot `json:"roots"`
-	Files   []soulseek.ShareFile `json:"files"`
+	Version    int                  `json:"version"`
+	Roots      []soulseek.ShareRoot `json:"roots"`
+	Files      []soulseek.ShareFile `json:"files"`
+	Exclusions []string             `json:"exclusions"`
 }
 
-func loadShareIndexCache(path string, shares []config.Share) (*soulseek.ShareIndex, error) {
+func loadShareIndexCache(path string, shares []config.Share, rules []string) (*soulseek.ShareIndex, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
@@ -176,11 +190,18 @@ func loadShareIndexCache(path string, shares []config.Share) (*soulseek.ShareInd
 	if cache.Version != shareIndexCacheVersion {
 		return nil, fmt.Errorf("unsupported share index cache version %d", cache.Version)
 	}
+	rules, err = config.NormalizeShareExclusions(rules)
+	if err != nil {
+		return nil, err
+	}
+	if cache.Exclusions == nil || !slices.Equal(cache.Exclusions, rules) {
+		return nil, errors.New("share index cache exclusions changed")
+	}
 	roots := make([]soulseek.ShareRoot, len(shares))
 	for i, share := range shares {
 		roots[i] = soulseek.ShareRoot{Name: share.Name, Path: share.Path}
 	}
-	index, err := soulseek.RestoreShareIndex(roots, cache.Files)
+	index, err := soulseek.RestoreShareIndexWithExclusions(roots, cache.Files, rules)
 	if err != nil {
 		return nil, err
 	}
@@ -191,7 +212,7 @@ func loadShareIndexCache(path string, shares []config.Share) (*soulseek.ShareInd
 }
 
 func saveShareIndexCache(path string, index *soulseek.ShareIndex) error {
-	return config.SaveJSON(path, shareIndexCache{Version: shareIndexCacheVersion, Roots: index.Roots(), Files: index.Files()})
+	return config.SaveJSON(path, shareIndexCache{Version: shareIndexCacheVersion, Roots: index.Roots(), Files: index.Files(), Exclusions: index.Exclusions()})
 }
 
 func (s *Service) persistShareIndex(index *soulseek.ShareIndex) {
@@ -201,7 +222,14 @@ func (s *Service) persistShareIndex(index *soulseek.ShareIndex) {
 }
 
 func buildShareIndex(ctx context.Context, shares []config.Share) (*soulseek.ShareIndex, error) {
-	index := soulseek.NewShareIndex()
+	return buildFilteredShareIndex(ctx, shares, nil)
+}
+
+func buildFilteredShareIndex(ctx context.Context, shares []config.Share, rules []string) (*soulseek.ShareIndex, error) {
+	index, err := soulseek.NewShareIndexWithExclusions(rules)
+	if err != nil {
+		return nil, err
+	}
 	for _, share := range shares {
 		if err := index.AddRoot(share.Name, share.Path); err != nil {
 			return nil, err
@@ -244,12 +272,13 @@ func (s *Service) restartShareWatcherLocked() {
 	generation := s.shareWatchGeneration
 	shares := append([]config.Share(nil), s.cfg.Shares...)
 	roots := s.shares.Roots()
+	policy := s.shares
 	delay := s.shareRescanDelay
 	builder := s.shareIndexBuilder
 	s.wg.Add(1)
 	go func() {
 		defer s.wg.Done()
-		s.watchShares(ctx, generation, shares, roots, delay, shareRescanMaxDelay, builder)
+		s.watchShares(ctx, generation, shares, roots, policy, delay, shareRescanMaxDelay, builder)
 	}()
 }
 
@@ -270,25 +299,26 @@ func (s *Service) publishShareIndex(generation uint64, index *soulseek.ShareInde
 	return nil
 }
 
-func (s *Service) watchShares(ctx context.Context, generation uint64, shares []config.Share, roots []soulseek.ShareRoot, quiet, maximum time.Duration, builder func(context.Context, []config.Share) (*soulseek.ShareIndex, error)) {
+func (s *Service) watchShares(ctx context.Context, generation uint64, shares []config.Share, roots []soulseek.ShareRoot, policy *soulseek.ShareIndex, quiet, maximum time.Duration, builder func(context.Context, []config.Share) (*soulseek.ShareIndex, error)) {
+	rules := policy.Exclusions()
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
 		log.Printf("share watcher: %v", err)
-		s.pollShares(ctx, generation, shares, quiet, builder)
+		s.pollShares(ctx, generation, shares, policy.Exclusions(), quiet, builder)
 		return
 	}
 
 	watched := make(map[string]bool)
 	watching := len(roots) == len(shares)
 	for _, root := range roots {
-		if err := addWatchTree(ctx, watcher, watched, root.Path, root.Path); err != nil {
+		if err := addWatchTree(ctx, watcher, watched, root.Path, root.Path, policy); err != nil {
 			log.Printf("share watcher %s: %v", root.Path, err)
 			watching = false
 		}
 	}
 	if !watching {
 		_ = watcher.Close()
-		s.pollShares(ctx, generation, shares, quiet, builder)
+		s.pollShares(ctx, generation, shares, policy.Exclusions(), quiet, builder)
 		return
 	}
 	defer watcher.Close()
@@ -333,8 +363,20 @@ func (s *Service) watchShares(ctx context.Context, generation uint64, shares []c
 		stopTimer(&quietTimer, &quietC)
 		stopTimer(&maxTimer, &maxC)
 		scanRevision := revision
+		workWake := s.scanCancellationWake()
+		guardedBuilder := func(ctx context.Context, roots []config.Share) (*soulseek.ShareIndex, error) {
+			select {
+			case <-workWake:
+				return nil, ErrScanCancelled
+			default:
+			}
+			if builder != nil {
+				return builder(ctx, roots)
+			}
+			return buildFilteredShareIndex(ctx, roots, rules)
+		}
 		go func() {
-			err := s.runShareScan(ctx, shares, generation, false, builder, func(index *soulseek.ShareIndex) error {
+			err := s.runShareScan(ctx, shares, rules, generation, false, guardedBuilder, func(index *soulseek.ShareIndex) error {
 				reply := make(chan error, 1)
 				select {
 				case scanPublish <- shareScanResult{index: index, revision: scanRevision, reply: reply}:
@@ -358,8 +400,24 @@ func (s *Service) watchShares(ctx context.Context, generation uint64, shares []c
 		startMaximum()
 	}
 
-	// Reconcile once after installing watches to close the startup scan/watch gap.
-	startScan()
+	cancelWake := s.scanCancellationWake()
+	consumeCancellation := func() {
+		select {
+		case <-cancelWake:
+			cancelWake = s.scanCancellationWake()
+			revision++
+			dirty, quietReady, maxReady = false, false, false
+			stopTimer(&quietTimer, &quietC)
+			stopTimer(&maxTimer, &maxC)
+		default:
+		}
+	}
+	// Reconcile the startup gap unless the user just cancelled that work.
+	if !s.userCancelledScan() {
+		startScan()
+	} else {
+		dirty = false
+	}
 	for {
 		select {
 		case <-ctx.Done():
@@ -369,7 +427,10 @@ func (s *Service) watchShares(ctx context.Context, generation uint64, shares []c
 				<-scanDone
 			}
 			return
+		case <-cancelWake:
+			consumeCancellation()
 		case event, ok := <-events:
+			consumeCancellation()
 			if !ok {
 				events = nil
 				watching = false
@@ -379,9 +440,17 @@ func (s *Service) watchShares(ctx context.Context, generation uint64, shares []c
 			if event.Op&(fsnotify.Create|fsnotify.Write|fsnotify.Remove|fsnotify.Rename) == 0 {
 				continue
 			}
+			info, statErr := os.Lstat(event.Name)
+			if statErr == nil {
+				if info.Mode()&os.ModeSymlink != 0 || policy.ExcludedLocalPath(event.Name, info.IsDir()) {
+					continue
+				}
+			} else if policy.ExcludedLocalPath(event.Name, false) && policy.ExcludedLocalPath(event.Name, true) {
+				continue // Removed entries of ambiguous type conservatively trigger a scan.
+			}
 			if event.Op&fsnotify.Create != 0 {
 				if info, statErr := os.Lstat(event.Name); statErr == nil && info.IsDir() && !strings.HasPrefix(info.Name(), ".") {
-					if addErr := addWatchTree(ctx, watcher, watched, event.Name, event.Name); addErr != nil {
+					if addErr := addWatchTree(ctx, watcher, watched, event.Name, event.Name, policy); addErr != nil {
 						log.Printf("share watcher %s: %v", event.Name, addErr)
 						watching = false
 					}
@@ -399,11 +468,13 @@ func (s *Service) watchShares(ctx context.Context, generation uint64, shares []c
 			log.Printf("share watcher: %v", watchErr)
 			markDirty()
 		case <-quietC:
+			consumeCancellation()
 			quietTimer, quietC, quietReady = nil, nil, true
 			if !scanning {
 				startScan()
 			}
 		case <-maxC:
+			consumeCancellation()
 			maxTimer, maxC, maxReady = nil, nil, true
 			if !scanning {
 				startScan()
@@ -414,15 +485,22 @@ func (s *Service) watchShares(ctx context.Context, generation uint64, shares []c
 				continue
 			}
 			for _, root := range result.index.Roots() {
-				if addErr := addWatchTree(ctx, watcher, watched, root.Path, root.Path); addErr != nil {
+				if addErr := addWatchTree(ctx, watcher, watched, root.Path, root.Path, policy); addErr != nil {
 					log.Printf("share watcher %s: %v", root.Path, addErr)
 					watching = false
 				}
 			}
 			result.reply <- s.publishShareIndex(generation, result.index)
 		case result := <-scanDone:
+			consumeCancellation()
 			scanning = false
-			if result.err != nil {
+			if errors.Is(result.err, ErrScanCancelled) {
+				// Only events arriving after cancellation may schedule another scan.
+				if !watching {
+					dirty = true
+					resetQuiet() // Lost watches resume polling at the normal interval.
+				}
+			} else if result.err != nil {
 				if ctx.Err() != nil {
 					return
 				}
@@ -450,7 +528,7 @@ func (s *Service) watchShares(ctx context.Context, generation uint64, shares []c
 	}
 }
 
-func (s *Service) pollShares(ctx context.Context, generation uint64, shares []config.Share, delay time.Duration, builder func(context.Context, []config.Share) (*soulseek.ShareIndex, error)) {
+func (s *Service) pollShares(ctx context.Context, generation uint64, shares []config.Share, rules []string, delay time.Duration, builder func(context.Context, []config.Share) (*soulseek.ShareIndex, error)) {
 	timer := time.NewTimer(delay)
 	defer timer.Stop()
 	for {
@@ -459,20 +537,22 @@ func (s *Service) pollShares(ctx context.Context, generation uint64, shares []co
 			return
 		case <-timer.C:
 		}
-		err := s.runShareScan(ctx, shares, generation, false, builder, func(index *soulseek.ShareIndex) error {
+		err := s.runShareScan(ctx, shares, rules, generation, false, builder, func(index *soulseek.ShareIndex) error {
 			return s.publishShareIndex(generation, index)
 		})
 		if err != nil {
 			if ctx.Err() != nil || errors.Is(err, errShareScanDiscarded) {
 				return
 			}
-			log.Printf("share rescan: %v", err)
+			if !errors.Is(err, ErrScanCancelled) {
+				log.Printf("share rescan: %v", err)
+			}
 		}
 		timer.Reset(delay)
 	}
 }
 
-func addWatchTree(ctx context.Context, watcher *fsnotify.Watcher, watched map[string]bool, root, path string) error {
+func addWatchTree(ctx context.Context, watcher *fsnotify.Watcher, watched map[string]bool, root, path string, policy *soulseek.ShareIndex) error {
 	return filepath.WalkDir(path, func(current string, entry fs.DirEntry, walkErr error) error {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -494,6 +574,9 @@ func addWatchTree(ctx context.Context, watcher *fsnotify.Watcher, watched map[st
 		}
 		if !entry.IsDir() {
 			return nil
+		}
+		if policy.ExcludedLocalPath(current, true) {
+			return filepath.SkipDir
 		}
 		current = filepath.Clean(current)
 		if watched[current] {

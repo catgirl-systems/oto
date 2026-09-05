@@ -91,7 +91,7 @@ func TestShareIndexCacheRoundTrip(t *testing.T) {
 	if err := os.Remove(filepath.Join(root, "song.flac")); err != nil {
 		t.Fatal(err)
 	}
-	restored, err := loadShareIndexCache(cachePath, shares)
+	restored, err := loadShareIndexCache(cachePath, shares, nil)
 	if err != nil || !hasIndexedFile(restored, "Music", "song.flac", 5) {
 		t.Fatalf("cache round trip failed: %v", err)
 	}
@@ -184,7 +184,7 @@ func TestStartRebuildsInvalidShareIndexCaches(t *testing.T) {
 			if scans.Load() != 1 {
 				t.Fatalf("fallback scans = %d", scans.Load())
 			}
-			if _, err := loadShareIndexCache(service.shareIndexPath, cfg.Shares); err != nil {
+			if _, err := loadShareIndexCache(service.shareIndexPath, cfg.Shares, cfg.ShareExclusions); err != nil {
 				t.Fatalf("fallback did not replace cache: %v", err)
 			}
 		})
@@ -220,7 +220,7 @@ func TestManualRescanReplacesShareIndexCache(t *testing.T) {
 	if err := service.Rescan(); err != nil {
 		t.Fatal(err)
 	}
-	cached, err := loadShareIndexCache(service.shareIndexPath, cfg.Shares)
+	cached, err := loadShareIndexCache(service.shareIndexPath, cfg.Shares, cfg.ShareExclusions)
 	if err != nil || !hasIndexedFile(cached, "Music", "new.flac", 3) || hasIndexedFile(cached, "Music", "old.flac", 3) {
 		t.Fatalf("rescan did not replace cache: %v", err)
 	}
@@ -374,8 +374,11 @@ func TestShareWatcherSkipsHiddenDirectoriesAndSymlinks(t *testing.T) {
 	if err := os.Symlink(outside, filepath.Join(root, "linked")); err != nil {
 		t.Fatal(err)
 	}
-	waitFor(t, func() bool { return scans.Load() >= 2 })
+	// Clearly hidden and symlink events no longer need a scan.
 	time.Sleep(75 * time.Millisecond)
+	if scans.Load() != 1 {
+		t.Fatal("excluded creation caused a scan")
+	}
 	if _, err := service.BrowseLocal("Music/.hidden"); err == nil {
 		t.Fatal("hidden directory was indexed")
 	}
