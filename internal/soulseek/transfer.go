@@ -91,7 +91,7 @@ func copyAtMost(ctx context.Context, dst io.Writer, src io.Reader, expected, off
 			return ErrTransferCancelled
 		default:
 		}
-		n, err := io.ReadFull(src, buf[:min(uint64(len(buf)), left)])
+		n, err := src.Read(buf[:min(uint64(len(buf)), left)])
 		if n > 0 {
 			written, writeErr := dst.Write(buf[:n])
 			if writeErr != nil {
@@ -106,7 +106,13 @@ func copyAtMost(ctx context.Context, dst io.Writer, src io.Reader, expected, off
 				progress(Progress{Done: done, Total: expected, State: "running"})
 			}
 		}
+		if left == 0 {
+			return nil
+		}
 		if err != nil {
+			if errors.Is(err, io.EOF) {
+				err = io.ErrUnexpectedEOF
+			}
 			return fmt.Errorf("%w: %w: expected %d bytes, got %d", ErrMalformed, err, expected, done-offset)
 		}
 	}
@@ -380,10 +386,14 @@ func (m *UploadManager) reserve(job *UploadJob, bytes int, now time.Time) (time.
 func (m *UploadManager) chunkSize() int {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.policy.BytesPerSecond == 0 {
+	return transferChunkSize(m.policy.BytesPerSecond)
+}
+
+func transferChunkSize(bytesPerSecond int64) int {
+	if bytesPerSecond == 0 {
 		return 32 << 10
 	}
-	return int(min(max(m.policy.BytesPerSecond/10, 1024), 32<<10))
+	return int(min(max(bytesPerSecond/10, 1024), 32<<10))
 }
 
 type uploadWriter struct {
