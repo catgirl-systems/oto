@@ -22,6 +22,7 @@ import (
 )
 
 type ClientConfig struct {
+	DownloadLimitBytesPerSecond                               int64
 	Address, Username, Password, ListenAddr, NetworkInterface string
 	Share                                                     *ShareIndex
 	Uploads                                                   *UploadManager
@@ -84,6 +85,7 @@ type peerAddressLookup struct {
 
 // Client owns one server connection; reconnecting creates a fresh lifecycle.
 type Client struct {
+	downloadLimit         downloadLimiter
 	cfg                   ClientConfig
 	mu                    sync.Mutex
 	writeMu               chan struct{}
@@ -134,7 +136,9 @@ func NewClient(cfg ClientConfig) *Client {
 	}
 	control := bindToDevice(cfg.NetworkInterface)
 	uploadRoot, uploadCancel := context.WithCancel(context.Background())
-	return &Client{cfg: cfg, writeMu: make(chan struct{}, 1), dialer: net.Dialer{Control: control}, listenConfig: net.ListenConfig{Control: control}, events: make(chan Event, 32), pending: make(map[uint32]chan SearchResponse), addresses: make(map[string]*peerAddressLookup), pierce: make(map[uint32]chan net.Conn), requested: make(map[string]*pendingDownload), downloads: make(map[uint32]*pendingDownload), uploads: make(map[string]*uploadAttempt), uploadRoot: uploadRoot, uploadCancel: uploadCancel, distributed: NewDistributedNode(), incomingSearch: policy, browseSlot: make(chan struct{}, 1), searchSlots: make(chan struct{}, 2)}
+	client := &Client{cfg: cfg, writeMu: make(chan struct{}, 1), dialer: net.Dialer{Control: control}, listenConfig: net.ListenConfig{Control: control}, events: make(chan Event, 32), pending: make(map[uint32]chan SearchResponse), addresses: make(map[string]*peerAddressLookup), pierce: make(map[uint32]chan net.Conn), requested: make(map[string]*pendingDownload), downloads: make(map[uint32]*pendingDownload), uploads: make(map[string]*uploadAttempt), uploadRoot: uploadRoot, uploadCancel: uploadCancel, distributed: NewDistributedNode(), incomingSearch: policy, browseSlot: make(chan struct{}, 1), searchSlots: make(chan struct{}, 2)}
+	client.ConfigureDownloadLimit(cfg.DownloadLimitBytesPerSecond)
+	return client
 }
 
 func bindToDevice(name string) func(string, string, syscall.RawConn) error {
@@ -198,6 +202,14 @@ func (c *Client) SetShareIndex(index *ShareIndex) {
 	c.cfg.Share = index
 	c.mu.Unlock()
 	_ = c.send(sharedCounts(index))
+}
+
+func (c *Client) ConfigureDownloadLimit(bytesPerSecond int64) {
+	c.downloadLimit.configure(bytesPerSecond)
+}
+
+func (c *Client) DownloadLimit() int64 {
+	return c.downloadLimit.limit()
 }
 
 func (c *Client) ConfigureUploads(policy UploadPolicy) {
@@ -1081,7 +1093,8 @@ func (c *Client) serveFile(peer net.Conn) {
 	if pending.start != nil {
 		pending.start()
 	}
-	err := CopyAtMost(pending.ctx, pending.writer, peer, pending.size, pending.offset, pending.progress)
+	reader := downloadReader{ctx: pending.ctx, limiter: &c.downloadLimit, src: peer}
+	err := CopyAtMost(pending.ctx, pending.writer, reader, pending.size, pending.offset, pending.progress)
 	pending.finish(err)
 }
 
