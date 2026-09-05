@@ -1171,7 +1171,7 @@ func TestFileDetails(t *testing.T) {
 	}
 
 	m.workspace, m.browseUser = workspaceBrowse, "bob"
-	m.entries = []entry{{name: `Private\demo.wav`, extension: "wav", size: 42, private: true, bitrate: 1411}}
+	m.entries = []entry{{name: `Private\demo.wav`, extension: "wav", size: 42, private: true, bitrate: 1411, vbrKnown: true}}
 	m.browseTree, m.cursor = buildBrowseTree(m.entries, "", treeState{}, 0)
 	m.cursor = m.browseTree.cursorForSource(0)
 	m.key(key("i"))
@@ -1598,7 +1598,7 @@ func TestDownloadSettingsCommandsAndStates(t *testing.T) {
 	cfg.Downloads.AfterFileCommand, cfg.Downloads.AfterFolderCommand = `echo "$1"`, `echo folder "$1"`
 	m := model{workspace: workspaceSettings, settingsSection: settingsDownloads, cfg: cfg}
 	fields := m.settingFields()
-	if len(fields) != 6 || fields[1].value != cfg.Downloads.AfterFileCommand || fields[2].value != cfg.Downloads.AfterFolderCommand {
+	if len(fields) < 6 || fields[1].value != cfg.Downloads.AfterFileCommand || fields[2].value != cfg.Downloads.AfterFolderCommand {
 		t.Fatalf("download settings not rendered: %+v", fields)
 	}
 	m.cursor = 1

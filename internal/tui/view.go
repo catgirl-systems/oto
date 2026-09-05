@@ -16,6 +16,8 @@ func (m model) View() tea.View {
 	content := m.mainView()
 	if m.setup {
 		content = m.setupView()
+	} else if m.searchScope != nil {
+		content = m.searchScopeView()
 	} else if m.passwordForm {
 		content = m.passwordFormView()
 	} else if m.folderMenu {
@@ -113,7 +115,7 @@ func (m model) passwordFormView() string {
 }
 
 func (m model) workspaceNames() []string {
-	names := []string{"Search", "Wishlist", "Browse", "Transfers", "Shares", "Settings"}
+	names := []string{"Search", "Wishlist", "Browse", "Transfers", "Stats", "Shares", "Settings"}
 	unread, downloads, uploads := 0, 0, 0
 	for _, item := range m.wishlist {
 		if item.Unread {
@@ -176,6 +178,8 @@ func (m model) mainView() string {
 		body = m.renderBrowse(innerWidth, innerHeight)
 	case workspaceTransfers:
 		body = m.renderTransfers(innerWidth, innerHeight)
+	case workspaceStats:
+		body = m.renderStats(innerWidth, innerHeight)
 	case workspaceShares:
 		body = m.renderShares(innerWidth, innerHeight)
 	case workspaceSettings:
@@ -270,6 +274,9 @@ func (m model) uploadStatusMenuView() string {
 func (m model) uploadConfirmView() string {
 	var b strings.Builder
 	title := "Confirm upload action"
+	if m.forcePending != nil {
+		title = "Download anyway"
+	}
 	if m.restoreShareExclusions {
 		title = "Restore share exclusions"
 	}
@@ -364,7 +371,7 @@ func (m model) detailView() string {
 		x = m.results[node.source]
 	} else if m.workspace == workspaceBrowse && node.source < len(m.entries) {
 		entry := m.entries[node.source]
-		x = result{path: node.path, user: m.browseUser, extension: entry.extension, size: entry.size, bitrate: entry.bitrate, duration: entry.duration, vbr: entry.vbr, sampleRate: entry.sampleRate, bitDepth: entry.bitDepth, public: !entry.private}
+		x = result{path: node.path, user: m.browseUser, extension: entry.extension, size: entry.size, bitrate: entry.bitrate, duration: entry.duration, vbr: entry.vbr, vbrKnown: entry.vbrKnown, sampleRate: entry.sampleRate, bitDepth: entry.bitDepth, public: !entry.private}
 	}
 	access := "private"
 	if x.public {
@@ -378,9 +385,11 @@ func (m model) detailView() string {
 		rows = append(rows, [2]string{"Type", x.extension})
 	}
 	if x.bitrate > 0 {
-		encoding := "CBR"
+		encoding := ""
 		if x.vbr {
 			encoding = "VBR"
+		} else if x.vbrKnown {
+			encoding = "CBR"
 		}
 		rows = append(rows, [2]string{"Bitrate", fmt.Sprintf("%d kbps %s", x.bitrate, encoding)})
 	}
@@ -542,6 +551,9 @@ func (m model) searchTabsLine(width int) string {
 	labels := make([]string, len(m.searchTabs))
 	for i, tab := range m.searchTabs {
 		label := tab.query
+		if len(tab.usernames) > 0 {
+			label = "@" + strings.Join(tab.usernames, ", ") + ": " + label
+		}
 		if tab.loading {
 			label += "…"
 		}
@@ -642,9 +654,11 @@ func (m model) footerHints() []string {
 	case workspaceTransfers:
 		hints := []string{"s search", "S folder search"}
 		if m.transferTab == transferDownloads {
-			return append(hints, "p pause", "r resume/retry", "d cancel", "c clear")
+			return append(hints, "space mark files", "F download anyway", "p pause", "r resume/retry", "d cancel", "c clear")
 		}
 		return append(hints, "space mark", "r retry", "d abort", "D abort users", "c clear selected", "C clear status")
+	case workspaceStats:
+		return []string{"ctrl+pgup/down pages", "a account", "/ peer", "[ / ] dates", "d direction", "e log outcome", "r range", "n next", "p first", "s sort", "P prune", "enter details"}
 	case workspaceShares:
 		hints := []string{"/ add", "r rescan"}
 		if scan := m.status.shareScan; scan != nil && scan.State == "scanning" {

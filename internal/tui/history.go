@@ -10,8 +10,9 @@ import (
 )
 
 type historyState struct {
-	Searches []string `json:"searches"`
-	Filters  []string `json:"filters"`
+	StatsAccount string   `json:"stats_account,omitempty"`
+	Searches     []string `json:"searches"`
+	Filters      []string `json:"filters"`
 }
 
 type historyCursor struct {

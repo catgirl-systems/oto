@@ -270,9 +270,9 @@ func (m model) browseShare(nodeID, path string, generation, request uint64) tea.
 		return shareBrowseMsg{nodeID: nodeID, generation: generation, request: request, entries: toEntries(entries), err: err}
 	}
 }
-func (m model) search(query, filter string, request, operation uint64) tea.Cmd {
+func (m model) search(query, filter string, request, operation uint64, users ...string) tea.Cmd {
 	return func() tea.Msg {
-		page, err := m.client.Search(m.ctx, query, filter)
+		page, err := m.client.Search(m.ctx, query, filter, users...)
 		return searchMsg{page: page, request: request, operation: operation, filter: filter, err: err}
 	}
 }
@@ -367,7 +367,7 @@ func (m *model) closeSearchTab() {
 	m.loadSearchTab(min(m.searchTabIndex, len(m.searchTabs)-1))
 }
 
-func (m *model) openSearch(query string) tea.Cmd {
+func (m *model) openSearch(query string, users ...string) tea.Cmd {
 	query = strings.TrimSpace(query)
 	if query == "" {
 		return nil
@@ -385,11 +385,11 @@ func (m *model) openSearch(query string) tea.Cmd {
 	}
 	m.searchRequest++
 	m.searchOperation++
-	tab := searchTab{query: query, filter: filter, selected: map[int]bool{}, loading: true, searching: true, request: m.searchRequest, operation: m.searchOperation}
+	tab := searchTab{usernames: append([]string(nil), users...), query: query, filter: filter, selected: map[int]bool{}, loading: true, searching: true, request: m.searchRequest, operation: m.searchOperation}
 	m.searchTabs = append(m.searchTabs, tab)
 	m.workspace = workspaceSearch
 	m.loadSearchTab(len(m.searchTabs) - 1)
-	return m.withActivity(m.search(tab.query, tab.filter, tab.request, tab.operation))
+	return m.withActivity(m.search(tab.query, tab.filter, tab.request, tab.operation, tab.usernames...))
 }
 
 func (m *model) openSearchPage(query, filter string, page daemon.SearchPage) {
@@ -415,6 +415,7 @@ func applySearchMsg(tab *searchTab, message searchMsg) {
 	if message.err != nil {
 		return
 	}
+	tab.usernames = append([]string(nil), message.page.Usernames...)
 	results := toResults(message.page.Results)
 	if message.append {
 		tab.results = append(tab.results, results...)
@@ -686,6 +687,27 @@ func (m model) Init() tea.Cmd {
 }
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch x := msg.(type) {
+	case statsMsg:
+		if x.request == m.stats.request {
+			m.stats.loading = false
+			m.stats.err = x.view.err
+			m.stats.overview = x.view.overview
+			m.stats.downloads, m.stats.uploads, m.stats.peers, m.stats.log = x.view.downloads, x.view.uploads, x.view.peers, x.view.log
+		}
+	case statsPruneMsg:
+		if m.stats.prune {
+			m.stats.err = errText(x.err)
+			if x.err == nil {
+				if x.apply {
+					m.stats.prune = false
+					m.setNotice(fmt.Sprintf("Pruned %d log rows and %d daily rows", x.result.Logs, x.result.Daily))
+				} else {
+					m.stats.preview = x.result
+					m.stats.pruneConfirm = true
+					m.stats.pruneChoice = 0
+				}
+			}
+		}
 	case tea.WindowSizeMsg:
 		m.width, m.height = x.Width, x.Height
 	case tickMsg:
@@ -693,7 +715,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.notice != "" && !time.Time(x).Before(m.noticeUntil) {
 			m.notice = ""
 		}
-		return m, tea.Batch(m.loadStatus(), m.loadTransfers(), m.loadShares(), m.loadWishlist(), tick())
+		return m, tea.Batch(m.loadStatus(), m.loadTransfers(), m.loadShares(), m.loadWishlist(), m.loadStats(), tick())
 	case activityTickMsg:
 		if !m.activityRunning {
 			break

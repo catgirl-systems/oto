@@ -252,7 +252,7 @@ func (m model) renderBrowse(width, height int) string {
 		metadata := fmt.Sprintf("%d files", len(node.leaves))
 		if node.kind == treeFile && node.source >= 0 {
 			x := m.entries[node.source]
-			_, metadata = searchMetadata(result{size: x.size, extension: x.extension, bitrate: x.bitrate, duration: x.duration, vbr: x.vbr, sampleRate: x.sampleRate, bitDepth: x.bitDepth, public: !x.private}, width, false)
+			_, metadata = searchMetadata(result{size: x.size, extension: x.extension, bitrate: x.bitrate, duration: x.duration, vbr: x.vbr, vbrKnown: x.vbrKnown, sampleRate: x.sampleRate, bitDepth: x.bitDepth, public: !x.private}, width, false)
 		}
 		row := fmt.Sprintf("%s %s %s  %s", mark, treeGlyph(&m.browseTree, node), searchTextColumn(treeLabel(&m.browseTree, nodeIndex), nameWidth), metadata)
 		selected := node.kind == treeFile && node.source >= 0 && m.selected[node.source]
@@ -475,11 +475,13 @@ func (m model) renderTransfers(width, height int) string {
 		nameWidth := max(4, width-lipgloss.Width(status)-10)
 		label := treeLabel(tree, nodeIndex)
 		row := fmt.Sprintf("%s %s %s %s  %s", spinner, direction, treeGlyph(tree, node), searchTextColumn(label, nameWidth), status)
-		if m.transferTab == transferUploads {
-			nameWidth = max(4, width-lipgloss.Width(status)-12)
-			mark := treeSelectionIDs(tree, nodeIndex, m.transfers, m.uploadSelected)
-			row = fmt.Sprintf("%s %s %s %s %s  %s", mark, spinner, direction, treeGlyph(tree, node), searchTextColumn(label, nameWidth), status)
+		selection := m.uploadSelected
+		if m.transferTab == transferDownloads {
+			selection = m.downloadSelected
 		}
+		nameWidth = max(4, width-lipgloss.Width(status)-12)
+		mark := treeSelectionIDs(tree, nodeIndex, m.transfers, selection)
+		row = fmt.Sprintf("%s %s %s %s %s  %s", mark, spinner, direction, treeGlyph(tree, node), searchTextColumn(label, nameWidth), status)
 		lines = append(lines, transferResultRow(trunc(row, max(4, width-2)), rowIndex == m.cursor, m.transferTab == transferUploads, failed))
 	}
 	return strings.Join(lines, "\n")
@@ -496,6 +498,13 @@ func (m model) renderShares(width, height int) string {
 			detail += "  error: " + strconv.Quote(scan.Error)
 		}
 		lines = append(lines, trunc(muted("SCAN  "+detail), width))
+		audio := fmt.Sprintf("AUDIO  %d extracted / %d cached / %d failed", scan.Audio.Extracted, scan.Audio.Cached, scan.Audio.Failed)
+		if !m.cfg.AudioMetadata {
+			audio = "AUDIO  extraction disabled"
+		} else if scan.Audio.Unavailable != "" {
+			audio = "AUDIO  install ffmpeg; " + scan.Audio.Unavailable
+		}
+		lines = append(lines, trunc(muted(audio), width))
 	}
 	limit := max(0, height-len(lines))
 	if m.editing && limit > 0 {
@@ -528,7 +537,7 @@ func (m model) renderShares(width, height int) string {
 	return strings.Join(lines, "\n")
 }
 
-var settingsSectionNames = [settingsSectionCount]string{"Account", "Connection", "Bandwidth", "Downloads", "Uploads", "Search", "Shares"}
+var settingsSectionNames = [settingsSectionCount]string{"Account", "Connection", "Bandwidth", "Downloads", "Uploads", "Search", "Shares", "Statistics"}
 
 func (m model) renderSettings(width, height int) string {
 	sections := settingsSectionNames[:]
@@ -608,6 +617,13 @@ func (m model) renderSettings(width, height int) string {
 
 func (m model) settingFields() []settingField {
 	switch m.settingsSection {
+	case settingsStatistics:
+		return []settingField{
+			{settingStatsLogRetention, "Log retention days (0 keep forever)", strconv.Itoa(m.cfg.Statistics.LogRetentionDays), settingInt},
+			{settingStatsDailyRetention, "Daily retention days (0 keep forever)", strconv.Itoa(m.cfg.Statistics.DailyRetentionDays), settingInt},
+			{settingStatsASCII, "ASCII charts", strconv.FormatBool(m.cfg.Statistics.ASCIICharts), settingBool},
+			{settingStatsPrune, "Prune now", "Preview and confirm", settingAction},
+		}
 	case settingsShares:
 		fields := make([]settingField, 0, len(m.cfg.ShareExclusions)+2)
 		for i, rule := range m.cfg.ShareExclusions {
@@ -615,7 +631,8 @@ func (m model) settingFields() []settingField {
 		}
 		return append(fields,
 			settingField{settingAddShareExclusion, "Add exclusion", "", settingText},
-			settingField{settingRestoreShareExclusions, "Restore defaults", "Press Enter", settingAction})
+			settingField{settingRestoreShareExclusions, "Restore defaults", "Press Enter", settingAction},
+			settingField{settingAudioMetadata, "Audio metadata (optional ffprobe)", strconv.FormatBool(m.cfg.AudioMetadata), settingBool})
 	case settingsAccount:
 		return []settingField{
 			{settingUsername, "Username", m.cfg.Soulseek.Username, settingText},
@@ -651,14 +668,14 @@ func (m model) settingFields() []settingField {
 			{settingUPnPPortMapping, "UPnP port forwarding", strconv.FormatBool(m.cfg.Soulseek.UPnPPortMapping), settingBool},
 		}
 	case settingsDownloads:
-		return []settingField{
+		return append([]settingField{
 			{settingDownloadPath, "Download path", m.cfg.DownloadDir, settingText},
 			{settingAfterFileCommand, "After file command", m.cfg.Downloads.AfterFileCommand, settingText},
 			{settingAfterFolderCommand, "After folder command", m.cfg.Downloads.AfterFolderCommand, settingText},
 			{settingFileNotifications, "File notifications", strconv.FormatBool(m.cfg.Downloads.FileNotifications), settingBool},
 			{settingFolderNotifications, "Folder notifications", strconv.FormatBool(m.cfg.Downloads.FolderNotifications), settingBool},
 			{settingAutoClearDownloads, "Auto-clear new completed downloads", strconv.FormatBool(m.cfg.Downloads.AutoClearCompleted), settingBool},
-		}
+		}, m.downloadFilterFields()...)
 	case settingsBandwidth:
 		profile := m.cfg.Bandwidth.ActiveProfileLimits()
 		return []settingField{
@@ -673,6 +690,8 @@ func (m model) settingFields() []settingField {
 			{settingUploadLimitScope, "Limit applies to", m.choiceValue(settingUploadLimitScope, uploadScopeLabel(m.cfg.Uploads.LimitScope)), settingChoice},
 			{settingUploadScheduling, "Scheduling", m.choiceValue(settingUploadScheduling, uploadSchedulingLabel(m.cfg.Uploads.Scheduling)), settingChoice},
 			{settingAutoClearUploads, "Auto-clear new completed uploads", strconv.FormatBool(m.cfg.Uploads.AutoClearCompleted), settingBool},
+			{settingUploadFileCap, "Per-user files (queued + active, 0 unlimited)", strconv.FormatUint(m.cfg.Uploads.MaxQueuedFilesPerUser, 10), settingInt},
+			{settingUploadByteCap, "Per-user bytes (queued + active, 0 unlimited)", strconv.FormatUint(m.cfg.Uploads.MaxQueuedBytesPerUser, 10) + " B", settingText},
 		}
 	default:
 		return []settingField{
@@ -695,6 +714,30 @@ func (m model) settingFields() []settingField {
 func (m *model) setSettingValue(value string) error {
 	field := m.settingFields()[m.cursor]
 	switch field.id {
+	case settingStatsLogRetention, settingStatsDailyRetention:
+		n, err := strconv.Atoi(value)
+		if err != nil || n < 0 || n > 365000 {
+			return errors.New("retention must be 0–365000 days")
+		}
+		if field.id == settingStatsLogRetention {
+			m.cfg.Statistics.LogRetentionDays = n
+		} else {
+			m.cfg.Statistics.DailyRetentionDays = n
+		}
+	case settingUploadFileCap:
+		n, err := strconv.ParseUint(value, 10, 64)
+		if err != nil {
+			return err
+		}
+		m.cfg.Uploads.MaxQueuedFilesPerUser = n
+	case settingUploadByteCap:
+		n, err := parseByteLimit(value)
+		if err != nil {
+			return err
+		}
+		m.cfg.Uploads.MaxQueuedBytesPerUser = n
+	case settingDownloadRule, settingAddDownloadRule:
+		return m.setDownloadRule(value, field.id == settingAddDownloadRule)
 	case settingShareExclusion, settingAddShareExclusion:
 		rules := append([]string{}, m.cfg.ShareExclusions...)
 		if field.id == settingAddShareExclusion {

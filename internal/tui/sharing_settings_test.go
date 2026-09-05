@@ -48,7 +48,7 @@ func TestStagedShareExclusionEditorAndAutoClear(t *testing.T) {
 		m.cursor = 0
 		m.key(key("d"))
 	}
-	if m.cfg.ShareExclusions == nil || len(m.settingFields()) != 2 {
+	if m.cfg.ShareExclusions == nil || len(m.settingFields()) != 3 {
 		t.Fatal("empty editor lost explicit empty policy")
 	}
 	for _, section := range []settingsSection{settingsDownloads, settingsUploads} {
