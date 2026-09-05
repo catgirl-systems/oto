@@ -269,7 +269,11 @@ func (m model) uploadStatusMenuView() string {
 
 func (m model) uploadConfirmView() string {
 	var b strings.Builder
-	b.WriteString(strong("Confirm upload action") + "\n\n")
+	title := "Confirm upload action"
+	if m.restoreShareExclusions {
+		title = "Restore share exclusions"
+	}
+	b.WriteString(strong(title) + "\n\n")
 	b.WriteString(trunc(m.uploadConfirmLabel+"?", max(4, m.width-12)) + "\n\n")
 	for i, label := range []string{"No", "Yes"} {
 		marker := "  "
@@ -324,7 +328,10 @@ func (m model) helpView() string {
 			{"o", "choose Online, Away, or Offline"},
 		}},
 		{"General", [][2]string{
-			{"share scan", "Shares shows live counts, root, pulse, and last result"},
+			{"share scan", "Shares: r rescan, c cancel before publication; last index stays available"},
+			{"elapsed / ETA", "daemon stream time; folder/user elapsed is cumulative"},
+			{"Settings → Shares", "edit/add rules, d remove, restore defaults; s saves"},
+			{"auto-clear completed", "Downloads / Uploads: opt in for future completions only"},
 			{"ctrl+w (results)", "close the active search or user tab"},
 			{"? / esc", "open / close this guide"},
 			{"q", "quit"},
@@ -639,6 +646,9 @@ func (m model) footerHints() []string {
 		return append(hints, "space mark", "r retry", "d abort", "D abort users", "c clear selected", "C clear status")
 	case workspaceShares:
 		hints := []string{"/ add", "r rescan"}
+		if scan := m.status.shareScan; scan != nil && scan.State == "scanning" {
+			hints = append(hints, "c cancel scan")
+		}
 		_, node := m.shareTree.node(m.cursor)
 		if node == nil {
 			return hints
@@ -657,6 +667,9 @@ func (m model) footerHints() []string {
 			return hints
 		}
 		field := fields[m.cursor]
+		if field.id == settingShareExclusion {
+			hints = append(hints, "d remove rule")
+		}
 		action := "edit"
 		switch field.kind {
 		case settingInfo:
@@ -667,6 +680,8 @@ func (m model) footerHints() []string {
 			action = "choose"
 		case settingAction:
 			switch field.id {
+			case settingRestoreShareExclusions:
+				action = "restore defaults"
 			case settingChangePassword:
 				action = "change password"
 			case settingListeningPortStatus:
@@ -693,8 +708,9 @@ func (m model) footerView() string {
 	if activity := m.activityView(m.width - 2); activity != "" {
 		return style.Render(activity)
 	}
-	if scan := m.status.shareScan; !m.editing && scan != nil && (scan.State == "scanning" || scan.State == "publishing") {
-		return style.Render(muted(trunc(fmt.Sprintf("%s Scanning shares %q: %d files, %d folders, %ds", pulseBar(m.spinner, 6), scan.Root, scan.Files, scan.Directories, scan.ElapsedMS/1000), m.width-2)))
+	if scan := m.status.shareScan; !m.editing && scan != nil && (scan.State == "scanning" || scan.State == "cancelling" || scan.State == "publishing") {
+		label := strings.ToUpper(scan.State[:1]) + scan.State[1:]
+		return style.Render(muted(trunc(fmt.Sprintf("%s %s shares %q: %d files, %d folders, %ds", pulseBar(m.spinner, 6), label, scan.Root, scan.Files, scan.Directories, scan.ElapsedMS/1000), m.width-2)))
 	}
 	actions := strings.Join(m.footerHints(), "  •  ")
 	return style.Render(muted(spread(actions, "•  ? all controls", m.width-2)))

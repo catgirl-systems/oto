@@ -401,6 +401,12 @@ func (m model) renderTransfers(width, height int) string {
 		trunc(downloadTab+"  "+uploadTab, width),
 	}
 	indexes := m.transferIndexes()
+	tree := &m.transferTrees[m.transferTab]
+	if width < 110 && len(indexes) > 0 && height > len(lines) {
+		if _, node := tree.node(m.cursor); node != nil {
+			lines = append(lines, trunc(m.transferTimeText(*node), width))
+		}
+	}
 	limit := max(0, height-len(lines))
 	if len(indexes) == 0 && limit > 0 {
 		label := "No downloads. Choose a file in Search or Browse."
@@ -409,7 +415,6 @@ func (m model) renderTransfers(width, height int) string {
 		}
 		return strings.Join(append(lines, "\n"+muted(label)), "\n")
 	}
-	tree := &m.transferTrees[m.transferTab]
 	start, end := visibleRange(len(tree.visible), m.cursor, limit)
 	frames := []rune("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏")
 	for rowIndex := start; rowIndex < end; rowIndex++ {
@@ -419,7 +424,10 @@ func (m model) renderTransfers(width, height int) string {
 		running, failed := false, false
 		for _, source := range node.leaves {
 			x := m.transfers[source]
-			done, total, speed = done+x.done, total+x.total, speed+x.speed
+			done, total = addSaturated(done, x.done), addSaturated(total, x.total)
+			if x.state == "running" {
+				speed = addSaturated(speed, x.speed)
+			}
 			running = running || x.state == "running" || x.state == "finalizing" || x.state == "retrying"
 			failed = failed || x.state == "failed"
 		}
@@ -429,8 +437,9 @@ func (m model) renderTransfers(width, height int) string {
 		}
 		bar, percent := progressBar(done, total, barWidth)
 		state := fmt.Sprintf("%d transfers", len(node.leaves))
+		var x transfer
 		if node.kind == treeFile && node.source >= 0 {
-			x := m.transfers[node.source]
+			x = m.transfers[node.source]
 			state = x.state
 			if x.err != "" {
 				state += ": " + x.err
@@ -444,15 +453,17 @@ func (m model) renderTransfers(width, height int) string {
 		}
 		if speed > 0 {
 			state += "  " + formatBytes(speed) + "/s"
-			if running && total > done {
-				state += "  ETA " + formatDuration((total-done-1)/speed+1)
-			}
 		}
 		stateWidth := 16
 		if width >= 90 {
 			stateWidth = 40
 		}
-		status := fmt.Sprintf("%s %3d%%  %s", bar, percent, searchTextColumn(state, stateWidth))
+		times := ""
+		if width >= 110 {
+			stateWidth = 22
+			times = "  " + m.transferTimeText(node)
+		}
+		status := fmt.Sprintf("%s %3d%%  %s%s", bar, percent, searchTextColumn(state, stateWidth), times)
 		spinner := " "
 		if running {
 			spinner = string(frames[m.spinner%len(frames)])
@@ -478,7 +489,7 @@ func (m model) renderShares(width, height int) string {
 	lines := []string{sectionHeader("SHARES", countLabel(len(m.shares), "folder"), width)}
 	if scan := m.status.shareScan; scan != nil {
 		detail := fmt.Sprintf("%s  root:%q  files:%d dirs:%d  %s", scan.State, scan.Root, scan.Files, scan.Directories, (time.Duration(scan.ElapsedMS) * time.Millisecond).Round(time.Second))
-		if scan.State == "scanning" || scan.State == "publishing" {
+		if scan.State == "scanning" || scan.State == "cancelling" || scan.State == "publishing" {
 			detail += "  " + pulseBar(m.spinner, max(3, min(12, width/4)))
 		}
 		if scan.Error != "" {
@@ -517,7 +528,7 @@ func (m model) renderShares(width, height int) string {
 	return strings.Join(lines, "\n")
 }
 
-var settingsSectionNames = [settingsSectionCount]string{"Account", "Connection", "Downloads", "Uploads", "Search"}
+var settingsSectionNames = [settingsSectionCount]string{"Account", "Connection", "Downloads", "Uploads", "Search", "Shares"}
 
 func (m model) renderSettings(width, height int) string {
 	sections := settingsSectionNames[:]
@@ -597,6 +608,14 @@ func (m model) renderSettings(width, height int) string {
 
 func (m model) settingFields() []settingField {
 	switch m.settingsSection {
+	case settingsShares:
+		fields := make([]settingField, 0, len(m.cfg.ShareExclusions)+2)
+		for i, rule := range m.cfg.ShareExclusions {
+			fields = append(fields, settingField{settingShareExclusion, fmt.Sprintf("Exclusion %d", i+1), rule, settingText})
+		}
+		return append(fields,
+			settingField{settingAddShareExclusion, "Add exclusion", "", settingText},
+			settingField{settingRestoreShareExclusions, "Restore defaults", "Press Enter", settingAction})
 	case settingsAccount:
 		return []settingField{
 			{settingUsername, "Username", m.cfg.Soulseek.Username, settingText},
@@ -638,6 +657,7 @@ func (m model) settingFields() []settingField {
 			{settingAfterFolderCommand, "After folder command", m.cfg.Downloads.AfterFolderCommand, settingText},
 			{settingFileNotifications, "File notifications", strconv.FormatBool(m.cfg.Downloads.FileNotifications), settingBool},
 			{settingFolderNotifications, "Folder notifications", strconv.FormatBool(m.cfg.Downloads.FolderNotifications), settingBool},
+			{settingAutoClearDownloads, "Auto-clear new completed downloads", strconv.FormatBool(m.cfg.Downloads.AutoClearCompleted), settingBool},
 		}
 	case settingsUploads:
 		profile := m.cfg.Uploads.Profiles[m.activeUploadProfileIndex()]
@@ -648,6 +668,7 @@ func (m model) settingFields() []settingField {
 			{settingDeleteUploadProfile, "Delete profile", "Press Enter", settingAction},
 			{settingUploadLimitScope, "Limit applies to", m.choiceValue(settingUploadLimitScope, uploadScopeLabel(m.cfg.Uploads.LimitScope)), settingChoice},
 			{settingUploadScheduling, "Scheduling", m.choiceValue(settingUploadScheduling, uploadSchedulingLabel(m.cfg.Uploads.Scheduling)), settingChoice},
+			{settingAutoClearUploads, "Auto-clear new completed uploads", strconv.FormatBool(m.cfg.Uploads.AutoClearCompleted), settingBool},
 		}
 	default:
 		return []settingField{
@@ -670,6 +691,18 @@ func (m model) settingFields() []settingField {
 func (m *model) setSettingValue(value string) error {
 	field := m.settingFields()[m.cursor]
 	switch field.id {
+	case settingShareExclusion, settingAddShareExclusion:
+		rules := append([]string{}, m.cfg.ShareExclusions...)
+		if field.id == settingAddShareExclusion {
+			rules = append(rules, value)
+		} else {
+			rules[m.cursor] = value
+		}
+		rules, err := config.NormalizeShareExclusions(rules)
+		if err != nil {
+			return err
+		}
+		m.cfg.ShareExclusions = rules
 	case settingUsername:
 		m.cfg.Soulseek.Username = value
 	case settingServer:

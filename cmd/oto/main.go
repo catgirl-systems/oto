@@ -66,7 +66,7 @@ func run(args []string) error {
 }
 
 func usage() {
-	fmt.Printf("oto — Soulseek search, browse, shares, and transfers\n\nUsage:\n  oto [--config PATH]\n  oto daemon [--config PATH] [--share-rescan-delay DURATION] [--listen-port-file PATH] [--listen-port-reconcile-interval DURATION]\n  oto status [--json]\n  oto transfers [--json]\n  oto pause DOWNLOAD_ID\n  oto resume DOWNLOAD_ID\n  oto rescan\n\nSource: %s\nLicense: AGPL-3.0-only; no warranty.\n", sourceURL)
+	fmt.Printf("oto — Soulseek search, browse, shares, and transfers\n\nUsage:\n  oto [--config PATH]\n  oto daemon [--config PATH] [--share-rescan-delay DURATION] [--listen-port-file PATH] [--listen-port-reconcile-interval DURATION]\n  oto status [--json]\n  oto transfers [--json]\n  oto pause DOWNLOAD_ID\n  oto resume DOWNLOAD_ID\n  oto rescan [--cancel]\n\nSource: %s\nLicense: AGPL-3.0-only; no warranty.\n", sourceURL)
 }
 
 func configFlag(fs *flag.FlagSet) *string {
@@ -282,9 +282,16 @@ func transfersCommand(args []string) error {
 		return json.NewEncoder(os.Stdout).Encode(transfers)
 	}
 	for _, transfer := range transfers {
-		fmt.Printf("%q direction=%q user=%q state=%q progress=%d/%d queue=%d error=%q filename=%q\n", transfer.ID, transfer.Direction, transfer.Username, transfer.State, transfer.Done, transfer.Total, transfer.Queue, transfer.Error, transfer.Filename)
+		fmt.Printf("%q direction=%q user=%q state=%q progress=%d/%d queue=%d error=%q filename=%q speed_bps=%d elapsed_ms=%s eta_seconds=%s\n", transfer.ID, transfer.Direction, transfer.Username, transfer.State, transfer.Done, transfer.Total, transfer.Queue, transfer.Error, transfer.Filename, transfer.SpeedBPS, optionalUint(transfer.ElapsedMS), optionalUint(transfer.ETASeconds))
 	}
 	return nil
+}
+
+func optionalUint(value *uint64) string {
+	if value == nil {
+		return "unknown"
+	}
+	return fmt.Sprint(*value)
 }
 
 func transferControlCommand(action string, args []string) error {
@@ -300,6 +307,25 @@ func transferControlCommand(action string, args []string) error {
 }
 
 func rescanCommand(args []string) error {
+	if len(args) == 1 && args[0] == "--cancel" {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		client := ipc.NewClient(config.SocketPath())
+		state, err := client.Status(ctx)
+		if err != nil {
+			return err
+		}
+		scan := state.ShareScan
+		if scan == nil || (scan.State != "scanning" && scan.State != "cancelling" && scan.State != "publishing") {
+			fmt.Println("No share scan is running.")
+			return nil
+		}
+		if err := client.CancelShareScan(ctx, scan.ID); err != nil {
+			return err
+		}
+		fmt.Printf("Cancellation requested for share scan %d.\n", scan.ID)
+		return nil
+	}
 	if len(args) != 0 {
 		return errors.New("rescan: unexpected arguments")
 	}

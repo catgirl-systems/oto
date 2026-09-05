@@ -110,7 +110,6 @@ type saveBrowseMsg struct {
 type folderDownloadMsg struct{ err error }
 type transferMsg struct {
 	transfers []transfer
-	at        time.Time
 	err       error
 }
 type sharesMsg struct {
@@ -247,25 +246,10 @@ func (m model) setPresence(presence daemon.Presence) tea.Cmd {
 func (m model) loadTransfers() tea.Cmd {
 	return func() tea.Msg {
 		x, err := m.client.Transfers(m.ctx)
-		return transferMsg{transfers: toTransfers(x), at: time.Now(), err: err}
+		return transferMsg{transfers: toTransfers(x), err: err}
 	}
 }
 
-func setTransferSpeeds(next, previous []transfer, elapsed time.Duration) {
-	if elapsed <= 0 {
-		return
-	}
-	old := make(map[string]uint64, len(previous))
-	for _, transfer := range previous {
-		old[transfer.id] = transfer.done
-	}
-	for i := range next {
-		done, ok := old[next[i].id]
-		if ok && next[i].state == "running" && next[i].done > done {
-			next[i].speed = uint64(float64(next[i].done-done) / elapsed.Seconds())
-		}
-	}
-}
 func (m model) loadShares() tea.Cmd {
 	return func() tea.Msg { x, e := m.client.Shares(m.ctx); return sharesMsg{shares: toShares(x), err: e} }
 }
@@ -679,6 +663,8 @@ func (m *model) openBrowse(user, target string, refresh bool) tea.Cmd {
 
 func (m model) saveSettings() tea.Cmd {
 	cfg := m.cfg
+	cfg.ShareExclusions = append([]string{}, m.cfg.ShareExclusions...)
+	cfg.Uploads.Profiles = append([]config.UploadProfile(nil), m.cfg.Uploads.Profiles...)
 	return func() tea.Msg {
 		_, err := m.client.UpdateConfig(m.ctx, cfg)
 		return settingsMsg{search: cfg.Search, err: err}
@@ -945,10 +931,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.workspace == workspaceTransfers {
 			m.transferCursors[m.transferTab] = m.cursor
 		}
-		if x.err == nil {
-			setTransferSpeeds(x.transfers, m.transfers, x.at.Sub(m.transferSampleAt))
-			m.transferSampleAt = x.at
-		}
 		m.err = errText(x.err)
 		if x.err != nil {
 			break
@@ -961,6 +943,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.workspace == workspaceTransfers {
 			m.cursor = m.transferCursors[m.transferTab]
 		}
+	case scanCancelMsg:
+		m.err = errText(x.err)
+		if x.err == nil {
+			m.setNotice("Scan cancellation requested")
+		}
+		return m, m.loadStatus()
 	case sharesMsg:
 		m.err = errText(x.err)
 		if x.err != nil {
