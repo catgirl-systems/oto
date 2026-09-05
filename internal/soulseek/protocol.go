@@ -1021,6 +1021,28 @@ type QueueFailedMessage struct{ Filename, Reason string }
 func (QueueFailedMessage) command() uint32           { return PeerUploadFailed }
 func (m QueueFailedMessage) encode(e *Encoder) error { return e.String(m.Filename) }
 
+func DecodeQueueDenied(b []byte) (QueueDenied, error) {
+	d := NewDecoder(b)
+	filename, err := d.String()
+	if err != nil {
+		return QueueDenied{}, err
+	}
+	reason, err := d.String()
+	if err != nil {
+		return QueueDenied{}, err
+	}
+	return QueueDenied{Filename: filename, Reason: reason}, d.Done()
+}
+
+func DecodeQueueFailed(b []byte) (QueueFailedMessage, error) {
+	d := NewDecoder(b)
+	filename, err := d.String()
+	if err != nil {
+		return QueueFailedMessage{}, err
+	}
+	return QueueFailedMessage{Filename: filename}, d.Done()
+}
+
 type TransferRequest struct {
 	Direction uint32
 	Token     uint32
@@ -1110,6 +1132,10 @@ func DecodeMessage(command uint32, payload []byte) (any, error) {
 		return DecodeTransferRequest(payload)
 	case PeerTransferResponse:
 		return DecodeTransferResponse(payload)
+	case PeerUploadDenied:
+		return DecodeQueueDenied(payload)
+	case PeerUploadFailed:
+		return DecodeQueueFailed(payload)
 	default:
 		return RawMessage{Command: command, Payload: append([]byte(nil), payload...)}, nil
 	}

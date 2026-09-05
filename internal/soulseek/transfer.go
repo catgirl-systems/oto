@@ -166,11 +166,13 @@ type paceState struct {
 }
 
 type UploadJob struct {
-	User    string
-	Request TransferRequest
-	Ready   chan struct{}
-	active  bool
-	pace    paceState
+	User      string
+	Request   TransferRequest
+	Ready     chan struct{}
+	active    bool
+	cancelled bool
+	released  bool
+	pace      paceState
 }
 
 const (
@@ -242,7 +244,7 @@ func (m *UploadManager) Enqueue(user string, r TransferRequest) *UploadJob {
 }
 
 func (m *UploadManager) nextIndex() int {
-	eligible := func(job *UploadJob) bool { return m.byUser[job.User] == 0 }
+	eligible := func(job *UploadJob) bool { return !job.cancelled && m.byUser[job.User] == 0 }
 	switch m.policy.Scheduling {
 	case UploadScheduleSmallestFirst:
 		best := -1
@@ -275,7 +277,7 @@ func (m *UploadManager) nextIndex() int {
 			}
 		}
 		for i, job := range m.q {
-			if job.User == target {
+			if eligible(job) && job.User == target {
 				return i
 			}
 		}
@@ -306,37 +308,48 @@ func (m *UploadManager) promote() {
 	}
 }
 
-func (m *UploadManager) Done(user string) {
+// Done releases exactly this job, including a cancelled queue entry.
+func (m *UploadManager) Done(job *UploadJob) {
 	m.mu.Lock()
-	if m.active > 0 {
-		m.active--
+	defer m.mu.Unlock()
+	if job.released {
+		return
 	}
-	if m.byUser[user] > 0 {
-		m.byUser[user]--
+	job.released = true
+	if job.active {
+		m.active--
+		m.byUser[job.User]--
+		job.active = false
+	}
+	for i, queued := range m.q {
+		if queued == job {
+			m.q = append(m.q[:i], m.q[i+1:]...)
+			break
+		}
 	}
 	m.promote()
-	m.mu.Unlock()
 }
 
-func (m *UploadManager) Wait(ctx context.Context, j *UploadJob) error {
-	select {
-	case <-j.Ready:
-		return nil
-	case <-ctx.Done():
-		m.mu.Lock()
-		if !j.active {
-			for i, queued := range m.q {
-				if queued == j {
-					m.q = append(m.q[:i], m.q[i+1:]...)
-					break
-				}
-			}
-			m.mu.Unlock()
-			return ErrTransferCancelled
-		}
-		m.mu.Unlock()
-		return nil
+// CancelJobs prevents promotion of the entire batch before any worker exits.
+func (m *UploadManager) CancelJobs(jobs []*UploadJob) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, job := range jobs {
+		job.cancelled = true
 	}
+}
+
+func (m *UploadManager) Wait(ctx context.Context, job *UploadJob) error {
+	select {
+	case <-job.Ready:
+	case <-ctx.Done():
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if ctx.Err() != nil || job.cancelled {
+		return ErrTransferCancelled
+	}
+	return nil
 }
 
 func (m *UploadManager) reserve(job *UploadJob, bytes int, now time.Time) (time.Duration, <-chan struct{}) {

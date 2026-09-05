@@ -577,11 +577,11 @@ func TestUploadFIFO(t *testing.T) {
 	if len(m.q) != 1 || m.q[0] != b {
 		t.Fatalf("queue: %+v", m.q)
 	}
-	m.Done("a")
+	m.Done(a)
 	if err := m.Wait(context.Background(), b); err != nil {
 		t.Fatal(err)
 	}
-	m.Done("b")
+	m.Done(b)
 }
 
 func uploadReady(job *UploadJob) bool {
@@ -601,12 +601,12 @@ func TestUploadFIFOUsesEligibleSlots(t *testing.T) {
 	if !uploadReady(first) || uploadReady(blocked) || !uploadReady(other) {
 		t.Fatalf("eligible FIFO jobs: first=%v blocked=%v other=%v", uploadReady(first), uploadReady(blocked), uploadReady(other))
 	}
-	m.Done("a")
+	m.Done(first)
 	if !uploadReady(blocked) {
 		t.Fatal("blocked user was not promoted when its prior upload finished")
 	}
-	m.Done("b")
-	m.Done("a")
+	m.Done(other)
+	m.Done(blocked)
 }
 
 func TestUploadRoundRobinUsers(t *testing.T) {
@@ -621,7 +621,7 @@ func TestUploadRoundRobinUsers(t *testing.T) {
 		if !uploadReady(job) {
 			t.Fatalf("round-robin did not promote %q", job.User)
 		}
-		m.Done(job.User)
+		m.Done(job)
 	}
 }
 
@@ -633,11 +633,11 @@ func TestUploadRandomChoosesEligibleUser(t *testing.T) {
 	a := m.Enqueue("a", TransferRequest{Filename: "a"})
 	b1 := m.Enqueue("b", TransferRequest{Filename: "first"})
 	b2 := m.Enqueue("b", TransferRequest{Filename: "second"})
-	m.Done(blocker.User)
+	m.Done(blocker)
 	if !uploadReady(b1) || uploadReady(a) || uploadReady(b2) {
 		t.Fatalf("random scheduler did not choose the selected user's oldest file")
 	}
-	m.Done("b")
+	m.Done(b1)
 }
 
 func TestUploadSmallestFirstAndArrivalTie(t *testing.T) {
@@ -647,16 +647,16 @@ func TestUploadSmallestFirstAndArrivalTie(t *testing.T) {
 	large := m.Enqueue("large", TransferRequest{Size: 100})
 	firstSmall := m.Enqueue("small-a", TransferRequest{Size: 10})
 	secondSmall := m.Enqueue("small-b", TransferRequest{Size: 10})
-	m.Done(blocker.User)
+	m.Done(blocker)
 	if !uploadReady(firstSmall) || uploadReady(large) || uploadReady(secondSmall) {
 		t.Fatal("smallest-first order or arrival tie-break was not preserved")
 	}
-	m.Done(firstSmall.User)
+	m.Done(firstSmall)
 	if !uploadReady(secondSmall) {
 		t.Fatal("second equal-sized upload was not next")
 	}
-	m.Done(secondSmall.User)
-	m.Done(large.User)
+	m.Done(secondSmall)
+	m.Done(large)
 }
 
 func TestUploadLimiterReservationsAndCancellation(t *testing.T) {
