@@ -540,6 +540,9 @@ func (m model) renderShares(width, height int) string {
 var settingsSectionNames = [settingsSectionCount]string{"Account", "Connection", "Bandwidth", "Downloads", "Uploads", "Search", "Shares", "Statistics"}
 
 func (m model) renderSettings(width, height int) string {
+	if m.stats.prune {
+		return m.renderStatsPrune(width, height)
+	}
 	if m.shareExclusions.open {
 		return m.renderShareExclusions(width, height)
 	}
@@ -621,11 +624,15 @@ func (m model) renderSettings(width, height int) string {
 func (m model) settingFields() []settingField {
 	switch m.settingsSection {
 	case settingsStatistics:
+		days := m.stats.pruneDays
+		if days == "" {
+			days = "30"
+		}
 		return []settingField{
 			{settingStatsLogRetention, "Log retention days (0 keep forever)", strconv.Itoa(m.cfg.Statistics.LogRetentionDays), settingInt},
 			{settingStatsDailyRetention, "Daily retention days (0 keep forever)", strconv.Itoa(m.cfg.Statistics.DailyRetentionDays), settingInt},
 			{settingStatsASCII, "ASCII charts", strconv.FormatBool(m.cfg.Statistics.ASCIICharts), settingBool},
-			{settingStatsPrune, "Prune now", "Preview and confirm", settingAction},
+			{settingStatsPrune, "Prune", days + " " + pruneDayUnit(days) + " · Enter to edit", settingAction},
 		}
 	case settingsShares:
 		return []settingField{

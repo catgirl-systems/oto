@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -32,7 +33,9 @@ type statsViewState struct {
 	sortBytes          bool
 	prune              bool
 	pruneConfirm       bool
-	pruneChoice        int
+	pruneDays          string
+	prunePending       bool
+	pruneGeneration    uint64
 	pruneRequest       ipc.PruneRequest
 	preview            stats.PruneResult
 	err                string
@@ -42,9 +45,10 @@ type statsMsg struct {
 	view    statsViewState
 }
 type statsPruneMsg struct {
-	result stats.PruneResult
-	apply  bool
-	err    error
+	request uint64
+	result  stats.PruneResult
+	apply   bool
+	err     error
 }
 
 var statsPages = []string{"Overview", "History", "Peers", "Log"}
@@ -566,36 +570,45 @@ func (m model) renderStats(width, height int) string {
 	return strings.Join(lines, "\n")
 }
 func (m *model) openStatsPrune() {
-	m.stats.prune = true
-	m.stats.pruneConfirm = false
-	m.stats.pruneChoice = 0
-	m.stats.pruneRequest = ipc.PruneRequest{Cutoff: time.Now().UTC().Truncate(24*time.Hour).AddDate(0, 0, -30), Logs: true, Daily: true}
-	m.stats.value = m.stats.pruneRequest.Cutoff.Format(time.DateOnly)
-	m.stats.cursor = len(m.stats.value)
+	v := &m.stats
+	v.request++ // Ignore an overview response that predates this dialog.
+	v.loading = false
+	v.prune, v.pruneConfirm, v.prunePending = true, false, false
+	v.pruneGeneration++
+	v.err = ""
+	v.pruneRequest = ipc.PruneRequest{Logs: true, Daily: true}
+	if v.pruneDays == "" {
+		v.pruneDays = "30"
+	}
+	v.cursor = len([]rune(v.pruneDays))
 }
-func (m model) pruneStats(apply bool) tea.Cmd {
+func (m *model) pruneStats(apply bool) tea.Cmd {
+	v := &m.stats
+	v.prunePending = true
+	v.pruneGeneration++
+	v.err = ""
+	request, generation := v.pruneRequest, v.pruneGeneration
+	client, ctx := m.client, m.ctx
 	return func() tea.Msg {
-		result, err := m.client.PruneStatistics(m.ctx, m.stats.pruneRequest, apply)
-		return statsPruneMsg{result, apply, err}
+		result, err := client.PruneStatistics(ctx, request, apply)
+		return statsPruneMsg{request: generation, result: result, apply: apply, err: err}
 	}
 }
 func (m *model) statsPruneKey(k tea.KeyPressMsg) tea.Cmd {
 	v := &m.stats
 	s := k.String()
 	if s == "esc" || s == "n" {
-		v.prune = false
+		if !v.prunePending || !v.pruneConfirm {
+			v.prune = false
+			v.pruneGeneration++
+		}
+		return nil
+	}
+	if v.prunePending {
 		return nil
 	}
 	if v.pruneConfirm {
-		switch s {
-		case "left", "right", "up", "down":
-			v.pruneChoice = 1 - v.pruneChoice
-		case "enter":
-			if v.pruneChoice == 1 {
-				return m.pruneStats(true)
-			}
-			v.prune = false
-		case "y":
+		if s == "enter" {
 			return m.pruneStats(true)
 		}
 		return nil
@@ -606,30 +619,58 @@ func (m *model) statsPruneKey(k tea.KeyPressMsg) tea.Cmd {
 	case "d":
 		v.pruneRequest.Daily = !v.pruneRequest.Daily
 	case "enter":
-		at, err := time.Parse(time.DateOnly, v.value)
-		if err != nil {
-			v.err = err.Error()
+		today := time.Now().UTC().Truncate(24 * time.Hour)
+		days, err := strconv.Atoi(v.pruneDays)
+		if err != nil || days < 1 || days > int(today.Sub(time.Unix(0, 0)).Hours()/24) {
+			v.err = "Enter a positive number of days (cutoff must be 1970 or later)."
 			return nil
 		}
-		v.pruneRequest.Cutoff = at
+		if !v.pruneRequest.Logs && !v.pruneRequest.Daily {
+			v.err = "Select logs, daily rollups, or both."
+			return nil
+		}
+		v.pruneRequest.Cutoff = today.AddDate(0, 0, -days)
 		return m.pruneStats(false)
 	default:
-		v.value, v.cursor, _ = editText(v.value, v.cursor, k)
+		v.pruneDays, v.cursor, _ = editText(v.pruneDays, v.cursor, k)
 	}
 	return nil
 }
+func pruneDayUnit(value string) string {
+	days, err := strconv.Atoi(value)
+	if err == nil && days == 1 {
+		return "day"
+	}
+	return "days"
+}
 func (m model) renderStatsPrune(width, height int) string {
 	v := m.stats
-	lines := []string{"Prune statistics (all accounts)", "Before UTC date: " + v.value, fmt.Sprintf("l logs: %t · d daily rollups: %t", v.pruneRequest.Logs, v.pruneRequest.Daily), "Lifetime and peer totals are never pruned.", v.err, "enter preview · esc cancel"}
+	lines := []string{accent("PRUNE · ALL ACCOUNTS")}
+	hint := "Enter previews affected records · Esc cancels"
 	if v.pruneConfirm {
-		choice := "[No] Yes"
-		if v.pruneChoice == 1 {
-			choice = "No [Yes]"
-		}
-		lines = append(lines, fmt.Sprintf("Delete %d log rows and %d daily rows?", v.preview.Logs, v.preview.Daily), choice, "arrows choose · enter accept · esc cancel")
+		lines = append(lines,
+			fmt.Sprintf("Delete log rows:   %d", v.preview.Logs),
+			fmt.Sprintf("Delete daily rows: %d", v.preview.Daily),
+			"Before "+v.pruneRequest.Cutoff.Format(time.DateOnly)+" UTC")
+		hint = "Enter again to prune · Esc cancels"
+	} else {
+		lines = append(lines,
+			"Older than: "+renderInput("", v.pruneDays, v.cursor, false, lipgloss.NewStyle())+" "+pruneDayUnit(v.pruneDays),
+			fmt.Sprintf("l logs: %t · d daily rollups: %t", v.pruneRequest.Logs, v.pruneRequest.Daily))
 	}
+	if v.prunePending {
+		hint = "Loading preview… · Esc cancels"
+		if v.pruneConfirm {
+			hint = "Pruning…"
+		}
+	}
+	lines = append(lines, strong(hint))
+	if v.err != "" {
+		lines = append(lines, danger(v.err))
+	}
+	lines = append(lines, "", muted("Lifetime/peer totals and local files are never deleted."))
 	for i := range lines {
-		lines[i] = trunc(lines[i], max(1, width))
+		lines[i] = ansi.Truncate(lines[i], max(1, width), "…")
 	}
 	return strings.Join(lines[:min(len(lines), max(1, height))], "\n")
 }
