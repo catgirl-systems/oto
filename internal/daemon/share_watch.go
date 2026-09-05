@@ -2,14 +2,12 @@ package daemon
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
 	"log"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -22,7 +20,6 @@ import (
 const (
 	DefaultShareRescanDelay = 5 * time.Minute
 	shareRescanMaxDelay     = 30 * time.Minute
-	shareIndexCacheVersion  = 3
 )
 
 type audioSettingKey struct{}
@@ -185,56 +182,6 @@ func (s *Service) runShareScan(ctx context.Context, shares []config.Share, rules
 	}
 	s.finishShareScan(id, state, started, err)
 	return err
-}
-
-type shareIndexCache struct {
-	Version    int                  `json:"version"`
-	Roots      []soulseek.ShareRoot `json:"roots"`
-	Files      []soulseek.ShareFile `json:"files"`
-	Exclusions []string             `json:"exclusions"`
-}
-
-func loadShareIndexCache(path string, shares []config.Share, rules []string) (*soulseek.ShareIndex, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, err
-	}
-	var cache shareIndexCache
-	if err := json.Unmarshal(data, &cache); err != nil {
-		return nil, err
-	}
-	if cache.Version != shareIndexCacheVersion {
-		return nil, fmt.Errorf("unsupported share index cache version %d", cache.Version)
-	}
-	rules, err = config.NormalizeShareExclusions(rules)
-	if err != nil {
-		return nil, err
-	}
-	if cache.Exclusions == nil || !slices.Equal(cache.Exclusions, rules) {
-		return nil, errors.New("share index cache exclusions changed")
-	}
-	roots := make([]soulseek.ShareRoot, len(shares))
-	for i, share := range shares {
-		roots[i] = soulseek.ShareRoot{Name: share.Name, Path: share.Path}
-	}
-	index, err := soulseek.RestoreShareIndexWithExclusions(roots, cache.Files, rules)
-	if err != nil {
-		return nil, err
-	}
-	if !slices.Equal(cache.Roots, index.Roots()) {
-		return nil, errors.New("share index cache roots changed")
-	}
-	return index, nil
-}
-
-func saveShareIndexCache(path string, index *soulseek.ShareIndex) error {
-	return config.SaveJSON(path, shareIndexCache{Version: shareIndexCacheVersion, Roots: index.Roots(), Files: index.Files(), Exclusions: index.Exclusions()})
-}
-
-func (s *Service) persistShareIndex(index *soulseek.ShareIndex) {
-	if err := saveShareIndexCache(s.shareIndexPath, index); err != nil {
-		log.Printf("save share index cache: %v", err)
-	}
 }
 
 func buildShareIndex(ctx context.Context, shares []config.Share) (*soulseek.ShareIndex, error) {

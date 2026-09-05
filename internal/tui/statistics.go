@@ -9,7 +9,6 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
-	"github.com/catgirl-systems/oto/internal/config"
 	"github.com/catgirl-systems/oto/internal/daemon"
 	"github.com/catgirl-systems/oto/internal/ipc"
 	"github.com/catgirl-systems/oto/internal/stats"
@@ -195,16 +194,8 @@ func (m *model) statsKey(k tea.KeyPressMsg) tea.Cmd {
 		if len(accounts) > 0 {
 			i := slices.Index(accounts, v.overview.Account)
 			v.filter.Account = accounts[(i+1)%len(accounts)]
-			m.history.StatsAccount = v.filter.Account
-			if m.historyPath != "" {
-				disk, err := loadHistory(m.historyPath)
-				if err == nil {
-					disk.StatsAccount = v.filter.Account
-					err = config.SaveJSON(m.historyPath, disk)
-				}
-				if err != nil {
-					v.err = err.Error()
-				}
+			if err := m.saveStatsAccount(v.filter.Account); err != nil {
+				v.err = err.Error()
 			}
 		}
 		v.filter.Cursor = ""

@@ -18,6 +18,8 @@ import (
 
 	"github.com/catgirl-systems/oto/internal/config"
 	"github.com/catgirl-systems/oto/internal/daemon"
+	"github.com/catgirl-systems/oto/internal/storage"
+	storageDB "github.com/catgirl-systems/oto/internal/storage/db"
 )
 
 func TestStatusMethodsBodyAndSocketMode(t *testing.T) {
@@ -32,15 +34,15 @@ func TestStatusMethodsBodyAndSocketMode(t *testing.T) {
 		t.Fatal(err)
 	}
 	c.Shares = []config.Share{{Name: "Music", Path: shareRoot}}
-	journalPath := filepath.Join(t.TempDir(), "journal.json")
-	if err := config.SaveJSON(journalPath, daemon.Journal{Downloads: []daemon.Download{{ID: "d-1", State: "running"}}}); err != nil {
-		t.Fatal(err)
-	}
+	journalPath := filepath.Join(t.TempDir(), "state.sqlite3")
 	svc, err := daemon.New(c, journalPath)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer svc.Close()
+	if _, err := svc.QueueDownloads([]daemon.DownloadRequest{{Username: "peer", Files: []daemon.DownloadItem{{Filename: "Album/song", Size: 4}}}}); err != nil {
+		t.Fatal(err)
+	}
 	path := filepath.Join(t.TempDir(), "run", "slsk.sock")
 	srv := NewServer(svc, path)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -149,11 +151,25 @@ func TestStatusMethodsBodyAndSocketMode(t *testing.T) {
 	if _, err := cl.BrowseShares(context.Background(), "Music/../outside"); err == nil {
 		t.Fatal("share traversal route accepted")
 	}
-	cachePath := filepath.Join(filepath.Dir(journalPath), "usershares", "cGVlcg.json")
-	if err := config.SaveJSON(cachePath, map[string]any{
-		"version": 1, "username": "peer", "saved_at": time.Now().UTC(),
-		"entries": []map[string]any{{"Name": `Music\cached.flac`, "Size": 42}},
-	}); err != nil {
+	state, err := storage.Open(journalPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx = context.Background()
+	snapshotID, err := state.Queries().CreateShareSnapshot(ctx, storageDB.CreateShareSnapshotParams{Source: "remote", NormalizedUsername: "peer", CreatedAt: time.Now().UnixMilli()})
+	if err == nil {
+		_, err = state.SQL().Exec("UPDATE share_snapshots SET state = 'published' WHERE id = ?", snapshotID)
+	}
+	if err == nil {
+		err = state.Queries().InsertShareEntry(ctx, storageDB.InsertShareEntryParams{SnapshotID: snapshotID, Ordinal: 0, Kind: "remote", Path: `Music\cached.flac`, Size: storage.EncodeUint64(42)})
+	}
+	if err == nil {
+		err = state.Queries().SetShareHead(ctx, storageDB.SetShareHeadParams{Source: "remote", NormalizedUsername: "peer", SnapshotID: snapshotID})
+	}
+	if closeErr := state.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil {
 		t.Fatal(err)
 	}
 	savedBrowses, err := cl.SavedBrowses(context.Background())
@@ -380,7 +396,7 @@ func TestDownloadPauseResumeAndHookConfigRoutes(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	cfg := config.Default()
 	cfg.Soulseek.Username, cfg.Soulseek.Password = "u", "p"
-	svc, err := daemon.New(cfg, filepath.Join(t.TempDir(), "downloads.json"))
+	svc, err := daemon.New(cfg, filepath.Join(t.TempDir(), "state.sqlite3"))
 	if err != nil {
 		t.Fatal(err)
 	}

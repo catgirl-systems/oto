@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -222,9 +221,19 @@ func TestCompletionNotifications(t *testing.T) {
 			s.cfg.Downloads.FileNotifications, s.cfg.Downloads.FolderNotifications = tc.files, tc.folders
 			delivered := make(chan string, 8)
 			s.desktopNotify = func(ctx context.Context, title, body string) error {
-				data, err := os.ReadFile(s.journalPath)
-				if err != nil || !strings.Contains(string(data), "completed") {
-					t.Error("notification preceded journal save")
+				rows, err := s.stateDB.Queries().ListDownloads(ctx)
+				if err != nil {
+					t.Error("notification database read failed")
+				}
+				completed := false
+				for _, row := range rows {
+					if row.State == "completed" {
+						completed = true
+						break
+					}
+				}
+				if !completed {
+					t.Error("notification preceded database commit")
 				}
 				delivered <- title + ":" + body
 				return errors.New("desktop unavailable") // Must not fail or retry the transfer.
@@ -257,12 +266,17 @@ func TestCompletionNotifications(t *testing.T) {
 			if s.Snapshot().DownloadNotification.Sequence != snap.DownloadNotification.Sequence {
 				t.Fatal("duplicate completion notified")
 			}
+			oldSession := s.downloadNotification.SessionID
+			if err := s.Close(); err != nil {
+				t.Fatal(err)
+			}
 			restored, err := New(s.cfg, s.journalPath)
 			if err != nil {
 				t.Fatal(err)
 			}
 			defer restored.Close()
-			if restored.Snapshot().DownloadNotification.Sequence != 0 || restored.downloadNotification.SessionID == s.downloadNotification.SessionID {
+			s = restored
+			if restored.Snapshot().DownloadNotification.Sequence != 0 || restored.downloadNotification.SessionID == oldSession {
 				t.Fatal("restore replayed notifications")
 			}
 			// A later file is a new completion, not suppressed forever by folder name.
@@ -275,7 +289,7 @@ func TestCompletionNotifications(t *testing.T) {
 				s.updateDownload(d.ID, "running", 4, nil)
 				s.completeDownload(d.ID, d.DownloadDir, putPartial(t, d.ID, "data"))
 				s.wg.Wait()
-				if s.Snapshot().DownloadNotification.Sequence != snap.DownloadNotification.Sequence+1 {
+				if s.Snapshot().DownloadNotification.Sequence != 1 {
 					t.Fatal("later folder completion lost")
 				}
 			}
@@ -306,9 +320,16 @@ func TestNotificationFailureBoundaries(t *testing.T) {
 				part = filepath.Join(t.TempDir(), "absent")
 			}
 			if mode == "save" {
-				s.journalPath = t.TempDir()
+				if _, err := s.stateDB.SQL().Exec("CREATE TRIGGER fail_download_update BEFORE UPDATE OF state ON downloads BEGIN SELECT RAISE(ABORT, 'injected update failure'); END"); err != nil {
+					t.Fatal(err)
+				}
 			}
 			s.completeDownload(d.ID, d.DownloadDir, part)
+			if mode == "save" {
+				if _, err := s.stateDB.SQL().Exec("DROP TRIGGER fail_download_update"); err != nil {
+					t.Fatal(err)
+				}
+			}
 			s.wg.Wait()
 			if s.Snapshot().DownloadNotification.Sequence != 0 {
 				t.Fatal("failure advanced notification signal")

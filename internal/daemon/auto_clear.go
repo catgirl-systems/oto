@@ -1,12 +1,7 @@
 package daemon
 
-import (
-	"errors"
-	"github.com/catgirl-systems/oto/internal/config"
-)
-
 // A completion worker must not use TransferAction: that action joins workers.
-// Save a new journal before changing memory; this never removes a data file.
+// Delete history and commit its accounting together; never remove a data file.
 func (s *Service) clearCompletedDownload(id string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -14,19 +9,10 @@ func (s *Service) clearCompletedDownload(id string) error {
 		if download.ID != id || download.State != "completed" {
 			continue
 		}
-		if s.telemetry != nil && s.statsPendingLocked(id) {
-			s.telemetry.clear[id] = true
-			return errors.New("statistics not durable; completed history retained")
-		}
-		next := s.journal
-		next.DownloadSequence = s.seq
-		next.Downloads = make([]Download, 0, len(s.journal.Downloads)-1)
-		next.Downloads = append(next.Downloads, s.journal.Downloads[:i]...)
-		next.Downloads = append(next.Downloads, s.journal.Downloads[i+1:]...)
-		if err := config.SaveJSON(s.journalPath, next); err != nil {
+		if err := s.deleteDownloadLocked(id); err != nil {
 			return err
 		}
-		s.journal = next
+		s.journal.Downloads = append(s.journal.Downloads[:i], s.journal.Downloads[i+1:]...)
 		delete(s.transfers, id)
 		s.forgetTransferLocked(id)
 		break

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"sync/atomic"
 	"testing"
@@ -50,14 +51,14 @@ func TestExclusionSettingsPublishAndRollback(t *testing.T) {
 	if err != nil || loaded.ShareExclusions == nil || len(loaded.ShareExclusions) != 0 {
 		t.Fatalf("empty policy not persisted: %+v %v", loaded.ShareExclusions, err)
 	}
-	if _, err := loadShareIndexCache(s.shareIndexPath, cfg.Shares, nil); err == nil {
+	if _, err := s.loadShareIndexCache(cfg.Shares, nil); err == nil {
 		t.Fatal("differently filtered cache accepted")
 	}
-	if _, err := loadShareIndexCache(s.shareIndexPath, cfg.Shares, []string{}); err != nil {
+	cache, err := s.loadShareIndexCache(cfg.Shares, []string{})
+	if err != nil {
 		t.Fatal(err)
 	}
 	index := s.shares
-	cache, _ := os.ReadFile(s.shareIndexPath)
 	disk, _ := os.ReadFile(s.configPath)
 	for _, failure := range []string{"validation", "scan", "save", "cancel"} {
 		t.Run(failure, func(t *testing.T) {
@@ -101,8 +102,8 @@ func TestExclusionSettingsPublishAndRollback(t *testing.T) {
 			if s.Config().Bandwidth.ActiveProfile != "Both" || client.DownloadLimit() != 11*1024 || client.UploadPolicy().BytesPerSecond != 7*1024 {
 				t.Fatal("failed staged scan changed bandwidth")
 			}
-			gotCache, _ := os.ReadFile(s.shareIndexPath)
-			if s.shares != index || !slices.Equal(s.cfg.ShareExclusions, cfg.ShareExclusions) || !bytes.Equal(disk, gotDisk) || !bytes.Equal(cache, gotCache) {
+			gotCache, err := s.loadShareIndexCache(s.cfg.Shares, s.cfg.ShareExclusions)
+			if err != nil || s.shares != index || !slices.Equal(s.cfg.ShareExclusions, cfg.ShareExclusions) || !bytes.Equal(disk, gotDisk) || !reflect.DeepEqual(cache.Files(), gotCache.Files()) {
 				t.Fatal("failed edit changed active or persisted configuration/index")
 			}
 		})

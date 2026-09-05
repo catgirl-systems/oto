@@ -16,7 +16,7 @@ import (
 func TestUploadActionRoutes(t *testing.T) {
 	cfg := config.Default()
 	cfg.Soulseek.Username, cfg.Soulseek.Password = "test", "test"
-	svc, err := daemon.New(cfg, filepath.Join(t.TempDir(), "journal.json"))
+	svc, err := daemon.New(cfg, filepath.Join(t.TempDir(), "state.sqlite3"))
 	if err != nil {
 		t.Fatal(err)
 	}

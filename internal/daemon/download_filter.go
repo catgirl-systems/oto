@@ -1,13 +1,15 @@
 package daemon
 
 import (
+	"context"
 	"errors"
 	"os"
-	"slices"
 	"time"
 
 	"github.com/catgirl-systems/oto/internal/config"
 	"github.com/catgirl-systems/oto/internal/soulseek"
+	"github.com/catgirl-systems/oto/internal/stats"
+	"github.com/catgirl-systems/oto/internal/storage/db"
 )
 
 func downloadMatcher(c config.Config) (*soulseek.ShareExclusions, error) {
@@ -34,9 +36,7 @@ func (s *Service) ForceDownloads(ids []string) (UploadActionResult, error) {
 		s.mu.Unlock()
 		return result, ErrClosed
 	}
-	next := s.journal
-	next.Downloads = slices.Clone(next.Downloads)
-	next.StatsPending = slices.Clone(next.StatsPending)
+	previous := s.snapshotLocked(ids...)
 	starts := []string{}
 	seen := map[string]bool{}
 	for _, id := range ids {
@@ -45,8 +45,8 @@ func (s *Service) ForceDownloads(ids []string) (UploadActionResult, error) {
 		}
 		seen[id] = true
 		found := false
-		for i := range next.Downloads {
-			d := &next.Downloads[i]
+		for i := range s.journal.Downloads {
+			d := &s.journal.Downloads[i]
 			if d.ID != id {
 				continue
 			}
@@ -60,8 +60,8 @@ func (s *Service) ForceDownloads(ids []string) (UploadActionResult, error) {
 			result.Changed++
 			if s.telemetry != nil {
 				event := s.statsTemplateLocked(id)
-				event.Kind = "forced"
-				next.StatsPending = append(next.StatsPending, s.statsPrepareEventLocked(event))
+				event.Kind = stats.KindForced
+				s.statsEventLocked(event)
 			}
 			break
 		}
@@ -69,11 +69,27 @@ func (s *Service) ForceDownloads(ids []string) (UploadActionResult, error) {
 			result.Errors = append(result.Errors, UploadActionError{id, os.ErrNotExist.Error()})
 		}
 	}
-	if err := config.SaveJSON(s.journalPath, next); err != nil {
+	dirty := make(map[string]bool, len(starts))
+	for _, id := range starts {
+		dirty[id] = true
+	}
+	if err := s.commitLockedFor(context.Background(), dirty, func(q *db.Queries) error {
+		for _, id := range starts {
+			for _, d := range s.journal.Downloads {
+				if d.ID == id {
+					if err := q.UpsertDownload(context.Background(), downloadParams(d)); err != nil {
+						return err
+					}
+					break
+				}
+			}
+		}
+		return nil
+	}); err != nil {
+		s.restoreLocked(previous)
 		s.mu.Unlock()
 		return UploadActionResult{}, err
 	}
-	s.journal = next
 	for _, id := range starts {
 		tr := s.transfers[id]
 		tr.State, tr.Error = "queued", ""

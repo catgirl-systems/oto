@@ -14,7 +14,7 @@ import (
 func TestUploadJournalRecoveryAndAccounts(t *testing.T) {
 	cfg := testConfig(t)
 	root := t.TempDir()
-	path := filepath.Join(t.TempDir(), "downloads.json")
+	path := filepath.Join(t.TempDir(), "state.sqlite3")
 	for _, name := range []string{"a", "b"} {
 		if err := os.WriteFile(filepath.Join(root, name), []byte(name), 0600); err != nil {
 			t.Fatal(err)
@@ -64,13 +64,7 @@ func TestUploadJournalRecoveryAndAccounts(t *testing.T) {
 	if len(first.journal.Uploads) != 2 || !first.journal.Uploads[0].Recoverable || first.journal.UploadSequence != 2 {
 		t.Fatalf("lost interrupted queue: %+v", first.journal)
 	}
-	// History order need not be the queue order (e.g. an old failed file was retried).
-	journal := first.journal
-	journal.Uploads = slices.Clone(journal.Uploads)
-	slices.Reverse(journal.Uploads)
-	if err := config.SaveJSON(path, journal); err != nil {
-		t.Fatal(err)
-	}
+	// SQLite persists queue order explicitly; recovery must use it rather than row order.
 	limited := soulseek.NewUploadManager(1)
 	limited.Configure(soulseek.UploadPolicy{MaxQueuedFilesPerUser: 1, MaxQueuedBytesPerUser: 1})
 	ready := make(chan struct{})

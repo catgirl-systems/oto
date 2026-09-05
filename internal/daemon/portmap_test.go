@@ -99,7 +99,7 @@ func prepareConnectOnce(t *testing.T, server string, natPMP, upnp bool) (*Servic
 	cfg := testConfig(t)
 	cfg.Soulseek.Server, cfg.Soulseek.ListenAddr = server, closedAddress(t)
 	cfg.Soulseek.NATPMPPortMapping, cfg.Soulseek.UPnPPortMapping = natPMP, upnp
-	service, err := New(cfg, t.TempDir()+"/state.json")
+	service, err := New(cfg, t.TempDir()+"/state.sqlite3")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -249,7 +249,7 @@ func TestPortMappingClosesBeforeReconnect(t *testing.T) {
 	cfg := testConfig(t)
 	cfg.Soulseek.Server, cfg.Soulseek.ListenAddr = server, closedAddress(t)
 	cfg.Soulseek.NATPMPPortMapping = true
-	service, err := New(cfg, t.TempDir()+"/state.json")
+	service, err := New(cfg, t.TempDir()+"/state.sqlite3")
 	if err != nil {
 		t.Fatal(err)
 	}

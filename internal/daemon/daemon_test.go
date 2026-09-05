@@ -2,7 +2,6 @@ package daemon
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -15,6 +14,7 @@ import (
 
 	"github.com/catgirl-systems/oto/internal/config"
 	"github.com/catgirl-systems/oto/internal/soulseek"
+	"github.com/catgirl-systems/oto/internal/storage"
 )
 
 func testConfig(t *testing.T) config.Config {
@@ -48,7 +48,7 @@ func TestJournalRoundTripAndSafeResume(t *testing.T) {
 	if err := os.WriteFile(completed, []byte("existing"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	jp := filepath.Join(d, "downloads.json")
+	jp := filepath.Join(d, "state.sqlite3")
 	s, err := New(c, jp)
 	if err != nil {
 		t.Fatal(err)
@@ -60,18 +60,20 @@ func TestJournalRoundTripAndSafeResume(t *testing.T) {
 	if err := s.Close(); err != nil {
 		t.Fatal(err)
 	}
-	b, err := os.ReadFile(jp)
+	db, err := storage.Open(jp)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var j Journal
-	if err := json.Unmarshal(b, &j); err != nil || len(j.Downloads) != 1 {
-		t.Fatalf("journal: %v %+v", err, j)
+	rows, err := db.Queries().ListDownloads(context.Background())
+	_ = db.Close()
+	if err != nil || len(rows) != 1 || rows[0].ID != got[0].ID {
+		t.Fatalf("download row: %v %+v", err, rows)
 	}
 	s2, err := New(c, jp)
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer s2.Close()
 	if len(s2.Downloads()) != 1 {
 		t.Fatal("journal did not reload")
 	}
@@ -104,7 +106,7 @@ func TestFolderDownloadItems(t *testing.T) {
 		t.Fatal("malformed entry accepted")
 	}
 
-	s, err := New(testConfig(t), filepath.Join(t.TempDir(), "downloads.json"))
+	s, err := New(testConfig(t), filepath.Join(t.TempDir(), "state.sqlite3"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -122,7 +124,7 @@ func TestFolderDownloadItems(t *testing.T) {
 
 func TestClearDownloadRemovesIncompleteFile(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
-	s, err := New(testConfig(t), filepath.Join(t.TempDir(), "downloads.json"))
+	s, err := New(testConfig(t), filepath.Join(t.TempDir(), "state.sqlite3"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -151,7 +153,7 @@ func TestCloseRequeuesPartialDownload(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	cfg := testConfig(t)
 	cfg.Soulseek.ConnectOnStartup = false
-	journalPath := filepath.Join(t.TempDir(), "downloads.json")
+	journalPath := filepath.Join(t.TempDir(), "state.sqlite3")
 	service, err := New(cfg, journalPath)
 	if err != nil {
 		t.Fatal(err)
@@ -194,7 +196,7 @@ func TestCloseRequeuesPartialDownload(t *testing.T) {
 func TestStartConnectionFailureDoesNotDeadlock(t *testing.T) {
 	cfg := testConfig(t)
 	cfg.Soulseek.Server, cfg.Soulseek.ListenAddr = closedAddress(t), closedAddress(t)
-	service, err := New(cfg, filepath.Join(t.TempDir(), "state.json"))
+	service, err := New(cfg, filepath.Join(t.TempDir(), "state.sqlite3"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -240,7 +242,7 @@ func TestPermanentLoginErrorWaitsForManualRetry(t *testing.T) {
 
 	cfg := testConfig(t)
 	cfg.Soulseek.Server, cfg.Soulseek.ListenAddr = server.Addr().String(), closedAddress(t)
-	service, err := New(cfg, filepath.Join(t.TempDir(), "state.json"))
+	service, err := New(cfg, filepath.Join(t.TempDir(), "state.sqlite3"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -269,7 +271,7 @@ func TestStartupDisabledAndAwayRetry(t *testing.T) {
 	cfg := testConfig(t)
 	cfg.Soulseek.ConnectOnStartup = false
 	cfg.Soulseek.Server, cfg.Soulseek.ListenAddr = closedAddress(t), closedAddress(t)
-	service, err := New(cfg, filepath.Join(t.TempDir(), "state.json"))
+	service, err := New(cfg, filepath.Join(t.TempDir(), "state.sqlite3"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -314,7 +316,7 @@ func TestOfflineRequeuesAndResumesPartialDownload(t *testing.T) {
 	cfg := testConfig(t)
 	cfg.Soulseek.ConnectOnStartup = false
 	cfg.Soulseek.Server, cfg.Soulseek.ListenAddr = closedAddress(t), closedAddress(t)
-	service, err := New(cfg, filepath.Join(t.TempDir(), "state.json"))
+	service, err := New(cfg, filepath.Join(t.TempDir(), "state.sqlite3"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -408,7 +410,7 @@ func TestSearchResultsSortPrivateLast(t *testing.T) {
 
 func TestUpdateConfigHotAppliesSearchAndDownload(t *testing.T) {
 	cfg := testConfig(t)
-	s, err := New(cfg, filepath.Join(t.TempDir(), "downloads.json"))
+	s, err := New(cfg, filepath.Join(t.TempDir(), "state.sqlite3"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -462,7 +464,7 @@ func TestUpdateConfigHotAppliesSearchAndDownload(t *testing.T) {
 
 func TestUpdateConfigHotAppliesUploadsAfterSave(t *testing.T) {
 	cfg := testConfig(t)
-	s, err := New(cfg, filepath.Join(t.TempDir(), "downloads.json"))
+	s, err := New(cfg, filepath.Join(t.TempDir(), "state.sqlite3"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -512,7 +514,7 @@ func TestUpdateConfigHotAppliesUploadsAfterSave(t *testing.T) {
 
 func TestChangePasswordPersistenceAndOwnership(t *testing.T) {
 	cfg := testConfig(t)
-	service, err := New(cfg, filepath.Join(t.TempDir(), "downloads.json"))
+	service, err := New(cfg, filepath.Join(t.TempDir(), "state.sqlite3"))
 	if err != nil {
 		t.Fatal(err)
 	}

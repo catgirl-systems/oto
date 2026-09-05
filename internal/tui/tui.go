@@ -14,6 +14,7 @@ import (
 	"github.com/catgirl-systems/oto/internal/config"
 	"github.com/catgirl-systems/oto/internal/daemon"
 	"github.com/catgirl-systems/oto/internal/ipc"
+	"github.com/catgirl-systems/oto/internal/storage"
 )
 
 // RunSetup writes the initial config before a daemon exists.
@@ -36,7 +37,13 @@ func RunWithTransient(ctx context.Context, client *ipc.Client, configPath string
 	if err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("load config: %w", err)
 	}
+	stateDB, err := storage.OpenTUI(config.StatePath())
+	if err != nil {
+		return fmt.Errorf("open state database: %w", err)
+	}
+	defer stateDB.Close()
 	m := newModel(ctx, client, configPath, transient, cfg)
+	m.stateDB = stateDB
 	m.initializeHistory()
 	if strings.TrimSpace(cfg.Soulseek.Username) == "" || strings.TrimSpace(cfg.Soulseek.Password) == "" {
 		m.setup = true

@@ -9,6 +9,7 @@ import (
 	"github.com/catgirl-systems/oto/internal/daemon"
 	"github.com/catgirl-systems/oto/internal/ipc"
 	"github.com/catgirl-systems/oto/internal/soulseek"
+	"github.com/catgirl-systems/oto/internal/storage"
 )
 
 type snapshot struct {
@@ -190,7 +191,8 @@ type model struct {
 	forcePending                           []string
 	ctx                                    context.Context
 	client                                 *ipc.Client
-	configPath, historyPath                string
+	configPath                             string
+	stateDB                                *storage.DB
 	cfg                                    config.Config
 	activeSearch                           config.Search
 	acceptedSearchDefault                  string
@@ -297,7 +299,7 @@ func (m model) rows() int {
 func (m model) pageRows() int { return max(1, m.height-8) }
 
 func newModel(ctx context.Context, c *ipc.Client, path string, transient bool, cfg config.Config) model {
-	m := model{ctx: ctx, client: c, configPath: path, historyPath: config.HistoryPath(), cfg: cfg, activeSearch: cfg.Search, acceptedSearchDefault: cfg.Search.DefaultFilter, transient: transient, width: 80, height: 24, selected: map[int]bool{}, uploadSelected: map[string]bool{}, wishlistNotified: map[string]uint64{}, setupVals: [6]string{cfg.Soulseek.Username, cfg.Soulseek.Password, cfg.Soulseek.ListenAddr, cfg.Soulseek.NetworkInterface, cfg.DownloadDir, ""}, inputCursor: utf8.RuneCountInString(cfg.Soulseek.Username), savedBrowseLoading: c != nil}
+	m := model{ctx: ctx, client: c, configPath: path, cfg: cfg, activeSearch: cfg.Search, acceptedSearchDefault: cfg.Search.DefaultFilter, transient: transient, width: 80, height: 24, selected: map[int]bool{}, uploadSelected: map[string]bool{}, wishlistNotified: map[string]uint64{}, setupVals: [6]string{cfg.Soulseek.Username, cfg.Soulseek.Password, cfg.Soulseek.ListenAddr, cfg.Soulseek.NetworkInterface, cfg.DownloadDir, ""}, inputCursor: utf8.RuneCountInString(cfg.Soulseek.Username), savedBrowseLoading: c != nil}
 	m.historyCursor.reset("")
 	return m
 }

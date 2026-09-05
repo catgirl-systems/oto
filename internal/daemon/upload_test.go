@@ -27,10 +27,14 @@ func uploadService(t *testing.T) (*Service, *soulseek.UploadManager, *soulseek.U
 	}
 	manager := soulseek.NewUploadManager(1)
 	blocker := manager.Enqueue("blocker", soulseek.TransferRequest{})
-	s := &Service{transfers: map[string]Transfer{}, uploadEpoch: 1, status: StatusConnected}
+	s, err := New(testConfig(t), filepath.Join(t.TempDir(), "state.sqlite3"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.shares, s.uploadEpoch, s.status = shares, 1, StatusConnected
 	s.client = soulseek.NewClient(soulseek.ClientConfig{Share: shares, Uploads: manager, UploadUpdate: func(e soulseek.TransferEvent) { s.uploadUpdate(1, e) }})
 	c := s.client
-	t.Cleanup(func() { _ = c.Close(); manager.Done(blocker) })
+	t.Cleanup(func() { _ = c.Close(); manager.Done(blocker); _ = s.Close() })
 	return s, manager, blocker, root
 }
 func uploadRow(t *testing.T, s *Service, user, file string) Transfer {

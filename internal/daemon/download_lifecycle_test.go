@@ -20,7 +20,7 @@ import (
 func downloadService(t *testing.T) *Service {
 	t.Helper()
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
-	s, err := New(testConfig(t), filepath.Join(t.TempDir(), "downloads.json"))
+	s, err := New(testConfig(t), filepath.Join(t.TempDir(), "state.sqlite3"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -83,11 +83,15 @@ func TestDownloadPauseResumeLifecycle(t *testing.T) {
 	if active != 0 {
 		t.Fatal("automatic resume started paused workers")
 	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
 	restored, err := New(s.cfg, s.journalPath)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer restored.Close()
+	s = restored
 	if d := restored.Downloads()[0]; d.State != "paused" || d.Offset != 7 {
 		t.Fatalf("paused download did not survive restart: %+v", d)
 	}
@@ -151,11 +155,15 @@ func TestDownloadRetryPersistsAndCompletes(t *testing.T) {
 	if d.State != "retrying" || d.RetryAt.Sub(d.UpdatedAt) != 3*time.Minute {
 		t.Fatalf("missing retry deadline: %+v", d)
 	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
 	restored, err := New(s.cfg, s.journalPath)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer restored.Close()
+	s = restored
 	if got := restored.Downloads()[0]; got.State != "retrying" || !got.RetryAt.Equal(d.RetryAt) {
 		t.Fatalf("retry not persisted: %+v", got)
 	}
@@ -307,6 +315,9 @@ func TestFinalizingDownloadControlsAndRestart(t *testing.T) {
 		if err := s.TransferAction(id, action); err == nil {
 			t.Fatalf("%s interrupted a finalizing download", action)
 		}
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
 	}
 	restored, err := New(s.cfg, s.journalPath)
 	if err != nil {

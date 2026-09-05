@@ -10,7 +10,7 @@ func TestFilteredDownloadsPersistAndRequireExplicitForce(t *testing.T) {
 	cfg := testConfig(t)
 	cfg.Downloads.FiltersEnabled = true
 	cfg.Downloads.FilterPatterns = []string{"*.exe", "blocked/"}
-	path := filepath.Join(t.TempDir(), "downloads.json")
+	path := filepath.Join(t.TempDir(), "state.sqlite3")
 	s, err := New(cfg, path)
 	if err != nil {
 		t.Fatal(err)

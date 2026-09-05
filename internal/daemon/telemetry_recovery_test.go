@@ -10,7 +10,7 @@ import (
 
 func TestCheckpointCrashAndLateCancellationAccounting(t *testing.T) {
 	cfg := testConfig(t)
-	path := filepath.Join(t.TempDir(), "downloads.json")
+	path := filepath.Join(t.TempDir(), "state.sqlite3")
 	s, err := New(cfg, path)
 	if err != nil {
 		t.Fatal(err)
@@ -26,9 +26,10 @@ func TestCheckpointCrashAndLateCancellationAccounting(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Simulate process loss after the checkpoint, without graceful-stop accounting.
-	if err = s.telemetry.store.Close(); err != nil {
+	if err = s.stateDB.Close(); err != nil {
 		t.Fatal(err)
 	}
+	s.stateDB = nil
 	s.telemetry = nil
 	restored, err := New(cfg, path)
 	if err != nil {

@@ -2,24 +2,18 @@ package daemon
 
 import (
 	"context"
-	"encoding/base64"
-	"encoding/json"
+	"database/sql"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 	"time"
 
-	"github.com/catgirl-systems/oto/internal/config"
 	"github.com/catgirl-systems/oto/internal/soulseek"
+	"github.com/catgirl-systems/oto/internal/storage"
 )
 
-const (
-	remoteShareCacheVersion = 1
-	browseProgressRetention = 5 * time.Second
-)
+const browseProgressRetention = 5 * time.Second
 
 var (
 	ErrBrowseNotLoaded = errors.New("daemon: share list is not loaded")
@@ -50,10 +44,9 @@ type trackedBrowse struct {
 }
 
 type remoteShareCache struct {
-	Version  int                   `json:"version"`
-	Username string                `json:"username"`
-	SavedAt  time.Time             `json:"saved_at"`
-	Entries  []soulseek.ShareEntry `json:"entries"`
+	Username string
+	SavedAt  time.Time
+	Entries  []soulseek.ShareEntry
 }
 
 type loadedBrowse struct {
@@ -119,78 +112,6 @@ func (s *Service) BrowseProgress(username string) *BrowseProgress {
 	return &progress
 }
 
-func remoteShareCachePath(dir, username string) (string, error) {
-	key, err := browseUsername(username)
-	if err != nil {
-		return "", err
-	}
-	name := base64.RawURLEncoding.EncodeToString([]byte(key)) + ".json"
-	return filepath.Join(dir, name), nil
-}
-
-func loadRemoteShareCache(dir, username string) (remoteShareCache, error) {
-	var cache remoteShareCache
-	path, err := remoteShareCachePath(dir, username)
-	if err != nil {
-		return cache, err
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return cache, err
-	}
-	if err := json.Unmarshal(data, &cache); err != nil {
-		return remoteShareCache{}, err
-	}
-	if cache.Version != remoteShareCacheVersion {
-		return remoteShareCache{}, fmt.Errorf("unsupported remote share cache version %d", cache.Version)
-	}
-	if !strings.EqualFold(strings.TrimSpace(cache.Username), strings.TrimSpace(username)) {
-		return remoteShareCache{}, errors.New("remote share cache username mismatch")
-	}
-	return cache, nil
-}
-
-func saveRemoteShareCache(dir string, cache remoteShareCache) error {
-	path, err := remoteShareCachePath(dir, cache.Username)
-	if err != nil {
-		return err
-	}
-	return config.SaveJSON(path, cache)
-}
-
-func listSavedBrowses(dir string) ([]SavedBrowse, error) {
-	files, err := os.ReadDir(dir)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	out := make([]SavedBrowse, 0, len(files))
-	for _, file := range files {
-		if file.IsDir() || filepath.Ext(file.Name()) != ".json" {
-			continue
-		}
-		encoded := strings.TrimSuffix(file.Name(), ".json")
-		decoded, err := base64.RawURLEncoding.DecodeString(encoded)
-		if err != nil {
-			continue
-		}
-		username := string(decoded)
-		path, err := remoteShareCachePath(dir, username)
-		if err != nil || filepath.Base(path) != file.Name() {
-			continue
-		}
-		info, err := file.Info()
-		if err != nil || !info.Mode().IsRegular() {
-			continue
-		}
-		out = append(out, SavedBrowse{Username: username, SavedAt: info.ModTime()})
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Username < out[j].Username })
-	return out, nil
-}
-
 func (s *Service) rememberBrowse(username string, entries []soulseek.ShareEntry, cached bool, savedAt time.Time) BrowseResult {
 	key, _ := browseUsername(username)
 	s.mu.Lock()
@@ -207,7 +128,7 @@ func (s *Service) BrowseComplete(ctx context.Context, username string) (BrowseRe
 		return BrowseResult{}, err
 	}
 	s.mu.RLock()
-	client, browse, dir := s.client, s.fullBrowse, s.remoteSharesDir
+	client, browse := s.client, s.fullBrowse
 	s.mu.RUnlock()
 
 	var remoteErr error
@@ -221,14 +142,14 @@ func (s *Service) BrowseComplete(ctx context.Context, username string) (BrowseRe
 		remoteErr = err
 	}
 
-	cache, cacheErr := loadRemoteShareCache(dir, username)
+	cache, cacheErr := s.loadRemoteShareCache(username)
 	if cacheErr == nil {
 		return s.rememberBrowse(cache.Username, cache.Entries, true, cache.SavedAt), nil
 	}
 	if remoteErr != nil {
 		return BrowseResult{}, remoteErr
 	}
-	if !errors.Is(cacheErr, os.ErrNotExist) {
+	if !errors.Is(cacheErr, sql.ErrNoRows) {
 		return BrowseResult{}, fmt.Errorf("daemon: load saved share list: %w", cacheErr)
 	}
 	return BrowseResult{}, ErrNotStarted
@@ -241,7 +162,6 @@ func (s *Service) SaveBrowse(username string, revision uint64) (SavedBrowse, err
 	}
 	s.mu.RLock()
 	loaded, ok := s.browses[key]
-	dir := s.remoteSharesDir
 	s.mu.RUnlock()
 	if !ok {
 		return SavedBrowse{}, ErrBrowseNotLoaded
@@ -250,8 +170,8 @@ func (s *Service) SaveBrowse(username string, revision uint64) (SavedBrowse, err
 		return SavedBrowse{}, ErrBrowseRevision
 	}
 	savedAt := time.Now().UTC()
-	cache := remoteShareCache{Version: remoteShareCacheVersion, Username: loaded.username, SavedAt: savedAt, Entries: loaded.result.Entries}
-	if err := saveRemoteShareCache(dir, cache); err != nil {
+	cache := remoteShareCache{Username: loaded.username, SavedAt: savedAt, Entries: loaded.result.Entries}
+	if err := s.saveRemoteShareCache(cache, revision); err != nil {
 		return SavedBrowse{}, err
 	}
 	s.mu.Lock()
@@ -264,8 +184,38 @@ func (s *Service) SaveBrowse(username string, revision uint64) (SavedBrowse, err
 }
 
 func (s *Service) SavedBrowses() ([]SavedBrowse, error) {
-	s.mu.RLock()
-	dir := s.remoteSharesDir
-	s.mu.RUnlock()
-	return listSavedBrowses(dir)
+	if s.stateDB == nil {
+		return nil, errors.New("daemon: state database is not open")
+	}
+	var out []SavedBrowse
+	err := s.stateDB.ReadSnapshot(context.Background(), func(snapshot *storage.ReadTx) error {
+		headRows, err := snapshot.Queries().ListShareHeads(context.Background())
+		if err != nil {
+			return err
+		}
+		for _, head := range headRows {
+			if head.Source != "remote" {
+				continue
+			}
+			row, err := snapshot.Queries().GetShareSnapshot(context.Background(), head.SnapshotID)
+			if err != nil {
+				return err
+			}
+			name := row.Username
+			if name == "" {
+				name = head.NormalizedUsername
+			}
+			savedAt := row.SavedAt
+			if savedAt == 0 {
+				savedAt = row.CreatedAt
+			}
+			out = append(out, SavedBrowse{Username: name, SavedAt: time.Unix(0, savedAt).UTC()})
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	sort.Slice(out, func(i, j int) bool { return strings.ToLower(out[i].Username) < strings.ToLower(out[j].Username) })
+	return out, nil
 }

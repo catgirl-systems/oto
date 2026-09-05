@@ -94,7 +94,7 @@ func TestSoulfindIPCSearchAndDownload(t *testing.T) {
 	cfg.Soulseek.ListenAddr = freeListenAddress(t)
 	cfg.Soulseek.NATPMPPortMapping, cfg.Soulseek.UPnPPortMapping = false, false
 	cfg.DownloadDir = downloadRoot
-	service, err := daemon.New(cfg, filepath.Join(t.TempDir(), "downloads.json"))
+	service, err := daemon.New(cfg, filepath.Join(t.TempDir(), "state.sqlite3"))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -55,7 +55,9 @@ func TestTransferTiming(t *testing.T) {
 }
 
 func TestTimingLifecycleGuards(t *testing.T) {
-	s := &Service{transfers: map[string]Transfer{"d-1": {ID: "d-1", State: "queued", Direction: "download", Total: 100}}, uploadEpoch: 1}
+	s := downloadService(t)
+	s.uploadEpoch = 1
+	s.transfers["d-1"] = Transfer{ID: "d-1", State: "queued", Direction: "download", Total: 100}
 	s.startTransfer("d-1", 40) // remote queued -> actual stream
 	s.updateTransferProgress("d-1", soulseek.Progress{State: "queued", Done: 0, Total: 100, Queue: 7})
 	if tr := s.transfers["d-1"]; tr.State != "running" || tr.Done != 40 || tr.Queue != 0 {

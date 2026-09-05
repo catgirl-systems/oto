@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/catgirl-systems/oto/internal/config"
 	"github.com/catgirl-systems/oto/internal/soulseek"
+	"github.com/catgirl-systems/oto/internal/storage"
 )
 
 func TestAutoClearNewDownloadsAndSequence(t *testing.T) {
@@ -100,20 +100,26 @@ func TestAutoClearJournalFailuresAndNonCompleted(t *testing.T) {
 		}
 	}
 	s.updateDownload(d.ID, "running", 4, nil)
-	path := s.journalPath
-	s.journalPath = t.TempDir() // completed-state save cannot replace a directory
+	if _, err := s.stateDB.SQL().Exec("CREATE TRIGGER fail_download_update BEFORE UPDATE OF state ON downloads BEGIN SELECT RAISE(ABORT, 'injected update failure'); END"); err != nil {
+		t.Fatal(err)
+	}
 	s.completeDownload(d.ID, d.DownloadDir, putPartial(t, d.ID, "data"))
-	if rows := s.Downloads(); len(rows) != 1 || rows[0].State != "completed" || s.Snapshot().DownloadNotification.Sequence != 0 {
-		t.Fatal("completion-save failure cleared history or notified")
+	if rows := s.Downloads(); len(rows) != 1 || rows[0].State != "completed" || rows[0].Offset != 4 || s.Snapshot().DownloadNotification.Sequence != 0 {
+		t.Fatalf("completion failure changed state: %+v notification=%+v", s.Downloads(), s.Snapshot().DownloadNotification)
 	}
-	if err := s.clearCompletedDownload(d.ID); err == nil || len(s.Downloads()) != 1 {
-		t.Fatal("cleanup-save failure lost history")
+	if _, err := s.stateDB.SQL().Exec("DROP TRIGGER fail_download_update"); err != nil {
+		t.Fatal(err)
 	}
-	s.journalPath = path
-	if err := s.saveJournalLocked(); err != nil {
+	if _, err := s.stateDB.SQL().Exec("CREATE TRIGGER fail_download_delete BEFORE DELETE ON downloads BEGIN SELECT RAISE(ABORT, 'injected delete failure'); END"); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.flushStats(); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.clearCompletedDownload(d.ID); err == nil || len(s.Downloads()) != 1 {
+		t.Fatal("cleanup failure lost history")
+	}
+	if _, err := s.stateDB.SQL().Exec("DROP TRIGGER fail_download_delete"); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.clearCompletedDownload(d.ID); err != nil || len(s.Downloads()) != 0 {
@@ -159,8 +165,16 @@ func TestAutoClearUploadsKeepsAttemptGuards(t *testing.T) {
 }
 
 func TestOldJournalSequenceMigration(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "journal")
-	if err := config.SaveJSON(path, Journal{Downloads: []Download{{ID: "d-42", State: "completed"}}}); err != nil {
+	path := filepath.Join(t.TempDir(), "state.sqlite3")
+	db, err := storage.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Queries().UpsertDownload(context.Background(), downloadParams(Download{ID: "d-42", State: "completed"})); err != nil {
+		_ = db.Close()
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
 		t.Fatal(err)
 	}
 	s, err := New(testConfig(t), path)

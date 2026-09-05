@@ -2,20 +2,20 @@
 package stats
 
 import (
+	"context"
 	"database/sql"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"iter"
-	"net/url"
-	"os"
-	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/catgirl-systems/oto/internal/storage"
+	"github.com/catgirl-systems/oto/internal/storage/db"
 	_ "modernc.org/sqlite"
 )
 
@@ -110,68 +110,39 @@ type PruneResult struct {
 	Logs  int64 `json:"logs"`
 	Daily int64 `json:"daily"`
 }
-type Store struct{ db *sql.DB }
+type Store struct {
+	db    *sql.DB
+	owner *storage.DB
+}
+
+// New borrows the shared daemon database. Closing the returned store does not
+// close db.
+func New(db *storage.DB) *Store {
+	if db == nil {
+		return nil
+	}
+	return &Store{db: db.SQL()}
+}
 
 var ErrInvalidCursor = errors.New("stats: invalid or expired cursor")
 
+// Open owns a standalone storage handle for statistics tests. Daemon
+// code should use New so statistics and transfers share one transaction.
 func Open(path string) (*Store, error) {
 	if path == "" {
 		return nil, errors.New("stats: file path required")
 	}
-	absolute, err := filepath.Abs(path)
+	owner, err := storage.Open(path)
 	if err != nil {
 		return nil, err
 	}
-	if err = os.MkdirAll(filepath.Dir(absolute), 0700); err != nil {
-		return nil, err
-	}
-	if err = os.Chmod(filepath.Dir(absolute), 0700); err != nil {
-		return nil, err
-	}
-	file, err := os.OpenFile(absolute, os.O_CREATE|os.O_RDWR, 0600)
-	if err != nil {
-		return nil, err
-	}
-	err = file.Chmod(0600)
-	closeErr := file.Close()
-	if err != nil {
-		return nil, err
-	}
-	if closeErr != nil {
-		return nil, closeErr
-	}
-	uri := url.URL{Scheme: "file", Path: absolute}
-	db, err := sql.Open("sqlite", uri.String())
-	if err != nil {
-		return nil, err
-	}
-	db.SetMaxOpenConns(1)
-	fail := func(err error) (*Store, error) { db.Close(); return nil, err }
-	for _, query := range []string{
-		"PRAGMA busy_timeout=5000", "PRAGMA journal_mode=WAL", "PRAGMA synchronous=FULL",
-		`CREATE TABLE IF NOT EXISTS seen(id TEXT PRIMARY KEY)`,
-		`CREATE TABLE IF NOT EXISTS events(id TEXT PRIMARY KEY,account TEXT,peer TEXT,direction TEXT,session TEXT,kind TEXT,at INTEGER,data TEXT NOT NULL)`,
-		`CREATE INDEX IF NOT EXISTS event_account ON events(account,at DESC,id DESC)`,
-		`CREATE INDEX IF NOT EXISTS event_peer ON events(account,peer,at DESC,id DESC)`,
-		`CREATE TABLE IF NOT EXISTS totals(account TEXT,peer TEXT,direction TEXT,session TEXT,day TEXT,data TEXT NOT NULL,PRIMARY KEY(account,peer,direction,session,day))`,
-		`CREATE INDEX IF NOT EXISTS totals_day ON totals(account,day)`,
-	} {
-		if _, err = db.Exec(query); err != nil {
-			return fail(err)
-		}
-	}
-	for _, name := range []string{absolute, absolute + "-wal", absolute + "-shm"} {
-		if err = os.Chmod(name, 0600); err != nil && !os.IsNotExist(err) {
-			return fail(err)
-		}
-	}
-	return &Store{db}, nil
+	return &Store{db: owner.SQL(), owner: owner}, nil
 }
 func (s *Store) Close() error {
-	if s == nil {
+	if s == nil || s.owner == nil {
 		return nil
 	}
-	return s.db.Close()
+	return s.owner.Close()
 }
 
 func metric(e Event) Totals {
@@ -231,18 +202,36 @@ func merge(dst *Totals, src Totals) error {
 }
 
 func (s *Store) Record(e Event) error { return s.RecordBatch([]Event{e}) }
+
 func (s *Store) RecordBatch(events []Event) error {
+	if s == nil || s.db == nil {
+		return errors.New("stats: store is closed")
+	}
 	tx, err := s.db.Begin()
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
+	if err = s.RecordBatchTx(context.Background(), tx, events); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// RecordBatchTx records fixed-schema writes inside the caller's transaction.
+// The caller owns commit/rollback; this is what lets transfer state and stats
+// share one atomic boundary.
+func (s *Store) RecordBatchTx(ctx context.Context, tx *sql.Tx, events []Event) error {
+	if s == nil || tx == nil {
+		return errors.New("stats: transaction is nil")
+	}
+	q := db.New(tx)
 	for _, e := range events {
 		if e.ID == "" || e.Account == "" || e.Session == "" || !validKinds[e.Kind] || (e.Direction != "upload" && e.Direction != "download") || e.At.IsZero() || e.At.Year() < 1970 || e.At.Year() > 2261 {
 			return errors.New("stats: invalid event")
 		}
 		e.At = e.At.UTC()
-		result, err := tx.Exec(`INSERT OR IGNORE INTO seen VALUES(?)`, e.ID)
+		result, err := q.InsertSeen(ctx, e.ID)
 		if err != nil {
 			return err
 		}
@@ -257,20 +246,23 @@ func (s *Store) RecordBatch(events []Event) error {
 		if err != nil {
 			return err
 		}
-		if _, err = tx.Exec(`INSERT INTO events VALUES(?,?,?,?,?,?,?,?)`, e.ID, e.Account, e.Peer, e.Direction, e.Session, e.Kind, e.At.UnixNano(), string(data)); err != nil {
+		account, peer := e.Account, e.Peer
+		direction, session, kind := e.Direction, e.Session, e.Kind
+		at := e.At.UnixNano()
+		if err = q.InsertEvent(ctx, db.InsertEventParams{ID: e.ID, Account: &account, Peer: &peer, Direction: &direction, Session: &session, Kind: &kind, At: &at, Data: string(data)}); err != nil {
 			return err
 		}
-		for _, day := range []string{"", e.At.Format("2006-01-02")} {
+		for _, day := range []string{"", e.At.Format(time.DateOnly)} {
 			var prior string
 			t := Totals{}
-			err = tx.QueryRow(`SELECT data FROM totals WHERE account=? AND peer=? AND direction=? AND session=? AND day=?`, e.Account, e.Peer, e.Direction, e.Session, day).Scan(&prior)
-			if err != nil && !errors.Is(err, sql.ErrNoRows) {
-				return err
-			}
+			dayArg := day
+			prior, err = q.GetTotalsData(ctx, db.GetTotalsDataParams{Account: &account, Peer: &peer, Direction: &direction, Session: &session, Day: &dayArg})
 			if err == nil {
 				if err = json.Unmarshal([]byte(prior), &t); err != nil {
 					return err
 				}
+			} else if !errors.Is(err, sql.ErrNoRows) {
+				return err
 			}
 			if err = merge(&t, metric(e)); err != nil {
 				return err
@@ -279,12 +271,12 @@ func (s *Store) RecordBatch(events []Event) error {
 			if err != nil {
 				return err
 			}
-			if _, err = tx.Exec(`INSERT INTO totals VALUES(?,?,?,?,?,?) ON CONFLICT(account,peer,direction,session,day) DO UPDATE SET data=excluded.data`, e.Account, e.Peer, e.Direction, e.Session, day, string(data)); err != nil {
+			if err = q.UpsertTotals(ctx, db.UpsertTotalsParams{Account: &account, Peer: &peer, Direction: &direction, Session: &session, Day: &dayArg, Data: string(data)}); err != nil {
 				return err
 			}
 		}
 	}
-	return tx.Commit()
+	return nil
 }
 func ValidateFilter(f Filter) error {
 	if len(f.Cursor) > 4096 {
@@ -595,23 +587,26 @@ func (s *Store) Prune(cutoff time.Time, logs, daily, apply bool) (PruneResult, e
 		return PruneResult{}, err
 	}
 	defer tx.Rollback()
+	q := db.New(tx)
 	out := PruneResult{}
+	at := cutoff.UnixNano()
+	day := cutoff.UTC().Format(time.DateOnly)
 	if logs {
-		if err = tx.QueryRow(`SELECT count(*) FROM events WHERE at<?`, cutoff.UnixNano()).Scan(&out.Logs); err != nil {
+		if out.Logs, err = q.CountEventsBefore(context.Background(), &at); err != nil {
 			return out, err
 		}
 		if apply {
-			if _, err = tx.Exec(`DELETE FROM events WHERE at<?`, cutoff.UnixNano()); err != nil {
+			if err = q.DeleteEventsBefore(context.Background(), &at); err != nil {
 				return out, err
 			}
 		}
 	}
 	if daily {
-		if err = tx.QueryRow(`SELECT count(*) FROM totals WHERE day<>'' AND day<?`, cutoff.UTC().Format(time.DateOnly)).Scan(&out.Daily); err != nil {
+		if out.Daily, err = q.CountDailyTotalsBefore(context.Background(), &day); err != nil {
 			return out, err
 		}
 		if apply {
-			if _, err = tx.Exec(`DELETE FROM totals WHERE day<>'' AND day<?`, cutoff.UTC().Format(time.DateOnly)); err != nil {
+			if err = q.DeleteDailyTotalsBefore(context.Background(), &day); err != nil {
 				return out, err
 			}
 		}

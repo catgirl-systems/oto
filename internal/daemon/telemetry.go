@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/catgirl-systems/oto/internal/stats"
+	"github.com/catgirl-systems/oto/internal/storage/db"
 )
 
 type attemptStats struct {
@@ -28,37 +29,38 @@ type RateSample struct {
 	Upload   uint64    `json:"upload"`
 }
 type telemetryState struct {
-	queued      map[string]time.Time
-	online      map[string]time.Duration
-	connections map[string]uint64
-	connected   string
-	lastSample  time.Time
-	store       *stats.Store
-	flushMu     sync.Mutex
-	session     string
-	sequence    uint64
-	started     time.Time
-	warning     string
-	attempts    map[string]*attemptStats
-	samples     map[string][]RateSample
-	wake        chan struct{}
-	clear       map[string]bool
+	queued         map[string]time.Time
+	online         map[string]time.Duration
+	connections    map[string]uint64
+	connected      string
+	lastSample     time.Time
+	store          *stats.Store
+	flushMu        sync.Mutex
+	pending        []stats.Event
+	activeDirty    map[string]bool
+	activeDeleted  map[string]bool
+	dirtyDownloads map[string]bool
+	dirtyUploads   map[string]bool
+	session        string
+	sequence       uint64
+	started        time.Time
+	warning        string
+	attempts       map[string]*attemptStats
+	samples        map[string][]RateSample
+	wake           chan struct{}
+	statsSince     time.Time
 }
 
 func (s *Service) initTelemetry() {
 	now := time.Now().UTC()
-	t := &telemetryState{session: rand.Text(), started: now, attempts: map[string]*attemptStats{}, samples: map[string][]RateSample{}, wake: make(chan struct{}, 1), clear: map[string]bool{}}
-	if s.journal.StatsSince.IsZero() {
-		s.journal.StatsSince = now
+	since := s.journal.StatsSince
+	if since.IsZero() {
+		since = now
 	}
-	for _, event := range s.journal.StatsActive {
-		s.journal.StatsPending = append(s.journal.StatsPending, event)
-	}
-	s.journal.StatsActive = nil
-	var err error
-	t.store, err = stats.Open(filepath.Join(filepath.Dir(s.journalPath), "stats.sqlite3"))
-	if err != nil {
-		t.warning = "Statistics unavailable: " + err.Error()
+	t := &telemetryState{session: rand.Text(), started: now, attempts: map[string]*attemptStats{}, samples: map[string][]RateSample{}, wake: make(chan struct{}, 1), activeDirty: map[string]bool{}, activeDeleted: map[string]bool{}, dirtyDownloads: map[string]bool{}, dirtyUploads: map[string]bool{}, statsSince: since}
+	t.store = stats.New(s.stateDB)
+	if t.store == nil {
+		t.warning = "Statistics unavailable: shared database is unavailable"
 	}
 	s.telemetry = t
 }
@@ -77,7 +79,7 @@ func (s *Service) statsPrepareEventLocked(e stats.Event) stats.Event {
 }
 func (s *Service) statsEventLocked(e stats.Event) {
 	if s.telemetry != nil {
-		s.journal.StatsPending = append(s.journal.StatsPending, s.statsPrepareEventLocked(e))
+		s.telemetry.pending = append(s.telemetry.pending, s.statsPrepareEventLocked(e))
 	}
 }
 func (s *Service) statsTemplateLocked(id string) stats.Event {
@@ -154,7 +156,7 @@ func (s *Service) statsBeginLocked(id, account string) {
 	interrupted.Kind = stats.KindInterrupted
 	interrupted.At = now
 	interrupted.Error = "Daemon stopped before terminal accounting (detected on restart)"
-	s.journal.StatsActive = append(s.journal.StatsActive, interrupted)
+	t.activeDirty[id] = true
 	s.statsEventLocked(e)
 	select {
 	case t.wake <- struct{}{}:
@@ -295,22 +297,17 @@ func (s *Service) statsStateLocked(id, state string) {
 	}
 	s.statsEventLocked(e)
 	a.terminal = true
-	s.journal.StatsActive = slices.DeleteFunc(s.journal.StatsActive, func(e stats.Event) bool { return e.TransferID == id })
+	t.activeDeleted[id] = true
+	delete(t.activeDirty, id)
 	a.interrupted = kind == stats.KindInterrupted
 	select {
 	case t.wake <- struct{}{}:
 	default:
 	}
 }
-func (s *Service) statsPendingLocked(id string) bool {
-	for _, e := range s.journal.StatsPending {
-		if e.TransferID == id {
-			return true
-		}
-	}
-	return false
-}
-func (s *Service) flushStats() error {
+func (s *Service) flushStats() error { return s.flushStatsContext(context.Background()) }
+
+func (s *Service) flushStatsContext(ctx context.Context) error {
 	t := s.telemetry
 	if t == nil {
 		return nil
@@ -318,81 +315,94 @@ func (s *Service) flushStats() error {
 	t.flushMu.Lock()
 	defer t.flushMu.Unlock()
 	s.mu.Lock()
-	for _, a := range t.attempts {
+	for id, a := range t.attempts {
 		a.checkpoint(time.Now().UTC())
 		s.statsDrainLocked(a)
-	}
-	for i := range s.journal.StatsActive {
-		s.journal.StatsActive[i].At = time.Now().UTC()
-	}
-	// Snapshot active upload progress along with the durable outbox.
-	for i := range s.journal.Uploads {
-		if tr, ok := s.transfers[s.journal.Uploads[i].ID]; ok {
-			s.journal.Uploads[i].Transfer = tr
+		if !a.terminal {
+			t.activeDirty[id] = true
 		}
 	}
-	pending := slices.Clone(s.journal.StatsPending)
-	err := s.saveJournalLocked()
-	s.mu.Unlock()
-	s.mu.RLock()
-	store := t.store
-	s.mu.RUnlock()
-	if err == nil && store == nil {
-		store, err = stats.Open(filepath.Join(filepath.Dir(s.journalPath), "stats.sqlite3"))
-		if err == nil {
-			s.mu.Lock()
-			t.store = store
-			s.mu.Unlock()
+	// The transaction includes only explicitly dirty rows, their events, and
+	// active-attempt checkpoints. Unchanged history is never rewritten.
+	ids := map[string]bool{}
+	for id := range t.dirtyDownloads {
+		ids[id] = true
+	}
+	var clearUploads []string
+	for id := range t.dirtyUploads {
+		ids[id] = true
+		if s.cfg.Uploads.AutoClearCompleted && s.transfers[id].State == "completed" {
+			clearUploads = append(clearUploads, id)
 		}
 	}
-	if err == nil {
-		err = store.RecordBatch(pending)
+	for id := range t.activeDirty {
+		ids[id] = true
 	}
-	s.mu.Lock()
+	for id := range t.activeDeleted {
+		ids[id] = true
+	}
+	for _, e := range t.pending {
+		ids[e.TransferID] = true
+	}
+	err := error(nil)
+	if len(ids) > 0 {
+		err = s.commitLockedFor(ctx, ids, func(q *db.Queries) error {
+			for id := range t.dirtyDownloads {
+				for _, d := range s.journal.Downloads {
+					if d.ID == id {
+						if err := q.UpsertDownload(ctx, downloadParams(d)); err != nil {
+							return err
+						}
+						break
+					}
+				}
+			}
+			for id := range t.dirtyUploads {
+				for _, u := range s.journal.Uploads {
+					if u.ID == id {
+						if tr, ok := s.transfers[id]; ok {
+							u.Transfer = tr
+						}
+						if err := q.UpsertUpload(ctx, uploadParams(u)); err != nil {
+							return err
+						}
+						break
+					}
+				}
+			}
+			return nil
+		})
+	}
 	if err != nil {
 		t.warning = "Statistics persistence: " + err.Error()
 		s.mu.Unlock()
 		return err
 	}
-	// Concurrent callbacks only append. A failed acknowledgement safely replays.
-	previous := s.journal.StatsPending
-	s.journal.StatsPending = slices.Clone(previous[len(pending):])
-	err = s.saveJournalLocked()
-	if err != nil {
-		s.journal.StatsPending = previous
-		t.warning = "Statistics acknowledgement: " + err.Error()
-		s.mu.Unlock()
-		return err
-	}
 	t.warning = ""
-	clearIDs := []string{}
-	for id := range t.clear {
-		if !s.statsPendingLocked(id) {
-			clearIDs = append(clearIDs, id)
-			delete(t.clear, id)
-		}
+	var retries []completionRetry
+	for id, retry := range s.completionRetries {
+		retries = append(retries, retry)
+		delete(s.completionRetries, id)
 	}
 	s.mu.Unlock()
-	for _, id := range clearIDs {
-		if isUploadID(id) {
-			s.mu.Lock()
-			if tr, ok := s.transfers[id]; ok && tr.State == "completed" {
-				delete(s.transfers, id)
-				if err := s.persistUploadLocked(id); err != nil {
-					s.transfers[id] = tr
-					t.warning = err.Error()
-				} else {
-					s.forgetTransferLocked(id)
-				}
+	for _, retry := range retries {
+		s.runCompletionEffects(retry)
+	}
+	for _, id := range clearUploads {
+		s.mu.Lock()
+		if tr, ok := s.transfers[id]; ok && tr.State == "completed" {
+			delete(s.transfers, id)
+			if err := s.persistUploadLocked(id); err != nil {
+				s.transfers[id] = tr
+				t.warning = err.Error()
+			} else {
+				s.forgetTransferLocked(id)
 			}
-			s.mu.Unlock()
-		} else {
-			_ = s.clearCompletedDownload(id)
 		}
+		s.mu.Unlock()
 	}
 	return nil
 }
-func isUploadID(id string) bool { return len(id) >= 7 && id[:7] == "upload:" }
 func (s *Service) telemetryLoop(ctx context.Context) {
 	defer s.wg.Done()
 	tick := time.NewTicker(time.Second)
