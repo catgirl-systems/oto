@@ -96,7 +96,7 @@ The Unix API accepts `POST /v1/shares/rescan/cancel` with `{"id": N}`: 202 for a
 
 ### Share exclusions
 
-Settings → Shares provides editable rules, **Add exclusion**, `d` removal, and **Restore defaults** (confirmation defaults to No). Save with `s`. Changes build a shadow index before committing settings; failed or cancelled scans keep the old configuration/index. Exclusion-only changes do not reconnect Soulseek. Browse, incoming search responses, share counts, caches, and directory watches use the same policy. Queued uploads revalidate before streaming; already-streaming uploads finish normally.
+Settings → Shares shows audio metadata and an **Excluded content** rule count. Press Enter on Excluded content to open its dedicated manager: patterns and matching explanations, `a` add, Enter edit, `d` remove, and `R` **Restore defaults** (confirmation defaults to No). The focused editor provides examples and validation; Escape cancels an edit, or returns from the list without discarding staged rules. Save all staged Settings with `s`. The manager distinguishes unsaved rules, saving/scan progress, errors, and applied rules. Changes build a shadow index before committing settings; failed or cancelled scans keep the old configuration/index and leave the draft available to correct or retry. Exclusion-only changes do not reconnect Soulseek. Browse, incoming search responses, share counts, caches, and directory watches use the same policy. Queued uploads revalidate before streaming; already-streaming uploads finish normally.
 
 `share_exclusions` is a global string array; missing/null uses defaults, explicit `[]` disables configurable rules, and custom lists replace defaults. Defaults are `.*`, `.*/`, `@eaDir/`, `#recycle/`, `#snapshot/`, `desktop.ini`, `Thumbs.db`, `System Volume Information/`, `$RECYCLE.BIN/`, `lost+found/`, `*.part`, `*.partial`, `*.crdownload`, `*.tmp`, `*.temp`, `*.bak`, and `*~`. Artwork, playlists, lyrics, logs, and music formats are not broadly excluded.
 
@@ -140,7 +140,7 @@ Bitrate, duration, sample rate and meaningful bit depth appear in local Shares, 
 | `C` in Uploads | clear uploads by status, independently of selection |
 | `r` | rerun a wishlist item, refresh a user browse or saved-user list, resume/retry a transfer subtree, or rescan shares |
 | `c` in Shares | request cancellation of the displayed scan before publication |
-| `d` in Settings → Shares | remove the selected staged exclusion rule |
+| `a` / Enter / `d` / `R` in Excluded content | add / edit / remove a staged rule / confirm restoring defaults |
 | `p` in Downloads | pause the selected transfer subtree without deleting partial data |
 | `o` | choose Online, Away, or Offline without quitting |
 | `s` in Browse or Settings | explicitly save the active remote share list, or save Settings |

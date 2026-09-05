@@ -124,8 +124,9 @@ type shareBrowseMsg struct {
 	err                 error
 }
 type settingsMsg struct {
-	search config.Search
-	err    error
+	search     config.Search
+	exclusions []string
+	err        error
 }
 type networkInterfacesMsg struct {
 	names []string
@@ -662,13 +663,18 @@ func (m *model) openBrowse(user, target string, refresh bool) tea.Cmd {
 	return nil
 }
 
-func (m model) saveSettings() tea.Cmd {
+func (m *model) saveSettings() tea.Cmd {
+	if m.settingsSaving {
+		return nil
+	}
+	m.settingsSaving = true
+	m.shareExclusions.err = ""
 	cfg := m.cfg
 	cfg.ShareExclusions = append([]string{}, m.cfg.ShareExclusions...)
 	cfg.Bandwidth.Profiles = append([]config.BandwidthProfile(nil), m.cfg.Bandwidth.Profiles...)
 	return func() tea.Msg {
 		_, err := m.client.UpdateConfig(m.ctx, cfg)
-		return settingsMsg{search: cfg.Search, err: err}
+		return settingsMsg{search: cfg.Search, exclusions: cfg.ShareExclusions, err: err}
 	}
 }
 
@@ -1014,6 +1020,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.cursor = m.shareCursor
 		}
 	case settingsMsg:
+		m.settingsSaving = false
+		m.shareExclusions.err = errText(x.err)
+		if x.err == nil && x.exclusions != nil {
+			m.shareExclusions.saved = append([]string{}, x.exclusions...)
+		}
 		m.err = errText(x.err)
 		if x.err == nil {
 			m.applyHistorySettings(x.search)
