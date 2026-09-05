@@ -176,6 +176,9 @@ type portMappingOpener func(context.Context, uint16, bool, bool, func(uint16)) (
 type Service struct {
 	mu                     sync.RWMutex
 	lifecycleMu            sync.Mutex
+	uploadMu               sync.Mutex
+	uploadEpoch            uint64
+	uploadOwners           map[string]uploadOwner
 	cfg                    config.Config
 	configPath             string
 	runCtx                 context.Context
@@ -512,7 +515,9 @@ func (s *Service) startSessionLocked() error {
 
 // stopSessionLocked requires lifecycleMu and preserves partial downloads.
 func (s *Service) stopSessionLocked(offline bool) {
+	s.uploadMu.Lock()
 	s.mu.Lock()
+	s.retireUploadsLocked()
 	cancel, client, mapping := s.cancel, s.client, s.mapping
 	s.ctx, s.cancel, s.client, s.mapping = nil, nil, nil, nil
 	s.wishlistServerInterval = 0
@@ -530,6 +535,7 @@ func (s *Service) stopSessionLocked(offline bool) {
 	if client != nil {
 		_ = client.Close()
 	}
+	s.uploadMu.Unlock()
 	if cancel != nil {
 		s.sessionWG.Wait()
 		s.downloadWG.Wait()
@@ -576,10 +582,19 @@ func (s *Service) connectOnce(ctx context.Context) error {
 		}
 	}
 	searchPolicy := incomingSearchPolicy(cfg)
+	s.mu.Lock()
+	if s.closed || s.ctx != ctx || s.presence == PresenceOffline {
+		s.mu.Unlock()
+		return context.Canceled
+	}
+	s.uploadEpoch++
+	epoch := s.uploadEpoch
+	s.mu.Unlock()
 	client := soulseek.NewClient(soulseek.ClientConfig{
 		Address: cfg.Soulseek.Server, Username: cfg.Soulseek.Username, Password: cfg.Soulseek.Password,
 		ListenAddr: cfg.Soulseek.ListenAddr, NetworkInterface: cfg.Soulseek.NetworkInterface,
 		Share: idx, Uploads: newUploadManager(cfg), IncomingSearch: &searchPolicy,
+		UploadUpdate: func(event soulseek.TransferEvent) { s.uploadUpdate(epoch, event) },
 	})
 	if err := client.Connect(ctx); err != nil {
 		return err
@@ -693,13 +708,16 @@ func (s *Service) reconnectLoop(ctx context.Context) {
 			stopEvents()
 			<-eventsDone
 			closePortMapping(mapping)
-			_ = client.Close()
+			s.uploadMu.Lock()
 			s.mu.Lock()
 			if s.client == client {
+				s.retireUploadsLocked()
 				s.client, s.mapping = nil, nil
 				s.wishlistServerInterval = 0
 			}
 			s.mu.Unlock()
+			_ = client.Close()
+			s.uploadMu.Unlock()
 			s.wakeWishlist()
 		}
 		if err == nil {
@@ -1092,7 +1110,14 @@ func (s *Service) Transfers() []Transfer {
 }
 func (s *Service) TransferAction(id, action string) error {
 	if strings.HasPrefix(id, "upload:") {
-		return errors.New("daemon: upload controls are not supported")
+		result, err := s.UploadAction(UploadActionRequest{Action: strings.ToLower(action), IDs: []string{id}})
+		if err != nil {
+			return err
+		}
+		if len(result.Errors) > 0 {
+			return errors.New(result.Errors[0].Error)
+		}
+		return nil
 	}
 	// Serialize stop/resume with each other and session shutdown. A stopped
 	// worker must release its file before it can be resumed or cleared.
@@ -1176,13 +1201,6 @@ func (s *Service) TransferAction(id, action string) error {
 		return err
 	}
 	defer s.mu.Unlock()
-	if transfer, ok := s.transfers[id]; ok && transfer.Direction == "upload" {
-		if strings.ToLower(action) == "clear" && (transfer.State == "completed" || transfer.State == "failed") {
-			delete(s.transfers, id)
-			return nil
-		}
-		return errors.New("daemon: upload action unavailable")
-	}
 	return os.ErrNotExist
 }
 func (s *Service) Shares() []config.Share {

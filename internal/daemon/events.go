@@ -21,11 +21,6 @@ func (s *Service) consumeClientEvents(ctx context.Context, client *soulseek.Clie
 				}
 				s.mu.Unlock()
 				s.wakeWishlist()
-			case soulseek.TransferEvent:
-				id := "upload:" + message.Username + ":" + message.Filename
-				s.mu.Lock()
-				s.transfers[id] = Transfer{ID: id, Username: message.Username, Filename: message.Filename, Direction: message.Direction, State: message.State, Done: message.Done, Total: message.Total, Error: message.Error}
-				s.mu.Unlock()
 			}
 		}
 	}
