@@ -35,6 +35,7 @@ type ClientConfig struct {
 	// UploadsReady gates new admissions and streaming until recovery is complete.
 	UploadsReady   <-chan struct{}
 	IncomingSearch *IncomingSearchPolicy
+	BrowseLimits   BrowseLimits
 }
 
 type IncomingSearchPolicy struct {
@@ -708,6 +709,7 @@ func (c *Client) BrowseWithProgress(ctx context.Context, peer net.Conn, path str
 }
 
 func (c *Client) browse(ctx context.Context, peer net.Conn, path string, progress func(received, total uint64)) ([]ShareEntry, error) {
+	limits := c.BrowseLimits()
 	if path == "" {
 		select {
 		case c.browseSlot <- struct{}{}:
@@ -718,14 +720,14 @@ func (c *Client) browse(ctx context.Context, peer net.Conn, path string, progres
 		if err := writeMessage(peer, SharedListRequest{}); err != nil {
 			return nil, err
 		}
-		command, payload, err := readFrameContextProgress(ctx, peer, progress)
+		command, payload, err := readFrameContextProgress(ctx, peer, progress, limits.MaxCompressedSize)
 		if err != nil {
 			return nil, err
 		}
 		if command != PeerSharedList {
 			return nil, fmt.Errorf("%w: expected shared list", ErrMalformed)
 		}
-		response, err := DecodeSharedListResponse(payload)
+		response, err := decodeSharedListResponse(payload, limits)
 		return response.Entries, err
 	}
 	cleanPath, err := NormalizePath(path)
@@ -737,14 +739,14 @@ func (c *Client) browse(ctx context.Context, peer net.Conn, path string, progres
 	if err := writeMessage(peer, FolderRequest{Token: token, Path: path}); err != nil {
 		return nil, err
 	}
-	command, payload, err := readFrameContext(ctx, peer)
+	command, payload, err := readFrameContextProgress(ctx, peer, nil, limits.MaxCompressedSize)
 	if err != nil {
 		return nil, err
 	}
 	if command != PeerFolderResponse {
 		return nil, fmt.Errorf("%w: expected folder response", ErrMalformed)
 	}
-	response, err := DecodeFolderResponse(payload)
+	response, err := decodeFolderResponse(payload, limits)
 	if err != nil {
 		return nil, err
 	}
@@ -762,17 +764,17 @@ func writeMessage(w net.Conn, m Message) error {
 	return writeAll(w, b)
 }
 func readFrameContext(ctx context.Context, c net.Conn) (uint32, []byte, error) {
-	return readFrameContextProgress(ctx, c, nil)
+	return readFrameContextProgress(ctx, c, nil, MaxFrameSize)
 }
 
-func readFrameContextProgress(ctx context.Context, c net.Conn, progress func(received, total uint64)) (uint32, []byte, error) {
+func readFrameContextProgress(ctx context.Context, c net.Conn, progress func(received, total uint64), maxFrameSize int) (uint32, []byte, error) {
 	type rr struct {
 		cmd uint32
 		p   []byte
 		e   error
 	}
 	ch := make(chan rr, 1)
-	go func() { a, b, e := ReadFrameWithProgress(c, progress); ch <- rr{a, b, e} }()
+	go func() { a, b, e := readFrame(c, progress, maxFrameSize); ch <- rr{a, b, e} }()
 	select {
 	case <-ctx.Done():
 		return 0, nil, ctx.Err()
@@ -895,6 +897,17 @@ func (c *Client) answerConnectPeer(instruction ConnectPeerInstruction) {
 
 func (c *Client) BrowseUser(ctx context.Context, username, path string) ([]ShareEntry, error) {
 	return c.BrowseUserWithProgress(ctx, username, path, nil)
+}
+
+// BrowseUserDirectoriesWithProgress fetches a complete shared list grouped by directory.
+func (c *Client) BrowseUserDirectoriesWithProgress(ctx context.Context, username string, progress func(uint64, uint64)) ([]ShareDirectory, error) {
+	limits := c.BrowseLimits()
+	peer, err := c.connectUser(ctx, username)
+	if err != nil {
+		return nil, err
+	}
+	defer peer.Close()
+	return c.browseSharedDirectories(ctx, peer, progress, limits)
 }
 
 // BrowseUserWithProgress reports compressed frame bytes for complete share lists.
