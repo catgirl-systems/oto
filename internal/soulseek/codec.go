@@ -116,7 +116,7 @@ func (d *Decoder) Bytes() ([]byte, error) {
 		return nil, e
 	}
 	if n > MaxBytesSize {
-		return nil, ErrTooLarge
+		return nil, fmt.Errorf("%w: byte field has %d bytes (limit %d)", ErrTooLarge, n, MaxBytesSize)
 	}
 	if e = d.need(int(n)); e != nil {
 		return nil, e
@@ -131,7 +131,7 @@ func (d *Decoder) String() (string, error) {
 		return "", e
 	}
 	if len(v) > MaxStringSize {
-		return "", ErrTooLarge
+		return "", fmt.Errorf("%w: string has %d bytes (limit %d)", ErrTooLarge, len(v), MaxStringSize)
 	}
 	return string(v), nil
 }
@@ -145,16 +145,16 @@ func (d *Decoder) Done() error {
 
 // ReadFrame reads a server/peer frame: uint32 length, uint32 command, payload.
 func ReadFrame(r io.Reader) (uint32, []byte, error) {
-	return readFrame(r, nil)
+	return readFrame(r, nil, MaxFrameSize)
 }
 
 // ReadFrameWithProgress reports received body bytes once the frame size is known.
 func ReadFrameWithProgress(r io.Reader, progress func(received, total uint64)) (uint32, []byte, error) {
-	return readFrame(r, progress)
+	return readFrame(r, progress, MaxFrameSize)
 }
 
-func readFrame(r io.Reader, progress func(received, total uint64)) (uint32, []byte, error) {
-	body, err := readBody(r, 4, progress)
+func readFrame(r io.Reader, progress func(received, total uint64), maxFrameSize int) (uint32, []byte, error) {
+	body, err := readBody(r, 4, progress, maxFrameSize)
 	if err != nil {
 		return 0, nil, err
 	}
@@ -169,7 +169,7 @@ func WriteFrame(w io.Writer, command uint32, payload []byte) error {
 
 // ReadInitFrame reads peer-init/distributed framing, whose command is one byte.
 func ReadInitFrame(r io.Reader) (byte, []byte, error) {
-	body, err := readBody(r, 1, nil)
+	body, err := readBody(r, 1, nil, MaxFrameSize)
 	if err != nil {
 		return 0, nil, err
 	}
@@ -180,7 +180,7 @@ func WriteInitFrame(w io.Writer, command byte, payload []byte) error {
 	return writeBody(w, []byte{command}, payload)
 }
 
-func readBody(r io.Reader, header int, progress func(received, total uint64)) ([]byte, error) {
+func readBody(r io.Reader, header int, progress func(received, total uint64), maxFrameSize int) ([]byte, error) {
 	var n uint32
 	if err := binary.Read(r, binary.LittleEndian, &n); err != nil {
 		// EOF between frames is a connection close, not an invalid payload.
@@ -189,8 +189,8 @@ func readBody(r io.Reader, header int, progress func(received, total uint64)) ([
 	if n < uint32(header) {
 		return nil, fmt.Errorf("%w: short frame header", ErrMalformed)
 	}
-	if n > MaxFrameSize {
-		return nil, ErrTooLarge
+	if uint64(n) > uint64(maxFrameSize) {
+		return nil, fmt.Errorf("%w: frame has %d bytes (limit %d)", ErrTooLarge, n, maxFrameSize)
 	}
 	body := make([]byte, n)
 	reader := r
@@ -232,21 +232,25 @@ func writeBody(w io.Writer, header, payload []byte) error {
 }
 
 func DecompressZlib(data []byte) ([]byte, error) {
-	if len(data) > MaxFrameSize {
-		return nil, ErrTooLarge
+	return decompressZlib(data, MaxFrameSize, MaxDecompressedSize)
+}
+
+func decompressZlib(data []byte, maxCompressedSize, maxDecompressedSize int) ([]byte, error) {
+	if len(data) > maxCompressedSize {
+		return nil, fmt.Errorf("%w: compressed payload has %d bytes (limit %d)", ErrTooLarge, len(data), maxCompressedSize)
 	}
 	z, e := zlib.NewReader(bytes.NewReader(data))
 	if e != nil {
 		return nil, fmt.Errorf("%w: %v", ErrMalformed, e)
 	}
 	defer z.Close()
-	lr := io.LimitReader(z, MaxDecompressedSize+1)
+	lr := io.LimitReader(z, int64(maxDecompressedSize)+1)
 	out, e := io.ReadAll(lr)
 	if e != nil {
 		return nil, e
 	}
-	if len(out) > MaxDecompressedSize {
-		return nil, ErrTooLarge
+	if len(out) > maxDecompressedSize {
+		return nil, fmt.Errorf("%w: decompressed payload exceeds %d bytes", ErrTooLarge, maxDecompressedSize)
 	}
 	return out, nil
 }

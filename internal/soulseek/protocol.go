@@ -52,7 +52,7 @@ const (
 )
 
 const (
-	maxShareEntries          = 500_000
+	maxShareEntries          = 2_000_000
 	maxSearchResults         = 10_000
 	maxExcludedSearchPhrases = 10_000
 )
@@ -574,7 +574,14 @@ func (r SearchResult) encode(e *Encoder) error {
 	return nil
 }
 
-func decodeSearchResult(d *Decoder) (SearchResult, error) {
+type fileDecoder interface {
+	U8() (uint8, error)
+	U32() (uint32, error)
+	U64() (uint64, error)
+	String() (string, error)
+}
+
+func decodeSearchResult(d fileDecoder) (SearchResult, error) {
 	var result SearchResult
 	code, err := d.U8()
 	if err != nil {
@@ -597,7 +604,7 @@ func decodeSearchResult(d *Decoder) (SearchResult, error) {
 		return result, err
 	}
 	if count > 64 {
-		return result, ErrTooLarge
+		return result, fmt.Errorf("%w: file has %d attributes (limit 64)", ErrTooLarge, count)
 	}
 	for i := uint32(0); i < count; i++ {
 		attribute, attributeErr := d.U32()
@@ -782,8 +789,12 @@ func (m SharedListResponse) encode(e *Encoder) error {
 }
 
 func DecodeSharedListResponse(b []byte) (SharedListResponse, error) {
+	return decodeSharedListResponse(b, BrowseLimits{}.withDefaults())
+}
+
+func decodeSharedListResponse(b []byte, limits BrowseLimits) (SharedListResponse, error) {
 	var message SharedListResponse
-	raw, err := DecompressZlib(b)
+	raw, err := decompressZlib(b, limits.MaxCompressedSize, limits.MaxDecompressedSize)
 	if err != nil {
 		return message, err
 	}
@@ -792,8 +803,8 @@ func DecodeSharedListResponse(b []byte) (SharedListResponse, error) {
 	if err != nil {
 		return message, err
 	}
-	if count > maxShareEntries {
-		return message, ErrTooLarge
+	if uint64(count) > uint64(limits.MaxEntries) {
+		return message, fmt.Errorf("%w: share list has %d directories (limit %d)", ErrTooLarge, count, limits.MaxEntries)
 	}
 	for i := uint32(0); i < count; i++ {
 		dir, err := d.String()
@@ -805,8 +816,8 @@ func DecodeSharedListResponse(b []byte) (SharedListResponse, error) {
 		if err != nil {
 			return message, err
 		}
-		if files > maxShareEntries || len(message.Entries)+int(files) > maxShareEntries {
-			return message, ErrTooLarge
+		if uint64(len(message.Entries))+uint64(files) > uint64(limits.MaxEntries) {
+			return message, fmt.Errorf("%w: share list has at least %d files/directories (limit %d)", ErrTooLarge, uint64(len(message.Entries))+uint64(files), limits.MaxEntries)
 		}
 		for j := uint32(0); j < files; j++ {
 			file, err := decodeSearchResult(d)
@@ -824,8 +835,8 @@ func DecodeSharedListResponse(b []byte) (SharedListResponse, error) {
 		if readErr != nil {
 			return message, readErr
 		}
-		if private > maxShareEntries {
-			return message, ErrTooLarge
+		if uint64(len(message.Entries))+uint64(private) > uint64(limits.MaxEntries) {
+			return message, fmt.Errorf("%w: share list including private directories has at least %d files/directories (limit %d)", ErrTooLarge, uint64(len(message.Entries))+uint64(private), limits.MaxEntries)
 		}
 		for i := uint32(0); i < private; i++ {
 			dir, decodeErr := d.String()
@@ -837,8 +848,8 @@ func DecodeSharedListResponse(b []byte) (SharedListResponse, error) {
 			if decodeErr != nil {
 				return message, decodeErr
 			}
-			if count > maxShareEntries || len(message.Entries)+int(count) > maxShareEntries {
-				return message, ErrTooLarge
+			if uint64(len(message.Entries))+uint64(count) > uint64(limits.MaxEntries) {
+				return message, fmt.Errorf("%w: share list including private entries has at least %d files/directories (limit %d)", ErrTooLarge, uint64(len(message.Entries))+uint64(count), limits.MaxEntries)
 			}
 			for j := uint32(0); j < count; j++ {
 				file, decodeErr := decodeSearchResult(d)
@@ -946,8 +957,12 @@ func (m FolderResponse) encode(e *Encoder) error {
 }
 
 func DecodeFolderResponse(b []byte) (FolderResponse, error) {
+	return decodeFolderResponse(b, BrowseLimits{}.withDefaults())
+}
+
+func decodeFolderResponse(b []byte, limits BrowseLimits) (FolderResponse, error) {
 	var message FolderResponse
-	raw, err := DecompressZlib(b)
+	raw, err := decompressZlib(b, limits.MaxCompressedSize, limits.MaxDecompressedSize)
 	if err != nil {
 		return message, err
 	}
@@ -962,8 +977,8 @@ func DecodeFolderResponse(b []byte) (FolderResponse, error) {
 	if err != nil {
 		return message, err
 	}
-	if folders > maxShareEntries {
-		return message, ErrTooLarge
+	if uint64(folders) > uint64(limits.MaxEntries) {
+		return message, fmt.Errorf("%w: folder response has %d directories (limit %d)", ErrTooLarge, folders, limits.MaxEntries)
 	}
 	for i := uint32(0); i < folders; i++ {
 		dir, err := d.String()
@@ -975,8 +990,8 @@ func DecodeFolderResponse(b []byte) (FolderResponse, error) {
 		if err != nil {
 			return message, err
 		}
-		if count > maxShareEntries || len(message.Entries)+int(count) > maxShareEntries {
-			return message, ErrTooLarge
+		if uint64(len(message.Entries))+uint64(count) > uint64(limits.MaxEntries) {
+			return message, fmt.Errorf("%w: folder response has at least %d files/directories (limit %d)", ErrTooLarge, uint64(len(message.Entries))+uint64(count), limits.MaxEntries)
 		}
 		for j := uint32(0); j < count; j++ {
 			file, err := decodeSearchResult(d)

@@ -42,7 +42,7 @@ func TestCodecMalformedAndCompressionLimit(t *testing.T) {
 	}
 	var frame bytes.Buffer
 	frame.Write([]byte{0xff, 0xff, 0xff, 0x7f})
-	if _, _, err := ReadFrame(&frame); err != ErrTooLarge {
+	if _, _, err := ReadFrame(&frame); !errors.Is(err, ErrTooLarge) || !strings.Contains(err.Error(), "frame has 2147483647 bytes (limit 67108864)") {
 		t.Fatalf("frame limit: %v", err)
 	}
 	var z bytes.Buffer
@@ -909,6 +909,48 @@ func TestOptionalPrivateLists(t *testing.T) {
 	list, err := DecodeSharedListResponse(compress(&shares))
 	if err != nil || len(list.Entries) != 2 || list.Entries[1].Private {
 		t.Fatalf("public-only shared list: %+v %v", list, err)
+	}
+}
+
+func TestBrowseLimitDiagnostics(t *testing.T) {
+	for _, kind := range []string{"share list", "private share list", "folder response"} {
+		for _, directories := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/directories=%t", kind, directories), func(t *testing.T) {
+				var raw Encoder
+				switch kind {
+				case "private share list":
+					raw.U32(0) // Public directories.
+					raw.U32(0) // Unknown field.
+				case "folder response":
+					raw.U32(7) // Token.
+					_ = raw.String("Music")
+				}
+				if directories {
+					raw.U32(maxShareEntries + 1)
+				} else {
+					raw.U32(1)
+					_ = raw.String("Music")
+					raw.U32(maxShareEntries) // Files plus the directory exceed the limit.
+				}
+				payload, err := CompressZlib(raw.Payload())
+				if err != nil {
+					t.Fatal(err)
+				}
+				if kind == "folder response" {
+					_, err = DecodeFolderResponse(payload)
+				} else {
+					_, err = DecodeSharedListResponse(payload)
+				}
+				if !errors.Is(err, ErrTooLarge) {
+					t.Fatalf("expected size limit: %v", err)
+				}
+				for _, detail := range []string{fmt.Sprint(maxShareEntries + 1), fmt.Sprintf("limit %d", maxShareEntries), "directories"} {
+					if !strings.Contains(err.Error(), detail) {
+						t.Fatalf("missing %q in error: %v", detail, err)
+					}
+				}
+			})
+		}
 	}
 }
 
