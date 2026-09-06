@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"github.com/catgirl-systems/oto/internal/diagnostics"
 	"github.com/catgirl-systems/oto/internal/stats"
 	"slices"
 	"time"
@@ -11,21 +12,22 @@ type DirectionTotals struct {
 	Upload   stats.Totals `json:"upload"`
 }
 type StatsOverview struct {
-	OnlineSeconds uint64          `json:"online_seconds"`
-	Reconnects    uint64          `json:"reconnects"`
-	Account       string          `json:"account"`
-	Accounts      []string        `json:"accounts"`
-	Session       string          `json:"session"`
-	Since         time.Time       `json:"since"`
-	UptimeSeconds uint64          `json:"uptime_seconds"`
-	Lifetime      DirectionTotals `json:"lifetime"`
-	SessionTotals DirectionTotals `json:"session_totals"`
-	ActiveFiles   uint64          `json:"active_files"`
-	QueuedFiles   uint64          `json:"queued_files"`
-	ActiveBytes   uint64          `json:"active_bytes"`
-	QueuedBytes   uint64          `json:"queued_bytes"`
-	Samples       []RateSample    `json:"samples"`
-	Warning       string          `json:"warning,omitempty"`
+	Logging       *diagnostics.Status `json:"logging,omitempty"`
+	OnlineSeconds uint64              `json:"online_seconds"`
+	Reconnects    uint64              `json:"reconnects"`
+	Account       string              `json:"account"`
+	Accounts      []string            `json:"accounts"`
+	Session       string              `json:"session"`
+	Since         time.Time           `json:"since"`
+	UptimeSeconds uint64              `json:"uptime_seconds"`
+	Lifetime      DirectionTotals     `json:"lifetime"`
+	SessionTotals DirectionTotals     `json:"session_totals"`
+	ActiveFiles   uint64              `json:"active_files"`
+	QueuedFiles   uint64              `json:"queued_files"`
+	ActiveBytes   uint64              `json:"active_bytes"`
+	QueuedBytes   uint64              `json:"queued_bytes"`
+	Samples       []RateSample        `json:"samples"`
+	Warning       string              `json:"warning,omitempty"`
 }
 
 func (s *Service) statsFilter(f stats.Filter) stats.Filter {
@@ -37,6 +39,7 @@ func (s *Service) statsFilter(f stats.Filter) stats.Filter {
 	return f
 }
 func (s *Service) Statistics(f stats.Filter) (StatsOverview, error) {
+	logging := s.loggingStatus()
 	store, err := s.statsStore()
 	if err != nil {
 		return StatsOverview{}, err
@@ -44,7 +47,7 @@ func (s *Service) Statistics(f stats.Filter) (StatsOverview, error) {
 	f = s.statsFilter(f)
 	s.mu.RLock()
 	t := s.telemetry
-	out := StatsOverview{Account: f.Account, Session: t.session, Since: t.statsSince, UptimeSeconds: uint64(max(0, time.Since(t.started).Seconds())), Warning: t.warning, Samples: slices.Clone(t.samples[f.Account])}
+	out := StatsOverview{Logging: logging, Account: f.Account, Session: t.session, Since: t.statsSince, UptimeSeconds: uint64(max(0, time.Since(t.started).Seconds())), Warning: t.warning, Samples: slices.Clone(t.samples[f.Account])}
 	out.OnlineSeconds = uint64(max(0, t.online[f.Account].Seconds()))
 	if n := t.connections[f.Account]; n > 0 {
 		out.Reconnects = n - 1

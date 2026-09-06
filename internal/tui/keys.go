@@ -198,7 +198,7 @@ func (m *model) key(k tea.KeyPressMsg) tea.Cmd {
 				m.uploadConfirmLabel = "Restore default download filters"
 			case settingManageShareExclusions:
 				m.openShareExclusions()
-			case settingNetworkInterface, settingBandwidthProfile, settingUploadLimitScope, settingUploadScheduling:
+			case settingNetworkInterface, settingBandwidthProfile, settingUploadLimitScope, settingUploadScheduling, settingLoggingLevel:
 				m.choiceChoosing = true
 				m.choiceSetting = fields[m.cursor].id
 				m.choiceIndex = m.configuredChoice(m.choiceSetting)
@@ -711,6 +711,8 @@ func (m *model) settingChoiceKey(k tea.KeyPressMsg) tea.Cmd {
 			}
 		case settingUploadScheduling:
 			m.cfg.Uploads.Scheduling = []config.UploadScheduling{config.UploadSchedulingFIFO, config.UploadSchedulingRoundRobin, config.UploadSchedulingRandom, config.UploadSchedulingSmallestFirst}[choice]
+		case settingLoggingLevel:
+			m.cfg.Logging.Level = []string{"DEBUG", "INFO", "WARN", "ERROR"}[choice]
 		}
 	}
 	return nil

@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 	"html"
-	"log"
+	"log/slog"
 	"os/exec"
 	"path/filepath"
 	"time"
@@ -47,7 +47,7 @@ func (s *Service) notifyDownloadLocked(user, target string, folderFinished bool)
 		defer s.wg.Done()
 		for _, message := range messages {
 			if err := notify(ctx, message.title, message.body); err != nil {
-				log.Printf("download notification: %v", err)
+				s.event(slog.LevelWarn, "download_notification_failed", err)
 			}
 		}
 	}()

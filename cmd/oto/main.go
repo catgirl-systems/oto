@@ -7,16 +7,18 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"os"
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"sync"
 	"syscall"
 	"time"
 
 	"github.com/catgirl-systems/oto/internal/config"
 	"github.com/catgirl-systems/oto/internal/daemon"
+	"github.com/catgirl-systems/oto/internal/diagnostics"
 	"github.com/catgirl-systems/oto/internal/ipc"
 	"github.com/catgirl-systems/oto/internal/tui"
 )
@@ -30,7 +32,11 @@ var (
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
-		fmt.Fprintln(os.Stderr, "oto:", err)
+		if len(os.Args) > 1 && os.Args[1] == "daemon" {
+			diagnostics.StartupError(os.Stderr, err)
+		} else {
+			fmt.Fprintln(os.Stderr, "oto:", err)
+		}
 		os.Exit(1)
 	}
 }
@@ -122,6 +128,30 @@ func tuiCommand(args []string) error {
 	return tui.RunWithTransient(ctx, client, *path, transient)
 }
 
+type tailWriter struct {
+	mu  sync.Mutex
+	buf []byte
+}
+
+func (w *tailWriter) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.buf == nil {
+		w.buf = make([]byte, 0, 32<<10)
+	}
+	n := len(p)
+	if len(p) >= 32<<10 {
+		w.buf = append(w.buf[:0], p[len(p)-(32<<10):]...)
+	} else {
+		if excess := len(w.buf) + len(p) - (32 << 10); excess > 0 {
+			copy(w.buf, w.buf[excess:])
+			w.buf = w.buf[:len(w.buf)-excess]
+		}
+		w.buf = append(w.buf, p...)
+	}
+	return n, nil
+}
+
 func startChild(ctx context.Context, path string) (*exec.Cmd, io.Closer, error) {
 	exe, err := executable()
 	if err != nil {
@@ -135,30 +165,24 @@ func startChild(ctx context.Context, path string) (*exec.Cmd, io.Closer, error) 
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Stdin = reader
 	cmd.Stdout = io.Discard
-	if err := os.MkdirAll(config.DataDir(), 0700); err != nil {
-		_ = reader.Close()
-		_ = writer.Close()
-		return nil, nil, err
-	}
-	logFile, err := os.OpenFile(filepath.Join(config.DataDir(), "daemon.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
-	if err != nil {
-		_ = reader.Close()
-		_ = writer.Close()
-		return nil, nil, err
-	}
-	cmd.Stderr = logFile
+	tail := new(tailWriter)
+	cmd.Stderr = tail
 	if err := cmd.Start(); err != nil {
-		_ = logFile.Close()
 		_ = reader.Close()
 		_ = writer.Close()
-		return nil, nil, err
+		return nil, nil, errors.New("daemon failed to start")
 	}
 	_ = reader.Close()
-	_ = logFile.Close()
 	abort := func(err error) (*exec.Cmd, io.Closer, error) {
 		_ = writer.Close()
 		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 		_ = cmd.Wait()
+		tail.mu.Lock()
+		detail := string(tail.buf)
+		tail.mu.Unlock()
+		if detail != "" {
+			err = fmt.Errorf("%w: %s", err, detail)
+		}
 		return nil, nil, err
 	}
 
@@ -175,7 +199,7 @@ func startChild(ctx context.Context, path string) (*exec.Cmd, io.Closer, error) 
 			return cmd, writer, nil
 		}
 		if cmd.ProcessState != nil {
-			return abort(errors.New("daemon exited before opening its socket"))
+			return abort(errors.New("daemon startup failed"))
 		}
 		select {
 		case <-ctx.Done():
@@ -183,7 +207,7 @@ func startChild(ctx context.Context, path string) (*exec.Cmd, io.Closer, error) 
 		case <-time.After(50 * time.Millisecond):
 		}
 	}
-	return abort(errors.New("timed out waiting for daemon"))
+	return abort(errors.New("daemon startup timed out"))
 }
 
 type daemonOptions struct {
@@ -196,12 +220,17 @@ type daemonOptions struct {
 
 func parseDaemonOptions(args []string) (daemonOptions, error) {
 	fs := flag.NewFlagSet("daemon", flag.ContinueOnError)
+	fs.SetOutput(io.Discard) // Invalid values can contain private paths or credentials.
 	path := configFlag(fs)
 	child := fs.Bool("child", false, "exit when stdin closes")
 	delay := fs.Duration("share-rescan-delay", daemon.DefaultShareRescanDelay, "quiet period before automatically rescanning shares (0 disables)")
 	listenPortFile := fs.String("listen-port-file", "", "file containing the current incoming listening port")
 	listenPortInterval := fs.Duration("listen-port-reconcile-interval", daemon.DefaultListenPortReconcileInterval, "fallback interval for rereading the listening port file (0 disables)")
 	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			fs.SetOutput(os.Stderr)
+			fs.Usage()
+		}
 		return daemonOptions{}, err
 	}
 	if fs.NArg() != 0 {
@@ -229,6 +258,20 @@ func daemonCommand(args []string) error {
 	if err != nil {
 		return err
 	}
+	defer service.Close()
+	var level slog.Level
+	_ = level.UnmarshalText([]byte(cfg.Logging.Level))
+	var mirror io.Writer
+	if !options.child {
+		mirror = os.Stderr
+	}
+	logs := diagnostics.New(filepath.Join(config.DataDir(), "logs"), level, mirror)
+	if err := service.SetDiagnostics(logs); err != nil {
+		logs.Close()
+		return err
+	}
+	logger := logs.Logger()
+	diagnostics.Event(logger, slog.LevelInfo, "daemon_started", nil, slog.String("version", version))
 	if err := service.SetShareRescanDelay(options.shareScanDelay); err != nil {
 		return err
 	}
@@ -243,23 +286,19 @@ func daemonCommand(args []string) error {
 		defer stop()
 	}
 	server := ipc.NewServer(service, config.SocketPath())
+	defer server.Close()
 	serverErr := make(chan error, 1)
 	go func() { serverErr <- server.Serve(ctx) }()
-
 	if err := service.Start(ctx); err != nil {
-		log.Printf("connection: %v (retrying when appropriate)", err)
+		diagnostics.Event(logger, slog.LevelWarn, "session_start_failed", err)
 	}
-	log.Printf("daemon foreground; socket=%s source=%s", config.SocketPath(), sourceURL)
 	select {
 	case <-ctx.Done():
+		diagnostics.Event(logger, slog.LevelInfo, "daemon_stopping", ctx.Err(), slog.String("reason", "signal_or_parent_eof"))
 	case err := <-serverErr:
-		if err != nil {
-			_ = service.Close()
-			return err
-		}
+		diagnostics.Event(logger, slog.LevelError, "ipc_server_stopped", err)
+		return err
 	}
-	_ = service.Close()
-	_ = server.Close()
 	return nil
 }
 

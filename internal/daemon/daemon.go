@@ -6,7 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"os"
 	"path"
 	"path/filepath"
@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/catgirl-systems/oto/internal/config"
+	"github.com/catgirl-systems/oto/internal/diagnostics"
 	"github.com/catgirl-systems/oto/internal/portmap"
 	"github.com/catgirl-systems/oto/internal/soulseek"
 	"github.com/catgirl-systems/oto/internal/stats"
@@ -66,6 +67,7 @@ type ShareScan struct {
 }
 
 type Snapshot struct {
+	Logging              *diagnostics.Status  `json:"logging,omitempty"`
 	StatsWarning         string               `json:"stats_warning,omitempty"`
 	Status               Status               `json:"status"`
 	Presence             Presence             `json:"presence"`
@@ -190,6 +192,7 @@ type portMapping interface {
 type portMappingOpener func(context.Context, uint16, bool, bool, func(uint16)) (portMapping, error)
 
 type Service struct {
+	diagnostics            *diagnostics.Manager
 	telemetry              *telemetryState
 	mu                     sync.RWMutex
 	lifecycleMu            sync.Mutex
@@ -275,6 +278,11 @@ func validateConfig(cfg config.Config) error {
 }
 
 func New(cfg config.Config, path string) (*Service, error) {
+	level, err := config.NormalizeLogLevel(cfg.Logging.Level)
+	if err != nil {
+		return nil, err
+	}
+	cfg.Logging.Level = level
 	cfg.Bandwidth.Profiles = slices.Clone(cfg.Bandwidth.Profiles)
 	rules, err := config.NormalizeShareExclusions(cfg.ShareExclusions)
 	if err != nil {
@@ -300,9 +308,10 @@ func New(cfg config.Config, path string) (*Service, error) {
 		return client.Search(ctx, query)
 	}, wishlistNotify: notifyWishlist, browses: make(map[string]loadedBrowse), browseProgress: make(map[string]trackedBrowse), fullBrowse: func(ctx context.Context, client *soulseek.Client, username string, progress func(received, total uint64)) ([]soulseek.ShareEntry, error) {
 		return client.BrowseUserWithProgress(ctx, username, "", progress)
-	}, transfers: make(map[string]Transfer), completionRetries: make(map[string]completionRetry), downloadSlots: make(chan struct{}, cfg.DownloadSlots), downloadCancels: make(map[string]context.CancelFunc), downloadDone: make(map[string]chan struct{}), downloadPeers: make(map[string]chan struct{}), shareScanGate: make(chan struct{}, 1), shareRescanDelay: DefaultShareRescanDelay, listenPortInterval: DefaultListenPortReconcileInterval, portMapOpen: func(ctx context.Context, port uint16, natPMP, upnp bool, changed func(uint16)) (portMapping, error) {
-		return portmap.Open(ctx, port, natPMP, upnp, changed)
-	}, portCheck: defaultListeningPortCheck, reconnectWake: make(chan struct{}, 1), status: StatusStopped, presence: PresenceOffline, journalPath: path}
+	}, transfers: make(map[string]Transfer), completionRetries: make(map[string]completionRetry), downloadSlots: make(chan struct{}, cfg.DownloadSlots), downloadCancels: make(map[string]context.CancelFunc), downloadDone: make(map[string]chan struct{}), downloadPeers: make(map[string]chan struct{}), shareScanGate: make(chan struct{}, 1), shareRescanDelay: DefaultShareRescanDelay, listenPortInterval: DefaultListenPortReconcileInterval, portCheck: defaultListeningPortCheck, reconnectWake: make(chan struct{}, 1), status: StatusStopped, presence: PresenceOffline, journalPath: path}
+	s.portMapOpen = func(ctx context.Context, port uint16, natPMP, upnp bool, changed func(uint16)) (portMapping, error) {
+		return portmap.OpenWithLogger(ctx, port, natPMP, upnp, changed, s.logger())
+	}
 	s.fullBrowseDirectories = func(ctx context.Context, client *soulseek.Client, username string, progress func(uint64, uint64)) ([]soulseek.ShareDirectory, error) {
 		return client.BrowseUserDirectoriesWithProgress(ctx, username, progress)
 	}
@@ -347,6 +356,7 @@ func (s *Service) Config() config.SafeConfig {
 }
 
 func (s *Service) Snapshot() Snapshot {
+	logging := s.loggingStatus()
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	publicIP, publicPort := "", uint16(0)
@@ -365,7 +375,7 @@ func (s *Service) Snapshot() Snapshot {
 	if s.telemetry != nil {
 		warning = s.telemetry.warning
 	}
-	return Snapshot{StatsWarning: warning, Status: s.status, Presence: s.presence, Error: s.lastErr, PublicIP: publicIP, PublicPort: publicPort, Config: s.cfg.Redacted(), Shares: append([]config.Share(nil), s.cfg.Shares...), ShareScan: scan, ShareIndexRevision: s.shareIndexRevision, DownloadNotification: s.downloadNotification, Downloads: append([]Download(nil), s.journal.Downloads...), Transfers: s.transferValuesLocked(time.Now())}
+	return Snapshot{Logging: logging, StatsWarning: warning, Status: s.status, Presence: s.presence, Error: s.lastErr, PublicIP: publicIP, PublicPort: publicPort, Config: s.cfg.Redacted(), Shares: append([]config.Share(nil), s.cfg.Shares...), ShareScan: scan, ShareIndexRevision: s.shareIndexRevision, DownloadNotification: s.downloadNotification, Downloads: append([]Download(nil), s.journal.Downloads...), Transfers: s.transferValuesLocked(time.Now())}
 }
 
 // Start initializes daemon-owned work and optionally starts a Soulseek session.
@@ -401,7 +411,7 @@ func (s *Service) Start(ctx context.Context) error {
 		s.mu.Unlock()
 	} else {
 		if !errors.Is(err, os.ErrNotExist) {
-			log.Printf("load share index cache: %v", err)
+			s.event(slog.LevelWarn, "share_index_cache_load_failed", err)
 		}
 		if err := s.runShareScan(runCtx, shares, rules, generation, false, nil, func(index *soulseek.ShareIndex) error {
 			return s.publishShareIndex(generation, index)
@@ -568,7 +578,7 @@ func (s *Service) stopSessionLocked(offline bool) {
 	if cancel != nil {
 		cancel()
 	}
-	closePortMapping(mapping)
+	s.closePortMapping(mapping)
 	if client != nil {
 		_ = client.Close()
 	}
@@ -612,6 +622,7 @@ func newUploadManager(c config.Config) *soulseek.UploadManager {
 	return uploads
 }
 func (s *Service) connectOnce(ctx context.Context) error {
+	s.event(slog.LevelInfo, "session_connect_started", nil)
 	s.mu.RLock()
 	if s.ctx != ctx {
 		s.mu.RUnlock()
@@ -645,7 +656,12 @@ func (s *Service) connectOnce(ctx context.Context) error {
 	s.mu.Unlock()
 	uploadsReady := make(chan struct{})
 	defer close(uploadsReady)
+	networkLogger := s.logger()
+	if networkLogger != nil {
+		networkLogger = networkLogger.With("session_id", epoch)
+	}
 	client := soulseek.NewClient(soulseek.ClientConfig{
+		Logger:  networkLogger,
 		Address: cfg.Soulseek.Server, Username: cfg.Soulseek.Username, Password: cfg.Soulseek.Password,
 		ListenAddr: cfg.Soulseek.ListenAddr, NetworkInterface: cfg.Soulseek.NetworkInterface,
 		Share: idx, Uploads: newUploadManager(cfg), IncomingSearch: &searchPolicy,
@@ -664,40 +680,41 @@ func (s *Service) connectOnce(ctx context.Context) error {
 	var mapping portMapping
 	if portFile != "" {
 		if cfg.Soulseek.NATPMPPortMapping || cfg.Soulseek.UPnPPortMapping {
-			log.Printf("port mapping: skipped because --listen-port-file is configured")
+			s.event(slog.LevelInfo, "port_mapping_skipped", nil, slog.String("reason", "listen_port_file"))
 		}
 	} else if cfg.Soulseek.NetworkInterface != "" {
 		if cfg.Soulseek.NATPMPPortMapping || cfg.Soulseek.UPnPPortMapping {
-			log.Printf("port mapping: skipped because network interface %q is configured", cfg.Soulseek.NetworkInterface)
+			s.event(slog.LevelInfo, "port_mapping_skipped", nil, slog.String("reason", "network_interface"))
 		}
 	} else if cfg.Soulseek.NATPMPPortMapping || cfg.Soulseek.UPnPPortMapping {
 		opened, err := openMapping(ctx, client.ListenPort(), cfg.Soulseek.NATPMPPortMapping, cfg.Soulseek.UPnPPortMapping, func(port uint16) {
 			if err := client.SetAdvertisedPort(port); err != nil {
-				log.Printf("port mapping: advertise external port %d: %v", port, err)
+				s.event(slog.LevelWarn, "port_mapping_advertise_failed", err, slog.Uint64("external_port", uint64(port)))
 			}
 		})
 		if err != nil {
-			log.Printf("port mapping: %v; continuing without automatic forwarding", err)
+			s.event(slog.LevelWarn, "port_mapping_open_failed", err)
 		} else {
 			mapping = opened
 		}
 	}
 	if err := client.Login(ctx); err != nil {
-		closePortMapping(mapping)
+		s.event(slog.LevelWarn, "session_login_failed", err)
+		s.closePortMapping(mapping)
 		_ = client.Close()
 		return err
 	}
 	s.mu.Lock()
 	if s.closed || s.ctx != ctx || s.presence == PresenceOffline {
 		s.mu.Unlock()
-		closePortMapping(mapping)
+		s.closePortMapping(mapping)
 		_ = client.Close()
 		return context.Canceled
 	}
 	if s.presence == PresenceAway {
 		if err := client.SetStatus(soulseek.UserStatusAway); err != nil {
 			s.mu.Unlock()
-			closePortMapping(mapping)
+			s.closePortMapping(mapping)
 			_ = client.Close()
 			return err
 		}
@@ -711,15 +728,16 @@ func (s *Service) connectOnce(ctx context.Context) error {
 	idx = s.shares
 	s.status, s.lastErr = StatusConnected, ""
 	s.mu.Unlock()
+	s.event(slog.LevelInfo, "session_connected", nil, slog.String("public_ip", client.PublicIP()), slog.Uint64("advertised_port", uint64(client.PublicPort())))
 	client.SetShareIndex(idx)
 	s.recoverUploads(client, epoch)
 	return nil
 }
 
-func closePortMapping(mapping portMapping) {
+func (s *Service) closePortMapping(mapping portMapping) {
 	if mapping != nil {
 		if err := mapping.Close(); err != nil {
-			log.Printf("port mapping: remove: %v", err)
+			s.event(slog.LevelWarn, "port_mapping_remove_failed", err)
 		}
 	}
 }
@@ -739,6 +757,7 @@ func (s *Service) reconnectLoop(ctx context.Context) {
 	backoff, delay := time.Second, time.Duration(0)
 	for {
 		if delay > 0 {
+			s.event(slog.LevelWarn, "session_reconnect_scheduled", nil, slog.Int64("delay_ms", delay.Milliseconds()))
 			timer := time.NewTimer(delay)
 			select {
 			case <-ctx.Done():
@@ -772,9 +791,10 @@ func (s *Service) reconnectLoop(ctx context.Context) {
 			eventsDone := make(chan struct{})
 			go func() { s.consumeClientEvents(eventCtx, client); close(eventsDone) }()
 			err = client.Run(ctx)
+			s.event(slog.LevelWarn, "session_disconnected", err)
 			stopEvents()
 			<-eventsDone
-			closePortMapping(mapping)
+			s.closePortMapping(mapping)
 			s.uploadMu.Lock()
 			s.mu.Lock()
 			if s.client == client {
@@ -797,6 +817,7 @@ func (s *Service) reconnectLoop(ctx context.Context) {
 
 		message := s.safeError(err)
 		if isPermanentLoginError(err) {
+			s.event(slog.LevelError, "session_login_rejected", err)
 			if !s.setSessionStatus(ctx, StatusError, message) {
 				return
 			}
@@ -870,7 +891,7 @@ func (s *Service) Close() error {
 	if cancel != nil {
 		cancel()
 	}
-	closePortMapping(mapping)
+	s.closePortMapping(mapping)
 	if client != nil {
 		_ = client.Close()
 	}
@@ -890,6 +911,20 @@ func (s *Service) Close() error {
 	flushCtx, flushCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	err := s.flushStatsContext(flushCtx)
 	flushCancel()
+	s.event(slog.LevelInfo, "daemon_stopped", err)
+	if s.diagnostics != nil {
+		s.diagnostics.Close()
+		select {
+		case <-s.diagnostics.Done():
+		default:
+			// A timed-out writer still owns its files. Do not let another daemon
+			// recover/rotate them before it exits (or this process terminates).
+			if s.stateDB != nil {
+				go func() { <-s.diagnostics.Done(); _ = s.stateDB.Close() }()
+			}
+			return err
+		}
+	}
 	if s.stateDB != nil {
 		err = errors.Join(err, s.stateDB.Close())
 	}
@@ -1480,7 +1515,17 @@ func hotConfigUpdate(old, next config.Config) bool {
 		old.UploadSlots == next.UploadSlots
 }
 
-func (s *Service) UpdateConfig(c config.Config) error {
+func (s *Service) UpdateConfig(c config.Config) (updateErr error) {
+	defer func() {
+		if updateErr != nil {
+			s.event(slog.LevelError, "config_update_failed", updateErr)
+		}
+	}()
+	level, err := config.NormalizeLogLevel(c.Logging.Level)
+	if err != nil {
+		return err
+	}
+	c.Logging.Level = level
 	c.Bandwidth.Profiles = slices.Clone(c.Bandwidth.Profiles)
 	rules, err := config.NormalizeShareExclusions(c.ShareExclusions)
 	if err != nil {
@@ -1512,6 +1557,9 @@ func (s *Service) UpdateConfig(c config.Config) error {
 			s.cfg = c
 		}
 		s.mu.Unlock()
+		if err == nil {
+			s.applyLogLevel(c.Logging.Level)
+		}
 		if err == nil && uploadsChanged && client != nil {
 			client.ConfigureUploads(uploadPolicy(c))
 		}
@@ -1569,6 +1617,7 @@ func (s *Service) UpdateConfig(c config.Config) error {
 			client.ConfigureIncomingSearch(incomingSearchPolicy(c))
 			client.ConfigureBrowseLimits(browseLimits(c))
 		}
+		s.applyLogLevel(c.Logging.Level)
 		s.persistShareIndex(index)
 		return nil
 	})

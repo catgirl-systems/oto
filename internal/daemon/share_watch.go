@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
-	"log"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -266,7 +266,7 @@ func (s *Service) watchShares(ctx context.Context, generation uint64, shares []c
 	rules := policy.Exclusions()
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
-		log.Printf("share watcher: %v", err)
+		s.event(slog.LevelError, "share_watcher_create_failed", err)
 		s.pollShares(ctx, generation, shares, policy.Exclusions(), quiet, builder)
 		return
 	}
@@ -275,7 +275,7 @@ func (s *Service) watchShares(ctx context.Context, generation uint64, shares []c
 	watching := len(roots) == len(shares)
 	for _, root := range roots {
 		if err := addWatchTree(ctx, watcher, watched, root.Path, root.Path, policy); err != nil {
-			log.Printf("share watcher %s: %v", root.Path, err)
+			s.event(slog.LevelWarn, "share_watcher_add_failed", err)
 			watching = false
 		}
 	}
@@ -414,7 +414,7 @@ func (s *Service) watchShares(ctx context.Context, generation uint64, shares []c
 			if event.Op&fsnotify.Create != 0 {
 				if info, statErr := os.Lstat(event.Name); statErr == nil && info.IsDir() && !strings.HasPrefix(info.Name(), ".") {
 					if addErr := addWatchTree(ctx, watcher, watched, event.Name, event.Name, policy); addErr != nil {
-						log.Printf("share watcher %s: %v", event.Name, addErr)
+						s.event(slog.LevelWarn, "share_watcher_add_failed", addErr)
 						watching = false
 					}
 				}
@@ -428,7 +428,7 @@ func (s *Service) watchShares(ctx context.Context, generation uint64, shares []c
 				watcherErrors = nil
 				continue
 			}
-			log.Printf("share watcher: %v", watchErr)
+			s.event(slog.LevelWarn, "share_watcher_event_failed", watchErr)
 			markDirty()
 		case <-quietC:
 			consumeCancellation()
@@ -449,7 +449,7 @@ func (s *Service) watchShares(ctx context.Context, generation uint64, shares []c
 			}
 			for _, root := range result.index.Roots() {
 				if addErr := addWatchTree(ctx, watcher, watched, root.Path, root.Path, policy); addErr != nil {
-					log.Printf("share watcher %s: %v", root.Path, addErr)
+					s.event(slog.LevelWarn, "share_watcher_add_failed", addErr)
 					watching = false
 				}
 			}
@@ -468,7 +468,7 @@ func (s *Service) watchShares(ctx context.Context, generation uint64, shares []c
 					return
 				}
 				if !errors.Is(result.err, errShareScanDiscarded) {
-					log.Printf("share rescan: %v", result.err)
+					s.event(slog.LevelWarn, "share_rescan_failed", result.err)
 				}
 				dirty = true
 				if quietTimer == nil && !quietReady {
@@ -508,7 +508,7 @@ func (s *Service) pollShares(ctx context.Context, generation uint64, shares []co
 				return
 			}
 			if !errors.Is(err, ErrScanCancelled) {
-				log.Printf("share rescan: %v", err)
+				s.event(slog.LevelWarn, "share_rescan_failed", err)
 			}
 		}
 		timer.Reset(delay)

@@ -447,9 +447,13 @@ func (s *Service) telemetryLoop(ctx context.Context) {
 				}
 				s.telemetry.samples[account] = samples
 			}
+			client := s.client
 			s.mu.Unlock()
 			checkpoints++
 			if checkpoints%5 == 0 {
+				if client != nil {
+					client.LogDiagnostics(now)
+				}
 				if err := s.flushStats(); err == nil && now.Sub(lastPrune) >= time.Hour {
 					if err = s.automaticStatsPrune(now); err != nil {
 						s.mu.Lock()
