@@ -98,6 +98,8 @@ Headless controls, with a daemon running:
 ```
 
 - **Configuration:** `~/.config/oto/config.json`; **state:** `~/.local/state/oto/` (XDG overrides supported). See [config.example.json](config.example.json) for settings; its paths are Docker defaults.
+- **Large shares:** Settings → Browse controls maximum files/folders (default 2,000,000), compressed response size (64 MiB), and decompressed response size (256 MiB). Saved changes apply to the next browse without reconnecting. These are payload limits, not total RAM limits: decoded snapshots use additional memory. JSON keys live under `browse` in the example config; accepted ranges are 1–10,000,000 entries, 1–256 MiB compressed, and 1–1024 MiB decompressed.
+- **Browse memory:** the daemon streams decompression and retains directory-grouped snapshots. The TUI loads folders on expansion, with at most 200 entries per page; Previous/Next replaces that folder's page instead of accumulating its files. Local browse replies have a 2 MiB cap. Navigation and `f` search use the existing snapshot, not another peer request. Selection includes unloaded descendants, and `s` saves the full snapshot (temporarily expanding paths for the cache writer).
 - **Connectivity:** allow incoming TCP **50300** for best results. NAT-PMP/UPnP forwarding is attempted automatically. VPN users can select a network interface in Settings.
 - **Accounts:** Soulseek allows one session per username—don't run oto and another client on the same account simultaneously.
 - **Privacy:** Soulseek traffic is not encrypted. Only share files you intend to make public.
