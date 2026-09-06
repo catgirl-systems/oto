@@ -3,10 +3,14 @@ package soulseek
 import (
 	"bytes"
 	"compress/zlib"
+	"context"
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"github.com/catgirl-systems/oto/internal/diagnostics"
 	"io"
+	"log/slog"
+	"time"
 )
 
 const (
@@ -181,26 +185,51 @@ func WriteInitFrame(w io.Writer, command byte, payload []byte) error {
 }
 
 func readBody(r io.Reader, header int, progress func(received, total uint64), maxFrameSize int) ([]byte, error) {
+	var logger *slog.Logger
+	if p, ok := r.(*diagnosticConn); ok {
+		logger = p.logger
+	}
+	var received uint64
+	lastLog := time.Now()
+	commandLogged := false
 	var n uint32
 	if err := binary.Read(r, binary.LittleEndian, &n); err != nil {
 		// EOF between frames is a connection close, not an invalid payload.
+		diagnostics.Event(logger, slog.LevelDebug, "frame_read_failed", err, slog.String("stage", "frame_length"))
 		return nil, fmt.Errorf("soulseek: read frame length: %w", err)
 	}
+	diagnostics.Event(logger, slog.LevelDebug, "frame_length_received", nil, slog.Uint64("declared_size", uint64(n)))
 	if n < uint32(header) {
 		return nil, fmt.Errorf("%w: short frame header", ErrMalformed)
 	}
 	if uint64(n) > uint64(maxFrameSize) {
+		diagnostics.Event(logger, slog.LevelWarn, "frame_limit_rejected", nil, slog.String("limit_name", "frame_bytes"), slog.Int("limit", maxFrameSize), slog.Uint64("actual", uint64(n)))
 		return nil, fmt.Errorf("%w: frame has %d bytes (limit %d)", ErrTooLarge, n, maxFrameSize)
 	}
 	body := make([]byte, n)
 	reader := r
-	if progress != nil {
-		var received uint64
+	if progress != nil || logger != nil {
 		total := uint64(n)
-		progress(0, total)
+		if progress != nil {
+			progress(0, total)
+		}
 		reader = io.TeeReader(r, writerFunc(func(p []byte) (int, error) {
 			received += uint64(len(p))
-			progress(received, total)
+			if progress != nil {
+				progress(received, total)
+			}
+			if !commandLogged && received >= uint64(header) {
+				command := uint64(body[0])
+				if header == 4 {
+					command = uint64(binary.LittleEndian.Uint32(body))
+				}
+				diagnostics.Event(logger, slog.LevelDebug, "frame_header_received", nil, slog.Uint64("command", command), slog.Uint64("declared_size", total))
+				commandLogged = true
+			}
+			if logger != nil && logger.Enabled(context.Background(), slog.LevelDebug) && (received == total || time.Since(lastLog) >= 5*time.Second) {
+				diagnostics.Event(logger, slog.LevelDebug, "frame_receive_progress", nil, slog.Uint64("received", received), slog.Uint64("total", total))
+				lastLog = time.Now()
+			}
 			return len(p), nil
 		}))
 	}
@@ -208,6 +237,7 @@ func readBody(r io.Reader, header int, progress func(received, total uint64), ma
 		if errors.Is(err, io.EOF) {
 			err = io.ErrUnexpectedEOF // The frame length was already received.
 		}
+		diagnostics.Event(logger, slog.LevelDebug, "frame_read_failed", err, slog.String("stage", "frame_body"), slog.Uint64("received", received), slog.Uint64("declared_size", uint64(n)))
 		return nil, fmt.Errorf("soulseek: read frame body: %w", err)
 	}
 	return body, nil
@@ -235,8 +265,9 @@ func DecompressZlib(data []byte) ([]byte, error) {
 	return decompressZlib(data, MaxFrameSize, MaxDecompressedSize)
 }
 
-func decompressZlib(data []byte, maxCompressedSize, maxDecompressedSize int) ([]byte, error) {
+func decompressZlib(data []byte, maxCompressedSize, maxDecompressedSize int, loggers ...*slog.Logger) ([]byte, error) {
 	if len(data) > maxCompressedSize {
+		logLimit(firstLogger(loggers), "compressed_bytes", uint64(maxCompressedSize), uint64(len(data)))
 		return nil, fmt.Errorf("%w: compressed payload has %d bytes (limit %d)", ErrTooLarge, len(data), maxCompressedSize)
 	}
 	z, e := zlib.NewReader(bytes.NewReader(data))
@@ -250,6 +281,7 @@ func decompressZlib(data []byte, maxCompressedSize, maxDecompressedSize int) ([]
 		return nil, e
 	}
 	if len(out) > maxDecompressedSize {
+		logLimit(firstLogger(loggers), "decompressed_bytes", uint64(maxDecompressedSize), uint64(len(out)))
 		return nil, fmt.Errorf("%w: decompressed payload exceeds %d bytes", ErrTooLarge, maxDecompressedSize)
 	}
 	return out, nil

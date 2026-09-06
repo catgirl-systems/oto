@@ -3,6 +3,7 @@ package soulseek
 import (
 	"bytes"
 	"fmt"
+	"log/slog"
 	"net"
 	"sort"
 	"strings"
@@ -792,9 +793,9 @@ func DecodeSharedListResponse(b []byte) (SharedListResponse, error) {
 	return decodeSharedListResponse(b, BrowseLimits{}.withDefaults())
 }
 
-func decodeSharedListResponse(b []byte, limits BrowseLimits) (SharedListResponse, error) {
+func decodeSharedListResponse(b []byte, limits BrowseLimits, loggers ...*slog.Logger) (SharedListResponse, error) {
 	var message SharedListResponse
-	raw, err := decompressZlib(b, limits.MaxCompressedSize, limits.MaxDecompressedSize)
+	raw, err := decompressZlib(b, limits.MaxCompressedSize, limits.MaxDecompressedSize, loggers...)
 	if err != nil {
 		return message, err
 	}
@@ -804,6 +805,7 @@ func decodeSharedListResponse(b []byte, limits BrowseLimits) (SharedListResponse
 		return message, err
 	}
 	if uint64(count) > uint64(limits.MaxEntries) {
+		logLimit(firstLogger(loggers), "entries", uint64(limits.MaxEntries), uint64(count))
 		return message, fmt.Errorf("%w: share list has %d directories (limit %d)", ErrTooLarge, count, limits.MaxEntries)
 	}
 	for i := uint32(0); i < count; i++ {
@@ -817,6 +819,7 @@ func decodeSharedListResponse(b []byte, limits BrowseLimits) (SharedListResponse
 			return message, err
 		}
 		if uint64(len(message.Entries))+uint64(files) > uint64(limits.MaxEntries) {
+			logLimit(firstLogger(loggers), "entries", uint64(limits.MaxEntries), uint64(len(message.Entries))+uint64(files))
 			return message, fmt.Errorf("%w: share list has at least %d files/directories (limit %d)", ErrTooLarge, uint64(len(message.Entries))+uint64(files), limits.MaxEntries)
 		}
 		for j := uint32(0); j < files; j++ {
@@ -836,6 +839,7 @@ func decodeSharedListResponse(b []byte, limits BrowseLimits) (SharedListResponse
 			return message, readErr
 		}
 		if uint64(len(message.Entries))+uint64(private) > uint64(limits.MaxEntries) {
+			logLimit(firstLogger(loggers), "entries", uint64(limits.MaxEntries), uint64(len(message.Entries))+uint64(private))
 			return message, fmt.Errorf("%w: share list including private directories has at least %d files/directories (limit %d)", ErrTooLarge, uint64(len(message.Entries))+uint64(private), limits.MaxEntries)
 		}
 		for i := uint32(0); i < private; i++ {
@@ -849,6 +853,7 @@ func decodeSharedListResponse(b []byte, limits BrowseLimits) (SharedListResponse
 				return message, decodeErr
 			}
 			if uint64(len(message.Entries))+uint64(count) > uint64(limits.MaxEntries) {
+				logLimit(firstLogger(loggers), "entries", uint64(limits.MaxEntries), uint64(len(message.Entries))+uint64(count))
 				return message, fmt.Errorf("%w: share list including private entries has at least %d files/directories (limit %d)", ErrTooLarge, uint64(len(message.Entries))+uint64(count), limits.MaxEntries)
 			}
 			for j := uint32(0); j < count; j++ {
@@ -960,9 +965,9 @@ func DecodeFolderResponse(b []byte) (FolderResponse, error) {
 	return decodeFolderResponse(b, BrowseLimits{}.withDefaults())
 }
 
-func decodeFolderResponse(b []byte, limits BrowseLimits) (FolderResponse, error) {
+func decodeFolderResponse(b []byte, limits BrowseLimits, loggers ...*slog.Logger) (FolderResponse, error) {
 	var message FolderResponse
-	raw, err := decompressZlib(b, limits.MaxCompressedSize, limits.MaxDecompressedSize)
+	raw, err := decompressZlib(b, limits.MaxCompressedSize, limits.MaxDecompressedSize, loggers...)
 	if err != nil {
 		return message, err
 	}
@@ -978,6 +983,7 @@ func decodeFolderResponse(b []byte, limits BrowseLimits) (FolderResponse, error)
 		return message, err
 	}
 	if uint64(folders) > uint64(limits.MaxEntries) {
+		logLimit(firstLogger(loggers), "entries", uint64(limits.MaxEntries), uint64(folders))
 		return message, fmt.Errorf("%w: folder response has %d directories (limit %d)", ErrTooLarge, folders, limits.MaxEntries)
 	}
 	for i := uint32(0); i < folders; i++ {
@@ -991,6 +997,7 @@ func decodeFolderResponse(b []byte, limits BrowseLimits) (FolderResponse, error)
 			return message, err
 		}
 		if uint64(len(message.Entries))+uint64(count) > uint64(limits.MaxEntries) {
+			logLimit(firstLogger(loggers), "entries", uint64(limits.MaxEntries), uint64(len(message.Entries))+uint64(count))
 			return message, fmt.Errorf("%w: folder response has at least %d files/directories (limit %d)", ErrTooLarge, uint64(len(message.Entries))+uint64(count), limits.MaxEntries)
 		}
 		for j := uint32(0); j < count; j++ {

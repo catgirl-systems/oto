@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"os"
 	"path/filepath"
@@ -111,7 +112,7 @@ func uploadPeer(t *testing.T, mode string, offset uint64) (PeerAddress, <-chan u
 	return PeerAddress{Username: "peer", IP: "127.0.0.1", Port: uint32(ln.Addr().(*net.TCPAddr).Port)}, messages, data
 }
 
-func uploadClient(t *testing.T, address PeerAddress, contents []byte) (*Client, chan TransferEvent, string) {
+func uploadClient(t *testing.T, address PeerAddress, contents []byte, loggers ...*slog.Logger) (*Client, chan TransferEvent, string) {
 	t.Helper()
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "song"), contents, 0600); err != nil {
@@ -125,7 +126,7 @@ func uploadClient(t *testing.T, address PeerAddress, contents []byte) (*Client, 
 		t.Fatal(err)
 	}
 	events := make(chan TransferEvent, 2048)
-	c := NewClient(ClientConfig{Share: shares, Uploads: NewUploadManager(1), UploadUpdate: func(e TransferEvent) { events <- e }})
+	c := NewClient(ClientConfig{Logger: firstLogger(loggers), Share: shares, Uploads: NewUploadManager(1), UploadUpdate: func(e TransferEvent) { events <- e }})
 	if address.IP != "" {
 		lookup := &peerAddressLookup{done: make(chan struct{}), address: address}
 		close(lookup.done)
@@ -166,7 +167,37 @@ func uploadMessage(t *testing.T, messages <-chan uint32, want uint32) {
 func TestUploadResumeAndRetry(t *testing.T) {
 	contents := bytes.Repeat([]byte("shared file\n"), 100)
 	addr, _, received := uploadPeer(t, "normal", 17)
-	c, events, path := uploadClient(t, addr, contents)
+	logger := protocolLogger(t, func(records []map[string]any) {
+		completed := map[float64]bool{}
+		connections := map[string]map[string]bool{}
+		for _, r := range records {
+			if r["msg"] == "transfer_completed" {
+				completed[r["attempt_id"].(float64)] = true
+			}
+			if r["msg"] == "resume_offset_received" && r["resume_offset"] != float64(17) {
+				t.Fatal("wrong diagnostic resume offset")
+			}
+			if r["msg"] == "connection_open" {
+				op, _ := r["operation_id"].(string)
+				if op != "" {
+					if connections[op] == nil {
+						connections[op] = map[string]bool{}
+					}
+					kind, _ := r["type"].(string)
+					connections[op][kind] = true
+				}
+			}
+		}
+		if len(completed) != 2 || len(connections) != 2 {
+			t.Fatal("retry correlation lost")
+		}
+		for _, types := range connections {
+			if !types["P"] || !types["F"] {
+				t.Fatal("upload P/F correlation lost")
+			}
+		}
+	})
+	c, events, path := uploadClient(t, addr, contents, logger)
 	for i := 0; i < 2; i++ {
 		started, err := c.QueueUpload("peer", `Music\song`)
 		if err != nil || !started {
