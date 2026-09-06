@@ -114,41 +114,6 @@ Headless controls, with a daemon running:
 - **Privacy:** Soulseek traffic is not encrypted. Only share files you intend to make public.
 - **Backups:** stop oto before copying its state directory, including SQLite sidecars. Unsupported database schemas are rejected, not migrated.
 
-## Diagnostic logs
-
-In **Settings → Logging → Level**, choose `DEBUG`, `INFO` (default), `WARN`, or `ERROR`, then save. The persisted `logging.level` setting is case-insensitive and normalized to uppercase; missing/empty values mean `INFO`. A successful save changes the running logger immediately, without reconnecting or rescanning. A failed save leaves the old level active. There is no logging environment variable or command-line override.
-
-The daemon writes JSON Lines with UTC `time`, `level`, stable event names in `msg`, a process `run_id`, and structured component/operation/connection identifiers. `INFO` records lifecycle events; `DEBUG` adds protocol stages and five-second transfer summaries, including stalled streams. `WARN` includes recoverable failures and a single stall transition after 30 seconds without progress; `ERROR` includes terminal and persistence failures. Handshake writes and port advertisements do **not** prove peer acceptance or external reachability; a remote upload-failure message does not establish its underlying cause.
-
-Transfer summaries separate received/written bytes from `committed_bytes`, the offset reported through application progress callbacks (not an fsync or SQLite-checkpoint guarantee). Missing last-data/progress ages mean no observation yet, rather than zero elapsed time.
-
-Managed files live in `${XDG_STATE_HOME:-$HOME/.local/state}/oto/logs` (normally `~/.local/state/oto/logs`). The Docker image defaults to `/config/oto/logs`; setting `XDG_STATE_HOME=/data/state` instead gives `/data/state/oto/logs`. **Stats → Diagnostic logs** shows the daemon's actual directory, effective level, stored bytes/file count, dropped records since startup, retention policy, and output/recovery warnings. These figures are daemon-wide even with a peer/account filter. Storage is actual compressed/on-disk size, including recovery/temporary files; metadata is cached for up to five seconds.
-
-```sh
-log_dir="${XDG_STATE_HOME:-$HOME/.local/state}/oto/logs"
-tail -F "$log_dir/daemon.log"
-gzip -cd "$log_dir"/daemon-*.log.gz
-```
-
-The active `daemon.log` stays uncompressed. Before a complete record would exceed **10 MiB**, oto rotates it and streams gzip compression, retaining **three closed segments** (for example `daemon-000001.log.gz`). Uncompressed recovery segments count toward those three slots. Directories use `0700`, files `0600`; symlink/non-regular managed files are rejected. Interrupted compression is recovered where possible, preserving the source on failure. Unsafe/incomplete recovery or pruning failures suspend file output rather than allowing unlimited growth. This is a size/count policy, **not an exact 40 MiB disk quota**: gzip overhead and one temporary compression copy add bounded overhead. Compression and retention are fixed, independently of transfer-history retention.
-
-Foreground/Docker daemons also mirror records to stderr. Docker's separate copy is **not** counted or managed by oto; the Compose example above bounds it separately. TUI-launched daemons write managed files without normal stderr mirroring; startup failure capture is limited to 32 KiB. An old `oto/daemon.log` directly in the state directory is left untouched: oto stops appending to it, and neither retention nor Stats includes it. Review/remove that legacy file yourself if no longer needed.
-
-Diagnostics are **best effort, not an audit journal**. One worker drains a 256-record nonblocking queue; full queues drop new records and report loss in Stats and a recovery summary. Records are capped at 8 KiB; oversized records become small omission events. Disk/compression/stderr delays do not block transfer producers. File failures leave the stderr sink available where possible, with file retries no more often than every 30 seconds. Shutdown allows two seconds to drain; crashes, SIGKILL, or indefinitely blocked output can lose records.
-
-**Treat logs as sensitive before sharing:** peer usernames and IP:port endpoints are included. Passwords, authentication/wire tokens, payloads, chat/search contents, filenames, share/download paths, hook commands, and whole configuration/transfer objects are excluded. Unknown error/rejection text is omitted; safe stage/class/syscall fields are logged instead. Existing user-facing transfer history is separate and unchanged.
-
-### Logging measurements
-
-Reproduce with `go test ./internal/diagnostics -run '^$' -bench '^BenchmarkLogging$' -benchmem -benchtime=200ms -count=3`. Local medians on Go 1.26.7, Linux/amd64, Ryzen 9 7950X:
-
-| DEBUG call | ns/call | B/call | allocations/call | attempted calls/s |
-| --- | ---: | ---: | ---: | ---: |
-| Filtered by INFO | 11.53 | 0 | 0 | 86.7 million |
-| Enabled | 874.5 | 189 | 2 | 1.14 million |
-
-This measures producer-path time with managed files and discarded stderr; allocation figures include concurrent output-worker activity. It is **not lossless storage throughput**: the enabled median-latency run dropped 55,719 of 275,401 attempts under queue pressure. It is not a comparison with other logging libraries.
-
 [AGPL-3.0-only](LICENSE). Offline country data: [ip-location-db](https://github.com/sapics/ip-location-db), PDDL.
 
 ## Nicotine+ comparison
