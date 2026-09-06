@@ -9,8 +9,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"strings"
+	"time"
 )
 
 // ShareDirectory is one directory in a complete shared-list response.
@@ -22,9 +24,10 @@ type ShareDirectory struct {
 
 // decodeSharedListDirectories parses the compressed payload without retaining
 // the decompressed wire representation.
-func decodeSharedListDirectories(data []byte, limits BrowseLimits) ([]ShareDirectory, error) {
+func decodeSharedListDirectories(data []byte, limits BrowseLimits, loggers ...*slog.Logger) ([]ShareDirectory, error) {
 	limits = limits.withDefaults()
 	if len(data) > limits.MaxCompressedSize {
+		logLimit(firstLogger(loggers), "compressed_bytes", uint64(limits.MaxCompressedSize), uint64(len(data)))
 		return nil, fmt.Errorf("%w: compressed payload has %d bytes (limit %d)", ErrTooLarge, len(data), limits.MaxCompressedSize)
 	}
 	source := bytes.NewReader(data)
@@ -34,7 +37,7 @@ func decodeSharedListDirectories(data []byte, limits BrowseLimits) ([]ShareDirec
 	}
 	defer z.Close()
 
-	counted := &decompressedLimitReader{r: z, max: uint64(limits.MaxDecompressedSize)}
+	counted := &decompressedLimitReader{r: z, max: uint64(limits.MaxDecompressedSize), logger: firstLogger(loggers)}
 	d := &sharedListStreamDecoder{r: bufio.NewReaderSize(counted, 32<<10), counted: counted}
 	result, err := d.parse(limits.MaxEntries)
 	if err != nil {
@@ -64,9 +67,10 @@ func decodeSharedListDirectories(data []byte, limits BrowseLimits) ([]ShareDirec
 }
 
 type decompressedLimitReader struct {
-	r   io.Reader
-	n   uint64
-	max uint64
+	r      io.Reader
+	n      uint64
+	max    uint64
+	logger *slog.Logger
 }
 
 func (r *decompressedLimitReader) Read(p []byte) (int, error) {
@@ -83,6 +87,7 @@ func (r *decompressedLimitReader) Read(p []byte) (int, error) {
 	n, err := r.r.Read(p)
 	r.n += uint64(n)
 	if r.n > r.max {
+		logLimit(r.logger, "decompressed_bytes", r.max, r.n)
 		return n, ErrTooLarge
 	}
 	return n, err
@@ -194,6 +199,7 @@ func (d *sharedListStreamDecoder) parse(maxEntries int) ([]ShareDirectory, error
 	total := uint64(0)
 	readGroups := func(count uint32, private bool) ([]ShareDirectory, error) {
 		if uint64(count) > max-total {
+			logLimit(d.counted.logger, "entries", max, total+uint64(count))
 			return nil, fmt.Errorf("%w: share list has at least %d directories (limit %d)", ErrTooLarge, total+uint64(count), max)
 		}
 		groups := make([]ShareDirectory, 0, int(count))
@@ -207,6 +213,7 @@ func (d *sharedListStreamDecoder) parse(maxEntries int) ([]ShareDirectory, error
 				return nil, err
 			}
 			if total >= max || uint64(files) > max-total-1 {
+				logLimit(d.counted.logger, "entries", max, total+1+uint64(files))
 				return nil, fmt.Errorf("%w: share list has at least %d files/directories (limit %d)", ErrTooLarge, total+1+uint64(files), max)
 			}
 			total++
@@ -256,6 +263,9 @@ func (d *sharedListStreamDecoder) parse(maxEntries int) ([]ShareDirectory, error
 
 // browseSharedDirectories fetches and parses one complete shared list.
 func (c *Client) browseSharedDirectories(ctx context.Context, peer net.Conn, progress func(uint64, uint64), limits BrowseLimits) ([]ShareDirectory, error) {
+	ctx, operationID := c.browseContext(ctx)
+	ctx, peer = c.browsePeer(ctx, peer)
+	c.log(ctx, slog.LevelInfo, "browse_operation_start", nil, slog.String("operation_id", operationID), slog.String("browse_type", "group"))
 	select {
 	case c.browseSlot <- struct{}{}:
 		defer func() { <-c.browseSlot }()
@@ -263,14 +273,30 @@ func (c *Client) browseSharedDirectories(ctx context.Context, peer net.Conn, pro
 		return nil, ctx.Err()
 	}
 	if err := writeMessage(peer, SharedListRequest{}); err != nil {
+		c.log(ctx, slog.LevelError, "browse_request_failed", err, slog.String("operation_id", operationID), slog.String("stage", "request"))
 		return nil, err
 	}
+	c.log(ctx, slog.LevelDebug, "browse_request_sent", nil, slog.String("operation_id", operationID), slog.Uint64("command", uint64(PeerGetSharedList)))
 	command, payload, err := readFrameContextProgress(ctx, peer, progress, limits.MaxCompressedSize)
 	if err != nil {
+		c.log(ctx, slog.LevelError, "browse_read_failed", err, slog.String("operation_id", operationID), slog.String("stage", "response"))
 		return nil, err
 	}
+	c.log(ctx, slog.LevelDebug, "browse_response_received", nil, slog.String("operation_id", operationID), slog.Uint64("command", uint64(command)), slog.Uint64("declared_size", uint64(len(payload))))
 	if command != PeerSharedList {
 		return nil, fmt.Errorf("%w: expected shared list", ErrMalformed)
 	}
-	return decodeSharedListDirectories(payload, limits)
+	started := time.Now()
+	result, err := decodeSharedListDirectories(payload, limits, c.logger(ctx))
+	if err != nil {
+		c.log(ctx, slog.LevelError, "browse_decode_failed", err, slog.String("operation_id", operationID), slog.String("stage", "body"))
+	} else if c.logger(ctx).Enabled(ctx, slog.LevelInfo) {
+		elapsed := time.Since(started)
+		entries := len(result)
+		for _, directory := range result {
+			entries += len(directory.Files)
+		}
+		c.log(ctx, slog.LevelInfo, "browse_decode_complete", nil, slog.String("operation_id", operationID), slog.Duration("decode_elapsed", elapsed), slog.Int("directories", len(result)), slog.Int("entries", entries), slog.Int("compressed_bytes", len(payload)))
+	}
+	return result, err
 }

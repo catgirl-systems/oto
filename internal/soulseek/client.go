@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"path/filepath"
 	"strings"
@@ -17,6 +18,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/catgirl-systems/oto/internal/country"
+	"github.com/catgirl-systems/oto/internal/diagnostics"
 	"golang.org/x/sys/unix"
 	"golang.org/x/text/cases"
 )
@@ -36,6 +38,7 @@ type ClientConfig struct {
 	UploadsReady   <-chan struct{}
 	IncomingSearch *IncomingSearchPolicy
 	BrowseLimits   BrowseLimits
+	Logger         *slog.Logger
 }
 
 type IncomingSearchPolicy struct {
@@ -74,6 +77,7 @@ type pendingDownload struct {
 	start              func()
 	done               chan error
 	ctx                context.Context
+	observation        *transferObservation
 }
 
 func (p *pendingDownload) finish(err error) {
@@ -122,6 +126,7 @@ type Client struct {
 	pierce                map[uint32]chan net.Conn
 	requested             map[string]*pendingDownload
 	downloads             map[uint32]*pendingDownload
+	observations          map[string]*transferObservation
 	distributed           *DistributedNode
 	incomingSearch        IncomingSearchPolicy
 	excludedSearchPhrases []string
@@ -129,6 +134,9 @@ type Client struct {
 }
 
 func NewClient(cfg ClientConfig) *Client {
+	if cfg.Logger != nil {
+		cfg.Logger = cfg.Logger.With("component", "soulseek")
+	}
 	if cfg.ListenAddr == "" {
 		cfg.ListenAddr = "127.0.0.1:0"
 	}
@@ -247,10 +255,15 @@ func (c *Client) Connect(ctx context.Context) error {
 		return errors.New("soulseek: already connected")
 	}
 	c.mu.Unlock()
+	started := time.Now()
+	c.log(ctx, slog.LevelDebug, "server_dial_started", nil)
 	conn, e := c.dialer.DialContext(ctx, "tcp", c.cfg.Address)
 	if e != nil {
+		c.log(ctx, slog.LevelWarn, "server_dial_failed", e, slog.String("stage", "dial"), slog.Int64("elapsed_ms", time.Since(started).Milliseconds()))
 		return e
 	}
+	conn = c.traceConn(ctx, conn, "", "S", "server")
+	diagnostics.Event(c.peerLogger(ctx, conn), slog.LevelInfo, "server_connected", nil, slog.Int64("elapsed_ms", time.Since(started).Milliseconds()))
 	c.mu.Lock()
 	c.conn = conn
 	c.ctx, c.cancel = context.WithCancel(context.Background())
@@ -356,10 +369,18 @@ func (c *Client) SetListenPort(port uint16) error {
 	}
 	return nil
 }
-func (c *Client) Login(ctx context.Context) error {
+func (c *Client) Login(ctx context.Context) (loginErr error) {
 	c.mu.Lock()
 	conn := c.conn
 	c.mu.Unlock()
+	ctx = diagnostics.WithLogger(ctx, c.peerLogger(ctx, conn))
+	defer func() {
+		level := slog.LevelInfo
+		if loginErr != nil {
+			level = slog.LevelWarn
+		}
+		c.log(ctx, level, "server_login_result", loginErr, slog.Bool("success", loginErr == nil), slog.String("stage", "login"))
+	}()
 	if conn == nil {
 		return ErrNotConnected
 	}
@@ -405,7 +426,12 @@ func (c *Client) Login(ctx context.Context) error {
 			port = uint16(ln.Addr().(*net.TCPAddr).Port)
 		}
 		if port != 0 {
-			_ = c.send(ListenPort{Port: uint32(port)})
+			err := c.send(ListenPort{Port: uint32(port)})
+			level := slog.LevelInfo
+			if err != nil {
+				level = slog.LevelWarn
+			}
+			c.log(ctx, level, "listen_port_sent", err, slog.Uint64("port", uint64(port)), slog.Bool("success", err == nil))
 		}
 		_ = c.SetStatus(UserStatusOnline)
 		index := c.shareIndex()
@@ -710,6 +736,9 @@ func (c *Client) BrowseWithProgress(ctx context.Context, peer net.Conn, path str
 
 func (c *Client) browse(ctx context.Context, peer net.Conn, path string, progress func(received, total uint64)) ([]ShareEntry, error) {
 	limits := c.BrowseLimits()
+	ctx, operationID := c.browseContext(ctx)
+	ctx, peer = c.browsePeer(ctx, peer)
+	c.log(ctx, slog.LevelInfo, "browse_operation_start", nil, slog.String("operation_id", operationID), slog.String("browse_type", map[bool]string{true: "group", false: "flat"}[path == ""]))
 	if path == "" {
 		select {
 		case c.browseSlot <- struct{}{}:
@@ -718,16 +747,26 @@ func (c *Client) browse(ctx context.Context, peer net.Conn, path string, progres
 			return nil, ctx.Err()
 		}
 		if err := writeMessage(peer, SharedListRequest{}); err != nil {
+			c.log(ctx, slog.LevelError, "browse_request_failed", err, slog.String("operation_id", operationID), slog.String("stage", "request"))
 			return nil, err
 		}
+		c.log(ctx, slog.LevelDebug, "browse_request_sent", nil, slog.String("operation_id", operationID), slog.Uint64("command", uint64(PeerGetSharedList)))
 		command, payload, err := readFrameContextProgress(ctx, peer, progress, limits.MaxCompressedSize)
 		if err != nil {
+			c.log(ctx, slog.LevelError, "browse_read_failed", err, slog.String("operation_id", operationID), slog.String("stage", "response"))
 			return nil, err
 		}
+		c.log(ctx, slog.LevelDebug, "browse_response_received", nil, slog.String("operation_id", operationID), slog.Uint64("command", uint64(command)), slog.Uint64("declared_size", uint64(len(payload))))
 		if command != PeerSharedList {
 			return nil, fmt.Errorf("%w: expected shared list", ErrMalformed)
 		}
-		response, err := decodeSharedListResponse(payload, limits)
+		started := time.Now()
+		response, err := decodeSharedListResponse(payload, limits, c.logger(ctx))
+		if err != nil {
+			c.log(ctx, slog.LevelError, "browse_decode_failed", err, slog.String("operation_id", operationID), slog.String("stage", "body"))
+		} else {
+			c.log(ctx, slog.LevelInfo, "browse_decode_complete", nil, slog.String("operation_id", operationID), slog.Duration("decode_elapsed", time.Since(started)), slog.Int("entries", len(response.Entries)))
+		}
 		return response.Entries, err
 	}
 	cleanPath, err := NormalizePath(path)
@@ -737,19 +776,26 @@ func (c *Client) browse(ctx context.Context, peer net.Conn, path string, progres
 	path = strings.ReplaceAll(cleanPath, "/", "\\")
 	token := c.nextToken()
 	if err := writeMessage(peer, FolderRequest{Token: token, Path: path}); err != nil {
+		c.log(ctx, slog.LevelError, "browse_request_failed", err, slog.String("operation_id", operationID), slog.String("stage", "request"))
 		return nil, err
 	}
+	c.log(ctx, slog.LevelDebug, "browse_request_sent", nil, slog.String("operation_id", operationID), slog.Uint64("command", uint64(PeerFolderContents)))
 	command, payload, err := readFrameContextProgress(ctx, peer, nil, limits.MaxCompressedSize)
 	if err != nil {
+		c.log(ctx, slog.LevelError, "browse_read_failed", err, slog.String("operation_id", operationID), slog.String("stage", "response"))
 		return nil, err
 	}
+	c.log(ctx, slog.LevelDebug, "browse_response_received", nil, slog.String("operation_id", operationID), slog.Uint64("command", uint64(command)), slog.Uint64("declared_size", uint64(len(payload))))
 	if command != PeerFolderResponse {
 		return nil, fmt.Errorf("%w: expected folder response", ErrMalformed)
 	}
-	response, err := decodeFolderResponse(payload, limits)
+	started := time.Now()
+	response, err := decodeFolderResponse(payload, limits, c.logger(ctx))
 	if err != nil {
+		c.log(ctx, slog.LevelError, "browse_decode_failed", err, slog.String("operation_id", operationID), slog.String("stage", "body"))
 		return nil, err
 	}
+	c.log(ctx, slog.LevelInfo, "browse_decode_complete", nil, slog.String("operation_id", operationID), slog.Duration("decode_elapsed", time.Since(started)), slog.Int("entries", len(response.Entries)))
 	responsePath, pathErr := NormalizePath(response.Path)
 	if response.Token != token || pathErr != nil || !strings.EqualFold(cleanPath, responsePath) {
 		return nil, fmt.Errorf("%w: folder response", ErrMalformed)
@@ -784,16 +830,24 @@ func readFrameContextProgress(ctx context.Context, c net.Conn, progress func(rec
 }
 
 func (c *Client) connectAddress(ctx context.Context, addr, kind string) (net.Conn, error) {
+	started := time.Now()
+	c.log(ctx, slog.LevelDebug, "connect_started", nil, slog.String("stage", "dial"), slog.String("type", kind))
 	peer, err := c.dialer.DialContext(ctx, "tcp", addr)
 	if err != nil {
+		c.log(ctx, slog.LevelInfo, "connect_failed", err, slog.String("stage", "dial"), slog.String("error_class", "dial"), slog.String("type", kind), slog.Duration("duration", time.Since(started)))
 		return nil, err
 	}
+	peer = c.traceConn(ctx, peer, "", kind, "outgoing")
+	logger := c.peerLogger(ctx, peer)
+	diagnostics.Event(logger, slog.LevelDebug, "dial_complete", nil, slog.Int64("elapsed_ms", time.Since(started).Milliseconds()))
 	stop := context.AfterFunc(ctx, func() { _ = peer.Close() })
 	defer stop()
 	if err = encodePeerHandshake(peer, PeerInitMessage{Username: c.cfg.Username, Type: kind, Token: 0}); err != nil {
+		diagnostics.Event(logger, slog.LevelInfo, "handshake_failed", err, slog.String("stage", "send"), slog.String("error_class", "handshake"))
 		peer.Close()
 		return nil, err
 	}
+	diagnostics.Event(logger, slog.LevelDebug, "handshake_sent", nil, slog.String("stage", "send"))
 	return peer, nil
 }
 
@@ -802,6 +856,9 @@ func (c *Client) connectUser(ctx context.Context, username string) (net.Conn, er
 }
 
 func (c *Client) connectUserType(ctx context.Context, username, kind string) (net.Conn, error) {
+	ctx = diagnostics.WithLogger(ctx, c.logger(ctx, slog.String("peer_username", username)))
+	started := time.Now()
+	c.log(ctx, slog.LevelDebug, "connect_user_started", nil, slog.String("stage", "address"), slog.String("type", kind), slog.String("peer_username", username))
 	if username == "" {
 		return nil, errors.New("soulseek: empty username")
 	}
@@ -812,12 +869,16 @@ func (c *Client) connectUserType(ctx context.Context, username, kind string) (ne
 	var directErr error
 	if address.IP != "0.0.0.0" && address.Port != 0 {
 		if peer, err := c.connectAddress(ctx, net.JoinHostPort(address.IP, fmt.Sprint(address.Port)), kind); err == nil {
+			c.log(ctx, slog.LevelDebug, "connect_user_complete", nil, slog.String("stage", "direct"), slog.String("type", kind), slog.String("peer_username", username), slog.Duration("duration", time.Since(started)))
 			return peer, nil
 		} else {
 			directErr = err
 		}
 	}
 	peer, err := c.connectIndirect(ctx, username, kind)
+	if err == nil {
+		c.log(ctx, slog.LevelDebug, "connect_user_complete", nil, slog.String("stage", "reverse"), slog.String("type", kind), slog.String("peer_username", username), slog.Duration("duration", time.Since(started)))
+	}
 	if err != nil && directErr != nil {
 		return nil, fmt.Errorf("direct: %v; indirect: %w", directErr, err)
 	}
@@ -854,6 +915,7 @@ func (c *Client) lookupPeerAddress(ctx context.Context, username string) (PeerAd
 }
 
 func (c *Client) connectIndirect(ctx context.Context, username, kind string) (net.Conn, error) {
+	c.log(ctx, slog.LevelDebug, "connect_indirect_started", nil, slog.String("stage", "reverse"), slog.String("type", kind), slog.String("peer_username", username))
 	token := randomToken()
 	connection := make(chan net.Conn, 1)
 	c.mu.Lock()
@@ -867,6 +929,10 @@ func (c *Client) connectIndirect(ctx context.Context, username, kind string) (ne
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	case peer := <-connection:
+		if p, ok := peer.(*diagnosticConn); ok {
+			peer = &diagnosticConn{Conn: p.Conn, id: p.id, opened: p.opened, logger: c.logger(ctx).With("connection_id", p.id, "route", "reverse", "peer_username", username, "type", kind)}
+			diagnostics.Event(c.peerLogger(ctx, peer), slog.LevelDebug, "connection_associated", nil)
+		}
 		return peer, nil
 	}
 }
@@ -878,12 +944,14 @@ func (c *Client) answerConnectPeer(instruction ConnectPeerInstruction) {
 	if err != nil {
 		return
 	}
+	peer = c.traceConn(ctx, peer, instruction.Username, instruction.Kind, "reverse_response")
 	var payload Encoder
 	payload.U32(instruction.Token)
 	if err := WriteInitFrame(peer, PeerPierceFirewall, payload.Payload()); err != nil {
 		_ = peer.Close()
 		return
 	}
+	diagnostics.Event(c.peerLogger(ctx, peer), slog.LevelDebug, "handshake_sent", nil, slog.String("stage", "reverse_response"))
 	defer peer.Close()
 	switch instruction.Kind {
 	case "P":
@@ -901,6 +969,7 @@ func (c *Client) BrowseUser(ctx context.Context, username, path string) ([]Share
 
 // BrowseUserDirectoriesWithProgress fetches a complete shared list grouped by directory.
 func (c *Client) BrowseUserDirectoriesWithProgress(ctx context.Context, username string, progress func(uint64, uint64)) ([]ShareDirectory, error) {
+	ctx, _ = c.browseContext(ctx)
 	limits := c.BrowseLimits()
 	peer, err := c.connectUser(ctx, username)
 	if err != nil {
@@ -912,6 +981,7 @@ func (c *Client) BrowseUserDirectoriesWithProgress(ctx context.Context, username
 
 // BrowseUserWithProgress reports compressed frame bytes for complete share lists.
 func (c *Client) BrowseUserWithProgress(ctx context.Context, username, path string, progress func(received, total uint64)) ([]ShareEntry, error) {
+	ctx, _ = c.browseContext(ctx)
 	peer, err := c.connectUser(ctx, username)
 	if err != nil {
 		return nil, err
@@ -940,7 +1010,13 @@ func (c *Client) DownloadWithStart(ctx context.Context, username, filename strin
 	}
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	pending := &pendingDownload{username: username, filename: filename, size: size, offset: offset, writer: dst, progress: progress, start: start, done: make(chan error, 1), ctx: ctx}
+	ctx = diagnostics.WithLogger(ctx, c.logger(ctx, slog.String("peer_username", username)))
+	observation := c.newObservation(ctx, "download", offset, size)
+	defer c.endObservation(observation)
+	if observation != nil {
+		ctx = diagnostics.WithLogger(ctx, observation.logger)
+	}
+	pending := &pendingDownload{username: username, filename: filename, size: size, offset: offset, writer: observedWriterAt{WriterAt: dst, observation: observation}, progress: observedProgress(observation, progress), start: start, done: make(chan error, 1), ctx: ctx, observation: observation}
 	key := downloadKey(username, filename)
 	c.mu.Lock()
 	if _, exists := c.requested[key]; exists {
@@ -973,11 +1049,13 @@ func (c *Client) DownloadWithStart(ctx context.Context, username, filename strin
 		return err
 	}
 	defer peer.Close()
+	ctx = diagnostics.WithLogger(ctx, c.peerLogger(ctx, peer))
 	stopPeer := context.AfterFunc(ctx, func() { _ = peer.Close() })
 	defer stopPeer()
 	if err := writeMessage(peer, QueueRequest{Filename: filename}); err != nil {
 		return err
 	}
+	c.log(ctx, slog.LevelInfo, "transfer_queued", nil, slog.Uint64("resume_offset", offset), slog.Uint64("size", size))
 	type frame struct {
 		command uint32
 		payload []byte
@@ -1012,6 +1090,7 @@ func (c *Client) DownloadWithStart(ctx context.Context, username, filename strin
 				transportError := errors.Is(message.err, io.EOF) || errors.Is(message.err, io.ErrUnexpectedEOF) ||
 					errors.Is(message.err, net.ErrClosed) || errors.As(message.err, &netErr)
 				if accepted && transportError {
+					c.log(ctx, slog.LevelDebug, "control_closed_file_continues", message.err, slog.String("stage", "control"), slog.String("stage_detail", "observed_transport_end"))
 					// P may close while F is still sending. The file result (or setup timeout) owns completion.
 					_ = peer.Close()
 					frames = nil
@@ -1037,10 +1116,13 @@ func (c *Client) DownloadWithStart(ctx context.Context, username, filename strin
 				if reason == "" {
 					reason = "upload denied"
 				}
+				c.observationStage(ctx, pending.observation, "rejected", slog.LevelInfo, nil)
+				c.log(ctx, slog.LevelWarn, "transfer_rejected", nil, slog.String("error_class", "remote_rejection"))
 				return &DownloadRejectedError{Reason: reason}
 			case PeerUploadFailed:
 				failed, decodeErr := DecodeQueueFailed(message.payload)
 				if decodeErr == nil && downloadKey(username, failed.Filename) == downloadKey(username, filename) {
+					c.observationStage(ctx, pending.observation, "remote_upload_failed", slog.LevelWarn, ErrUploadFailed)
 					return ErrUploadFailed
 				}
 			case PeerTransferRequest:
@@ -1079,6 +1161,10 @@ func (c *Client) acceptDownload(peer net.Conn, pending *pendingDownload, request
 	}
 	pending.size, pending.accepted = request.Size, true
 	c.downloads[request.Token] = pending
+	attrs := []slog.Attr{slog.String("stage", "control"), slog.Uint64("offset", pending.offset), slog.Uint64("size", request.Size)}
+	if pending.observation != nil {
+		attrs = append(attrs, slog.String("linked_to", pending.observation.id))
+	}
 	pending.startTimer = time.AfterFunc(downloadSetupTimeout, func() {
 		c.mu.Lock()
 		defer c.mu.Unlock()
@@ -1092,6 +1178,12 @@ func (c *Client) acceptDownload(peer net.Conn, pending *pendingDownload, request
 		return err
 	}
 	defer peer.SetWriteDeadline(time.Time{})
+	if o := pending.observation; o != nil {
+		o.mu.Lock()
+		o.size = request.Size
+		o.mu.Unlock()
+	}
+	c.log(pending.ctx, slog.LevelDebug, "transfer_accepted", nil, attrs...)
 	return writeMessage(peer, TransferResponse{Token: request.Token, Accepted: true})
 }
 
@@ -1112,8 +1204,12 @@ func (c *Client) serveFile(peer net.Conn) {
 	}
 	c.mu.Unlock()
 	if pending == nil {
+		c.log(context.Background(), slog.LevelInfo, "file_token_unmatched", nil, slog.String("stage", "file_handshake"), slog.String("error_class", "unknown_token"))
 		return
 	}
+	fileLogger := c.linkFileLogger(pending.ctx, peer)
+	fileCtx := diagnostics.WithLogger(pending.ctx, fileLogger)
+	diagnostics.Event(fileLogger, slog.LevelDebug, "file_token_matched", nil, slog.String("stage", "file_handshake"))
 	pending.fileMu.Lock()
 	defer pending.fileMu.Unlock()
 	if pending.ctx.Err() != nil {
@@ -1125,18 +1221,26 @@ func (c *Client) serveFile(peer net.Conn) {
 	var offsetBytes [8]byte
 	binary.LittleEndian.PutUint64(offsetBytes[:], pending.offset)
 	if _, err := peer.Write(offsetBytes[:]); err != nil {
+		diagnostics.Event(fileLogger, slog.LevelError, "file_setup_failed", err, slog.String("stage", "resume_offset"))
 		pending.finish(err)
 		return
 	}
 	if err := peer.SetDeadline(time.Time{}); err != nil {
+		diagnostics.Event(fileLogger, slog.LevelError, "file_setup_failed", err, slog.String("stage", "clear_deadline"))
 		pending.finish(err)
 		return
 	}
 	if pending.start != nil {
 		pending.start()
 	}
-	reader := downloadReader{ctx: pending.ctx, limiter: &c.downloadLimit, src: peer}
+	pending.observation.begin(fileLogger)
+	reader := downloadReader{ctx: pending.ctx, limiter: &c.downloadLimit, src: observedReader{Reader: peer, observation: pending.observation}}
 	err := CopyAtMost(pending.ctx, pending.writer, reader, pending.size, pending.offset, pending.progress)
+	if err != nil {
+		c.observationStage(fileCtx, pending.observation, "transfer_failed", slog.LevelError, err)
+	} else {
+		c.observationStage(fileCtx, pending.observation, "transfer_completed", slog.LevelInfo, nil)
+	}
 	pending.finish(err)
 }
 
@@ -1288,6 +1392,7 @@ func (c *Client) acceptLoop(ln net.Listener) {
 	}
 }
 func (c *Client) servePeer(p net.Conn) {
+	p = c.traceConn(context.Background(), p, "", "", "incoming")
 	initCmd, b, e := ReadInitFrame(p)
 	if e != nil {
 		return
@@ -1318,8 +1423,11 @@ func (c *Client) servePeer(p net.Conn) {
 	if initCmd == byte(PeerInit) {
 		peerInfo, err := parsePeerInit(b)
 		if err != nil {
+			c.log(context.Background(), slog.LevelInfo, "handshake_failed", err, slog.String("stage", "receive"), slog.String("error_class", "handshake"))
 			return
 		}
+		logger := c.peerLogger(context.Background(), p).With("peer_username", peerInfo.Username, "type", peerInfo.Type)
+		diagnostics.Event(logger, slog.LevelDebug, "handshake_received", nil, slog.String("stage", "receive"))
 		if peerInfo.Type == "F" {
 			c.serveFile(p)
 			return

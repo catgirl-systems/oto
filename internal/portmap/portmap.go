@@ -4,10 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"strings"
 	"time"
 
+	"github.com/catgirl-systems/oto/internal/diagnostics"
 	"github.com/huin/goupnp/soap"
 	nat "github.com/libp2p/go-nat"
 )
@@ -27,6 +28,7 @@ type Mapping struct {
 	renewal       time.Duration
 	operationWait time.Duration
 	onChange      func(uint16)
+	logger        *slog.Logger
 	ctx           context.Context
 	cancel        context.CancelFunc
 	done          chan struct{}
@@ -35,10 +37,18 @@ type Mapping struct {
 
 // Open discovers and maps internalPort. A nil mapping means both protocols are disabled.
 func Open(ctx context.Context, internalPort uint16, natPMP, upnp bool, onChange func(uint16)) (*Mapping, error) {
-	return open(ctx, internalPort, natPMP, upnp, onChange, renewalInterval, nat.DiscoverNATs)
+	return OpenWithLogger(ctx, internalPort, natPMP, upnp, onChange, nil)
+}
+
+func OpenWithLogger(ctx context.Context, internalPort uint16, natPMP, upnp bool, onChange func(uint16), logger *slog.Logger) (*Mapping, error) {
+	return openWithLogger(ctx, internalPort, natPMP, upnp, onChange, renewalInterval, nat.DiscoverNATs, logger)
 }
 
 func open(ctx context.Context, internalPort uint16, natPMP, upnp bool, onChange func(uint16), renewal time.Duration, discover func(context.Context) <-chan nat.NAT) (*Mapping, error) {
+	return openWithLogger(ctx, internalPort, natPMP, upnp, onChange, renewal, discover, nil)
+}
+
+func openWithLogger(ctx context.Context, internalPort uint16, natPMP, upnp bool, onChange func(uint16), renewal time.Duration, discover func(context.Context) <-chan nat.NAT, logger *slog.Logger) (*Mapping, error) {
 	if !natPMP && !upnp {
 		return nil, nil
 	}
@@ -79,10 +89,10 @@ func open(ctx context.Context, internalPort uint16, natPMP, upnp bool, onChange 
 		mappingCtx, cancelMapping := context.WithCancel(ctx)
 		mapping := &Mapping{
 			gateway: gateway, internalPort: int(internalPort), lease: actualLease,
-			renewal: renewal, operationWait: operationTimeout, onChange: onChange,
+			renewal: renewal, operationWait: operationTimeout, onChange: onChange, logger: logger,
 			ctx: mappingCtx, cancel: cancelMapping, done: make(chan struct{}),
 		}
-		log.Printf("port mapping: mapped TCP port %d to external port %d using %s", internalPort, externalPort, gateway.Type())
+		diagnostics.Event(logger, slog.LevelInfo, "port_mapping_mapped", nil, slog.Uint64("internal_port", uint64(internalPort)), slog.Uint64("external_port", uint64(externalPort)), slog.String("gateway", gateway.Type()))
 		if onChange != nil {
 			onChange(uint16(externalPort))
 		}
@@ -122,11 +132,11 @@ func (m *Mapping) run(externalPort uint16) {
 			port, lease, err := add(opCtx, m.gateway, m.internalPort, m.lease)
 			cancel()
 			if err != nil {
-				log.Printf("port mapping: renew %s TCP port %d: %v", m.gateway.Type(), m.internalPort, err)
+				diagnostics.Event(m.logger, slog.LevelWarn, "port_mapping_renew_failed", err, slog.Uint64("internal_port", uint64(m.internalPort)), slog.String("gateway", m.gateway.Type()))
 				continue
 			}
 			if port < 1 || port > 65535 {
-				log.Printf("port mapping: renew %s TCP port %d returned invalid external port %d", m.gateway.Type(), m.internalPort, port)
+				diagnostics.Event(m.logger, slog.LevelWarn, "port_mapping_renew_invalid_port", nil, slog.Uint64("internal_port", uint64(m.internalPort)), slog.Uint64("external_port", uint64(port)), slog.String("gateway", m.gateway.Type()))
 				continue
 			}
 			m.lease = lease

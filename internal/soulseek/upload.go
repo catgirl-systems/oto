@@ -6,12 +6,15 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/catgirl-systems/oto/internal/diagnostics"
 )
 
 type TransferEvent struct {
@@ -42,6 +45,7 @@ type uploadAttempt struct {
 	progress       uint64
 	manual, notify bool
 	fileStarted    bool
+	observation    *transferObservation
 }
 
 func (c *Client) emitUpload(a *uploadAttempt, state string, done uint64, message string) {
@@ -174,6 +178,7 @@ func (c *Client) registerUploadWithOptions(username, filename string, peerRequeu
 			}
 		}
 		c.emitUpload(a, "queued", 0, "")
+		c.observationStage(a.ctx, a.observation, "queued", slog.LevelDebug, nil)
 		go c.executeUpload(a)
 		return a, true, nil
 	}
@@ -257,7 +262,24 @@ func (c *Client) executeUpload(a *uploadAttempt) {
 	c.mu.Unlock()
 }
 
-func (c *Client) performUpload(a *uploadAttempt, setupCtx context.Context, setupCancel context.CancelFunc) error {
+func (c *Client) performUpload(a *uploadAttempt, setupCtx context.Context, setupCancel context.CancelFunc) (uploadErr error) {
+	operationCtx := diagnostics.WithLogger(a.ctx, c.logger(a.ctx).With("peer_username", a.target.Username, "attempt_id", a.target.Attempt))
+	a.observation = c.newObservation(operationCtx, "upload", 0, a.job.Request.Size)
+	defer c.endObservation(a.observation)
+	if a.observation != nil {
+		operationCtx = diagnostics.WithLogger(operationCtx, a.observation.logger)
+	}
+	setupCtx = diagnostics.WithLogger(setupCtx, c.logger(operationCtx))
+	defer func() {
+		level, event := slog.LevelInfo, "transfer_completed"
+		if uploadErr != nil {
+			level, event = slog.LevelError, "transfer_failed"
+		}
+		if errors.Is(uploadErr, context.Canceled) {
+			level, event = slog.LevelInfo, "transfer_cancelled"
+		}
+		c.log(operationCtx, level, event, uploadErr)
+	}()
 	peer, err := c.connectUser(setupCtx, a.target.Username)
 	if err != nil {
 		return err
@@ -268,6 +290,7 @@ func (c *Client) performUpload(a *uploadAttempt, setupCtx context.Context, setup
 	if err := writeMessage(peer, a.job.Request); err != nil {
 		return err
 	}
+	c.log(setupCtx, slog.LevelDebug, "transfer_request_sent", nil, slog.String("stage", "control"), slog.Uint64("size", a.job.Request.Size))
 	// This dedicated connection has exactly one reader.
 	command, payload, err := ReadFrame(peer)
 	if err != nil {
@@ -283,6 +306,7 @@ func (c *Client) performUpload(a *uploadAttempt, setupCtx context.Context, setup
 	if response.Token != a.job.Request.Token {
 		return ErrMalformed
 	}
+	c.log(setupCtx, slog.LevelDebug, "transfer_response_received", nil, slog.Bool("accepted", response.Accepted), slog.String("stage", "control"), slog.Uint64("size", a.job.Request.Size))
 	if !response.Accepted {
 		if response.Reason == "" {
 			response.Reason = "upload denied"
@@ -317,6 +341,13 @@ func (c *Client) performUpload(a *uploadAttempt, setupCtx context.Context, setup
 	if offset > a.job.Request.Size {
 		return ErrMalformed
 	}
+	operationCtx = diagnostics.WithLogger(operationCtx, c.linkFileLogger(operationCtx, filePeer))
+	c.log(operationCtx, slog.LevelDebug, "resume_offset_received", nil, slog.Uint64("resume_offset", offset))
+	if a.observation != nil {
+		a.observation.mu.Lock()
+		a.observation.offset, a.observation.committed = offset, offset
+		a.observation.mu.Unlock()
+	}
 	// A queued/setup attempt may outlive a share-policy publication.
 	_, local, size, err := c.validateUpload(a.target.Username, a.target.Filename)
 	if err != nil {
@@ -337,6 +368,7 @@ func (c *Client) performUpload(a *uploadAttempt, setupCtx context.Context, setup
 		callback(TransferEvent{Direction: "upload", Username: a.target.Username, Filename: a.target.Filename, Attempt: a.target.Attempt, State: "running", Done: offset, Total: a.job.Request.Size})
 	}
 	c.emitUpload(a, "running", offset, "")
+	a.observation.begin(c.logger(operationCtx))
 	writer := c.cfg.Uploads.LimitWriter(a.ctx, a.job, uploadProgressWriter{Writer: filePeer, client: c, attempt: a})
 	return SendFile(a.ctx, filepath.Dir(a.localPath), filepath.Base(a.localPath), writer, a.job.Request.Size, offset, nil)
 }
@@ -350,6 +382,7 @@ type uploadProgressWriter struct {
 
 func (w uploadProgressWriter) Write(p []byte) (int, error) {
 	n, err := w.Writer.Write(p)
+	w.attempt.observation.observe(false, n, err)
 	if n > 0 {
 		a := w.attempt
 		a.mu.Lock()
@@ -357,6 +390,7 @@ func (w uploadProgressWriter) Write(p []byte) (int, error) {
 		done := a.progress
 		a.mu.Unlock()
 		w.client.emitUpload(a, "running", done, "")
+		a.observation.commit(done)
 	}
 	return n, err
 }
@@ -413,6 +447,11 @@ func (c *Client) failPendingDownload(username, filename string, err error) {
 	pending := c.requested[downloadKey(username, filename)]
 	c.mu.Unlock()
 	if pending != nil {
+		event := "transfer_rejected"
+		if errors.Is(err, ErrUploadFailed) {
+			event = "remote_upload_failed"
+		}
+		c.log(pending.ctx, slog.LevelWarn, event, err)
 		pending.finish(err)
 	}
 }

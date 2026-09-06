@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"io"
+	"log/slog"
 	"net"
 	"os"
 	"testing"
@@ -121,7 +122,7 @@ func TestShortDownloadPreservesReadError(t *testing.T) {
 }
 
 func TestDownloadControlConnectionLifetime(t *testing.T) {
-	for _, action := range []string{"complete", "resume", "late_file", "short_file", "rejected", "before_accept", "separate_rejection", "separate_failure", "separate_size_change"} {
+	for _, action := range []string{"complete", "resume", "late_file", "short_file", "rejected", "before_accept", "separate_rejection", "separate_failure", "separate_size_change", "disk_failure", "live_level", "blocked_logging"} {
 		t.Run(action, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
@@ -131,7 +132,15 @@ func TestDownloadControlConnectionLifetime(t *testing.T) {
 			}
 			defer listener.Close()
 			_ = listener.(*net.TCPListener).SetDeadline(time.Now().Add(5 * time.Second))
-			client := NewClient(ClientConfig{})
+			var stderr io.Writer
+			if action == "blocked_logging" {
+				w := make(protocolBlockedOutput)
+				defer close(w)
+				stderr = w
+			}
+			manager := protocolDiagnostics(t, func(records []map[string]any) { checkDownloadEvents(t, action, records) }, stderr)
+			logger := manager.Logger().With("transfer_id", "d-test", "attempt_id", 2)
+			client := NewClient(ClientConfig{Logger: logger})
 			defer client.Close()
 			lookup := &peerAddressLookup{done: make(chan struct{}), address: PeerAddress{IP: "127.0.0.1", Port: uint32(listener.Addr().(*net.TCPAddr).Port)}}
 			close(lookup.done)
@@ -141,6 +150,9 @@ func TestDownloadControlConnectionLifetime(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer file.Close()
+			if action == "disk_failure" {
+				file.Close()
+			}
 			var prefix []byte
 			if action == "resume" {
 				prefix = []byte("pre")
@@ -223,10 +235,29 @@ func TestDownloadControlConnectionLifetime(t *testing.T) {
 			if _, err := right.Write(chunk); err != nil {
 				t.Fatal(err)
 			}
+			if action == "disk_failure" {
+				if err := <-result; !errors.Is(err, os.ErrClosed) {
+					t.Fatalf("lost disk failure: %v", err)
+				}
+				return
+			}
 			select {
 			case <-progress:
 			case <-ctx.Done():
 				t.Fatal("file transfer never started")
+			}
+			if action == "live_level" {
+				manager.SetLevel(slog.LevelError)
+				manager.Logger().Debug("PRIVATE_CONTENT")
+				manager.SetLevel(slog.LevelDebug)
+			}
+			if action == "blocked_logging" {
+				for i := 0; i < 1024; i++ {
+					manager.Logger().Debug("queue_pressure")
+				}
+				if manager.Status().DroppedRecords == 0 {
+					t.Fatal("queue did not fill")
+				}
 			}
 			if separate {
 				_ = peer.Close()
