@@ -259,7 +259,6 @@ func (x *browseSnapshot) page(ctx context.Context, req BrowsePageRequest) (Brows
 			}
 		}
 	} else {
-		// ponytail: global find scans the snapshot; index only if measured query latency warrants it.
 		prefix := strings.ToLower(x.dirs[folder].path) + "\\"
 		for id := range x.dirs {
 			if err := ctx.Err(); err != nil {
@@ -387,7 +386,6 @@ func (s *Service) OpenBrowse(ctx context.Context, username, folder, query string
 }
 
 func (x *browseSnapshot) flatEntries() []soulseek.ShareEntry {
-	// ponytail: explicit saving still flattens paths for the existing cache writer; stream rows if saving becomes a memory bottleneck.
 	entries := make([]soulseek.ShareEntry, 0, x.total)
 	for id, d := range x.dirs {
 		if id != 0 {

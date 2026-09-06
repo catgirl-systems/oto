@@ -125,10 +125,6 @@ func readListenPortFile(path string) (uint16, bool, error) {
 	return uint16(port), true, nil
 }
 
-func watchListenPortFile(ctx context.Context, path string, interval time.Duration, apply func(uint16, bool)) {
-	watchListenPortFileWithLogger(ctx, path, interval, apply, nil)
-}
-
 func watchListenPortFileWithLogger(ctx context.Context, path string, interval time.Duration, apply func(uint16, bool), logger *slog.Logger) {
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {

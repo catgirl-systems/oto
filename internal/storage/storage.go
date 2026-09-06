@@ -8,7 +8,7 @@ import (
 	"context"
 	"database/sql"
 	"database/sql/driver"
-	"embed"
+	_ "embed"
 	"errors"
 	"fmt"
 	"net/url"
@@ -22,7 +22,7 @@ import (
 )
 
 //go:embed schema.sql
-var schemaFS embed.FS
+var schema []byte
 
 const (
 	SchemaVersion  = 1
@@ -101,10 +101,6 @@ func open(path string, daemon bool) (*DB, error) {
 	if err = sqlDB.Ping(); err != nil {
 		return closeDB(fmt.Errorf("%w: open database: %v", ErrCorrupt, err))
 	}
-	schema, err := schemaFS.ReadFile("schema.sql")
-	if err != nil {
-		return closeDB(err)
-	}
 	if err = bootstrapSchema(sqlDB, schema); err != nil {
 		return closeDB(err)
 	}
@@ -132,12 +128,7 @@ func bootstrapSchema(db *sql.DB, schema []byte) error {
 	if err != nil {
 		return fmt.Errorf("storage: begin schema bootstrap: %w", err)
 	}
-	committed := false
-	defer func() {
-		if !committed {
-			_ = tx.Rollback()
-		}
-	}()
+	defer tx.Rollback()
 
 	var version int
 	if err := tx.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
@@ -154,7 +145,6 @@ func bootstrapSchema(db *sql.DB, schema []byte) error {
 		if err := tx.Commit(); err != nil {
 			return fmt.Errorf("storage: finish schema check: %w", err)
 		}
-		committed = true
 		return nil
 	}
 	if _, err := tx.Exec(string(schema)); err != nil {
@@ -163,7 +153,6 @@ func bootstrapSchema(db *sql.DB, schema []byte) error {
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("storage: commit schema: %w", err)
 	}
-	committed = true
 	return nil
 }
 
@@ -243,12 +232,7 @@ func (d *DB) WriteTx(ctx context.Context, fn func(*sql.Tx) error) (err error) {
 	if err != nil {
 		return err
 	}
-	committed := false
-	defer func() {
-		if !committed {
-			_ = tx.Rollback()
-		}
-	}()
+	defer tx.Rollback()
 	if fn == nil {
 		return errors.New("storage: nil write callback")
 	}
@@ -263,7 +247,6 @@ func (d *DB) WriteTx(ctx context.Context, fn func(*sql.Tx) error) (err error) {
 	if err = tx.Commit(); err != nil {
 		return err
 	}
-	committed = true
 	return nil
 }
 

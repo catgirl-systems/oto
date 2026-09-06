@@ -104,7 +104,6 @@ func (s *Service) downloadPeerSlot(username string) chan struct{} {
 	defer s.mu.Unlock()
 	peerSlot := s.downloadPeers[username]
 	if peerSlot == nil {
-		// ponytail: serialize downloads per peer; multiplex P connections if parallel same-peer queues matter.
 		peerSlot = make(chan struct{}, 1)
 		s.downloadPeers[username] = peerSlot
 	}

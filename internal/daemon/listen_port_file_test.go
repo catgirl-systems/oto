@@ -18,9 +18,9 @@ func TestWatchListenPortFile(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	updates := make(chan listenPortUpdate, 16)
-	go watchListenPortFile(ctx, path, time.Hour, func(port uint16, available bool) {
+	go watchListenPortFileWithLogger(ctx, path, time.Hour, func(port uint16, available bool) {
 		updates <- listenPortUpdate{port: port, available: available}
-	})
+	}, nil)
 	waitForListenPort(t, updates, listenPortUpdate{})
 
 	if err := os.WriteFile(path, []byte("43001\n"), 0600); err != nil {
@@ -48,9 +48,9 @@ func TestListenPortFileFallsBackToConfiguredReconciliation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	updates := make(chan listenPortUpdate, 16)
-	go watchListenPortFile(ctx, path, 20*time.Millisecond, func(port uint16, available bool) {
+	go watchListenPortFileWithLogger(ctx, path, 20*time.Millisecond, func(port uint16, available bool) {
 		updates <- listenPortUpdate{port: port, available: available}
-	})
+	}, nil)
 	waitForListenPort(t, updates, listenPortUpdate{})
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		t.Fatal(err)
