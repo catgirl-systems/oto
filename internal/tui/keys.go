@@ -785,14 +785,14 @@ func (m *model) editKey(k tea.KeyPressMsg) tea.Cmd {
 					m.browseRuleAncestors = map[int][]int{}
 					for key, page := range m.browsePages {
 						if page.query != "" {
-							delete(m.browsePages, key)
+							evictBrowsePage(m.browsePages, key)
 						}
 					}
 					m.saveBrowseTab()
 					tab := &m.browseTabs[m.browseTabIndex]
 					rebuildRemoteBrowse(tab)
 					m.loadBrowseTab(m.browseTabIndex)
-					if _, ok := m.browsePages[browsePageKey("", filter)]; !ok {
+					if page := m.browsePages[browsePageKey("", filter)]; !page.loaded {
 						return m.requestRemotePage("", filter, 0)
 					}
 					return nil

@@ -199,6 +199,11 @@ func (m model) compactView() string {
 	if activity := m.activityView(m.width); activity != "" {
 		footer = activity
 	}
+	if m.workspace == workspaceBrowse {
+		if heading, detail := m.browseFailure(); heading != "" {
+			return strings.Join(browseErrorLines(heading, detail, m.width, m.height), "\n")
+		}
+	}
 	lines := []string{
 		trunc("oto  "+m.statusText(), m.width),
 		trunc("["+names[m.workspace]+"]", m.width),

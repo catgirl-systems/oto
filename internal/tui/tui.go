@@ -508,7 +508,6 @@ func (m *model) saveBrowseTab() {
 	tab.entries, tab.cursor, tab.selected, tab.loading, tab.tree = m.entries, m.cursor, m.selected, m.loading, m.browseTree
 	tab.filter = m.browseFilter
 	tab.loaded, tab.cached, tab.revision, tab.savedAt = m.browseLoaded, m.browseCached, m.browseRevision, m.browseSavedAt
-	tab.err = m.err
 	tab.paged, tab.pages, tab.remote = m.browsePaged, m.browsePages, m.browseRemote
 	tab.pageTotal = m.browseTotal
 	tab.ruleAncestors = m.browseRuleAncestors
@@ -535,7 +534,7 @@ func (m *model) loadBrowseTab(index int) {
 	m.browsePaged, m.browsePages, m.browseRemote = tab.paged, tab.pages, tab.remote
 	m.browseTotal = tab.pageTotal
 	m.browseRuleAncestors = tab.ruleAncestors
-	m.err = tab.err
+	m.err = browseErrorText(tab.err)
 }
 
 func (m *model) switchWorkspace(next workspace) {
@@ -617,7 +616,9 @@ func (m *model) openTreeNode(toggle bool) tea.Cmd {
 		folder := normalizeBrowsePath(node.path)
 		if m.browseFilter != "" {
 			m.browseFilter = ""
-			m.browsePages = map[string]browsePageState{}
+			for key := range m.browsePages {
+				evictBrowsePage(m.browsePages, key)
+			}
 			return m.requestRemotePage(folder, "", 0)
 		}
 		if toggle && m.browseTree.expandedNode(*node) {
@@ -704,6 +705,7 @@ func (m *model) openBrowse(user, target string, refresh bool) tea.Cmd {
 	}
 	m.browseRequest++
 	tab.request, tab.loading, tab.loaded = m.browseRequest, true, false
+	tab.err = ""
 	tab.received, tab.total, tab.revision = 0, 0, 0
 	tab.pages, tab.remote, tab.entries, tab.tree, tab.selected = map[string]browsePageState{}, nil, nil, treeState{}, map[int]bool{}
 	tab.ruleAncestors = nil
@@ -939,11 +941,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if !strings.EqualFold(tab.user, x.user) || tab.revision != x.revision || !exists || state.request != x.request {
 				continue
 			}
-			state.loading = false
+			state.loading, state.err = false, errText(x.err)
 			tab.pages[key] = state
-			if x.err != nil {
-				tab.err = errText(x.err)
-			} else if x.page.Revision == tab.revision {
+			if x.err == nil && x.page.Revision == tab.revision {
 				applyBrowsePage(tab, x)
 			}
 			if m.workspace == workspaceBrowse && i == m.browseTabIndex {
