@@ -123,6 +123,7 @@ type transfer struct {
 	id, user, filename, direction, state, err string
 	done, total, speed                        uint64
 	elapsedMS, etaSeconds                     *uint64
+	waitingForPeerSeconds, retryInSeconds     *uint64
 	queue                                     uint32
 }
 type share struct{ name, path string }
@@ -339,7 +340,7 @@ func toEntry(v soulseek.ShareEntry) entry {
 func toTransfers(x []daemon.Transfer) []transfer {
 	r := make([]transfer, len(x))
 	for i, v := range x {
-		r[i] = transfer{id: v.ID, user: v.Username, filename: v.Filename, direction: v.Direction, state: v.State, err: v.Error, done: v.Done, total: v.Total, speed: v.SpeedBPS, elapsedMS: v.ElapsedMS, etaSeconds: v.ETASeconds, queue: v.Queue}
+		r[i] = transfer{id: v.ID, user: v.Username, filename: v.Filename, direction: v.Direction, state: v.State, err: v.Error, done: v.Done, total: v.Total, speed: v.SpeedBPS, elapsedMS: v.ElapsedMS, etaSeconds: v.ETASeconds, waitingForPeerSeconds: v.WaitingForPeerSeconds, retryInSeconds: v.RetryInSeconds, queue: v.Queue}
 	}
 	return r
 }

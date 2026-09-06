@@ -125,18 +125,20 @@ type SearchPage struct {
 }
 
 type Transfer struct {
-	ID         string  `json:"id"`
-	Username   string  `json:"username"`
-	Filename   string  `json:"filename"`
-	Direction  string  `json:"direction"`
-	State      string  `json:"state"`
-	Done       uint64  `json:"done"`
-	Total      uint64  `json:"total"`
-	ElapsedMS  *uint64 `json:"elapsed_ms"`
-	SpeedBPS   uint64  `json:"speed_bps"`
-	ETASeconds *uint64 `json:"eta_seconds"`
-	Queue      uint32  `json:"queue,omitempty"`
-	Error      string  `json:"error,omitempty"`
+	ID                    string  `json:"id"`
+	Username              string  `json:"username"`
+	Filename              string  `json:"filename"`
+	Direction             string  `json:"direction"`
+	State                 string  `json:"state"`
+	Done                  uint64  `json:"done"`
+	Total                 uint64  `json:"total"`
+	ElapsedMS             *uint64 `json:"elapsed_ms"`
+	SpeedBPS              uint64  `json:"speed_bps"`
+	ETASeconds            *uint64 `json:"eta_seconds"`
+	WaitingForPeerSeconds *uint64 `json:"waiting_for_peer_seconds,omitempty"`
+	RetryInSeconds        *uint64 `json:"retry_in_seconds,omitempty"`
+	Queue                 uint32  `json:"queue,omitempty"`
+	Error                 string  `json:"error,omitempty"`
 }
 
 type Download struct {
@@ -357,8 +359,9 @@ func (s *Service) Config() config.SafeConfig {
 
 func (s *Service) Snapshot() Snapshot {
 	logging := s.loggingStatus()
+	now := time.Now()
 	s.mu.RLock()
-	defer s.mu.RUnlock()
+	client := s.client
 	publicIP, publicPort := "", uint16(0)
 	if s.status == StatusConnected && s.client != nil {
 		publicIP, publicPort = s.client.PublicIP(), s.client.PublicPort()
@@ -375,7 +378,10 @@ func (s *Service) Snapshot() Snapshot {
 	if s.telemetry != nil {
 		warning = s.telemetry.warning
 	}
-	return Snapshot{Logging: logging, StatsWarning: warning, Status: s.status, Presence: s.presence, Error: s.lastErr, PublicIP: publicIP, PublicPort: publicPort, Config: s.cfg.Redacted(), Shares: append([]config.Share(nil), s.cfg.Shares...), ShareScan: scan, ShareIndexRevision: s.shareIndexRevision, DownloadNotification: s.downloadNotification, Downloads: append([]Download(nil), s.journal.Downloads...), Transfers: s.transferValuesLocked(time.Now())}
+	snapshot := Snapshot{Logging: logging, StatsWarning: warning, Status: s.status, Presence: s.presence, Error: s.lastErr, PublicIP: publicIP, PublicPort: publicPort, Config: s.cfg.Redacted(), Shares: append([]config.Share(nil), s.cfg.Shares...), ShareScan: scan, ShareIndexRevision: s.shareIndexRevision, DownloadNotification: s.downloadNotification, Downloads: append([]Download(nil), s.journal.Downloads...), Transfers: s.transferValuesLocked(now)}
+	s.mu.RUnlock()
+	addDownloadWaits(snapshot.Transfers, client, now)
+	return snapshot
 }
 
 // Start initializes daemon-owned work and optionally starts a Soulseek session.
@@ -1265,9 +1271,13 @@ func (s *Service) Downloads() []Download {
 	return append([]Download(nil), s.journal.Downloads...)
 }
 func (s *Service) Transfers() []Transfer {
+	now := time.Now()
 	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.transferValuesLocked(time.Now())
+	client := s.client
+	transfers := s.transferValuesLocked(now)
+	s.mu.RUnlock()
+	addDownloadWaits(transfers, client, now)
+	return transfers
 }
 func (s *Service) TransferAction(id, action string) error {
 	if strings.HasPrefix(id, "upload:") {

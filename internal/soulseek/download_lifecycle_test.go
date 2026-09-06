@@ -179,6 +179,9 @@ func TestDownloadControlConnectionLifetime(t *testing.T) {
 			if command, _, err := ReadFrame(peer); err != nil || command != PeerQueueUpload {
 				t.Fatalf("queue request: %d %v", command, err)
 			}
+			if wait := client.DownloadWaitSeconds("peer", "song", time.Now().Add(time.Minute)); wait != nil {
+				t.Fatal("setup advertised a file-data wait")
+			}
 			if action == "before_accept" {
 				_ = peer.Close()
 				if err := <-result; !errors.Is(err, io.EOF) {
@@ -292,6 +295,18 @@ func TestDownloadControlConnectionLifetime(t *testing.T) {
 				t.Fatalf("control close cancelled active file: %v", err)
 			case <-time.After(20 * time.Millisecond):
 			}
+			// Inspect the actual blocked file reader without waiting 42 real seconds.
+			// A control close and dropped logs must not erase the observation.
+			for {
+				wait := client.DownloadWaitSeconds("peer", "song", time.Now().Add(42*time.Second))
+				if wait != nil && *wait >= 42 {
+					break
+				}
+				if ctx.Err() != nil {
+					t.Fatal("active file never exposed its data wait")
+				}
+				time.Sleep(time.Millisecond)
+			}
 			tail := []byte("tail")
 			if action == "short_file" {
 				tail = tail[:2]
@@ -308,6 +323,9 @@ func TestDownloadControlConnectionLifetime(t *testing.T) {
 				}
 			} else if err != nil {
 				t.Fatalf("download failed: %v", err)
+			}
+			if wait := client.DownloadWaitSeconds("peer", "song", time.Now().Add(time.Minute)); wait != nil {
+				t.Fatal("finished download retained its wait")
 			}
 			if got, err := os.ReadFile(file.Name()); err != nil || !bytes.Equal(got, contents) {
 				t.Fatalf("downloaded data mismatch: got %d bytes, want %d: %v", len(got), len(contents), err)

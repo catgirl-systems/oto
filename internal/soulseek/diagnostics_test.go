@@ -206,3 +206,54 @@ func TestDiagnosticSocketCapability(t *testing.T) {
 		t.Fatal("Unix path exposed")
 	}
 }
+
+func TestDownloadWaitSeconds(t *testing.T) {
+	for _, level := range []slog.Level{slog.LevelDebug, slog.LevelInfo, slog.LevelWarn, slog.LevelError} {
+		t.Run(level.String(), func(t *testing.T) {
+			logger := slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{Level: level}))
+			c := NewClient(ClientConfig{Logger: logger})
+			defer c.Close()
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			o := c.newObservation(ctx, "download", 100, 200)
+			defer c.endObservation(o)
+			key := downloadKey("peer", "album/file")
+			c.requested[key] = &pendingDownload{ctx: ctx, observation: o}
+			now := time.Unix(1000, 0)
+			check := func(want *uint64) {
+				t.Helper()
+				got := c.DownloadWaitSeconds("peer", `album\file`, now)
+				if (got == nil) != (want == nil) || got != nil && *got != *want {
+					t.Fatalf("wait = %v, want %v", got, want)
+				}
+			}
+			check(nil) // queued/setup, even for a resumed file
+			o.started = now.Add(-42 * time.Second)
+			o.setStage("read")
+			seconds := uint64(42)
+			check(&seconds) // waiting for first data
+			o.lastRead = now.Add(-31 * time.Second)
+			seconds = 31
+			check(&seconds)
+			if o.stallWarned || !o.sampled.IsZero() {
+				t.Fatal("status read changed diagnostic sampling")
+			}
+			for _, stage := range []string{"write", "stream", "remote_upload_failed", "transfer_failed", "transfer_completed"} {
+				o.setStage(stage)
+				check(nil)
+			}
+			o.setStage("read")
+			o.lastRead = now // progress/recovery needs no diagnostic tick
+			seconds = 0
+			check(&seconds)
+			o.lastRead = now.Add(time.Second) // clock correction cannot underflow
+			check(&seconds)
+			cancel()
+			check(nil)
+			delete(c.requested, key)
+			check(nil)
+			c.requested[key] = &pendingDownload{ctx: context.Background()}
+			check(nil) // unavailable observations stay unknown
+		})
+	}
+}
