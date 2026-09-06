@@ -88,6 +88,7 @@ Configuration is created at `./oto-config/config.json`; state also lives under `
 | `f` | Filter results / find in a browse list |
 | `Space` | Select files |
 | `d` | Download; cancel in Transfers |
+| `D` in Search / Browse | Download the highlighted file with a different local filename |
 | `p` / `r` in Downloads | Pause / resume |
 | `s` in Settings | Save changes |
 | `?` | Full keyboard guide |
@@ -105,6 +106,7 @@ Headless controls, with a daemon running:
 
 - **Configuration:** `~/.config/oto/config.json`; **state:** `~/.local/state/oto/` (XDG overrides supported). See [config.example.json](config.example.json) for settings; its paths are Docker defaults.
 - **Download status:** after 30 seconds without file data while a network read is pending, rows show `Waiting · 42s`; select the file for `Waiting for peer data · 42s`. This describes an observation, not the cause of the stall; setup and local writes are not labelled as peer waits. Retrying downloads show `Retry in 1:05` (minutes:seconds), retaining the observed failure reason in the selected-file detail. `Retry pending` means the existing retry deadline has passed, not that a new attempt has started. Both indicators refresh through normal polling, use daemon time, and leave retry scheduling unchanged. Older daemons without this metadata retain their basic status labels.
+- **Download as:** highlight one file in Search or Browse and press `D`. Edit its local filename (including the extension), then Enter to queue or Esc to cancel. The normal per-user directory and remote filename stay unchanged; restart/resume, filters and collision handling still use the existing download flow. Clear other selections first; folders, batches and active downloads cannot be renamed. Paged Browse keeps snapshot revision checks and requires an updated daemon; an older daemon rejects the action rather than silently downloading with the original name.
 - **Large shares:** Settings → Browse controls maximum files/folders (default 2,000,000), compressed response size (64 MiB), and decompressed response size (256 MiB). Saved changes apply to the next browse without reconnecting. These are payload limits, not total RAM limits: decoded snapshots use additional memory. JSON keys live under `browse` in the example config; accepted ranges are 1–10,000,000 entries, 1–256 MiB compressed, and 1–1024 MiB decompressed.
 - **Browse memory:** the daemon streams decompression and retains directory-grouped snapshots. The TUI loads folders on expansion, with at most 200 entries per page; Previous/Next replaces that folder's page instead of accumulating its files. Local browse replies have a 2 MiB cap. Navigation and `f` search use the existing snapshot, not another peer request. Selection includes unloaded descendants, and `s` saves the full snapshot (temporarily expanding paths for the cache writer).
 - **Connectivity:** allow incoming TCP **50300** for best results. NAT-PMP/UPnP forwarding is attempted automatically. VPN users can select a network interface in Settings.
@@ -260,7 +262,8 @@ oto focuses on file sharing and a detachable terminal UI. [Nicotine+](https://ni
 | Store downloads in per-user subfolders | :white_check_mark: | :white_check_mark: |
 | Avoid overwriting collisions by choosing an unused filename | :white_check_mark: | :white_check_mark: |
 | Separate folder for files manually sent by other users | :x: | :white_check_mark: |
-| Rename a file before downloading | :x: | :white_check_mark: |
+| Rename a file before downloading | :white_check_mark: | :x: |
+| Rename a destination folder before downloading | :x: | :white_check_mark: |
 | Automatic filename-based download filters | :white_check_mark: | :white_check_mark: |
 | Force a filtered download to bypass filters | :white_check_mark: | :white_check_mark: |
 | Global download speed limit | :white_check_mark: | :white_check_mark: |
