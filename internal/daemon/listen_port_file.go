@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"net"
 	"os"
 	"path/filepath"
@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/catgirl-systems/oto/internal/diagnostics"
 	"github.com/fsnotify/fsnotify"
 )
 
@@ -46,7 +47,7 @@ func (s *Service) startListenPortWatcherLocked() {
 	s.wg.Add(1)
 	go func() {
 		defer s.wg.Done()
-		watchListenPortFile(ctx, path, interval, s.applyListenPort)
+		watchListenPortFileWithLogger(ctx, path, interval, s.applyListenPort, s.logger())
 	}()
 }
 
@@ -65,11 +66,13 @@ func (s *Service) applyListenPort(port uint16, available bool) {
 		s.status, s.lastErr = StatusReconnecting, ErrListenPortUnavailable.Error()
 	}
 	s.mu.Unlock()
+	s.event(slog.LevelInfo, "forwarded_port_changed", nil, slog.Bool("available", available), slog.Uint64("requested_port", uint64(port)))
 	if !active {
 		return
 	}
 
 	if port == 0 {
+		s.event(slog.LevelWarn, "forwarded_port_reconnect", nil, slog.String("reason", "port_unavailable"))
 		if client != nil {
 			_ = client.Close()
 		}
@@ -78,10 +81,10 @@ func (s *Service) applyListenPort(port uint16, available bool) {
 	}
 	if client != nil {
 		if err := client.SetListenPort(port); err == nil {
-			log.Printf("listening port updated to %d", port)
+			s.event(slog.LevelInfo, "listen_port_advertised", nil, slog.Uint64("requested_port", uint64(port)), slog.Uint64("listener_port", uint64(client.ListenPort())), slog.Uint64("advertised_port", uint64(client.PublicPort())))
 			return
 		} else {
-			log.Printf("listening port %d: %v", port, err)
+			s.event(slog.LevelWarn, "listen_port_update_failed", err, slog.Uint64("port", uint64(port)))
 			_ = client.Close()
 		}
 	}
@@ -123,14 +126,18 @@ func readListenPortFile(path string) (uint16, bool, error) {
 }
 
 func watchListenPortFile(ctx context.Context, path string, interval time.Duration, apply func(uint16, bool)) {
+	watchListenPortFileWithLogger(ctx, path, interval, apply, nil)
+}
+
+func watchListenPortFileWithLogger(ctx context.Context, path string, interval time.Duration, apply func(uint16, bool), logger *slog.Logger) {
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
-		log.Printf("listen port watcher: %v", err)
+		diagnostics.Event(logger, slog.LevelError, "listen_port_watcher_create_failed", err)
 	}
 	if watcher != nil {
 		defer watcher.Close()
 		if err := watcher.Add(filepath.Dir(path)); err != nil {
-			log.Printf("listen port watcher %s: %v", path, err)
+			diagnostics.Event(logger, slog.LevelWarn, "listen_port_watcher_add_failed", err)
 		}
 	}
 
@@ -165,7 +172,7 @@ func watchListenPortFile(ctx context.Context, path string, interval time.Duratio
 	reconcile := func() {
 		port, available, err := readListenPortFile(path)
 		if err != nil {
-			log.Printf("listen port file %s: %v", path, err)
+			diagnostics.Event(logger, slog.LevelWarn, "listen_port_file_read_failed", err)
 			return
 		}
 		apply(port, available)
@@ -193,7 +200,7 @@ func watchListenPortFile(ctx context.Context, path string, interval time.Duratio
 				watcherErrors = nil
 				continue
 			}
-			log.Printf("listen port watcher: %v", err)
+			diagnostics.Event(logger, slog.LevelWarn, "listen_port_watcher_event_failed", err)
 			schedule()
 		case <-timerC:
 			timerC = nil

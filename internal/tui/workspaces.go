@@ -548,7 +548,7 @@ func (m model) renderShares(width, height int) string {
 	return strings.Join(lines, "\n")
 }
 
-var settingsSectionNames = [settingsSectionCount]string{"Account", "Connection", "Bandwidth", "Downloads", "Uploads", "Search", "Shares", "Browse", "Statistics"}
+var settingsSectionNames = [settingsSectionCount]string{"Account", "Connection", "Bandwidth", "Downloads", "Uploads", "Search", "Shares", "Browse", "Statistics", "Logging"}
 
 func (m model) renderSettings(width, height int) string {
 	if m.stats.prune {
@@ -643,11 +643,13 @@ func (m model) settingFields() []settingField {
 			days = "30"
 		}
 		return []settingField{
-			{settingStatsLogRetention, "Log retention days (0 keep forever)", strconv.Itoa(m.cfg.Statistics.LogRetentionDays), settingInt},
+			{settingStatsLogRetention, "Transfer history retention days (0 keep forever)", strconv.Itoa(m.cfg.Statistics.LogRetentionDays), settingInt},
 			{settingStatsDailyRetention, "Daily retention days (0 keep forever)", strconv.Itoa(m.cfg.Statistics.DailyRetentionDays), settingInt},
 			{settingStatsASCII, "ASCII charts", strconv.FormatBool(m.cfg.Statistics.ASCIICharts), settingBool},
 			{settingStatsPrune, "Prune", days + " " + pruneDayUnit(days) + " · Enter to edit", settingAction},
 		}
+	case settingsLogging:
+		return []settingField{{settingLoggingLevel, "Level", m.choiceValue(settingLoggingLevel, m.cfg.Logging.Level), settingChoice}}
 	case settingsShares:
 		return []settingField{
 			{settingAudioMetadata, "Audio metadata (optional ffprobe)", strconv.FormatBool(m.cfg.AudioMetadata), settingBool},
@@ -920,6 +922,8 @@ func (m model) choiceOptions(id settingID) []string {
 		return append(options, "New…")
 	case settingUploadLimitScope:
 		return []string{"All transfers", "Each transfer"}
+	case settingLoggingLevel:
+		return []string{"DEBUG", "INFO", "WARN", "ERROR"}
 	case settingUploadScheduling:
 		return []string{"FIFO", "Round-robin", "Random", "Smallest first"}
 	default:
@@ -953,6 +957,8 @@ func (m model) configuredChoice(id settingID) int {
 		current = uploadScopeLabel(m.cfg.Uploads.LimitScope)
 	case settingUploadScheduling:
 		current = uploadSchedulingLabel(m.cfg.Uploads.Scheduling)
+	case settingLoggingLevel:
+		current = m.cfg.Logging.Level
 	}
 	for i, option := range options {
 		if option == current {

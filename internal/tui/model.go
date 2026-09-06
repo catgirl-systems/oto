@@ -71,6 +71,7 @@ const (
 	settingsShares
 	settingsBrowse
 	settingsStatistics
+	settingsLogging
 	settingsSectionCount
 )
 

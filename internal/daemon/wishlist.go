@@ -5,7 +5,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"slices"
 	"strconv"
 	"strings"
@@ -222,7 +222,7 @@ func (s *Service) runWishlist(ctx context.Context, id string, automatic bool) (S
 	}
 	if notify {
 		if err := s.wishlistNotify(ctx, query, len(matching)); err != nil {
-			log.Printf("wishlist notification: %v", err)
+			s.event(slog.LevelWarn, "wishlist_notification_failed", err)
 		}
 	}
 	return page, nil
@@ -308,7 +308,7 @@ func (s *Service) wishlistLoop(ctx context.Context) {
 		if id := s.nextWishlistID(); id != "" {
 			lastRequest = time.Now()
 			if _, err := s.runWishlist(ctx, id, true); err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, ErrNotStarted) && !errors.Is(err, ErrWishlistNotFound) {
-				log.Printf("wishlist search: %v", err)
+				s.event(slog.LevelWarn, "wishlist_search_failed", err)
 			}
 		}
 	}

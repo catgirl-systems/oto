@@ -21,6 +21,7 @@ const (
 	settingStatsDailyRetention
 	settingStatsASCII
 	settingStatsPrune
+	settingLoggingLevel
 )
 
 func (m model) downloadFilterFields() []settingField {

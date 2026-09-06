@@ -3,7 +3,7 @@ package daemon
 import (
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"sort"
 	"strings"
@@ -40,10 +40,25 @@ func liveUpload(state string) bool              { return state == "queued" || st
 func (s *Service) uploadUpdate(session uint64, event soulseek.TransferEvent) {
 	if event.State == "queued" {
 		if err := s.uploadAccepted(session, event); err != nil {
-			log.Printf("upload admission: %v", err)
+			s.event(slog.LevelError, "upload_admission_failed", err)
 		}
 		return
 	}
+	var loggedID string
+	var logTransition bool
+	var persistenceErr error
+	defer func() {
+		if logTransition {
+			level := slog.LevelInfo
+			if event.State == "failed" {
+				level = slog.LevelError
+			}
+			s.uploadEvent("upload_state", level, nil, loggedID, session, event)
+		}
+		if persistenceErr != nil {
+			s.uploadEvent("upload_persist_failed", slog.LevelError, persistenceErr, loggedID, session, event)
+		}
+	}()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed || session != s.uploadEpoch {
@@ -57,6 +72,7 @@ func (s *Service) uploadUpdate(session uint64, event soulseek.TransferEvent) {
 	}
 	s.progressTransferLocked(id, event.Done)
 	oldState := s.transfers[id].State
+	loggedID, logTransition = id, oldState != event.State
 	s.transfers[id] = Transfer{ID: id, Username: event.Username, Filename: event.Filename, Direction: "upload", State: event.State, Done: event.Done, Total: event.Total, Error: event.Error}
 	if s.telemetry != nil {
 		s.telemetry.dirtyUploads[id] = true
@@ -67,7 +83,7 @@ func (s *Service) uploadUpdate(session uint64, event soulseek.TransferEvent) {
 	if oldState != event.State {
 		s.statsStateLocked(id, event.State)
 		if err := s.persistUploadLocked(id); err != nil {
-			log.Printf("save upload: %v", err)
+			persistenceErr = err
 			if s.telemetry != nil {
 				s.telemetry.warning = "Persistence: " + err.Error()
 			}
@@ -79,7 +95,7 @@ func (s *Service) uploadUpdate(session uint64, event soulseek.TransferEvent) {
 		delete(s.transfers, id)
 		if err := s.persistUploadLocked(id); err != nil {
 			s.transfers[id] = tr
-			log.Printf("clear upload: %v", err)
+			persistenceErr = err
 			return
 		}
 		s.forgetTransferLocked(id)
@@ -119,7 +135,7 @@ func (s *Service) retireUploadsLocked() {
 			s.stopTransferLocked(id)
 			s.statsStateLocked(id, "interrupted")
 			if err := s.persistUploadLocked(id); err != nil {
-				log.Printf("persist interrupted upload: %v", err)
+				s.event(slog.LevelWarn, "upload_interrupted_persist_failed", err)
 			}
 		}
 	}

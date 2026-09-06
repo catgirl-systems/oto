@@ -8,6 +8,7 @@ import (
 
 	"github.com/catgirl-systems/oto/internal/config"
 	"github.com/catgirl-systems/oto/internal/daemon"
+	"github.com/catgirl-systems/oto/internal/diagnostics"
 	"github.com/catgirl-systems/oto/internal/stats"
 	"github.com/charmbracelet/x/ansi"
 )
@@ -131,5 +132,32 @@ func TestStatsPlotAndContextHints(t *testing.T) {
 		if strings.Contains(hints, "e outcome") != (page == 3) || strings.Contains(hints, "s sort") != (page == 2) {
 			t.Fatalf("irrelevant controls on page %d: %s", page, hints)
 		}
+	}
+}
+
+func TestDiagnosticStatsLayoutAndOldDaemon(t *testing.T) {
+	t.Setenv("NO_COLOR", "1")
+	m := model{workspace: workspaceStats, cfg: config.Default()}
+	m.stats.filter.Peer = "peer"
+	m.stats.overview.Warning = "history warning"
+	m.stats.overview.Logging = &diagnostics.Status{Level: "DEBUG", Directory: strings.Repeat("/long-state", 40), StoredBytes: 33, FileCount: 2, DroppedRecords: 7, RotationBytes: 10 << 20, MaxArchives: 3, Warning: "file output suspended"}
+	full := m.renderStats(144, 200)
+	for _, want := range []string{"Diagnostic logs · daemon-wide", "33 B stored", "2 files", "7 dropped", "history warning", "file output suspended", "retain 3 closed segments"} {
+		if !strings.Contains(full, want) {
+			t.Fatalf("missing %q", want)
+		}
+	}
+	for _, width := range []int{1, 12, 40, 80, 144} {
+		m.cursor = 0
+		for _, line := range strings.Split(m.renderStats(width, 24), "\n") {
+			if ansi.StringWidth(line) > width {
+				t.Fatalf("logging layout overflows %d", width)
+			}
+		}
+	}
+	m.stats.overview.Logging = nil
+	m.cursor = 0
+	if strings.Contains(m.renderStats(144, 200), "Diagnostic logs") {
+		t.Fatal("old daemon rendered fictitious logs")
 	}
 }

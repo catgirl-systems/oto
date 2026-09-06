@@ -3,7 +3,7 @@ package daemon
 import (
 	"context"
 	"errors"
-	"log"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -92,7 +92,7 @@ func (s *Service) completeDownload(id, root, partPath string) {
 		}
 		s.completionRetries[id] = completionRetry{id: id, username: download.Username, target: target, folder: folder, folderFinished: folderFinished, commands: commands, closed: closed, ctx: ctx}
 		s.mu.Unlock()
-		log.Printf("save completed download (commands and notifications skipped): %v", err)
+		s.event(slog.LevelError, "download_completion_persist_failed", err)
 		return
 	}
 	s.mu.Unlock()
@@ -116,7 +116,7 @@ func (s *Service) runCompletionEffects(r completionRetry) {
 	s.mu.Unlock()
 	if r.commands.AutoClearCompleted {
 		if err := s.clearCompletedDownload(r.id); err != nil {
-			log.Printf("clear completed download %s (history retained): %v", r.id, err)
+			s.event(slog.LevelWarn, "download_completion_clear_failed", err)
 		}
 	}
 	if r.closed {
@@ -126,12 +126,12 @@ func (s *Service) runCompletionEffects(r completionRetry) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	if err := startDownloadCommand(ctx, r.commands.AfterFileCommand, r.target); err != nil {
-		log.Printf("start file download command: %v", err)
+	if err := s.startDownloadCommand(ctx, r.commands.AfterFileCommand, r.target); err != nil {
+		s.event(slog.LevelWarn, "download_file_hook_failed", err)
 	}
 	if r.folderFinished {
-		if err := startDownloadCommand(ctx, r.commands.AfterFolderCommand, r.folder); err != nil {
-			log.Printf("start folder download command: %v", err)
+		if err := s.startDownloadCommand(ctx, r.commands.AfterFolderCommand, r.folder); err != nil {
+			s.event(slog.LevelWarn, "download_folder_hook_failed", err)
 		}
 	}
 }
@@ -155,7 +155,7 @@ func (s *Service) folderCompleteLocked(username, folder string) bool {
 	return true
 }
 
-func startDownloadCommand(ctx context.Context, command, path string) error {
+func (s *Service) startDownloadCommand(ctx context.Context, command, path string) error {
 	if strings.TrimSpace(command) == "" {
 		return nil
 	}
@@ -175,7 +175,7 @@ func startDownloadCommand(ctx context.Context, command, path string) error {
 	}
 	go func() {
 		if err := cmd.Wait(); err != nil {
-			log.Printf("download command failed: %v", err)
+			s.event(slog.LevelWarn, "download_hook_failed", err)
 		}
 	}()
 	return nil

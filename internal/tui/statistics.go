@@ -395,6 +395,20 @@ func (m model) statsOverview(width int) []string {
 		muted(fmt.Sprintf("Upload/download ratio   session %s · lifetime %s", statsRatio(o.SessionTotals.Upload.Bytes, o.SessionTotals.Download.Bytes), statsRatio(o.Lifetime.Upload.Bytes, o.Lifetime.Download.Bytes))),
 		"",
 	}
+	if logs := o.Logging; logs != nil {
+		for _, line := range []string{
+			"Diagnostic logs · daemon-wide",
+			fmt.Sprintf("%s · %s stored · %d files · %d dropped", logs.Level, formatBytes(logs.StoredBytes), logs.FileCount, logs.DroppedRecords),
+			fmt.Sprintf("Rotate at %s · retain %d closed segments", formatBytes(logs.RotationBytes), logs.MaxArchives),
+			logs.Directory,
+		} {
+			lines = append(lines, muted(trunc(line, max(1, width))))
+		}
+		if logs.Warning != "" {
+			lines = append(lines, trunc("Logging warning: "+logs.Warning, max(1, width)))
+		}
+		lines = append(lines, "")
+	}
 	if m.stats.filter.Peer != "" {
 		lines = append(lines, muted("Live activity is account-wide; totals are for the selected peer."), "")
 	}

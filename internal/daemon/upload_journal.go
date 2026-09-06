@@ -3,7 +3,7 @@ package daemon
 import (
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"net"
 	"slices"
 	"strings"
@@ -46,6 +46,12 @@ func (s *Service) uploadEventIDLocked(e soulseek.TransferEvent) string {
 
 // uploadAccepted commits admission before the client starts network work.
 func (s *Service) uploadAccepted(session uint64, e soulseek.TransferEvent) error {
+	var loggedID string
+	defer func() {
+		if loggedID != "" {
+			s.uploadEvent("upload_queued", slog.LevelInfo, nil, loggedID, session, e)
+		}
+	}()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed || session != s.uploadEpoch {
@@ -113,6 +119,7 @@ func (s *Service) uploadAccepted(session uint64, e soulseek.TransferEvent) error
 	s.uploadOwners[id] = uploadOwner{session: session, target: soulseek.UploadTarget{Username: e.Username, Filename: e.Filename, Attempt: e.Attempt}}
 	s.transfers[id] = tr
 	s.prepareTransferLocked(id)
+	loggedID = id
 	return nil
 }
 
@@ -184,7 +191,7 @@ func (s *Service) recoverUploads(client *soulseek.Client, epoch uint64) {
 		tr.State, tr.Error = "failed", err.Error()
 		s.transfers[u.ID] = tr
 		if err := s.persistUploadLocked(u.ID); err != nil {
-			log.Printf("persist upload recovery: %v", err)
+			s.event(slog.LevelError, "upload_recovery_persist_failed", err)
 		}
 		s.mu.Unlock()
 	}

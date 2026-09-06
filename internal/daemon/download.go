@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -86,7 +86,7 @@ func (s *Service) resumeDownloads() {
 			s.journal.Downloads[i].UpdatedAt = time.Now().UTC()
 			if err := s.persistDownloadLocked(s.journal.Downloads[i]); err != nil {
 				s.restoreLocked(previous)
-				log.Printf("resume download: %v", err)
+				s.event(slog.LevelWarn, "download_resume_persist_failed", err)
 			} else {
 				starts = append(starts, id)
 			}
@@ -194,6 +194,8 @@ func (s *Service) runDownload(ctx context.Context, download Download, slots chan
 			if accountErr != nil {
 				return
 			}
+			ctx = s.transferContext(ctx, id, download.Username)
+			s.event(slog.LevelInfo, "download_attempt_started", nil, slog.String("transfer_id", id), slog.String("peer_username", download.Username), slog.Uint64("offset", offset))
 			err = client.DownloadWithStart(ctx, download.Username, strings.ReplaceAll(download.Filename, "/", "\\"), download.Size, offset, file, func(progress soulseek.Progress) {
 				s.updateTransferProgress(id, progress)
 			}, func() { s.startTransfer(id, offset) })
@@ -283,6 +285,23 @@ func (s *Service) updateTransferProgress(id string, progress soulseek.Progress) 
 }
 
 func (s *Service) updateDownload(id, state string, offset uint64, failure error) error {
+	var actualState, peer string
+	var retryAt time.Time
+	var attempt uint64
+	logFailure := failure
+	defer func() {
+		if actualState == "" {
+			return
+		}
+		level := slog.LevelInfo
+		if actualState == "retrying" {
+			level = slog.LevelWarn
+		}
+		if actualState == "failed" || actualState == "persist_failed" {
+			level = slog.LevelError
+		}
+		s.event(level, "download_state", logFailure, slog.String("transfer_id", id), slog.Uint64("attempt_id", attempt), slog.String("peer_username", peer), slog.String("state", actualState), slog.Time("retry_at", retryAt), slog.Uint64("offset", offset))
+	}()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for i := range s.journal.Downloads {
@@ -291,6 +310,12 @@ func (s *Service) updateDownload(id, state string, offset uint64, failure error)
 			continue
 		}
 		previous := s.snapshotLocked(id)
+		peer = d.Username
+		if s.telemetry != nil {
+			if a := s.telemetry.attempts[id]; a != nil {
+				attempt = a.event.Attempt
+			}
+		}
 		if d.State == "paused" || d.State == "cancelled" {
 			state, failure = d.State, nil
 		}
@@ -307,6 +332,7 @@ func (s *Service) updateDownload(id, state string, offset uint64, failure error)
 				d.State, d.RetryAt = "retrying", d.UpdatedAt.Add(delay)
 			}
 		}
+		actualState, retryAt, logFailure = d.State, d.RetryAt, failure
 		if transfer := s.transfers[id]; transfer.ID != "" {
 			transfer.State, transfer.Done, transfer.Error, transfer.Queue = d.State, d.Offset, d.Error, 0
 			s.transfers[id] = transfer
@@ -324,7 +350,7 @@ func (s *Service) updateDownload(id, state string, offset uint64, failure error)
 			if s.telemetry != nil {
 				s.telemetry.warning = "Persistence: " + err.Error()
 			}
-			log.Printf("save download state: %v", err)
+			actualState, logFailure = "persist_failed", err
 			return err
 		}
 		return nil

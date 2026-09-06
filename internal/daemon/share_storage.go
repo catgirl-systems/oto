@@ -4,7 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"log"
+	"log/slog"
 	"os"
 	"slices"
 	"strings"
@@ -246,7 +246,7 @@ func (s *Service) persistShareIndex(index *soulseek.ShareIndex) {
 		err = gcShareSnapshots(ctx, s.stateDB)
 	}
 	if err != nil {
-		logShareStorage(err)
+		s.logShareStorage(err)
 	}
 }
 
@@ -436,13 +436,13 @@ func (s *Service) saveRemoteShareCache(cache remoteShareCache, revision uint64) 
 		return err
 	}
 	if gcErr := gcShareSnapshots(context.Background(), s.stateDB); gcErr != nil {
-		log.Printf("WARN share storage garbage collection: %v", gcErr)
+		s.event(slog.LevelWarn, "share_storage_gc_failed", gcErr)
 	}
 	return nil
 }
 
-func logShareStorage(err error) {
+func (s *Service) logShareStorage(err error) {
 	if err != nil && !errors.Is(err, context.Canceled) {
-		log.Printf("share storage: %v", err)
+		s.event(slog.LevelWarn, "share_storage_failed", err)
 	}
 }
