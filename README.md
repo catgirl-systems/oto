@@ -228,7 +228,7 @@ oto focuses on file sharing and a detachable terminal UI. [Nicotine+](https://ni
 | Avoid overwriting collisions by choosing an unused filename | :white_check_mark: | :white_check_mark: |
 | Separate folder for files manually sent by other users | :x: | :white_check_mark: |
 | Rename a file before downloading | :white_check_mark: | :x: |
-| Rename a destination folder before downloading | :x: | :white_check_mark: |
+| Rename a destination folder before downloading | :white_check_mark: | :white_check_mark: |
 | Automatic filename-based download filters | :white_check_mark: | :white_check_mark: |
 | Force a filtered download to bypass filters | :white_check_mark: | :white_check_mark: |
 | Global download speed limit | :white_check_mark: | :white_check_mark: |
