@@ -101,5 +101,12 @@ func TestBandwidthValidation(t *testing.T) {
 		if (c.Validate() != nil) != invalid {
 			t.Fatalf("rate validation %v", rates)
 		}
+		data, err := json.Marshal(c)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if (json.Unmarshal(data, &Config{}) != nil) != invalid {
+			t.Fatalf("decoded rate validation %v", rates)
+		}
 	}
 }

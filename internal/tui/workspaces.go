@@ -3,6 +3,7 @@ package tui
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -11,7 +12,10 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/catgirl-systems/oto/internal/config"
 	"github.com/catgirl-systems/oto/internal/daemon"
+	"github.com/go-playground/validator/v10"
 )
+
+var settingValidator = validator.New()
 
 func (m model) renderSearch(width, height int) string {
 	inputStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#F5E0DC"))
@@ -768,42 +772,51 @@ func (m model) settingFields() []settingField {
 
 func (m *model) setSettingValue(value string) error {
 	field := m.settingFields()[m.cursor]
+	cfg := m.cfg
+	var target *int
+	var namespace string
 	switch field.id {
-	case settingStatsLogRetention, settingStatsDailyRetention:
+	case settingStatsLogRetention:
+		target, namespace = &cfg.Statistics.LogRetentionDays, "Statistics.LogRetentionDays"
+	case settingStatsDailyRetention:
+		target, namespace = &cfg.Statistics.DailyRetentionDays, "Statistics.DailyRetentionDays"
+	case settingBrowseMaxEntries:
+		target, namespace = &cfg.Browse.MaxEntries, "Browse.MaxEntries"
+	case settingBrowseMaxCompressedMiB:
+		target, namespace = &cfg.Browse.MaxCompressedMiB, "Browse.MaxCompressedMiB"
+	case settingBrowseMaxDecompressedMiB:
+		target, namespace = &cfg.Browse.MaxDecompressedMiB, "Browse.MaxDecompressedMiB"
+	case settingMinimumIncomingSearchLength:
+		target, namespace = &cfg.Search.MinimumIncomingSearchLength, "Search.MinimumIncomingSearchLength"
+	case settingMaximumIncomingSearchResults:
+		target, namespace = &cfg.Search.MaximumIncomingSearchResults, "Search.MaximumIncomingSearchResults"
+	case settingSearchHistoryLimit:
+		target, namespace = &cfg.Search.SearchHistoryLimit, "Search.SearchHistoryLimit"
+	case settingFilterHistoryLimit:
+		target, namespace = &cfg.Search.FilterHistoryLimit, "Search.FilterHistoryLimit"
+	case settingWishlistInterval:
+		target, namespace = &cfg.Search.WishlistIntervalMinutes, "Search.WishlistIntervalMinutes"
+	case settingUploadSpeedLimit, settingDownloadSpeedLimit:
+		cfg.Bandwidth.Profiles = slices.Clone(cfg.Bandwidth.Profiles)
+		i := m.activeBandwidthProfileIndex()
+		target, namespace = &cfg.Bandwidth.Profiles[i].UploadSpeedLimitKiB, fmt.Sprintf("Bandwidth.Profiles[%d].UploadSpeedLimitKiB", i)
+		if field.id == settingDownloadSpeedLimit {
+			target, namespace = &cfg.Bandwidth.Profiles[i].DownloadSpeedLimitKiB, fmt.Sprintf("Bandwidth.Profiles[%d].DownloadSpeedLimitKiB", i)
+		}
+	}
+	if target != nil {
 		n, err := strconv.Atoi(value)
-		if err != nil || n < 0 || n > 365000 {
-			return errors.New("retention must be 0–365000 days")
+		if err != nil {
+			return err
 		}
-		if field.id == settingStatsLogRetention {
-			m.cfg.Statistics.LogRetentionDays = n
-		} else {
-			m.cfg.Statistics.DailyRetentionDays = n
+		*target = n
+		if err := settingValidator.StructPartial(cfg, namespace); err != nil {
+			return err
 		}
-	case settingBrowseMaxEntries, settingBrowseMaxCompressedMiB, settingBrowseMaxDecompressedMiB:
-		n, err := strconv.Atoi(value)
-		if err != nil || n < 1 {
-			return errors.New("browse limit must be a positive integer")
-		}
-		max := 0
-		switch field.id {
-		case settingBrowseMaxEntries:
-			max = 10000000
-		case settingBrowseMaxCompressedMiB:
-			max = 256
-		default:
-			max = 1024
-		}
-		if n > max {
-			return fmt.Errorf("browse limit must be at most %d", max)
-		}
-		switch field.id {
-		case settingBrowseMaxEntries:
-			m.cfg.Browse.MaxEntries = n
-		case settingBrowseMaxCompressedMiB:
-			m.cfg.Browse.MaxCompressedMiB = n
-		default:
-			m.cfg.Browse.MaxDecompressedMiB = n
-		}
+		m.cfg = cfg
+		return nil
+	}
+	switch field.id {
 	case settingUploadFileCap:
 		n, err := strconv.ParseUint(value, 10, 64)
 		if err != nil {
@@ -857,41 +870,6 @@ func (m *model) setSettingValue(value string) error {
 		}
 		m.cfg.Bandwidth.Profiles[i].Name = value
 		m.cfg.Bandwidth.ActiveProfile = value
-	case settingUploadSpeedLimit, settingDownloadSpeedLimit, settingMinimumIncomingSearchLength, settingMaximumIncomingSearchResults, settingSearchHistoryLimit, settingFilterHistoryLimit, settingWishlistInterval:
-		limit, err := strconv.Atoi(value)
-		if err != nil || limit < 0 {
-			return errors.New("value must be a nonnegative integer")
-		}
-		switch field.id {
-		case settingUploadSpeedLimit, settingDownloadSpeedLimit:
-			if limit > 1000000 {
-				return errors.New("speed limit must be at most 1000000 KiB/s")
-			}
-			if field.id == settingDownloadSpeedLimit {
-				m.cfg.Bandwidth.Profiles[m.activeBandwidthProfileIndex()].DownloadSpeedLimitKiB = limit
-			} else {
-				m.cfg.Bandwidth.Profiles[m.activeBandwidthProfileIndex()].UploadSpeedLimitKiB = limit
-			}
-		case settingMinimumIncomingSearchLength:
-			if limit > 50 {
-				return errors.New("minimum incoming search length must be at most 50")
-			}
-			m.cfg.Search.MinimumIncomingSearchLength = limit
-		case settingMaximumIncomingSearchResults:
-			if limit < 50 || limit > 10000 {
-				return errors.New("maximum incoming search results must be between 50 and 10000")
-			}
-			m.cfg.Search.MaximumIncomingSearchResults = limit
-		case settingSearchHistoryLimit:
-			m.cfg.Search.SearchHistoryLimit = limit
-		case settingFilterHistoryLimit:
-			m.cfg.Search.FilterHistoryLimit = limit
-		default:
-			if limit > 525600 {
-				return errors.New("wishlist interval must be at most 525600 minutes")
-			}
-			m.cfg.Search.WishlistIntervalMinutes = limit
-		}
 	}
 	return nil
 }

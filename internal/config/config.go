@@ -18,6 +18,8 @@ import (
 	"github.com/go-playground/validator/v10"
 )
 
+var configValidator = validator.New()
+
 const (
 	DefaultServer      = "server.slsknet.org:2242"
 	DefaultListenAddr  = "0.0.0.0:50300"
@@ -88,21 +90,21 @@ const (
 
 type BandwidthProfile struct {
 	Name                  string `json:"name"`
-	UploadSpeedLimitKiB   int    `json:"upload_speed_limit_kib"`
-	DownloadSpeedLimitKiB int    `json:"download_speed_limit_kib"`
+	UploadSpeedLimitKiB   int    `json:"upload_speed_limit_kib" validate:"min=0,max=1000000"`
+	DownloadSpeedLimitKiB int    `json:"download_speed_limit_kib" validate:"min=0,max=1000000"`
 }
 
 type Bandwidth struct {
-	Profiles      []BandwidthProfile `json:"profiles"`
+	Profiles      []BandwidthProfile `json:"profiles" validate:"min=1,dive"`
 	ActiveProfile string             `json:"active_profile"`
 }
 
 type Uploads struct {
-	MaxQueuedFilesPerUser uint64           `json:"max_queued_files_per_user"`
-	MaxQueuedBytesPerUser uint64           `json:"max_queued_bytes_per_user"`
+	MaxQueuedFilesPerUser uint64           `json:"max_queued_files_per_user" validate:"max=1000000"`
+	MaxQueuedBytesPerUser uint64           `json:"max_queued_bytes_per_user" validate:"max=9223372036854775807"`
 	AutoClearCompleted    bool             `json:"auto_clear_completed"`
-	LimitScope            UploadLimitScope `json:"limit_scope"`
-	Scheduling            UploadScheduling `json:"scheduling"`
+	LimitScope            UploadLimitScope `json:"limit_scope" validate:"oneof=total per_transfer"`
+	Scheduling            UploadScheduling `json:"scheduling" validate:"oneof=fifo round_robin random smallest_first"`
 }
 
 type legacyUploadProfile struct {
@@ -147,8 +149,8 @@ func ValidateBandwidthProfileName(name string) error {
 }
 
 func validateBandwidth(b Bandwidth) error {
-	if len(b.Profiles) == 0 {
-		return errors.New("config: at least one bandwidth profile is required")
+	if err := configValidator.Struct(b); err != nil {
+		return fmt.Errorf("config: %w", err)
 	}
 	active := false
 	for i, profile := range b.Profiles {
@@ -159,9 +161,6 @@ func validateBandwidth(b Bandwidth) error {
 			if strings.EqualFold(previous.Name, profile.Name) {
 				return fmt.Errorf("config: duplicate bandwidth profile name %q", profile.Name)
 			}
-		}
-		if profile.UploadSpeedLimitKiB < 0 || profile.UploadSpeedLimitKiB > 1000000 || profile.DownloadSpeedLimitKiB < 0 || profile.DownloadSpeedLimitKiB > 1000000 {
-			return fmt.Errorf("config: invalid speed limit for bandwidth profile %q", profile.Name)
 		}
 		active = active || profile.Name == b.ActiveProfile
 	}
@@ -187,7 +186,7 @@ type Config struct {
 	Uploads         Uploads    `json:"uploads"`
 	Downloads       Downloads  `json:"downloads"`
 	DownloadDir     string     `json:"download_dir" validate:"required"`
-	Shares          []Share    `json:"shares"`
+	Shares          []Share    `json:"shares" validate:"unique=Name,dive"`
 	ShareExclusions []string   `json:"share_exclusions"`
 	DownloadSlots   int        `json:"download_slots" validate:"min=1"`
 	UploadSlots     int        `json:"upload_slots" validate:"min=1"`
@@ -243,16 +242,13 @@ func (c Config) Validate() error {
 	if _, err := NormalizeDownloadFilters(c.Downloads.FilterPatterns); err != nil {
 		return err
 	}
-	if c.Uploads.MaxQueuedFilesPerUser > 1000000 || c.Uploads.MaxQueuedBytesPerUser > 1<<63-1 {
-		return errors.New("config: upload queue limit out of range")
-	}
 	if _, err := NormalizeShareExclusions(c.ShareExclusions); err != nil {
 		return err
 	}
 	if strings.IndexByte(c.Downloads.AfterFileCommand, 0) >= 0 || strings.IndexByte(c.Downloads.AfterFolderCommand, 0) >= 0 {
 		return errors.New("config: download commands must not contain NUL bytes")
 	}
-	if err := validator.New().Struct(c); err != nil {
+	if err := configValidator.Struct(c); err != nil {
 		return fmt.Errorf("config: %w", err)
 	}
 	for label, address := range map[string]string{"server": c.Soulseek.Server, "listen address": c.Soulseek.ListenAddr} {
@@ -265,26 +261,13 @@ func (c Config) Validate() error {
 			return fmt.Errorf("config: invalid %s port", label)
 		}
 	}
-	if c.Uploads.LimitScope != UploadLimitTotal && c.Uploads.LimitScope != UploadLimitPerTransfer {
-		return fmt.Errorf("config: invalid upload limit scope %q", c.Uploads.LimitScope)
-	}
-	switch c.Uploads.Scheduling {
-	case UploadSchedulingFIFO, UploadSchedulingRoundRobin, UploadSchedulingRandom, UploadSchedulingSmallestFirst:
-	default:
-		return fmt.Errorf("config: invalid upload scheduling %q", c.Uploads.Scheduling)
-	}
 	if err := validateBandwidth(c.Bandwidth); err != nil {
 		return err
 	}
-	seen := map[string]bool{}
 	for _, sh := range c.Shares {
-		if strings.TrimSpace(sh.Name) == "" || strings.ContainsAny(sh.Name, "/\\") || sh.Name == "." || sh.Name == ".." || seen[sh.Name] {
+		if strings.TrimSpace(sh.Name) == "" || strings.ContainsAny(sh.Name, "/\\") || sh.Name == "." || sh.Name == ".." {
 			return fmt.Errorf("config: invalid share %q", sh.Name)
 		}
-		if sh.Path == "" {
-			return fmt.Errorf("config: empty path for share %q", sh.Name)
-		}
-		seen[sh.Name] = true
 	}
 	return nil
 }
