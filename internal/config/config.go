@@ -104,6 +104,12 @@ func (b Bandwidth) ActiveProfileLimits() BandwidthProfile {
 	return BandwidthProfile{}
 }
 
+type Browse struct {
+	MaxEntries         int `json:"max_entries" validate:"min=1,max=10000000"`
+	MaxCompressedMiB   int `json:"max_compressed_mib" validate:"min=1,max=256"`
+	MaxDecompressedMiB int `json:"max_decompressed_mib" validate:"min=1,max=1024"`
+}
+
 type Downloads struct {
 	FiltersEnabled      bool     `json:"filters_enabled"`
 	FilterPatterns      []string `json:"filter_patterns"`
@@ -153,6 +159,7 @@ type Statistics struct {
 }
 type Config struct {
 	Statistics      Statistics `json:"statistics"`
+	Browse          Browse     `json:"browse"`
 	AudioMetadata   bool       `json:"audio_metadata"`
 	Soulseek        Soulseek   `json:"soulseek"`
 	Search          Search     `json:"search"`
@@ -168,6 +175,7 @@ type Config struct {
 
 type SafeConfig struct {
 	Statistics    Statistics `json:"statistics"`
+	Browse        Browse     `json:"browse"`
 	AudioMetadata bool       `json:"audio_metadata"`
 	Soulseek      struct {
 		Username          string `json:"username"`
@@ -192,12 +200,12 @@ type SafeConfig struct {
 
 func Default() Config {
 	home, _ := os.UserHomeDir()
-	return Config{AudioMetadata: true, ShareExclusions: DefaultShareExclusions(), Soulseek: Soulseek{Server: DefaultServer, ListenAddr: DefaultListenAddr, ConnectOnStartup: true, NATPMPPortMapping: true, UPnPPortMapping: true}, Search: Search{RememberSearches: true, SearchHistoryLimit: 200, RememberFilters: true, FilterHistoryLimit: 50, WishlistIntervalMinutes: 15, WishlistNotifications: true, RespondToIncomingSearches: true, MinimumIncomingSearchLength: 3, MaximumIncomingSearchResults: 300}, Bandwidth: defaultBandwidth(), Uploads: Uploads{LimitScope: UploadLimitTotal, Scheduling: UploadSchedulingFIFO}, Downloads: Downloads{FolderNotifications: true, FilterPatterns: DefaultDownloadFilters()}, DownloadDir: filepath.Join(home, DefaultDownloadDir), DownloadSlots: 4, UploadSlots: 2}
+	return Config{AudioMetadata: true, Browse: Browse{MaxEntries: 2000000, MaxCompressedMiB: 64, MaxDecompressedMiB: 256}, ShareExclusions: DefaultShareExclusions(), Soulseek: Soulseek{Server: DefaultServer, ListenAddr: DefaultListenAddr, ConnectOnStartup: true, NATPMPPortMapping: true, UPnPPortMapping: true}, Search: Search{RememberSearches: true, SearchHistoryLimit: 200, RememberFilters: true, FilterHistoryLimit: 50, WishlistIntervalMinutes: 15, WishlistNotifications: true, RespondToIncomingSearches: true, MinimumIncomingSearchLength: 3, MaximumIncomingSearchResults: 300}, Bandwidth: defaultBandwidth(), Uploads: Uploads{LimitScope: UploadLimitTotal, Scheduling: UploadSchedulingFIFO}, Downloads: Downloads{FolderNotifications: true, FilterPatterns: DefaultDownloadFilters()}, DownloadDir: filepath.Join(home, DefaultDownloadDir), DownloadSlots: 4, UploadSlots: 2}
 }
 
 func (c Config) Redacted() SafeConfig {
 	var out SafeConfig
-	out.Statistics, out.AudioMetadata = c.Statistics, c.AudioMetadata
+	out.Statistics, out.Browse, out.AudioMetadata = c.Statistics, c.Browse, c.AudioMetadata
 	out.Soulseek.Username, out.Soulseek.Password, out.Soulseek.Server, out.Soulseek.ListenAddr, out.Soulseek.NetworkInterface, out.Soulseek.ConnectOnStartup, out.Soulseek.NATPMPPortMapping, out.Soulseek.UPnPPortMapping = c.Soulseek.Username, "[redacted]", c.Soulseek.Server, c.Soulseek.ListenAddr, c.Soulseek.NetworkInterface, c.Soulseek.ConnectOnStartup, c.Soulseek.NATPMPPortMapping, c.Soulseek.UPnPPortMapping
 	out.Search, out.Bandwidth, out.Uploads, out.Downloads, out.DownloadDir, out.Shares, out.DownloadSlots, out.UploadSlots = c.Search, c.Bandwidth, c.Uploads, c.Downloads, c.DownloadDir, append([]Share(nil), c.Shares...), c.DownloadSlots, c.UploadSlots
 	out.Bandwidth.Profiles = append([]BandwidthProfile(nil), c.Bandwidth.Profiles...)

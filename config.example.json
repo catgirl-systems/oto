@@ -9,6 +9,11 @@
     "nat_pmp_port_mapping": true,
     "upnp_port_mapping": true
   },
+  "browse": {
+    "max_entries": 2000000,
+    "max_compressed_mib": 64,
+    "max_decompressed_mib": 256
+  },
   "search": {
     "remember_searches": true,
     "search_history_limit": 200,
