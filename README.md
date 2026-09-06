@@ -12,6 +12,10 @@
 
 **Soulseek in your terminal.** Search, share and transfer files on Linux. No slskd required.
 
+![Connected oto terminal searching two peers, browsing shared files, and pausing and resuming a download to completion](assets/demo.gif)
+
+Search with `/`, browse a result with `b`, select a file with `Space`, and download with `d`. In Transfers, `p` pauses and `r` resumes.
+
 [Without Docker](#without-docker) · [With Docker](#with-docker) · [Basics](#basics) · [Nicotine+ comparison](#nicotine-comparison)
 
 ## Without Docker
