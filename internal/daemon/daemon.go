@@ -1202,6 +1202,9 @@ func (s *Service) QueueDownloads(reqs []DownloadRequest) ([]Download, error) {
 			dest := item.Destination
 			if dest == "" {
 				dest = safeSegment(req.Username) + "/" + name
+			} else if err := validateDownloadDestination(dest); err != nil {
+				s.mu.Unlock()
+				return nil, err
 			}
 			if _, err := soulseek.SafeJoin(root, dest); err != nil {
 				s.mu.Unlock()

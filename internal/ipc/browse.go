@@ -2,6 +2,7 @@ package ipc
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -35,6 +36,10 @@ func (s *Server) browseDownload(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, err)
 		return
 	}
+	if r.URL.Path == "/v1/browse/download-as" && req.Destination == "" {
+		writeErr(w, 400, errors.New("download destination is required"))
+		return
+	}
 	out, err := s.service.QueueBrowse(r.Context(), req)
 	if err != nil {
 		writeErr(w, 400, err)
@@ -61,6 +66,11 @@ func (c *Client) QueueBrowse(ctx context.Context, req daemon.BrowseDownloadReque
 	var out daemon.BrowseDownloadResult
 	client := *c.http
 	client.Timeout = 2 * time.Minute
-	err := c.doWith(ctx, http.MethodPost, "/v1/browse/download", req, &out, MaxBodySize, &client)
+	path := "/v1/browse/download"
+	if req.Destination != "" {
+		// Old daemons must reject this action, not silently ignore the new field.
+		path = "/v1/browse/download-as"
+	}
+	err := c.doWith(ctx, http.MethodPost, path, req, &out, MaxBodySize, &client)
 	return out, err
 }

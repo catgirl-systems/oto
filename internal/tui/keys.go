@@ -14,6 +14,9 @@ import (
 
 func (m *model) key(k tea.KeyPressMsg) tea.Cmd {
 	s := k.String()
+	if m.downloadAs != nil {
+		return m.downloadAsKey(k)
+	}
 	if m.stats.prune || m.workspace == workspaceStats && (m.stats.edit != "" || m.stats.detail != nil) {
 		return m.statsKey(k)
 	}
@@ -356,6 +359,10 @@ func (m *model) key(k tea.KeyPressMsg) tea.Cmd {
 			return m.action("clear")
 		}
 	case "D":
+		if m.workspace == workspaceSearch || m.workspace == workspaceBrowse {
+			m.openDownloadAs()
+			return nil
+		}
 		if m.workspace == workspaceTransfers && m.transferTab == transferUploads {
 			return m.beginUploadAction("cancel", true)
 		}

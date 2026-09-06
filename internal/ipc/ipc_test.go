@@ -190,6 +190,22 @@ func TestStatusMethodsBodyAndSocketMode(t *testing.T) {
 	if _, err := cl.QueueBrowse(context.Background(), daemon.BrowseDownloadRequest{Username: "peer", Revision: browse.Revision + 1, Selection: map[int]bool{page.Entries[0].ID: true}}); err == nil {
 		t.Fatal("download accepted stale revision")
 	}
+	rename := daemon.BrowseDownloadRequest{Username: "peer", Revision: browse.Revision + 1, Selection: map[int]bool{page.Entries[0].ID: true}, Destination: "peer/Music/renamed.flac"}
+	if _, err := cl.QueueBrowse(ctx, rename); err == nil {
+		t.Fatal("download-as accepted stale revision")
+	}
+	rename.Revision = browse.Revision
+	queuedAs, err := cl.QueueBrowse(ctx, rename)
+	if err != nil || queuedAs.Queued != 1 {
+		t.Fatalf("download-as route: %+v %v", queuedAs, err)
+	}
+	if got := svc.Downloads()[1]; got.Filename != `Music\cached.flac` || got.Destination != rename.Destination {
+		t.Fatalf("download-as changed remote filename: %+v", got)
+	}
+	rename.Destination = ""
+	if err := cl.Do(ctx, http.MethodPost, "/v1/browse/download-as", rename, nil); err == nil || len(svc.Downloads()) != 2 {
+		t.Fatal("download-as accepted an empty destination")
+	}
 	if _, err := cl.SaveBrowse(context.Background(), "peer", browse.Revision); err != nil {
 		t.Fatalf("save browse route: %v", err)
 	}

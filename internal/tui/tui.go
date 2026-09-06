@@ -1046,6 +1046,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case folderDownloadMsg:
 		m.err = errText(x.err)
+	case downloadAsMsg:
+		if m.downloadAs == nil {
+			break
+		}
+		m.downloadAs.pending = false
+		m.downloadAs.err = errText(x.err)
+		if x.err == nil {
+			m.downloadAs = nil
+			m.setNotice("Download queued")
+			return m, m.loadTransfers()
+		}
 	case transferMsg:
 		if m.workspace == workspaceTransfers {
 			m.transferCursors[m.transferTab] = m.cursor
@@ -1159,6 +1170,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.cursor = m.transferCursors[m.transferTab]
 		}
 	case tea.PasteMsg:
+		if m.downloadAs != nil {
+			m.pasteDownloadAs(x.Content)
+			return m, nil
+		}
 		text := strings.Map(func(r rune) rune {
 			if unicode.IsControl(r) {
 				return -1

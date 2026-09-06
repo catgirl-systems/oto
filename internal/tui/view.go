@@ -16,6 +16,8 @@ func (m model) View() tea.View {
 	content := m.mainView()
 	if m.setup {
 		content = m.setupView()
+	} else if m.downloadAs != nil {
+		content = m.downloadAsView()
 	} else if m.searchScope != nil {
 		content = m.searchScopeView()
 	} else if m.passwordForm {
@@ -326,6 +328,7 @@ func (m model) helpView() string {
 			{"/ f r d (wishlist)", "add, edit filter, rerun, or remove a wishlist item"},
 			{"space", "select item or loaded folder contents"},
 			{"d", "download / choose folder mode and destination"},
+			{"D (Search/Browse)", "download highlighted file with a different local filename"},
 			{"r", "refresh browse / resume or retry transfer / rescan shares"},
 			{"d / D (uploads)", "abort selected / confirm abort all for selected users"},
 			{"c / C (uploads)", "confirm clear selected / clear by status"},
