@@ -96,7 +96,7 @@ func TestOpenFiltersAndPrefersNATPMP(t *testing.T) {
 			upnp := &fakeNAT{kind: "UPNP (IG2-IP1)", defaultPort: 5200}
 			var discoveries atomic.Int32
 			var changed uint16
-			mapping, err := open(context.Background(), 50300, tc.natPMP, tc.upnp, func(port uint16) { changed = port }, time.Hour, discovery(&discoveries, upnp, pmp))
+			mapping, err := openWithLogger(context.Background(), 50300, tc.natPMP, tc.upnp, func(port uint16) { changed = port }, time.Hour, discovery(&discoveries, upnp, pmp), nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -147,7 +147,7 @@ func TestOpenFallsBackToUPnPAndRetriesPermanentLease(t *testing.T) {
 	pmp := &fakeNAT{kind: "NAT-PMP", results: []addResult{{err: errors.New("refused")}}}
 	upnp := &fakeNAT{kind: "UPNP (IG1-IP1)", defaultPort: 5300, results: []addResult{{err: &fault}, {port: 5300}}}
 	var discoveries atomic.Int32
-	mapping, err := open(context.Background(), 50300, true, true, nil, time.Hour, discovery(&discoveries, upnp, pmp))
+	mapping, err := openWithLogger(context.Background(), 50300, true, true, nil, time.Hour, discovery(&discoveries, upnp, pmp), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -169,7 +169,7 @@ func TestRenewalReportsChangedPortAndCancellationDeletes(t *testing.T) {
 	var discoveries atomic.Int32
 	ctx, cancel := context.WithCancel(context.Background())
 	changed := make(chan uint16, 3)
-	mapping, err := open(ctx, 50300, false, true, func(port uint16) { changed <- port }, 5*time.Millisecond, discovery(&discoveries, gateway))
+	mapping, err := openWithLogger(ctx, 50300, false, true, func(port uint16) { changed <- port }, 5*time.Millisecond, discovery(&discoveries, gateway), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -201,7 +201,7 @@ func TestRenewalReportsChangedPortAndCancellationDeletes(t *testing.T) {
 
 func TestDisabledSkipsDiscovery(t *testing.T) {
 	var discoveries atomic.Int32
-	mapping, err := open(context.Background(), 50300, false, false, nil, time.Hour, discovery(&discoveries))
+	mapping, err := openWithLogger(context.Background(), 50300, false, false, nil, time.Hour, discovery(&discoveries), nil)
 	if err != nil || mapping != nil || discoveries.Load() != 0 {
 		t.Fatalf("mapping=%v err=%v discoveries=%d", mapping, err, discoveries.Load())
 	}

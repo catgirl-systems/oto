@@ -34,8 +34,7 @@ type uploadOwner struct {
 	target  soulseek.UploadTarget
 }
 
-func uploadID(username, filename string) string { return "upload:" + username + ":" + filename }
-func liveUpload(state string) bool              { return state == "queued" || state == "running" }
+func liveUpload(state string) bool { return state == "queued" || state == "running" }
 
 func (s *Service) uploadUpdate(session uint64, event soulseek.TransferEvent) {
 	if event.State == "queued" {

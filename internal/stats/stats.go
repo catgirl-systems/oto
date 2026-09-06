@@ -387,8 +387,6 @@ func (s *Store) Totals(f Filter) (Totals, error) {
 	return out, nil
 }
 
-// ponytail: merge compact per-peer/session rollups in Go; use numeric SQL columns
-// if millions of distinct peer/session combinations make aggregate queries costly.
 func (s *Store) Peers(f Filter) (PeerPage, error) {
 	grouped := map[string]Totals{}
 	for r, err := range s.rows(f, !f.From.IsZero() || !f.To.IsZero()) {

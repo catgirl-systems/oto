@@ -809,10 +809,6 @@ func writeMessage(w net.Conn, m Message) error {
 	}
 	return writeAll(w, b)
 }
-func readFrameContext(ctx context.Context, c net.Conn) (uint32, []byte, error) {
-	return readFrameContextProgress(ctx, c, nil, MaxFrameSize)
-}
-
 func readFrameContextProgress(ctx context.Context, c net.Conn, progress func(received, total uint64), maxFrameSize int) (uint32, []byte, error) {
 	type rr struct {
 		cmd uint32

@@ -736,7 +736,6 @@ func nextSequence(dir string) (int, error) {
 			max = n
 		}
 	}
-	// ponytail: one million rotations per directory; widen sequence names if needed.
 	if max >= 999999 {
 		return 0, errors.New("archive sequence exhausted")
 	}

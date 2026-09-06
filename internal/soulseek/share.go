@@ -368,7 +368,6 @@ func (s *ShareIndex) Search(query string, limit int) []ShareFile {
 		return nil
 	}
 	out := make([]ShareFile, 0, min(len(s.files), limit))
-	// ponytail: still a linear scan; add a search index only if cached matching is too slow.
 	for i, v := range s.searchPaths {
 		ok := true
 		for _, x := range need {
