@@ -111,6 +111,7 @@ func (s *Server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/browse", s.browse)
 	mux.HandleFunc("GET /v1/browse/page", s.browsePage)
 	mux.HandleFunc("POST /v1/browse/download", s.browseDownload)
+	mux.HandleFunc("POST /v1/browse/download-as", s.browseDownload)
 	mux.HandleFunc("GET /v1/wishlist", s.wishlist)
 	mux.HandleFunc("PUT /v1/wishlist", s.wishlist)
 	mux.HandleFunc("DELETE /v1/wishlist/{id}", s.wishlist)

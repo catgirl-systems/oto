@@ -409,9 +409,15 @@ func (s *Service) QueueBrowse(ctx context.Context, req BrowseDownloadRequest) (B
 		return BrowseDownloadResult{}, err
 	}
 	x := loaded.snapshot
+	if req.Destination != "" && (req.Folder != "" || req.Recursive || len(req.Selection) != 1) {
+		return BrowseDownloadResult{}, errors.New("daemon: download as requires one explicitly selected file")
+	}
 	for id := range req.Selection {
 		if id <= 0 || id > x.total {
 			return BrowseDownloadResult{}, errors.New("daemon: invalid browse selection")
+		}
+		if req.Destination != "" && (id < len(x.dirs) || !req.Selection[id]) {
+			return BrowseDownloadResult{}, errors.New("daemon: download as requires one explicitly selected file")
 		}
 	}
 	folder := -1
@@ -465,7 +471,7 @@ func (s *Service) QueueBrowse(ctx context.Context, req BrowseDownloadRequest) (B
 				continue
 			}
 			seen[name] = true
-			items = append(items, DownloadItem{Filename: name, Size: entry.Size})
+			items = append(items, DownloadItem{Filename: name, Size: entry.Size, Destination: req.Destination})
 		}
 	}
 	if len(items) == 0 {
