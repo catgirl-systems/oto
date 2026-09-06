@@ -189,3 +189,42 @@ func TestStatePathUsesXDGStateHome(t *testing.T) {
 		t.Fatalf("StatePath() = %q, want %q", got, want)
 	}
 }
+
+func TestBrowseDefaultsValidationAndRoundTrip(t *testing.T) {
+	cfg := Default()
+	cfg.Soulseek.Username, cfg.Soulseek.Password = "u", "p"
+	if err := cfg.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Browse != (Browse{MaxEntries: 2000000, MaxCompressedMiB: 64, MaxDecompressedMiB: 256}) {
+		t.Fatalf("browse defaults: %+v", cfg.Browse)
+	}
+	for _, mutate := range []func(*Config){
+		func(c *Config) { c.Browse.MaxEntries = 0 }, func(c *Config) { c.Browse.MaxEntries = -1 }, func(c *Config) { c.Browse.MaxEntries = 10000001 },
+		func(c *Config) { c.Browse.MaxCompressedMiB = 0 }, func(c *Config) { c.Browse.MaxCompressedMiB = -1 }, func(c *Config) { c.Browse.MaxCompressedMiB = 257 },
+		func(c *Config) { c.Browse.MaxDecompressedMiB = 0 }, func(c *Config) { c.Browse.MaxDecompressedMiB = -1 }, func(c *Config) { c.Browse.MaxDecompressedMiB = 1025 },
+	} {
+		invalid := cfg
+		mutate(&invalid)
+		if invalid.Validate() == nil {
+			t.Fatal("invalid browse limit accepted")
+		}
+	}
+	path := filepath.Join(t.TempDir(), "config.json")
+	cfg.Browse = Browse{MaxEntries: 123, MaxCompressedMiB: 12, MaxDecompressedMiB: 34}
+	if err := cfg.Save(path); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Load(path)
+	if err != nil || got.Browse != cfg.Browse || got.Redacted().Browse != cfg.Browse {
+		t.Fatalf("browse round trip: %+v %v", got.Browse, err)
+	}
+	old := filepath.Join(t.TempDir(), "old.json")
+	if err := os.WriteFile(old, []byte(`{"soulseek":{"username":"u","password":"p","server":"server.slsknet.org:2242","listen_addr":"0.0.0.0:50300"},"download_dir":"/tmp","download_slots":1,"upload_slots":1}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	legacy, err := Load(old)
+	if err != nil || legacy.Browse != Default().Browse {
+		t.Fatalf("old config browse defaults: %+v %v", legacy.Browse, err)
+	}
+}
