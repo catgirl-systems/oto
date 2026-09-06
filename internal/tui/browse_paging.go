@@ -207,17 +207,17 @@ func (m *model) requestRemotePage(folder, query string, cursor int) tea.Cmd {
 	}
 }
 
-func (m model) queueRemoteBrowse(selection map[int]bool, folder string, recursive bool) tea.Cmd {
+func (m model) queueRemoteBrowse(selection map[int]bool, folder string, recursive bool, destination string) tea.Cmd {
 	user, revision, dir := m.browseUser, m.browseRevision, m.cfg.DownloadDir
 	if folder != "" {
-		user, dir = m.folderMenuUser, m.folderMenuDownloadDir
+		user, revision, dir = m.folderMenuUser, m.folderMenuRevision, m.folderMenuDownloadDir
 	}
 	rules := make(map[int]bool, len(selection))
 	for id, value := range selection {
 		rules[id] = value
 	}
 	return func() tea.Msg {
-		_, err := m.client.QueueBrowse(m.ctx, daemon.BrowseDownloadRequest{Username: user, Revision: revision, Selection: rules, Folder: folder, Recursive: recursive, DownloadDir: dir})
+		_, err := m.client.QueueBrowse(m.ctx, daemon.BrowseDownloadRequest{Username: user, Revision: revision, Selection: rules, Folder: folder, Recursive: recursive, DownloadDir: dir, Destination: destination})
 		return folderDownloadMsg{err: err}
 	}
 }

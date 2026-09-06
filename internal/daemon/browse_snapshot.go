@@ -409,8 +409,17 @@ func (s *Service) QueueBrowse(ctx context.Context, req BrowseDownloadRequest) (B
 		return BrowseDownloadResult{}, err
 	}
 	x := loaded.snapshot
-	if req.Destination != "" && (req.Folder != "" || req.Recursive || len(req.Selection) != 1) {
-		return BrowseDownloadResult{}, errors.New("daemon: download as requires one explicitly selected file")
+	if req.Destination != "" {
+		if req.Folder != "" {
+			if len(req.Selection) != 0 {
+				return BrowseDownloadResult{}, errors.New("daemon: folder download as cannot include a separate selection")
+			}
+			if err := setFolderDestinations(nil, req.Folder, req.Destination); err != nil {
+				return BrowseDownloadResult{}, err
+			}
+		} else if req.Recursive || len(req.Selection) != 1 {
+			return BrowseDownloadResult{}, errors.New("daemon: download as requires one explicitly selected file")
+		}
 	}
 	for id := range req.Selection {
 		if id <= 0 || id > x.total {
@@ -476,6 +485,11 @@ func (s *Service) QueueBrowse(ctx context.Context, req BrowseDownloadRequest) (B
 	}
 	if len(items) == 0 {
 		return BrowseDownloadResult{}, errors.New("daemon: no downloadable files selected")
+	}
+	if req.Folder != "" {
+		if err := setFolderDestinations(items, req.Folder, req.Destination); err != nil {
+			return BrowseDownloadResult{}, err
+		}
 	}
 	s.mu.RLock()
 	dir := strings.TrimSpace(req.DownloadDir)

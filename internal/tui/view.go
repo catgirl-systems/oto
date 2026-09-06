@@ -214,32 +214,41 @@ func (m model) compactView() string {
 }
 
 func (m model) folderMenuView() string {
-	var b strings.Builder
-	b.WriteString(strong("Download folder") + "\n")
-	b.WriteString(muted(m.folderMenuUser+"  "+m.folderMenuPath) + "\n\n")
-	options := []string{"Download folder only", "Download folder + subfolders"}
-	for i, option := range options {
+	width := max(1, min(64, m.width-6))
+	bodyWidth := max(1, width-4)
+	body := []string{strong("Download folder"), fmt.Sprintf("%q  %q", m.folderMenuUser, m.folderMenuPath), ""}
+	for i, option := range []string{"Download folder only", "Download folder + subfolders"} {
 		marker := "  "
 		if i == m.folderMenuChoice {
-			marker = accent("› ")
-			option = strong(option)
+			marker, option = accent("› "), strong(option)
 		}
-		b.WriteString(marker + option + "\n")
+		body = append(body, marker+option)
 	}
-	b.WriteString("\n" + strong("Download root") + "\n  ")
+	for i, field := range []struct{ label, value string }{{"Download root", m.folderMenuDownloadDir}, {"Folder name", m.folderMenuName}} {
+		value := fmt.Sprintf("%q", field.value)
+		if m.folderMenuEditing && (i == 1) == m.folderMenuRename {
+			value = renderInputWindow(field.value, m.inputCursor, bodyWidth)
+		}
+		body = append(body, "", strong(field.label), value)
+	}
+	body = append(body, "", m.folderMenuError)
 	if m.folderMenuEditing {
-		b.WriteString(renderInput("", m.folderMenuDownloadDir, m.inputCursor, false, lipgloss.NewStyle()))
+		body = append(body, "←→ move · enter / esc finish editing")
 	} else {
-		b.WriteString(m.folderMenuDownloadDir)
+		body = append(body, "↑↓ choose · / edit root · n rename", "enter download · esc cancel")
 	}
-	if m.folderMenuEditing {
-		b.WriteString("\n\n" + muted("←→ move caret  •  enter / esc finish editing"))
-	} else {
-		b.WriteString("\n\n" + muted("↑↓ / j k choose  •  / edit path  •  enter download  •  esc cancel"))
+	for i := range body {
+		body[i] = trunc(body[i], bodyWidth)
 	}
-	cardWidth := max(38, min(64, m.width-4))
-	card := panelStyle().Width(cardWidth).Padding(1, 2).Render(b.String())
+	card := panelStyle().Width(width).Padding(1, 1).Render(strings.Join(body, "\n"))
 	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, card)
+}
+
+func renderInputWindow(value string, cursor, width int) string {
+	runes := []rune(value)
+	cursor = max(0, min(cursor, len(runes)))
+	start := max(0, lipgloss.Width(string(runes[:cursor]))-width+1)
+	return ansi.Cut(renderInput("", value, cursor, false, lipgloss.NewStyle()), start, start+width)
 }
 
 var presenceChoices = []daemon.Presence{daemon.PresenceOnline, daemon.PresenceAway, daemon.PresenceOffline}

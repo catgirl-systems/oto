@@ -48,7 +48,7 @@ type BrowseDownloadRequest struct {
 	Folder      string       `json:"folder,omitempty"`
 	Recursive   bool         `json:"recursive"`
 	DownloadDir string       `json:"download_dir,omitempty"`
-	Destination string       `json:"destination,omitempty"` // Single explicitly selected file only.
+	Destination string       `json:"destination,omitempty"` // Selected file, or destination directory for Folder.
 }
 
 type BrowseDownloadResult struct {

@@ -8,7 +8,6 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/catgirl-systems/oto/internal/daemon"
-	"github.com/charmbracelet/x/ansi"
 )
 
 type downloadAsForm struct {
@@ -104,10 +103,7 @@ func (m model) downloadAsView() string {
 	form := m.downloadAs
 	width := max(1, min(76, m.width-6))
 	bodyWidth := max(1, width-4)
-	runes := []rune(form.name)
-	cursor := max(0, min(form.cursor, len(runes)))
-	start := max(0, lipgloss.Width(string(runes[:cursor]))-bodyWidth+1)
-	input := ansi.Cut(renderInput("", form.name, cursor, false, lipgloss.NewStyle()), start, start+bodyWidth)
+	input := renderInputWindow(form.name, form.cursor, bodyWidth)
 	body := []string{strong("Download as…"), "", fmt.Sprintf("Peer: %q", form.user), fmt.Sprintf("Remote: %q", form.filename), "", "Save as:", input, "", "Keeps the normal download folder.", form.err, "enter download · esc cancel"}
 	if form.pending {
 		body[len(body)-1] = "Queueing download…"

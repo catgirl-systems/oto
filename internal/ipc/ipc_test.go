@@ -206,6 +206,24 @@ func TestStatusMethodsBodyAndSocketMode(t *testing.T) {
 	if err := cl.Do(ctx, http.MethodPost, "/v1/browse/download-as", rename, nil); err == nil || len(svc.Downloads()) != 2 {
 		t.Fatal("download-as accepted an empty destination")
 	}
+	folderRename := daemon.FolderDownloadRequest{Username: "peer", Folder: "Music", Destination: "peer/Renamed", DownloadDir: t.TempDir(), Files: []daemon.DownloadItem{{Filename: `Music\cached.flac`, Size: 42}}}
+	if queued, err := cl.QueueFolder(ctx, folderRename); err != nil || queued != 1 {
+		t.Fatalf("folder download-as route: queued=%d %v", queued, err)
+	}
+	if got := svc.Downloads()[2]; got.Destination != "peer/Renamed/cached.flac" || got.Filename != `Music\cached.flac` {
+		t.Fatalf("folder download-as destination: %+v", got)
+	}
+	folderRename.Destination = ""
+	if err := cl.Do(ctx, http.MethodPost, "/v1/folder-downloads/as", folderRename, nil); err == nil {
+		t.Fatal("folder download-as accepted an empty destination")
+	}
+	pagedFolder := daemon.BrowseDownloadRequest{Username: "peer", Folder: "Music", Destination: "peer/Renamed", Revision: browse.Revision, DownloadDir: t.TempDir(), Recursive: true}
+	if queued, err := cl.QueueBrowse(ctx, pagedFolder); err != nil || queued.Queued != 1 {
+		t.Fatalf("paged folder download-as route: %+v %v", queued, err)
+	}
+	if got := svc.Downloads()[3]; got.Destination != "peer/Renamed/cached.flac" || got.Filename != `Music\cached.flac` {
+		t.Fatalf("paged folder download-as destination: %+v", got)
+	}
 	if _, err := cl.SaveBrowse(context.Background(), "peer", browse.Revision); err != nil {
 		t.Fatalf("save browse route: %v", err)
 	}
