@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -1495,5 +1496,56 @@ func TestBrowseSettingsEdits(t *testing.T) {
 	}
 	if got := m.settingFields()[0].label; got != "Max entries (files + folders)" {
 		t.Fatalf("entry label: %q", got)
+	}
+}
+
+func TestIntegerSettingsValidation(t *testing.T) {
+	maxInt := int(^uint(0) >> 1)
+	for _, test := range []struct {
+		section  settingsSection
+		field    settingID
+		min, max int
+	}{
+		{settingsStatistics, settingStatsLogRetention, 0, 365000},
+		{settingsStatistics, settingStatsDailyRetention, 0, 365000},
+		{settingsBrowse, settingBrowseMaxEntries, 1, 10000000},
+		{settingsBrowse, settingBrowseMaxCompressedMiB, 1, 256},
+		{settingsBrowse, settingBrowseMaxDecompressedMiB, 1, 1024},
+		{settingsSearch, settingMinimumIncomingSearchLength, 0, 50},
+		{settingsSearch, settingMaximumIncomingSearchResults, 50, 10000},
+		{settingsSearch, settingSearchHistoryLimit, 0, maxInt},
+		{settingsSearch, settingFilterHistoryLimit, 0, maxInt},
+		{settingsSearch, settingWishlistInterval, 0, 525600},
+		{settingsBandwidth, settingUploadSpeedLimit, 0, 1000000},
+		{settingsBandwidth, settingDownloadSpeedLimit, 0, 1000000},
+	} {
+		t.Run(fmt.Sprint(test.field), func(t *testing.T) {
+			m := model{cfg: config.Default(), settingsSection: test.section, cursor: -1}
+			m.cfg.Bandwidth.Profiles = append(m.cfg.Bandwidth.Profiles, config.BandwidthProfile{Name: "Other"})
+			m.cfg.Bandwidth.ActiveProfile = "Other"
+			for i, field := range m.settingFields() {
+				if field.id == test.field {
+					m.cursor = i
+				}
+			}
+			if m.cursor < 0 {
+				t.Fatal("setting not found")
+			}
+			for _, n := range []int{test.min, test.max} {
+				value := fmt.Sprint(n)
+				if err := m.setSettingValue(value); err != nil || m.settingFields()[m.cursor].value != value {
+					t.Fatalf("valid value %q: %v", value, err)
+				}
+			}
+			before := m.cfg.Redacted()
+			for _, value := range []string{"", "no", fmt.Sprint(test.min - 1), fmt.Sprint(uint64(test.max) + 1)} {
+				if err := m.setSettingValue(value); err == nil || !reflect.DeepEqual(m.cfg.Redacted(), before) {
+					t.Fatalf("invalid value %q accepted or changed config: %v", value, err)
+				}
+			}
+			if m.cfg.Bandwidth.Profiles[0] != config.Default().Bandwidth.Profiles[0] {
+				t.Fatal("edited the inactive profile")
+			}
+		})
 	}
 }

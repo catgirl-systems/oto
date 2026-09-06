@@ -139,6 +139,8 @@ func TestUploadConfigRoundTripAndValidation(t *testing.T) {
 	cfg.Soulseek.Username, cfg.Soulseek.Password = "u", "p"
 	cfg.Bandwidth = Bandwidth{Profiles: []BandwidthProfile{{Name: "Fast", UploadSpeedLimitKiB: 1000}, {Name: "Night", UploadSpeedLimitKiB: 25, DownloadSpeedLimitKiB: 100}}, ActiveProfile: "Night"}
 	cfg.Uploads.LimitScope, cfg.Uploads.Scheduling = UploadLimitPerTransfer, UploadSchedulingSmallestFirst
+	cfg.Uploads.MaxQueuedFilesPerUser, cfg.Uploads.MaxQueuedBytesPerUser = 1000000, 1<<63-1
+	cfg.Shares = []Share{{Name: "Music", Path: "/music"}, {Name: "music", Path: "/other"}}
 	path := filepath.Join(t.TempDir(), "config.json")
 	if err := cfg.Save(path); err != nil {
 		t.Fatal(err)
@@ -150,6 +152,13 @@ func TestUploadConfigRoundTripAndValidation(t *testing.T) {
 	for _, mutate := range []func(*Config){
 		func(c *Config) { c.Uploads.LimitScope = "bad" },
 		func(c *Config) { c.Uploads.Scheduling = "bad" },
+		func(c *Config) { c.Uploads.MaxQueuedFilesPerUser++ },
+		func(c *Config) { c.Uploads.MaxQueuedBytesPerUser++ },
+		func(c *Config) { c.Shares = []Share{{Name: "same", Path: "/a"}, {Name: "same", Path: "/b"}} },
+		func(c *Config) { c.Shares = []Share{{Name: "empty"}} },
+		func(c *Config) { c.Shares = []Share{{Name: " ", Path: "/a"}} },
+		func(c *Config) { c.Shares = []Share{{Name: "..", Path: "/a"}} },
+		func(c *Config) { c.Shares = []Share{{Name: "a/b", Path: "/a"}} },
 		func(c *Config) { c.Bandwidth.Profiles = nil },
 		func(c *Config) { c.Bandwidth.ActiveProfile = "missing" },
 	} {
