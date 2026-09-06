@@ -122,6 +122,7 @@ func (s *Server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/browse/save", s.saveBrowse)
 	mux.HandleFunc("POST /v1/downloads", s.downloads)
 	mux.HandleFunc("POST /v1/folder-downloads", s.folderDownloads)
+	mux.HandleFunc("POST /v1/folder-downloads/as", s.folderDownloads)
 	mux.HandleFunc("GET /v1/transfers", s.transfers)
 	mux.HandleFunc("POST /v1/transfers/{id}", s.transfers)
 	mux.HandleFunc("POST /v1/uploads/actions", s.uploadAction)
@@ -375,6 +376,10 @@ func (s *Server) folderDownloads(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, err)
 		return
 	}
+	if r.URL.Path == "/v1/folder-downloads/as" && req.Destination == "" {
+		writeErr(w, 400, errors.New("download destination is required"))
+		return
+	}
 	out, err := s.service.QueueFolder(r.Context(), req)
 	if err != nil {
 		writeErr(w, 400, err)
@@ -618,7 +623,12 @@ func (c *Client) QueueFolder(ctx context.Context, req daemon.FolderDownloadReque
 	var response struct {
 		Queued int `json:"queued"`
 	}
-	err := c.Do(ctx, "POST", "/v1/folder-downloads", req, &response)
+	path := "/v1/folder-downloads"
+	if req.Destination != "" {
+		// Older daemons must reject rather than silently discard the destination.
+		path += "/as"
+	}
+	err := c.Do(ctx, "POST", path, req, &response)
 	return response.Queued, err
 }
 func (c *Client) Transfers(ctx context.Context) ([]daemon.Transfer, error) {

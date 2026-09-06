@@ -571,6 +571,11 @@ func (m *model) openFolderMenu() bool {
 	if user == "" {
 		return false
 	}
+	m.folderMenuName, m.folderMenuError = browseEntryLabel(node.path), ""
+	m.folderMenuRename, m.folderMenuRevision = false, m.browseRevision
+	if strings.IndexFunc(m.folderMenuName, unicode.IsControl) >= 0 {
+		m.folderMenuName = ""
+	}
 	if m.workspace == workspaceBrowse && m.browsePaged {
 		m.folderMenu, m.folderMenuEditing, m.folderMenuChoice = true, false, 0
 		m.folderMenuUser, m.folderMenuPath, m.folderMenuDownloadDir = user, normalizeBrowsePath(node.path), m.cfg.DownloadDir
@@ -640,6 +645,12 @@ func (m *model) folderMenuRequest() daemon.FolderDownloadRequest {
 	return req
 }
 
+func (m *model) folderMenuInput() *string {
+	if m.folderMenuRename {
+		return &m.folderMenuName
+	}
+	return &m.folderMenuDownloadDir
+}
 func (m *model) folderMenuKey(k tea.KeyPressMsg) tea.Cmd {
 	if m.folderMenuEditing {
 		switch k.String() {
@@ -647,7 +658,9 @@ func (m *model) folderMenuKey(k tea.KeyPressMsg) tea.Cmd {
 			m.folderMenuEditing = false
 			return nil
 		}
-		m.folderMenuDownloadDir, m.inputCursor, _ = editText(m.folderMenuDownloadDir, m.inputCursor, k)
+		value := m.folderMenuInput()
+		*value, m.inputCursor, _ = editText(*value, m.inputCursor, k)
+		m.folderMenuError = ""
 		return nil
 	}
 	switch k.String() {
@@ -657,15 +670,24 @@ func (m *model) folderMenuKey(k tea.KeyPressMsg) tea.Cmd {
 		m.folderMenuChoice = max(0, m.folderMenuChoice-1)
 	case "down", "j":
 		m.folderMenuChoice = min(1, m.folderMenuChoice+1)
-	case "/":
-		m.folderMenuEditing = true
-		m.inputCursor = len([]rune(m.folderMenuDownloadDir))
+	case "/", "n":
+		m.folderMenuEditing, m.folderMenuRename = true, k.String() == "n"
+		m.inputCursor = len([]rune(*m.folderMenuInput()))
 	case "enter":
+		destination, err := daemon.DownloadAsDestination(m.folderMenuUser, m.folderMenuPath, m.folderMenuName)
+		if err != nil {
+			m.folderMenuError = err.Error()
+			return nil
+		}
+		if m.folderMenuName == browseEntryLabel(m.folderMenuPath) {
+			destination = "" // Preserve ordinary downloads and compatibility when unchanged.
+		}
 		if m.workspace == workspaceBrowse && m.browsePaged {
 			m.folderMenu = false
-			return m.queueRemoteBrowse(nil, m.folderMenuPath, m.folderMenuChoice == 1)
+			return m.queueRemoteBrowse(nil, m.folderMenuPath, m.folderMenuChoice == 1, destination)
 		}
 		req := m.folderMenuRequest()
+		req.Destination = destination
 		m.folderMenu = false
 		return m.queueFolder(req)
 	}
@@ -1066,13 +1088,13 @@ func (m *model) queueBrowse() tea.Cmd {
 			selected = selected || value
 		}
 		if selected {
-			return m.queueRemoteBrowse(m.selected, "", false)
+			return m.queueRemoteBrowse(m.selected, "", false, "")
 		}
 		_, node := m.browseTree.node(m.cursor)
 		if node == nil || node.kind != treeFile {
 			return nil
 		}
-		return m.queueRemoteBrowse(map[int]bool{remoteNodeIDValue(node.id): true}, "", false)
+		return m.queueRemoteBrowse(map[int]bool{remoteNodeIDValue(node.id): true}, "", false, "")
 	}
 	chosen := make(map[string]download)
 	for source, item := range m.entries {

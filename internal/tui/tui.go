@@ -1174,6 +1174,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.pasteDownloadAs(x.Content)
 			return m, nil
 		}
+		if m.folderMenu {
+			if m.folderMenuEditing {
+				if strings.IndexFunc(x.Content, unicode.IsControl) >= 0 {
+					m.folderMenuError = "Name/path cannot contain control characters"
+					return m, nil
+				}
+				value := m.folderMenuInput()
+				*value, m.inputCursor = insertText(*value, x.Content, m.inputCursor)
+				m.folderMenuError = ""
+			}
+			return m, nil
+		}
 		text := strings.Map(func(r rune) rune {
 			if unicode.IsControl(r) {
 				return -1

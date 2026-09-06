@@ -38,3 +38,34 @@ func validateDownloadDestination(destination string) error {
 	parts := strings.ReplaceAll(destination, "\\", "/")
 	return validateDownloadName(parts[strings.LastIndexByte(parts, '/')+1:])
 }
+
+// setFolderDestinations preserves each file's path beneath the selected remote folder.
+func setFolderDestinations(items []DownloadItem, folder, destination string) error {
+	if destination == "" {
+		return nil
+	}
+	if err := validateDownloadDestination(destination); err != nil {
+		return err
+	}
+	destination, err := soulseek.NormalizePath(destination)
+	if err != nil {
+		return err
+	}
+	folder, err = soulseek.NormalizePath(folder)
+	if err != nil {
+		return err
+	}
+	segments := strings.Split(folder, "/")
+	for i := range items {
+		relative := items[i].Filename // Both queue paths supply normalized remote names.
+		for _, segment := range segments {
+			part, rest, ok := strings.Cut(relative, "/")
+			if !ok || !strings.EqualFold(part, segment) {
+				return errors.New("daemon: file is outside the selected folder")
+			}
+			relative = rest
+		}
+		items[i].Destination = destination + "/" + relative
+	}
+	return nil
+}

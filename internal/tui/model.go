@@ -221,6 +221,9 @@ type model struct {
 	settingsSaving                         bool
 	restoreDownloadRules                   bool
 	folderMenuEditing                      bool
+	folderMenuRename                       bool
+	folderMenuName, folderMenuError        string
+	folderMenuRevision                     uint64
 	downloadAs                             *downloadAsForm
 	loadingMore, filterEditing             bool
 	browseFindEditing                      bool

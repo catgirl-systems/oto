@@ -219,3 +219,157 @@ func TestDownloadAsCaretAndRemoteControlCharacters(t *testing.T) {
 		t.Fatal("peer control characters reached the filename input")
 	}
 }
+
+func TestFolderRenameDialogAndRequests(t *testing.T) {
+	t.Setenv("NO_COLOR", "1")
+	type request struct {
+		daemon.FolderDownloadRequest
+		Revision uint64 `json:"revision"`
+		route    string
+	}
+	requests := make(chan request, 1)
+	listener, err := net.Listen("unix", filepath.Join(t.TempDir(), "ipc.sock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		req := request{route: r.URL.Path}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Error(err)
+		}
+		requests <- req
+		if strings.HasSuffix(req.Destination, "/Unsupported") {
+			http.NotFound(w, r)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(daemon.BrowseDownloadResult{Queued: 1})
+	})}
+	go func() { _ = server.Serve(listener) }()
+	t.Cleanup(func() { _ = server.Close() })
+	for _, source := range []string{"search", "saved", "paged"} {
+		t.Run(source, func(t *testing.T) {
+			m := model{ctx: context.Background(), client: ipc.NewClient(listener.Addr().String()), width: 80, height: 24, browseUser: "peer", browseRevision: 7}
+			m.cfg.DownloadDir = "/downloads"
+			if source == "search" {
+				m.workspace = workspaceSearch
+				m.results = []result{{user: "peer", path: `Music\Album\a.flac`, size: 3}, {user: "peer", path: `Music\Album\Disc\b.flac`, size: 8}}
+				m.searchTree, _ = buildSearchTree(m.results, treeState{}, 0)
+			} else {
+				m.workspace = workspaceBrowse
+				m.entries = []entry{{name: `Music\Album\a.flac`, size: 3}, {name: `Music\Album\Disc\b.flac`, size: 8}}
+				m.browseTree, _ = buildBrowseTree(m.entries, "", treeState{}, 0)
+				if source == "paged" {
+					m.browsePaged = true
+					m.entries = nil
+					m.browseTree = treeState{nodes: []treeNode{{kind: treeFolder, id: remoteNodeID(1), path: `Music\Album`}}, visible: []int{0}}
+				}
+			}
+			for cursor, index := range m.currentTree().visible {
+				if m.currentTree().nodes[index].path == `Music\Album` {
+					m.cursor = cursor
+					break
+				}
+			}
+			m.key(key("d"))
+			if !m.folderMenu || m.folderMenuName != "Album" {
+				t.Fatal("folder name not prefilled")
+			}
+			cmd := m.key(key("enter"))
+			if cmd == nil {
+				t.Fatal("ordinary folder download blocked")
+			}
+			if msg := cmd().(folderDownloadMsg); msg.err != nil {
+				t.Fatal(msg.err)
+			}
+			req := <-requests
+			if req.Destination != "" || (source == "paged" && req.route != "/v1/browse/download") || (source != "paged" && req.route != "/v1/folder-downloads") {
+				t.Fatalf("ordinary download changed: %+v", req)
+			}
+			m.key(key("d"))
+			m.key(key("n"))
+			m.key(key("ctrl+u"))
+			next, _ := m.Update(tea.PasteMsg{Content: "日本語"})
+			m = next.(model)
+			if m.folderMenuName != "日本語" || m.folderMenuDownloadDir != "/downloads" {
+				t.Fatal("rename changed download root")
+			}
+			next, _ = m.Update(tea.PasteMsg{Content: "bad\nname"})
+			m = next.(model)
+			if m.folderMenuName != "日本語" || m.folderMenuError == "" {
+				t.Fatal("control paste accepted")
+			}
+			m.key(key("enter")) // Finish editing, not queue.
+			for _, name := range []string{"", "..", "../escape", `dir\name`} {
+				m.folderMenuName = name
+				if m.key(key("enter")) != nil || !m.folderMenu || m.folderMenuError == "" {
+					t.Fatalf("invalid folder submitted: %q", name)
+				}
+			}
+			m.folderMenuName, m.folderMenuError = "日本語", ""
+			for _, width := range []int{40, 80} {
+				m.width = width
+				view := m.folderMenuView()
+				if !strings.Contains(view, "Folder name") || !strings.Contains(view, "日本語") {
+					t.Fatal("missing folder input")
+				}
+				for _, line := range strings.Split(view, "\n") {
+					if lipgloss.Width(line) > width {
+						t.Fatalf("folder dialog overflow: %q", line)
+					}
+				}
+			}
+			m.key(key("esc"))
+			if m.folderMenu || len(requests) != 0 {
+				t.Fatal("cancel submitted rename")
+			}
+			for _, recursive := range []bool{false, true} {
+				m.key(key("d"))
+				if m.folderMenuName != "Album" {
+					t.Fatal("previous rename leaked into next dialog")
+				}
+				m.folderMenuName = "日本語"
+				if recursive {
+					m.key(key("down"))
+				}
+				revision := m.browseRevision
+				m.browseRevision++ // Must use the revision when the dialog opened.
+				cmd = m.key(key("enter"))
+				if cmd == nil {
+					t.Fatal("rename not submitted")
+				}
+				if msg := cmd().(folderDownloadMsg); msg.err != nil {
+					t.Fatal(msg.err)
+				}
+				req = <-requests
+				if req.Username != "peer" || req.Folder != `Music\Album` || req.Destination != "peer/Music/日本語" || req.DownloadDir != "/downloads" || req.Recursive != recursive {
+					t.Fatalf("rename request: %+v", req)
+				}
+				if source == "paged" {
+					if req.route != "/v1/browse/download-as" || req.Revision != revision || len(req.Files) != 0 {
+						t.Fatal("paged rename lost revision or flattened files")
+					}
+				} else {
+					want := map[string]uint64{`Music\Album\a.flac`: 3}
+					if recursive {
+						want[`Music\Album\Disc\b.flac`] = 8
+					}
+					if req.route != "/v1/folder-downloads/as" || len(req.Files) != len(want) {
+						t.Fatalf("folder rename changed source: %+v", req)
+					}
+					for _, file := range req.Files {
+						if want[file.Filename] != file.Size || file.Destination != "" {
+							t.Fatalf("changed remote file: %+v", file)
+						}
+					}
+				}
+			}
+			m.key(key("d"))
+			m.folderMenuName = "Unsupported"
+			msg := m.key(key("enter"))().(folderDownloadMsg)
+			<-requests
+			if msg.err == nil || len(requests) != 0 {
+				t.Fatal("old daemon silently accepted rename or client fell back")
+			}
+		})
+	}
+}

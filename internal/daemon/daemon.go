@@ -182,6 +182,7 @@ type FolderDownloadRequest struct {
 	Username    string         `json:"username"`
 	DownloadDir string         `json:"download_dir,omitempty"`
 	Folder      string         `json:"folder"`
+	Destination string         `json:"destination,omitempty"`
 	Subfolders  []string       `json:"subfolders,omitempty"`
 	Files       []DownloadItem `json:"files,omitempty"`
 	Recursive   bool           `json:"recursive"`
@@ -1064,6 +1065,9 @@ func folderDownloadItems(req FolderDownloadRequest, entries []soulseek.ShareEntr
 	if len(items) == 0 {
 		return nil, errors.New("daemon: folder contains no downloadable files")
 	}
+	if err := setFolderDestinations(items, folder, req.Destination); err != nil {
+		return nil, err
+	}
 	return items, nil
 }
 
@@ -1093,6 +1097,9 @@ func (s *Service) QueueFolder(ctx context.Context, req FolderDownloadRequest) ([
 		return nil, err
 	}
 	req.Folder = folder
+	if err := setFolderDestinations(nil, folder, req.Destination); err != nil {
+		return nil, err
+	}
 	folders := []string{folder}
 	seen := map[string]bool{strings.ToLower(folder): true}
 	if req.Recursive {
