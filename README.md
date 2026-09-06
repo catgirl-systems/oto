@@ -125,7 +125,7 @@ oto focuses on file sharing and a detachable terminal UI. [Nicotine+](https://ni
 
 :white_check_mark: supported · :x: unavailable · :fast_forward: different approach
 
-### Network and session
+### Network and session (19/23 - 83%)
 
 | Feature | oto | Nicotine+ |
 | --- | --- | --- |
@@ -153,7 +153,7 @@ oto focuses on file sharing and a detachable terminal UI. [Nicotine+](https://ni
 | Check remaining Soulseek supporter privileges | :x: | :white_check_mark: |
 | Gift Soulseek privileges to another user | :x: | :white_check_mark: |
 
-### Search
+### Search (30/32 - 94%)
 
 | Feature | oto | Nicotine+ |
 | --- | --- | --- |
@@ -190,7 +190,7 @@ oto focuses on file sharing and a detachable terminal UI. [Nicotine+](https://ni
 | Configure maximum results returned to peers | :white_check_mark: | :white_check_mark: |
 | Honor server-provided excluded search phrases | :white_check_mark: | :white_check_mark: |
 
-### Browsing users and files
+### Browsing users and files (14/14 - 100%)
 
 | Feature | oto | Nicotine+ |
 | --- | --- | --- |
@@ -209,7 +209,7 @@ oto focuses on file sharing and a detachable terminal UI. [Nicotine+](https://ni
 | Show progress while retrieving large share lists | :white_check_mark: | :white_check_mark: |
 | View detailed file properties and media metadata | :white_check_mark: | :white_check_mark: |
 
-### Downloads
+### Downloads (28/31 - 90%)
 
 | Feature | oto | Nicotine+ |
 | --- | --- | --- |
@@ -245,7 +245,7 @@ oto focuses on file sharing and a detachable terminal UI. [Nicotine+](https://ni
 | Search the network for a transfer's file or folder name | :white_check_mark: | :white_check_mark: |
 | Remove the associated incomplete file when deleting a transfer | :white_check_mark: | :white_check_mark: |
 
-### Uploads
+### Uploads (21/30 - 70%)
 
 | Feature | oto | Nicotine+ |
 | --- | --- | --- |
@@ -280,7 +280,7 @@ oto focuses on file sharing and a detachable terminal UI. [Nicotine+](https://ni
 | Wait for active uploads to finish before quitting | :x: | :white_check_mark: |
 | Message all users currently downloading | :x: | :white_check_mark: |
 
-### Shares and permissions
+### Shares and permissions (14/19 - 74%)
 
 | Feature | oto | Nicotine+ |
 | --- | --- | --- |
@@ -306,7 +306,7 @@ oto focuses on file sharing and a detachable terminal UI. [Nicotine+](https://ni
 
 :fast_forward: oto watches share filesystem changes and reconciles after its quiet/max delays instead of waiting for a daily schedule.
 
-### Users, chat, and community
+### Users, chat, and community (0/39 - 0%)
 
 | Feature | oto | Nicotine+ |
 | --- | --- | --- |
@@ -350,7 +350,7 @@ oto focuses on file sharing and a detachable terminal UI. [Nicotine+](https://ni
 | Incoming text censorship patterns | :x: | :white_check_mark: |
 | `/me` actions and extensible chat commands | :x: | :white_check_mark: |
 
-### Extensibility, persistence, and operation
+### Extensibility, persistence, and operation (8/17 - 47%)
 
 | Feature | oto | Nicotine+ |
 | --- | --- | --- |
