@@ -246,6 +246,30 @@ func observedProgress(o *transferObservation, next ProgressFunc) ProgressFunc {
 	}
 }
 
+// DownloadWaitSeconds reports time without file data while a network read is
+// pending. Setup, local writes, completed attempts and unavailable observations
+// are unknown, not evidence that the peer is at fault. This does not sample logs.
+func (c *Client) DownloadWaitSeconds(username, filename string, now time.Time) *uint64 {
+	c.mu.Lock()
+	pending := c.requested[downloadKey(username, filename)]
+	c.mu.Unlock()
+	if pending == nil || pending.observation == nil || pending.ctx.Err() != nil {
+		return nil
+	}
+	o := pending.observation
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if o.started.IsZero() || o.stage != "read" {
+		return nil
+	}
+	last := o.lastRead
+	if last.IsZero() {
+		last = o.started
+	}
+	seconds := uint64(max(0, now.Sub(last)/time.Second))
+	return &seconds
+}
+
 // LogDiagnostics is invoked by the existing five-second daemon telemetry cadence.
 func (c *Client) LogDiagnostics(now time.Time) {
 	c.mu.Lock()

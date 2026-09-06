@@ -413,6 +413,16 @@ func (m model) renderTransfers(width, height int) string {
 	}
 	indexes := m.transferIndexes()
 	tree := &m.transferTrees[m.transferTab]
+	if _, node := tree.node(m.cursor); node != nil && node.kind == treeFile && node.source >= 0 && height > len(lines)+1 {
+		x := m.transfers[node.source]
+		status := transferStatus(x, false)
+		if status != x.state || x.err != "" {
+			if x.err != "" {
+				status += ": " + x.err
+			}
+			lines = append(lines, trunc(status, width))
+		}
+	}
 	if width < 110 && len(indexes) > 0 && height > len(lines) {
 		if _, node := tree.node(m.cursor); node != nil {
 			lines = append(lines, trunc(m.transferTimeText(*node), width))
@@ -451,7 +461,7 @@ func (m model) renderTransfers(width, height int) string {
 		var x transfer
 		if node.kind == treeFile && node.source >= 0 {
 			x = m.transfers[node.source]
-			state = x.state
+			state = transferStatus(x, true)
 			if x.err != "" {
 				state += ": " + x.err
 			}

@@ -71,3 +71,22 @@ func (m model) transferTimeText(node treeNode) string {
 	}
 	return fmt.Sprintf("%s %s  ETA %s", label, optionalDuration(elapsed, true), optionalDuration(eta, false))
 }
+
+func transferStatus(x transfer, compact bool) string {
+	if x.direction == "download" {
+		if x.state == "running" && x.waitingForPeerSeconds != nil && *x.waitingForPeerSeconds >= 30 {
+			label := "Waiting for peer data"
+			if compact {
+				label = "Waiting"
+			}
+			return fmt.Sprintf("%s · %ds", label, *x.waitingForPeerSeconds)
+		}
+		if x.state == "retrying" && x.retryInSeconds != nil {
+			if *x.retryInSeconds == 0 {
+				return "Retry pending"
+			}
+			return "Retry in " + formatDuration(*x.retryInSeconds)
+		}
+	}
+	return x.state
+}

@@ -4,6 +4,8 @@ import (
 	"math"
 	"sort"
 	"time"
+
+	"github.com/catgirl-systems/oto/internal/soulseek"
 )
 
 // Timing belongs to the daemon run, not the journal or an attached frontend.
@@ -131,10 +133,39 @@ func (s *Service) stopTransferLocked(id string) {
 }
 
 func (s *Service) transferValuesLocked(now time.Time) []Transfer {
+	retries := make(map[string]time.Time)
+	for _, d := range s.journal.Downloads {
+		if d.State == "retrying" && !d.RetryAt.IsZero() {
+			retries[d.ID] = d.RetryAt
+		}
+	}
 	out := make([]Transfer, 0, len(s.transfers))
 	for _, x := range s.transfers {
-		out = append(out, s.transferTiming[x.ID].snapshot(x, now))
+		x = s.transferTiming[x.ID].snapshot(x, now)
+		x.RetryInSeconds = nil
+		if at, ok := retries[x.ID]; ok && x.State == "retrying" && x.Direction == "download" {
+			remaining := max(0, at.Sub(now))
+			seconds := uint64(remaining / time.Second)
+			if remaining%time.Second != 0 {
+				seconds++
+			}
+			x.RetryInSeconds = &seconds
+		}
+		out = append(out, x)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out
+}
+
+// Read network observations only after releasing the service lock.
+func addDownloadWaits(transfers []Transfer, client *soulseek.Client, now time.Time) {
+	if client == nil {
+		return
+	}
+	for i := range transfers {
+		x := &transfers[i]
+		if x.Direction == "download" && x.State == "running" {
+			x.WaitingForPeerSeconds = client.DownloadWaitSeconds(x.Username, x.Filename, now)
+		}
+	}
 }

@@ -100,3 +100,49 @@ func TestTimingLifecycleGuards(t *testing.T) {
 		t.Fatal("new successful-file request reused old timing")
 	}
 }
+
+func TestTransferRetryCountdownIsReadOnly(t *testing.T) {
+	now := time.Unix(1000, 0)
+	original := Transfer{ID: "d-1", Direction: "download", State: "retrying", Done: 100, Total: 200, Error: "remote upload failed"}
+	download := Download{ID: original.ID, State: original.State, Offset: original.Done, RetryAt: now.Add(65*time.Second + time.Nanosecond), Error: original.Error}
+	s := &Service{transfers: map[string]Transfer{original.ID: original}, journal: Journal{Downloads: []Download{download}}}
+	for _, tc := range []struct {
+		at   time.Time
+		want uint64
+	}{
+		{now, 66}, {now.Add(time.Nanosecond), 65},
+		{download.RetryAt.Add(-time.Nanosecond), 1}, {download.RetryAt, 0},
+		{download.RetryAt.Add(time.Hour), 0},
+	} {
+		got := s.transferValuesLocked(tc.at)[0]
+		if got.RetryInSeconds == nil || *got.RetryInSeconds != tc.want || got.WaitingForPeerSeconds != nil || got.State != original.State || got.Error != original.Error || got.Done != original.Done {
+			t.Fatalf("countdown at %v: %+v", tc.at, got)
+		}
+		if s.journal.Downloads[0] != download || s.transfers[original.ID] != original {
+			t.Fatal("reading countdown changed retry policy/state")
+		}
+	}
+	// Both IPC views use daemon time; an overdue attempt is pending, not running.
+	for _, got := range []Transfer{s.Transfers()[0], s.Snapshot().Transfers[0]} {
+		if got.RetryInSeconds == nil || *got.RetryInSeconds != 0 || got.State != "retrying" || got.Error != original.Error {
+			t.Fatalf("public snapshot: %+v", got)
+		}
+	}
+	for _, state := range []string{"queued", "running", "paused", "cancelled", "failed", "completed", "finalizing"} {
+		x := original
+		x.State = state
+		s.transfers[x.ID] = x
+		if got := s.transferValuesLocked(now)[0]; got.RetryInSeconds != nil {
+			t.Fatalf("%s retained retry countdown", state)
+		}
+	}
+	s.transfers[original.ID] = original
+	s.journal.Downloads[0].RetryAt = time.Time{}
+	if got := s.transferValuesLocked(now)[0]; got.RetryInSeconds != nil {
+		t.Fatal("unknown deadline became a known countdown")
+	}
+	var old Transfer
+	if err := json.Unmarshal([]byte(`{"id":"old","state":"retrying","error":"observed error"}`), &old); err != nil || old.RetryInSeconds != nil || old.WaitingForPeerSeconds != nil {
+		t.Fatalf("old IPC payload: %+v, %v", old, err)
+	}
+}
