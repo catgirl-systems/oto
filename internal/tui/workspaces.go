@@ -148,7 +148,10 @@ func (m model) browseTabsLine(width int) string {
 	}
 	labels := make([]string, len(m.browseTabs))
 	for i, tab := range m.browseTabs {
-		label := tab.user
+		label := browseErrorText(tab.user)
+		if heading, _ := tab.failure(); heading != "" {
+			label += " (error)"
+		}
 		if tab.cached {
 			label += " (cached)"
 		}
@@ -170,7 +173,7 @@ func (m model) renderBrowse(width, height int) string {
 	if m.editing && !m.browseFindEditing {
 		prompt = renderInput("/  ", m.input, m.inputCursor, false, inputStyle) + muted("   enter browse  •  esc cancel")
 	} else if m.browseUser != "" {
-		prompt = styled("/  "+m.browseUser, inputStyle)
+		prompt = styled("/  "+browseErrorText(m.browseUser), inputStyle)
 	}
 	count, singular := len(m.entries), "item"
 	if len(m.browseTabs) == 0 {
@@ -195,6 +198,20 @@ func (m model) renderBrowse(width, height int) string {
 		lines = append(lines, tabs)
 	}
 	lines = append(lines, trunc(prompt, width))
+	heading, detail := m.browseFailure()
+	if heading != "" {
+		if height <= len(lines) {
+			lines = lines[:max(0, height-1)]
+		}
+		errorHeight := min(6, height-len(lines))
+		if len(m.entries) > 0 {
+			errorHeight = min(errorHeight, max(3, (height-len(lines))/2))
+		}
+		lines = append(lines, browseErrorLines(heading, detail, width, errorHeight)...)
+		if len(m.entries) == 0 || height-len(lines) < 4 {
+			return strings.Join(lines, "\n")
+		}
+	}
 	if m.browseLoaded {
 		findLine := muted("f  Search this share snapshot")
 		if m.editing && m.browseFindEditing {
@@ -223,7 +240,7 @@ func (m model) renderBrowse(width, height int) string {
 	if m.loading && height > len(lines) {
 		return strings.Join(append(lines, muted("◌  Loading shared files…")), "\n")
 	}
-	if m.browseFilter != "" && len(m.browseTree.visible) == 0 && height > len(lines) {
+	if heading == "" && m.browseFilter != "" && len(m.browseTree.visible) == 0 && height > len(lines) {
 		return strings.Join(append(lines, muted("No matching shared files. Press f to change or clear the find.")), "\n")
 	}
 	if m.browseLoaded && len(m.entries) == 0 && height > len(lines) {

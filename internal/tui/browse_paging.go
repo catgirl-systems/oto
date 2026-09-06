@@ -11,7 +11,7 @@ import (
 )
 
 type browsePageState struct {
-	folder, query       string
+	folder, query, err  string
 	entries, ancestors  []daemon.BrowseEntry
 	cursor, next, total int
 	history             []int
@@ -143,14 +143,14 @@ func applyBrowsePage(tab *browseTab, msg browsePageMsg) {
 	if msg.page.Cursor != tab.pages[key].cursor {
 		for oldKey, old := range tab.pages {
 			if oldKey != key && old.query == msg.query && (msg.folder == "" || strings.HasPrefix(old.folder, msg.folder+"\\")) {
-				delete(tab.pages, oldKey)
+				evictBrowsePage(tab.pages, oldKey)
 			}
 		}
 	}
 	delete(tab.pages, key)
 	key = browsePageKey(msg.page.Folder, msg.page.Query)
 	tab.pages[key] = browsePageState{folder: msg.page.Folder, query: msg.page.Query, entries: msg.page.Entries, ancestors: msg.page.Ancestors, cursor: msg.page.Cursor, next: msg.page.NextCursor, total: msg.page.Total, history: history, loaded: true}
-	tab.loaded, tab.paged, tab.loading, tab.err = true, true, false, ""
+	tab.loaded, tab.paged, tab.loading = true, true, false
 	tab.revision, tab.cached, tab.savedAt = msg.page.Revision, msg.page.Cached, msg.page.SavedAt
 	tab.pageTotal = msg.page.TotalEntries
 	if tab.tree.expanded == nil {
@@ -197,6 +197,7 @@ func (m *model) requestRemotePage(folder, query string, cursor int) tea.Cmd {
 	}
 	m.browseRequest++
 	state.folder, state.query, state.loading, state.request = folder, query, true, m.browseRequest
+	state.err = ""
 	tab.pages[key] = state
 	m.loadBrowseTab(m.browseTabIndex)
 	user, revision, request := tab.user, tab.revision, state.request
