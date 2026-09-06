@@ -177,8 +177,18 @@ func TestStatusMethodsBodyAndSocketMode(t *testing.T) {
 		t.Fatalf("saved browse list: %+v %v", savedBrowses, err)
 	}
 	browse, err := cl.Browse(context.Background(), "peer")
-	if err != nil || !browse.Cached || browse.Revision == 0 || len(browse.Entries) != 1 || browse.Entries[0].Name != `Music\cached.flac` {
+	if err != nil || !browse.Cached || browse.Revision == 0 || len(browse.Entries) != 1 || browse.Entries[0].Name != `Music` || browse.TotalEntries != 2 {
 		t.Fatalf("cached browse route: %+v %v", browse, err)
+	}
+	page, err := cl.BrowsePage(context.Background(), daemon.BrowsePageRequest{Username: "peer", Revision: browse.Revision, Folder: "Music"})
+	if err != nil || len(page.Entries) != 1 || page.Entries[0].Name != `Music\cached.flac` {
+		t.Fatalf("browse page route: %+v %v", page, err)
+	}
+	if _, err := cl.BrowsePage(context.Background(), daemon.BrowsePageRequest{Username: "peer", Revision: browse.Revision + 1}); err == nil {
+		t.Fatal("page accepted stale revision")
+	}
+	if _, err := cl.QueueBrowse(context.Background(), daemon.BrowseDownloadRequest{Username: "peer", Revision: browse.Revision + 1, Selection: map[int]bool{page.Entries[0].ID: true}}); err == nil {
+		t.Fatal("download accepted stale revision")
 	}
 	if _, err := cl.SaveBrowse(context.Background(), "peer", browse.Revision); err != nil {
 		t.Fatalf("save browse route: %v", err)

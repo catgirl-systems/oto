@@ -418,6 +418,9 @@ func TestUpdateConfigHotAppliesSearchAndDownload(t *testing.T) {
 	configPath := filepath.Join(t.TempDir(), "config.json")
 	s.SetConfigPath(configPath)
 	client := soulseek.NewClient(soulseek.ClientConfig{})
+	if got := client.BrowseLimits(); got != browseLimits(cfg) {
+		t.Fatalf("config and client browse defaults differ: %+v", got)
+	}
 	s.mu.Lock()
 	s.client = client
 	s.mu.Unlock()
@@ -436,6 +439,7 @@ func TestUpdateConfigHotAppliesSearchAndDownload(t *testing.T) {
 	next.Search.RespondToIncomingSearches = false
 	next.Search.MinimumIncomingSearchLength = 7
 	next.Search.MaximumIncomingSearchResults = 500
+	next.Browse = config.Browse{MaxEntries: 3_000_000, MaxCompressedMiB: 96, MaxDecompressedMiB: 384}
 	if err := s.UpdateConfig(next); err != nil {
 		t.Fatalf("hot update: %v", err)
 	}
@@ -450,10 +454,21 @@ func TestUpdateConfigHotAppliesSearchAndDownload(t *testing.T) {
 	if got := client.IncomingSearchPolicy(); got != incomingSearchPolicy(next) {
 		t.Fatalf("incoming search policy was not hot-applied: %+v", got)
 	}
+	if got := client.BrowseLimits(); got != browseLimits(next) {
+		t.Fatalf("browse limits were not hot-applied: %+v", got)
+	}
 	loaded, err := config.Load(configPath)
-	if err != nil || loaded.Search != next.Search || loaded.DownloadDir != next.DownloadDir || loaded.Soulseek.ConnectOnStartup {
+	if err != nil || loaded.Browse != next.Browse || loaded.Search != next.Search || loaded.DownloadDir != next.DownloadDir || loaded.Soulseek.ConnectOnStartup {
 		t.Fatalf("saved hot update: %+v %v", loaded, err)
 	}
+
+	failed := next
+	failed.Browse.MaxEntries = 4_000_000
+	s.SetConfigPath(t.TempDir())
+	if err := s.UpdateConfig(failed); err == nil || client.BrowseLimits() != browseLimits(next) {
+		t.Fatalf("failed save changed browse limits: %v", err)
+	}
+	s.SetConfigPath(configPath)
 
 	connectionChange := next
 	connectionChange.Soulseek.Server = "example.com:2242"

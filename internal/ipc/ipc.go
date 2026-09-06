@@ -22,9 +22,10 @@ import (
 )
 
 const (
-	Version                 = "v1"
-	MaxBodySize       int64 = 1 << 20
-	MaxBrowseBodySize int64 = 128 << 20
+	Version           = "v1"
+	MaxBodySize int64 = 1 << 20
+	// Browse replies are bounded pages, including folder ancestry and metadata.
+	MaxBrowseBodySize int64 = 2 << 20
 )
 
 type Server struct {
@@ -108,6 +109,8 @@ func (s *Server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/search", s.search)
 	mux.HandleFunc("POST /v1/downloads/force", s.forceDownloads)
 	mux.HandleFunc("GET /v1/browse", s.browse)
+	mux.HandleFunc("GET /v1/browse/page", s.browsePage)
+	mux.HandleFunc("POST /v1/browse/download", s.browseDownload)
 	mux.HandleFunc("GET /v1/wishlist", s.wishlist)
 	mux.HandleFunc("PUT /v1/wishlist", s.wishlist)
 	mux.HandleFunc("DELETE /v1/wishlist/{id}", s.wishlist)
@@ -315,7 +318,7 @@ func (s *Server) wishlist(w http.ResponseWriter, r *http.Request) {
 	}
 }
 func (s *Server) browse(w http.ResponseWriter, r *http.Request) {
-	out, err := s.service.BrowseComplete(r.Context(), r.URL.Query().Get("user"))
+	out, err := s.service.OpenBrowse(r.Context(), r.URL.Query().Get("user"), r.URL.Query().Get("folder"), r.URL.Query().Get("query"))
 	if err != nil {
 		writeErr(w, 400, err)
 		return
@@ -583,10 +586,8 @@ func (c *Client) OpenWishlist(ctx context.Context, id string) (daemon.SearchPage
 	err := c.Do(ctx, http.MethodPost, "/v1/wishlist/"+url.PathEscape(id)+"/open", nil, &page)
 	return page, err
 }
-func (c *Client) Browse(ctx context.Context, username string) (daemon.BrowseResult, error) {
-	var result daemon.BrowseResult
-	err := c.do(ctx, "GET", "/v1/browse?user="+url.QueryEscape(username), nil, &result, MaxBrowseBodySize)
-	return result, err
+func (c *Client) Browse(ctx context.Context, username string) (daemon.BrowsePage, error) {
+	return c.OpenBrowse(ctx, username, "", "")
 }
 
 func (c *Client) BrowseProgress(ctx context.Context, username string) (*daemon.BrowseProgress, error) {

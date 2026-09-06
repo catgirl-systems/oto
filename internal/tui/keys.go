@@ -564,6 +564,12 @@ func (m *model) openFolderMenu() bool {
 	if user == "" {
 		return false
 	}
+	if m.workspace == workspaceBrowse && m.browsePaged {
+		m.folderMenu, m.folderMenuEditing, m.folderMenuChoice = true, false, 0
+		m.folderMenuUser, m.folderMenuPath, m.folderMenuDownloadDir = user, normalizeBrowsePath(node.path), m.cfg.DownloadDir
+		m.folderMenuFiles, m.folderMenuSubfolders = [2][]download{}, nil
+		return true
+	}
 	if m.workspace == workspaceBrowse && m.browseFilter != "" {
 		fullTree, _ := buildBrowseTree(m.entries, "", treeState{}, 0)
 		fullIndex, ok := fullTree.byID[node.id]
@@ -648,6 +654,10 @@ func (m *model) folderMenuKey(k tea.KeyPressMsg) tea.Cmd {
 		m.folderMenuEditing = true
 		m.inputCursor = len([]rune(m.folderMenuDownloadDir))
 	case "enter":
+		if m.workspace == workspaceBrowse && m.browsePaged {
+			m.folderMenu = false
+			return m.queueRemoteBrowse(nil, m.folderMenuPath, m.folderMenuChoice == 1)
+		}
 		req := m.folderMenuRequest()
 		m.folderMenu = false
 		return m.queueFolder(req)
@@ -760,6 +770,24 @@ func (m *model) editKey(k tea.KeyPressMsg) tea.Cmd {
 			filter := strings.TrimSpace(m.input)
 			if filter != m.browseFilter {
 				m.browseFilter, m.selected = filter, map[int]bool{}
+				if m.browsePaged {
+					filter = normalizeBrowseQuery(filter)
+					m.browseFilter = filter
+					m.browseRuleAncestors = map[int][]int{}
+					for key, page := range m.browsePages {
+						if page.query != "" {
+							delete(m.browsePages, key)
+						}
+					}
+					m.saveBrowseTab()
+					tab := &m.browseTabs[m.browseTabIndex]
+					rebuildRemoteBrowse(tab)
+					m.loadBrowseTab(m.browseTabIndex)
+					if _, ok := m.browsePages[browsePageKey("", filter)]; !ok {
+						return m.requestRemotePage("", filter, 0)
+					}
+					return nil
+				}
 				m.browseTree, m.cursor = buildBrowseTree(m.entries, filter, m.browseTree, m.cursor)
 				m.saveBrowseTab()
 			}
@@ -946,6 +974,32 @@ func (m *model) enter() tea.Cmd {
 }
 
 func (m *model) toggle() {
+	if m.workspace == workspaceBrowse && m.browsePaged {
+		index, node := m.browseTree.node(m.cursor)
+		if node == nil || node.kind == treePage {
+			return
+		}
+		item := m.browseRemote[node.source]
+		chosen := m.remoteMark(index) == "●"
+		if m.selected == nil {
+			m.selected = map[int]bool{}
+		}
+		if m.browseRuleAncestors == nil {
+			m.browseRuleAncestors = map[int][]int{}
+		}
+		for id, ancestors := range m.browseRuleAncestors {
+			for _, ancestor := range ancestors {
+				if ancestor == item.ID {
+					delete(m.selected, id)
+					delete(m.browseRuleAncestors, id)
+					break
+				}
+			}
+		}
+		m.selected[item.ID], m.browseRuleAncestors[item.ID] = !chosen, item.Ancestors
+		m.saveBrowseTab()
+		return
+	}
 	if m.workspace == workspaceTransfers && m.transferTab == transferDownloads {
 		m.toggleDownloadSelection()
 		return
@@ -997,6 +1051,20 @@ func (m *model) queueResult() tea.Cmd {
 	}
 }
 func (m *model) queueBrowse() tea.Cmd {
+	if m.browsePaged {
+		selected := false
+		for _, value := range m.selected {
+			selected = selected || value
+		}
+		if selected {
+			return m.queueRemoteBrowse(m.selected, "", false)
+		}
+		_, node := m.browseTree.node(m.cursor)
+		if node == nil || node.kind != treeFile {
+			return nil
+		}
+		return m.queueRemoteBrowse(map[int]bool{remoteNodeIDValue(node.id): true}, "", false)
+	}
 	chosen := make(map[string]download)
 	for source, item := range m.entries {
 		if m.selected[source] && !item.directory {

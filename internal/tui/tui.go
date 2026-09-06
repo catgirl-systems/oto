@@ -93,6 +93,7 @@ type browseMsg struct {
 	user     string
 	request  uint64
 	entries  []entry
+	page     daemon.BrowsePage
 	cached   bool
 	savedAt  time.Time
 	revision uint64
@@ -441,10 +442,11 @@ func applySearchMsg(tab *searchTab, message searchMsg) {
 	}
 	tab.id, tab.total, tab.found, tab.next = message.page.ID, message.page.Total, message.page.FoundTotal, message.page.NextCursor
 }
-func (m model) browse(user string, request uint64) tea.Cmd {
+func (m model) browse(user, folder string, request uint64) tea.Cmd {
+	query := m.browseFilter
 	return func() tea.Msg {
-		result, err := m.client.Browse(m.ctx, user)
-		return browseMsg{user: user, request: request, entries: toEntries(result.Entries), cached: result.Cached, savedAt: result.SavedAt, revision: result.Revision, err: err}
+		page, err := m.client.OpenBrowse(m.ctx, user, folder, query)
+		return browseMsg{user: user, request: request, page: page, cached: page.Cached, savedAt: page.SavedAt, revision: page.Revision, err: err}
 	}
 }
 
@@ -506,6 +508,10 @@ func (m *model) saveBrowseTab() {
 	tab.entries, tab.cursor, tab.selected, tab.loading, tab.tree = m.entries, m.cursor, m.selected, m.loading, m.browseTree
 	tab.filter = m.browseFilter
 	tab.loaded, tab.cached, tab.revision, tab.savedAt = m.browseLoaded, m.browseCached, m.browseRevision, m.browseSavedAt
+	tab.err = m.err
+	tab.paged, tab.pages, tab.remote = m.browsePaged, m.browsePages, m.browseRemote
+	tab.pageTotal = m.browseTotal
+	tab.ruleAncestors = m.browseRuleAncestors
 }
 
 func (m *model) loadBrowseTab(index int) {
@@ -513,6 +519,7 @@ func (m *model) loadBrowseTab(index int) {
 		m.browseTabIndex = -1
 		m.browseUser, m.browseFilter, m.entries, m.cursor, m.loading = "", "", nil, max(0, min(m.savedBrowseCursor, len(m.savedBrowses)-1)), false
 		m.browseLoaded, m.browseCached, m.browseRevision, m.browseSavedAt = false, false, 0, time.Time{}
+		m.browsePaged, m.browsePages, m.browseRemote = false, nil, nil
 		m.browseFindEditing = false
 		m.selected, m.err = map[int]bool{}, ""
 		m.browseTree = treeState{}
@@ -525,6 +532,9 @@ func (m *model) loadBrowseTab(index int) {
 	}
 	m.browseUser, m.browseFilter, m.entries, m.cursor, m.selected, m.loading, m.browseTree = tab.user, tab.filter, tab.entries, tab.cursor, tab.selected, tab.loading, tab.tree
 	m.browseLoaded, m.browseCached, m.browseRevision, m.browseSavedAt = tab.loaded, tab.cached, tab.revision, tab.savedAt
+	m.browsePaged, m.browsePages, m.browseRemote = tab.paged, tab.pages, tab.remote
+	m.browseTotal = tab.pageTotal
+	m.browseRuleAncestors = tab.ruleAncestors
 	m.err = tab.err
 }
 
@@ -600,6 +610,30 @@ func (m *model) openTreeNode(toggle bool) tea.Cmd {
 	if node == nil || node.kind == treeFile {
 		return nil
 	}
+	if m.workspace == workspaceBrowse && m.browsePaged {
+		if node.kind == treePage {
+			return m.requestRemotePage(node.path, node.detail, node.source)
+		}
+		folder := normalizeBrowsePath(node.path)
+		if m.browseFilter != "" {
+			m.browseFilter = ""
+			m.browsePages = map[string]browsePageState{}
+			return m.requestRemotePage(folder, "", 0)
+		}
+		if toggle && m.browseTree.expandedNode(*node) {
+			m.cursor = m.browseTree.toggle(m.cursor)
+			return nil
+		}
+		m.browseTree.expanded[node.id] = true
+		if page := m.browsePages[browsePageKey(folder, "")]; !page.loaded {
+			return m.requestRemotePage(folder, "", 0)
+		}
+		m.browseTree.rebuildVisible()
+		if !toggle {
+			m.cursor = m.browseTree.right(m.cursor)
+		}
+		return nil
+	}
 	if m.workspace == workspaceShares && !node.loaded && !node.loading {
 		m.shareRequest++
 		node.loading, node.request = true, m.shareRequest
@@ -649,25 +683,32 @@ func (m *model) openBrowse(user, target string, refresh bool) tea.Cmd {
 	}
 	tab := &m.browseTabs[index]
 	tab.target = normalizeBrowsePath(target)
-	if tab.target != "" && tab.filter != "" {
-		tab.filter, tab.selected = "", map[int]bool{}
-		tab.tree, tab.cursor = buildBrowseTree(tab.entries, "", tab.tree, tab.cursor)
-	}
-	request := refresh || (!tab.loaded && !tab.loading)
-	if request {
-		m.browseRequest++
-		tab.request, tab.loading = m.browseRequest, true
-		tab.received, tab.total = 0, 0
-	} else if tab.target != "" {
-		tab.cursor = tab.tree.cursorForSource(browseTargetCursor(tab.entries, tab.target))
-		tab.target = ""
+	if tab.target != "" {
+		tab.filter = ""
 	}
 	m.workspace = workspaceBrowse
-	m.loadBrowseTab(index)
-	if request {
-		return m.withActivity(m.browse(tab.user, tab.request))
+	if tab.loaded && !refresh {
+		m.loadBrowseTab(index)
+		if tab.target != "" && tab.paged {
+			return m.requestRemotePage(tab.target, "", 0)
+		}
+		if tab.target != "" {
+			tab.cursor = tab.tree.cursorForSource(browseTargetCursor(tab.entries, tab.target))
+			m.loadBrowseTab(index)
+		}
+		return nil
 	}
-	return nil
+	if tab.loading && !refresh {
+		m.loadBrowseTab(index)
+		return nil
+	}
+	m.browseRequest++
+	tab.request, tab.loading, tab.loaded = m.browseRequest, true, false
+	tab.received, tab.total, tab.revision = 0, 0, 0
+	tab.pages, tab.remote, tab.entries, tab.tree, tab.selected = map[string]browsePageState{}, nil, nil, treeState{}, map[int]bool{}
+	tab.ruleAncestors = nil
+	m.loadBrowseTab(index)
+	return m.withActivity(m.browse(tab.user, tab.target, tab.request))
 }
 
 func (m *model) saveSettings() tea.Cmd {
@@ -887,7 +928,48 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.searchID, m.searchTotal, m.searchFound, m.searchNext = x.page.ID, x.page.Total, x.page.FoundTotal, x.page.NextCursor
 		m.searchTree, m.cursor = buildSearchTree(m.results, m.searchTree, m.cursor)
+	case browsePageMsg:
+		if m.workspace == workspaceBrowse {
+			m.saveBrowseTab()
+		}
+		for i := range m.browseTabs {
+			tab := &m.browseTabs[i]
+			key := browsePageKey(x.folder, x.query)
+			state, exists := tab.pages[key]
+			if !strings.EqualFold(tab.user, x.user) || tab.revision != x.revision || !exists || state.request != x.request {
+				continue
+			}
+			state.loading = false
+			tab.pages[key] = state
+			if x.err != nil {
+				tab.err = errText(x.err)
+			} else if x.page.Revision == tab.revision {
+				applyBrowsePage(tab, x)
+			}
+			if m.workspace == workspaceBrowse && i == m.browseTabIndex {
+				m.loadBrowseTab(i)
+			}
+			break
+		}
 	case browseMsg:
+		if x.page.Revision != 0 {
+			for i := range m.browseTabs {
+				tab := &m.browseTabs[i]
+				if !strings.EqualFold(tab.user, x.user) || tab.request != x.request {
+					continue
+				}
+				if x.err != nil {
+					tab.loading, tab.err = false, errText(x.err)
+				} else {
+					applyBrowsePage(tab, browsePageMsg{user: x.user, page: x.page, folder: x.page.Folder, query: x.page.Query, request: x.request, revision: x.page.Revision})
+				}
+				if m.workspace == workspaceBrowse && i == m.browseTabIndex {
+					m.loadBrowseTab(i)
+				}
+				break
+			}
+			break
+		}
 		user := x.user
 		if user == "" {
 			user = m.browseUser

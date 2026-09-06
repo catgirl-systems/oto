@@ -219,6 +219,7 @@ type Service struct {
 	browses                map[string]loadedBrowse
 	browseProgress         map[string]trackedBrowse
 	fullBrowse             fullBrowseFunc
+	fullBrowseDirectories  func(context.Context, *soulseek.Client, string, func(uint64, uint64)) ([]soulseek.ShareDirectory, error)
 	browseSeq              uint64
 	browseProgressSeq      uint64
 	transfers              map[string]Transfer
@@ -302,6 +303,9 @@ func New(cfg config.Config, path string) (*Service, error) {
 	}, transfers: make(map[string]Transfer), completionRetries: make(map[string]completionRetry), downloadSlots: make(chan struct{}, cfg.DownloadSlots), downloadCancels: make(map[string]context.CancelFunc), downloadDone: make(map[string]chan struct{}), downloadPeers: make(map[string]chan struct{}), shareScanGate: make(chan struct{}, 1), shareRescanDelay: DefaultShareRescanDelay, listenPortInterval: DefaultListenPortReconcileInterval, portMapOpen: func(ctx context.Context, port uint16, natPMP, upnp bool, changed func(uint16)) (portMapping, error) {
 		return portmap.Open(ctx, port, natPMP, upnp, changed)
 	}, portCheck: defaultListeningPortCheck, reconnectWake: make(chan struct{}, 1), status: StatusStopped, presence: PresenceOffline, journalPath: path}
+	s.fullBrowseDirectories = func(ctx context.Context, client *soulseek.Client, username string, progress func(uint64, uint64)) ([]soulseek.ShareDirectory, error) {
+		return client.BrowseUserDirectoriesWithProgress(ctx, username, progress)
+	}
 	s.stateDB, err = storage.OpenDaemon(path)
 	if err != nil {
 		scanCancel()
@@ -586,6 +590,14 @@ func downloadLimit(c config.Config) int64 {
 	return int64(c.Bandwidth.ActiveProfileLimits().DownloadSpeedLimitKiB) * 1024
 }
 
+func browseLimits(c config.Config) soulseek.BrowseLimits {
+	return soulseek.BrowseLimits{
+		MaxEntries:          c.Browse.MaxEntries,
+		MaxCompressedSize:   c.Browse.MaxCompressedMiB << 20,
+		MaxDecompressedSize: c.Browse.MaxDecompressedMiB << 20,
+	}
+}
+
 func incomingSearchPolicy(c config.Config) soulseek.IncomingSearchPolicy {
 	return soulseek.IncomingSearchPolicy{
 		Respond:        c.Search.RespondToIncomingSearches,
@@ -639,6 +651,7 @@ func (s *Service) connectOnce(ctx context.Context) error {
 		Share: idx, Uploads: newUploadManager(cfg), IncomingSearch: &searchPolicy,
 		UploadsReady:                uploadsReady,
 		DownloadLimitBytesPerSecond: downloadLimit(cfg),
+		BrowseLimits:                browseLimits(cfg),
 		UploadAccepted:              func(event soulseek.TransferEvent) error { return s.uploadAccepted(epoch, event) },
 		UploadRejected:              func(event soulseek.TransferEvent) { s.uploadRejected(epoch, event) },
 		UploadUpdate:                func(event soulseek.TransferEvent) { s.uploadUpdate(epoch, event) },
@@ -693,6 +706,7 @@ func (s *Service) connectOnce(ctx context.Context) error {
 	client.ConfigureUploads(uploadPolicy(s.cfg))
 	client.ConfigureDownloadLimit(downloadLimit(s.cfg))
 	client.ConfigureIncomingSearch(incomingSearchPolicy(s.cfg))
+	client.ConfigureBrowseLimits(browseLimits(s.cfg))
 	s.client, s.mapping = client, mapping
 	idx = s.shares
 	s.status, s.lastErr = StatusConnected, ""
@@ -1504,6 +1518,7 @@ func (s *Service) UpdateConfig(c config.Config) error {
 		if err == nil && client != nil {
 			client.ConfigureDownloadLimit(downloadLimit(c))
 			client.ConfigureIncomingSearch(incomingSearchPolicy(c))
+			client.ConfigureBrowseLimits(browseLimits(c))
 		}
 		if err == nil && oldInterval != c.Search.WishlistIntervalMinutes {
 			s.wakeWishlist()
@@ -1552,6 +1567,7 @@ func (s *Service) UpdateConfig(c config.Config) error {
 			}
 			client.ConfigureDownloadLimit(downloadLimit(c))
 			client.ConfigureIncomingSearch(incomingSearchPolicy(c))
+			client.ConfigureBrowseLimits(browseLimits(c))
 		}
 		s.persistShareIndex(index)
 		return nil
