@@ -22,7 +22,26 @@ const (
 	DefaultServer      = "server.slsknet.org:2242"
 	DefaultListenAddr  = "0.0.0.0:50300"
 	DefaultDownloadDir = "Downloads/oto"
+	DefaultLogLevel    = "INFO"
 )
+
+type Logging struct {
+	Level string `json:"level"`
+}
+
+// NormalizeLogLevel returns the canonical logging level.
+func NormalizeLogLevel(level string) (string, error) {
+	level = strings.ToUpper(strings.TrimSpace(level))
+	if level == "" {
+		return DefaultLogLevel, nil
+	}
+	switch level {
+	case "DEBUG", "INFO", "WARN", "ERROR":
+		return level, nil
+	default:
+		return "", fmt.Errorf("config: invalid log level %q", level)
+	}
+}
 
 type Soulseek struct {
 	Username          string `json:"username" validate:"required"`
@@ -158,6 +177,7 @@ type Statistics struct {
 	ASCIICharts        bool `json:"ascii_charts"`
 }
 type Config struct {
+	Logging         Logging    `json:"logging"`
 	Statistics      Statistics `json:"statistics"`
 	Browse          Browse     `json:"browse"`
 	AudioMetadata   bool       `json:"audio_metadata"`
@@ -174,6 +194,7 @@ type Config struct {
 }
 
 type SafeConfig struct {
+	Logging       Logging    `json:"logging"`
 	Statistics    Statistics `json:"statistics"`
 	Browse        Browse     `json:"browse"`
 	AudioMetadata bool       `json:"audio_metadata"`
@@ -200,12 +221,13 @@ type SafeConfig struct {
 
 func Default() Config {
 	home, _ := os.UserHomeDir()
-	return Config{AudioMetadata: true, Browse: Browse{MaxEntries: 2000000, MaxCompressedMiB: 64, MaxDecompressedMiB: 256}, ShareExclusions: DefaultShareExclusions(), Soulseek: Soulseek{Server: DefaultServer, ListenAddr: DefaultListenAddr, ConnectOnStartup: true, NATPMPPortMapping: true, UPnPPortMapping: true}, Search: Search{RememberSearches: true, SearchHistoryLimit: 200, RememberFilters: true, FilterHistoryLimit: 50, WishlistIntervalMinutes: 15, WishlistNotifications: true, RespondToIncomingSearches: true, MinimumIncomingSearchLength: 3, MaximumIncomingSearchResults: 300}, Bandwidth: defaultBandwidth(), Uploads: Uploads{LimitScope: UploadLimitTotal, Scheduling: UploadSchedulingFIFO}, Downloads: Downloads{FolderNotifications: true, FilterPatterns: DefaultDownloadFilters()}, DownloadDir: filepath.Join(home, DefaultDownloadDir), DownloadSlots: 4, UploadSlots: 2}
+	return Config{Logging: Logging{Level: DefaultLogLevel}, AudioMetadata: true, Browse: Browse{MaxEntries: 2000000, MaxCompressedMiB: 64, MaxDecompressedMiB: 256}, ShareExclusions: DefaultShareExclusions(), Soulseek: Soulseek{Server: DefaultServer, ListenAddr: DefaultListenAddr, ConnectOnStartup: true, NATPMPPortMapping: true, UPnPPortMapping: true}, Search: Search{RememberSearches: true, SearchHistoryLimit: 200, RememberFilters: true, FilterHistoryLimit: 50, WishlistIntervalMinutes: 15, WishlistNotifications: true, RespondToIncomingSearches: true, MinimumIncomingSearchLength: 3, MaximumIncomingSearchResults: 300}, Bandwidth: defaultBandwidth(), Uploads: Uploads{LimitScope: UploadLimitTotal, Scheduling: UploadSchedulingFIFO}, Downloads: Downloads{FolderNotifications: true, FilterPatterns: DefaultDownloadFilters()}, DownloadDir: filepath.Join(home, DefaultDownloadDir), DownloadSlots: 4, UploadSlots: 2}
 }
 
 func (c Config) Redacted() SafeConfig {
 	var out SafeConfig
-	out.Statistics, out.Browse, out.AudioMetadata = c.Statistics, c.Browse, c.AudioMetadata
+	out.Logging, out.Statistics, out.Browse, out.AudioMetadata = c.Logging, c.Statistics, c.Browse, c.AudioMetadata
+	out.Logging.Level, _ = NormalizeLogLevel(c.Logging.Level)
 	out.Soulseek.Username, out.Soulseek.Password, out.Soulseek.Server, out.Soulseek.ListenAddr, out.Soulseek.NetworkInterface, out.Soulseek.ConnectOnStartup, out.Soulseek.NATPMPPortMapping, out.Soulseek.UPnPPortMapping = c.Soulseek.Username, "[redacted]", c.Soulseek.Server, c.Soulseek.ListenAddr, c.Soulseek.NetworkInterface, c.Soulseek.ConnectOnStartup, c.Soulseek.NATPMPPortMapping, c.Soulseek.UPnPPortMapping
 	out.Search, out.Bandwidth, out.Uploads, out.Downloads, out.DownloadDir, out.Shares, out.DownloadSlots, out.UploadSlots = c.Search, c.Bandwidth, c.Uploads, c.Downloads, c.DownloadDir, append([]Share(nil), c.Shares...), c.DownloadSlots, c.UploadSlots
 	out.Bandwidth.Profiles = append([]BandwidthProfile(nil), c.Bandwidth.Profiles...)
@@ -215,6 +237,9 @@ func (c Config) Redacted() SafeConfig {
 }
 
 func (c Config) Validate() error {
+	if _, err := NormalizeLogLevel(c.Logging.Level); err != nil {
+		return err
+	}
 	if _, err := NormalizeDownloadFilters(c.Downloads.FilterPatterns); err != nil {
 		return err
 	}
@@ -302,6 +327,11 @@ func (c *Config) UnmarshalJSON(data []byte) error {
 			}
 		}
 	}
+	level, err := NormalizeLogLevel(next.Logging.Level)
+	if err != nil {
+		return err
+	}
+	next.Logging.Level = level
 	if err := validateBandwidth(next.Bandwidth); err != nil {
 		return err
 	}
@@ -345,6 +375,11 @@ func Load(path string) (Config, error) {
 }
 
 func (c Config) Save(path string) error {
+	level, err := NormalizeLogLevel(c.Logging.Level)
+	if err != nil {
+		return err
+	}
+	c.Logging.Level = level
 	rules, err := NormalizeShareExclusions(c.ShareExclusions)
 	if err != nil {
 		return err
