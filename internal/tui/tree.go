@@ -13,6 +13,7 @@ const (
 	treeFile
 	treeUser
 	treeShareRoot
+	treePage
 )
 
 type treeNode struct {

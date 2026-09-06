@@ -69,6 +69,7 @@ const (
 	settingsUploads
 	settingsSearch
 	settingsShares
+	settingsBrowse
 	settingsStatistics
 	settingsSectionCount
 )
@@ -111,6 +112,11 @@ type browseTab struct {
 	received, total           uint64
 	savedAt                   time.Time
 	tree                      treeState
+	paged                     bool
+	pages                     map[string]browsePageState
+	pageTotal                 int
+	ruleAncestors             map[int][]int
+	remote                    []daemon.BrowseEntry
 }
 type transfer struct {
 	id, user, filename, direction, state, err string
@@ -176,6 +182,9 @@ const (
 	settingAutoClearDownloads
 	settingAutoClearUploads
 	settingManageShareExclusions
+	settingBrowseMaxEntries
+	settingBrowseMaxCompressedMiB
+	settingBrowseMaxDecompressedMiB
 )
 
 type settingField struct {
@@ -258,6 +267,11 @@ type model struct {
 	browseLoaded, browseCached             bool
 	browseSavedAt                          time.Time
 	browseTree                             treeState
+	browsePaged                            bool
+	browsePages                            map[string]browsePageState
+	browseTotal                            int
+	browseRuleAncestors                    map[int][]int
+	browseRemote                           []daemon.BrowseEntry
 	savedBrowses                           []daemon.SavedBrowse
 	savedBrowseCursor                      int
 	savedBrowseLoading                     bool
@@ -314,9 +328,12 @@ func toResults(x []daemon.SearchResult) []result {
 func toEntries(x []soulseek.ShareEntry) []entry {
 	r := make([]entry, len(x))
 	for i, v := range x {
-		r[i] = entry{name: v.Name, extension: v.Extension, size: v.Size, directory: v.Directory, private: v.Private, bitrate: v.Bitrate, duration: v.Duration, vbr: v.VBR, vbrKnown: v.VBRKnown, sampleRate: v.SampleRate, bitDepth: v.BitDepth}
+		r[i] = toEntry(v)
 	}
 	return r
+}
+func toEntry(v soulseek.ShareEntry) entry {
+	return entry{name: v.Name, extension: v.Extension, size: v.Size, directory: v.Directory, private: v.Private, bitrate: v.Bitrate, duration: v.Duration, vbr: v.VBR, vbrKnown: v.VBRKnown, sampleRate: v.SampleRate, bitDepth: v.BitDepth}
 }
 func toTransfers(x []daemon.Transfer) []transfer {
 	r := make([]transfer, len(x))

@@ -52,6 +52,8 @@ type remoteShareCache struct {
 type loadedBrowse struct {
 	username string
 	result   BrowseResult
+	snapshot *browseSnapshot
+	request  uint64
 }
 
 type fullBrowseFunc func(context.Context, *soulseek.Client, string, func(received, total uint64)) ([]soulseek.ShareEntry, error)
@@ -171,6 +173,9 @@ func (s *Service) SaveBrowse(username string, revision uint64) (SavedBrowse, err
 	}
 	savedAt := time.Now().UTC()
 	cache := remoteShareCache{Username: loaded.username, SavedAt: savedAt, Entries: loaded.result.Entries}
+	if loaded.snapshot != nil {
+		cache.Entries = loaded.snapshot.flatEntries()
+	}
 	if err := s.saveRemoteShareCache(cache, revision); err != nil {
 		return SavedBrowse{}, err
 	}

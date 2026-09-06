@@ -177,13 +177,18 @@ func (m model) renderBrowse(width, height int) string {
 		count, singular = len(m.savedBrowses), "saved user"
 	}
 	countText := countLabel(count, singular)
-	if m.browseFilter != "" {
-		matches := browseMatchCount(m.entries, m.browseFilter)
-		matchWord := "matches"
-		if matches == 1 {
-			matchWord = "match"
+	if m.browsePaged {
+		countText = fmt.Sprintf("%d loaded / %d total", len(m.entries), m.browseTotal)
+		if m.browseFilter != "" {
+			countText = fmt.Sprintf("%d matches / %d total", m.browsePages[browsePageKey("", m.browseFilter)].total, m.browseTotal)
 		}
-		countText = fmt.Sprintf("%d %s / %s", matches, matchWord, countLabel(len(m.entries), "item"))
+	} else if m.browseFilter != "" {
+		matches := browseMatchCount(m.entries, m.browseFilter)
+		word := "matches"
+		if matches == 1 {
+			word = "match"
+		}
+		countText = fmt.Sprintf("%d %s / %s", matches, word, countLabel(len(m.entries), "item"))
 	}
 	lines := []string{sectionHeader("BROWSE", countText, width)}
 	if tabs := m.browseTabsLine(width); tabs != "" {
@@ -191,15 +196,14 @@ func (m model) renderBrowse(width, height int) string {
 	}
 	lines = append(lines, trunc(prompt, width))
 	if m.browseLoaded {
-		findLine := muted("f  Press f to find in loaded shares")
+		findLine := muted("f  Search this share snapshot")
 		if m.editing && m.browseFindEditing {
-			findLine = renderInput("f  ", m.input, m.inputCursor, false, inputStyle) + muted("   enter apply  •  esc cancel")
+			findLine = renderInput("f  ", m.input, m.inputCursor, false, inputStyle) + muted("   enter search  •  esc cancel")
 		} else if m.browseFilter != "" {
 			findLine = styled("f  "+m.browseFilter, inputStyle)
 		}
 		lines = append(lines, trunc(findLine, width))
 	}
-
 	if len(m.browseTabs) == 0 {
 		if m.savedBrowseLoading && height > len(lines) {
 			return strings.Join(append(lines, muted("◌  Loading saved share lists…")), "\n")
@@ -212,13 +216,15 @@ func (m model) renderBrowse(width, height int) string {
 		start, end := visibleRange(len(m.savedBrowses), m.cursor, limit)
 		for i := start; i < end; i++ {
 			saved := m.savedBrowses[i]
-			row := fmt.Sprintf("  %-24s  %s", saved.Username, saved.SavedAt.Local().Format("2006-01-02 15:04"))
-			lines = append(lines, selectedRow(trunc(row, width), i == m.cursor))
+			lines = append(lines, selectedRow(trunc(fmt.Sprintf("  %-24s  %s", saved.Username, saved.SavedAt.Local().Format("2006-01-02 15:04")), width), i == m.cursor))
 		}
 		return strings.Join(lines, "\n")
 	}
 	if m.loading && height > len(lines) {
 		return strings.Join(append(lines, muted("◌  Loading shared files…")), "\n")
+	}
+	if m.browseFilter != "" && len(m.browseTree.visible) == 0 && height > len(lines) {
+		return strings.Join(append(lines, muted("No matching shared files. Press f to change or clear the find.")), "\n")
 	}
 	if m.browseLoaded && len(m.entries) == 0 && height > len(lines) {
 		return strings.Join(append(lines, muted("No shared files.")), "\n")
@@ -226,10 +232,6 @@ func (m model) renderBrowse(width, height int) string {
 	if len(m.entries) == 0 && height > len(lines) {
 		return strings.Join(append(lines, "\n"+muted("Enter a Soulseek username to browse their shared files.")), "\n")
 	}
-	if m.browseFilter != "" && len(m.browseTree.visible) == 0 && height > len(lines) {
-		return strings.Join(append(lines, muted("No matching shared files. Press f to change or clear the find.")), "\n")
-	}
-
 	_, selectedNode := m.browseTree.node(m.cursor)
 	folder := ""
 	if selectedNode != nil {
@@ -242,21 +244,32 @@ func (m model) renderBrowse(width, height int) string {
 	headings, _ := searchMetadata(result{}, width, false)
 	nameWidth := max(4, width-lipgloss.Width(headings)-8)
 	lines = append(lines, muted("      "+searchTextColumn("FILE", nameWidth)+"  "+headings))
-
 	limit := max(0, height-len(lines))
 	start, end := visibleRange(len(m.browseTree.visible), m.cursor, limit)
 	for rowIndex := start; rowIndex < end; rowIndex++ {
-		nodeIndex := m.browseTree.visible[rowIndex]
-		node := m.browseTree.nodes[nodeIndex]
-		mark := treeSelection(&m.browseTree, nodeIndex, m.selected)
+		idx := m.browseTree.visible[rowIndex]
+		node := m.browseTree.nodes[idx]
+		mark := treeSelection(&m.browseTree, idx, m.selected)
+		if m.browsePaged {
+			mark = m.remoteMark(idx)
+		}
 		metadata := fmt.Sprintf("%d files", len(node.leaves))
-		if node.kind == treeFile && node.source >= 0 {
+		if m.browsePaged && node.kind == treeFolder && node.source >= 0 && node.source < len(m.browseRemote) {
+			metadata = fmt.Sprintf("%d files", m.browseRemote[node.source].FileCount)
+		}
+		if node.kind == treePage {
+			mark, metadata = " ", ""
+		}
+		if node.kind == treeFile && node.source >= 0 && node.source < len(m.entries) {
 			x := m.entries[node.source]
 			_, metadata = searchMetadata(result{size: x.size, extension: x.extension, bitrate: x.bitrate, duration: x.duration, vbr: x.vbr, vbrKnown: x.vbrKnown, sampleRate: x.sampleRate, bitDepth: x.bitDepth, public: !x.private}, width, false)
 		}
-		row := fmt.Sprintf("%s %s %s  %s", mark, treeGlyph(&m.browseTree, node), searchTextColumn(treeLabel(&m.browseTree, nodeIndex), nameWidth), metadata)
-		selected := node.kind == treeFile && node.source >= 0 && m.selected[node.source]
-		lines = append(lines, searchResultRow(row, rowIndex == m.cursor, selected))
+		row := fmt.Sprintf("%s %s %s  %s", mark, treeGlyph(&m.browseTree, node), searchTextColumn(treeLabel(&m.browseTree, idx), nameWidth), metadata)
+		chosen := m.selected[node.source]
+		if m.browsePaged {
+			chosen = m.remoteNodeChosen(idx)
+		}
+		lines = append(lines, searchResultRow(row, rowIndex == m.cursor, chosen))
 	}
 	return strings.Join(lines, "\n")
 }
@@ -300,7 +313,6 @@ func (m model) currentActivity() (activity, bool) {
 			return activity{kind: activityBrowse, label: tab.user, request: tab.request, received: tab.received, total: tab.total}, true
 		}
 	}
-
 	browseIndex := -1
 	for i := range m.browseTabs {
 		tab := &m.browseTabs[i]
@@ -320,7 +332,6 @@ func (m model) currentActivity() (activity, bool) {
 		tab := m.browseTabs[browseIndex]
 		return activity{kind: activityBrowse, label: tab.user, request: tab.request, received: tab.received, total: tab.total}, true
 	}
-
 	searchIndex := -1
 	for i := range m.searchTabs {
 		tab := &m.searchTabs[i]
@@ -537,7 +548,7 @@ func (m model) renderShares(width, height int) string {
 	return strings.Join(lines, "\n")
 }
 
-var settingsSectionNames = [settingsSectionCount]string{"Account", "Connection", "Bandwidth", "Downloads", "Uploads", "Search", "Shares", "Statistics"}
+var settingsSectionNames = [settingsSectionCount]string{"Account", "Connection", "Bandwidth", "Downloads", "Uploads", "Search", "Shares", "Browse", "Statistics"}
 
 func (m model) renderSettings(width, height int) string {
 	if m.stats.prune {
@@ -613,6 +624,9 @@ func (m model) renderSettings(width, height int) string {
 		row := fmt.Sprintf("%-*s %s", labelWidth, field.label, value)
 		formLines = append(formLines, selectedRow(trunc(row, max(4, width-sidebarWidth-4)), i == m.cursor))
 	}
+	if m.settingsSection == settingsBrowse && len(formLines)+3 <= contentHeight {
+		formLines = append(formLines, muted(trunc("Payload limits only; decoded entries and UI use extra RAM.", max(4, width-sidebarWidth-4))))
+	}
 	if fieldStart == 0 && fieldEnd == len(fields) && len(formLines)+2 <= contentHeight {
 		formLines = append(formLines, "", muted("enter edit/toggle/choose/run  •  s save  •  ← → section"))
 	}
@@ -638,6 +652,12 @@ func (m model) settingFields() []settingField {
 		return []settingField{
 			{settingAudioMetadata, "Audio metadata (optional ffprobe)", strconv.FormatBool(m.cfg.AudioMetadata), settingBool},
 			{settingManageShareExclusions, "Excluded content", fmt.Sprintf("%d rules · Enter to manage", len(m.cfg.ShareExclusions)), settingAction},
+		}
+	case settingsBrowse:
+		return []settingField{
+			{settingBrowseMaxEntries, "Max entries (files + folders)", strconv.Itoa(m.cfg.Browse.MaxEntries), settingInt},
+			{settingBrowseMaxCompressedMiB, "Max compressed response (MiB)", strconv.Itoa(m.cfg.Browse.MaxCompressedMiB), settingInt},
+			{settingBrowseMaxDecompressedMiB, "Max decompressed response (MiB)", strconv.Itoa(m.cfg.Browse.MaxDecompressedMiB), settingInt},
 		}
 	case settingsAccount:
 		return []settingField{
@@ -729,6 +749,31 @@ func (m *model) setSettingValue(value string) error {
 			m.cfg.Statistics.LogRetentionDays = n
 		} else {
 			m.cfg.Statistics.DailyRetentionDays = n
+		}
+	case settingBrowseMaxEntries, settingBrowseMaxCompressedMiB, settingBrowseMaxDecompressedMiB:
+		n, err := strconv.Atoi(value)
+		if err != nil || n < 1 {
+			return errors.New("browse limit must be a positive integer")
+		}
+		max := 0
+		switch field.id {
+		case settingBrowseMaxEntries:
+			max = 10000000
+		case settingBrowseMaxCompressedMiB:
+			max = 256
+		default:
+			max = 1024
+		}
+		if n > max {
+			return fmt.Errorf("browse limit must be at most %d", max)
+		}
+		switch field.id {
+		case settingBrowseMaxEntries:
+			m.cfg.Browse.MaxEntries = n
+		case settingBrowseMaxCompressedMiB:
+			m.cfg.Browse.MaxCompressedMiB = n
+		default:
+			m.cfg.Browse.MaxDecompressedMiB = n
 		}
 	case settingUploadFileCap:
 		n, err := strconv.ParseUint(value, 10, 64)

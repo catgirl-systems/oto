@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -1465,5 +1466,34 @@ func TestDownloadSettingsCommandsAndStates(t *testing.T) {
 	m.transfers[0].state = "retrying"
 	if !m.active() {
 		t.Fatal("retrying downloads should remain active")
+	}
+}
+
+func TestBrowseSettingsEdits(t *testing.T) {
+	m := model{cfg: config.Default(), workspace: workspaceSettings, settingsSection: settingsBrowse}
+	fields := m.settingFields()
+	if len(fields) != 3 {
+		t.Fatalf("browse fields: %+v", fields)
+	}
+	for i, value := range []string{"123", "12", "34"} {
+		m.cursor = i
+		if err := m.setSettingValue(value); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if m.cfg.Browse != (config.Browse{MaxEntries: 123, MaxCompressedMiB: 12, MaxDecompressedMiB: 34}) {
+		t.Fatalf("browse edits: %+v", m.cfg.Browse)
+	}
+	for i, ceiling := range []int{10_000_000, 256, 1024} {
+		m.cursor = i
+		for _, value := range []string{"0", "-1", "no", fmt.Sprint(ceiling + 1)} {
+			before := m.cfg.Browse
+			if err := m.setSettingValue(value); err == nil || m.cfg.Browse != before {
+				t.Fatalf("invalid browse field %d = %q was adopted", i, value)
+			}
+		}
+	}
+	if got := m.settingFields()[0].label; got != "Max entries (files + folders)" {
+		t.Fatalf("entry label: %q", got)
 	}
 }
