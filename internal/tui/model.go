@@ -13,12 +13,13 @@ import (
 )
 
 type snapshot struct {
-	status              daemon.Status
-	presence            daemon.Presence
-	user, publicIP, err string
-	publicPort          uint16
-	shareScan           *daemon.ShareScan
-	shareIndexRevision  uint64
+	status               daemon.Status
+	presence             daemon.Presence
+	user, publicIP, err  string
+	publicPort           uint16
+	shareScan            *daemon.ShareScan
+	shareIndexRevision   uint64
+	waitForUploadsOnQuit bool
 }
 type result struct {
 	user, path, extension, country string
@@ -183,6 +184,7 @@ const (
 	settingFolderNotifications
 	settingAutoClearDownloads
 	settingAutoClearUploads
+	settingWaitForActiveUploadsOnQuit
 	settingManageShareExclusions
 	settingBrowseMaxEntries
 	settingBrowseMaxCompressedMiB

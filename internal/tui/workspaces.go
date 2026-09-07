@@ -749,6 +749,7 @@ func (m model) settingFields() []settingField {
 			{settingUploadLimitScope, "Limit applies to", m.choiceValue(settingUploadLimitScope, uploadScopeLabel(m.cfg.Uploads.LimitScope)), settingChoice},
 			{settingUploadScheduling, "Scheduling", m.choiceValue(settingUploadScheduling, uploadSchedulingLabel(m.cfg.Uploads.Scheduling)), settingChoice},
 			{settingAutoClearUploads, "Auto-clear new completed uploads", strconv.FormatBool(m.cfg.Uploads.AutoClearCompleted), settingBool},
+			{settingWaitForActiveUploadsOnQuit, "Wait for active uploads on quit", strconv.FormatBool(m.cfg.Uploads.WaitForActiveUploadsOnQuit), settingBool},
 			{settingUploadFileCap, "Per-user files (queued + active, 0 unlimited)", strconv.FormatUint(m.cfg.Uploads.MaxQueuedFilesPerUser, 10), settingInt},
 			{settingUploadByteCap, "Per-user bytes (queued + active, 0 unlimited)", strconv.FormatUint(m.cfg.Uploads.MaxQueuedBytesPerUser, 10) + " B", settingText},
 		}

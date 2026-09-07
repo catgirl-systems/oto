@@ -772,7 +772,11 @@ func (m model) footerHints() []string {
 func (m model) footerView() string {
 	style := lipgloss.NewStyle().Width(m.width).Padding(0, 1)
 	if m.confirm {
-		return style.Render(danger("Quit and interrupt active transfers?  y confirm  •  esc cancel"))
+		message := "Quit and interrupt active transfers?"
+		if m.status.waitForUploadsOnQuit {
+			message = "Wait for active uploads, then interrupt downloads?"
+		}
+		return style.Render(danger(message + "  y confirm  •  esc cancel"))
 	}
 	if activity := m.activityView(m.width - 2); activity != "" {
 		return style.Render(activity)

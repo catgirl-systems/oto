@@ -48,7 +48,10 @@ func RunWithTransient(ctx context.Context, client *ipc.Client, configPath string
 	if strings.TrimSpace(cfg.Soulseek.Username) == "" || strings.TrimSpace(cfg.Soulseek.Password) == "" {
 		m.setup = true
 	}
-	_, err = tea.NewProgram(m).Run()
+	_, err = tea.NewProgram(m, tea.WithContext(ctx), tea.WithoutSignalHandler()).Run()
+	if ctx.Err() != nil {
+		return nil // The owning command handles shutdown and subsequent signals.
+	}
 	return err
 }
 
@@ -807,6 +810,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				scan = &copy
 			}
 			m.status = snapshot{status: x.snapshot.Status, presence: x.snapshot.Presence, user: x.snapshot.Config.Soulseek.Username, publicIP: x.snapshot.PublicIP, publicPort: x.snapshot.PublicPort, err: x.snapshot.Error, shareScan: scan, shareIndexRevision: x.snapshot.ShareIndexRevision}
+			m.status.waitForUploadsOnQuit = x.snapshot.Config.Uploads.WaitForActiveUploadsOnQuit
 			notification := x.snapshot.DownloadNotification
 			bell := notification.SessionID != "" && notification.SessionID == m.downloadNotification.SessionID && notification.Sequence > m.downloadNotification.Sequence
 			if notification.SessionID != m.downloadNotification.SessionID || notification.Sequence >= m.downloadNotification.Sequence {
