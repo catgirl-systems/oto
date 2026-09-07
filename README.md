@@ -245,7 +245,7 @@ oto focuses on file sharing and a detachable terminal UI. [Nicotine+](https://ni
 | Search the network for a transfer's file or folder name | :white_check_mark: | :white_check_mark: |
 | Remove the associated incomplete file when deleting a transfer | :white_check_mark: | :white_check_mark: |
 
-### Uploads (22/30 - 73%)
+### Uploads (23/30 - 77%)
 
 | Feature | oto | Nicotine+ |
 | --- | --- | --- |
@@ -260,7 +260,7 @@ oto focuses on file sharing and a detachable terminal UI. [Nicotine+](https://ni
 | Abort every upload from selected users | :white_check_mark: | :white_check_mark: |
 | Clear uploads by status | :white_check_mark: | :white_check_mark: |
 | Automatically clear finished uploads | :white_check_mark: | :white_check_mark: |
-| Automatically clear cancelled uploads | :x: | :white_check_mark: |
+| Automatically clear cancelled uploads | :white_check_mark: | :white_check_mark: |
 | Manually send a file to another user | :x: | :white_check_mark: |
 | Manually send a folder to another user | :x: | :white_check_mark: |
 | Global upload speed limit | :white_check_mark: | :white_check_mark: |
