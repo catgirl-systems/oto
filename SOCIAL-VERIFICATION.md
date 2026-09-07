@@ -126,7 +126,7 @@ exact test names and evidence as their sequential commits land.
 
 | Gate | Required verification | Evidence |
 |---|---|---|
-| G01 | Schema fresh/upgrade/rollback/WAL backup/concurrent legacy history/downgrade | Pending step 2 |
+| G01 | Schema fresh/upgrade/rollback/WAL backup/concurrent legacy history/downgrade | `internal/storage`: `TestCommunityMigration*`, `TestCommunityFreshBootstrapRollback`, `TestCommunityStorage*` |
 | G02 | Reliable callback/backpressure/unlocked dispatch/watches/stale epochs/reconnect | Pending step 3 |
 | G03 | Two TUIs: drafts/read markers/no focus theft/scroll anchors/detach | Pending steps 4–5 |
 | G04 | 120×40, 80×24, 40×16, tiny; resize while editing; Unicode/CJK/emoji; NO_COLOR | Pending steps 4–18 |
@@ -158,9 +158,21 @@ exact test names and evidence as their sequential commits land.
   vet, reference fixture check, and ten isolated terminal repetitions. No
   real-server social interoperability has been run yet.
 
+### 2. Storage
+
+- Schema v2; daemon-only transactional migration with private, validated WAL-aware
+  backup, unchanged legacy records/uint64 encodings, public root defaults, and
+  live v1 reader/writer compatibility. Generated account-scoped Community queries
+  cover durable messages/outbox, independent replay/submission receipts, monotone
+  read markers, buddies/settings/rooms/interests/rules/aliases, and 200-row paging.
+- `TestCommunityMigration*`, `TestCommunityFreshBootstrapRollback` and
+  `TestCommunityStorage*` passed 20 race-enabled repetitions. Full race/vet suites
+  and ten terminal smoke repetitions passed; repeated sqlc generation is stable.
+  This is storage evidence only; user-facing feature rows remain pending.
+
 ## Remaining commit sequence
 
-2 storage migration → 3 reliable dispatch/watches → 4 Community shell/user actions
+3 reliable dispatch/watches → 4 Community shell/user actions
 → 5 private chat → 6 public rooms/feed → 7 private roles/walls → 8 buddies
 → 9 profiles/discovery → 10 permissions → 11 upload policies → 12 privileges
 → 13 scoped search → 14 text/commands → 15 away/broadcasts → 16 manual sends

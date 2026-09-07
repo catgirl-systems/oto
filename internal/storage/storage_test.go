@@ -18,7 +18,7 @@ func TestOpenReopenAndSchema(t *testing.T) {
 	if got := db.SQL().Stats().MaxOpenConnections; got != 4 {
 		t.Fatalf("max connections = %d, want 4", got)
 	}
-	for _, pragma := range []struct{ name, want string }{{"user_version", "1"}, {"foreign_keys", "1"}, {"synchronous", "2"}} {
+	for _, pragma := range []struct{ name, want string }{{"user_version", "2"}, {"foreign_keys", "1"}, {"synchronous", "2"}} {
 		var got string
 		if err := db.SQL().QueryRow("PRAGMA " + pragma.name).Scan(&got); err != nil {
 			t.Fatal(err)
@@ -75,7 +75,7 @@ func TestRejectsCorruptAndUnsupported(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.SQL().Exec("PRAGMA user_version = 2"); err != nil {
+	if _, err := db.SQL().Exec("PRAGMA user_version = 3"); err != nil {
 		db.Close()
 		t.Fatal(err)
 	}

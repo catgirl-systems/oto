@@ -559,15 +559,22 @@ SELECT snapshot_id, ordinal, name, path FROM share_roots
 WHERE snapshot_id = ? ORDER BY ordinal
 `
 
-func (q *Queries) ListShareRoots(ctx context.Context, snapshotID int64) ([]ShareRoot, error) {
+type ListShareRootsRow struct {
+	SnapshotID int64  `json:"snapshot_id"`
+	Ordinal    int64  `json:"ordinal"`
+	Name       string `json:"name"`
+	Path       string `json:"path"`
+}
+
+func (q *Queries) ListShareRoots(ctx context.Context, snapshotID int64) ([]ListShareRootsRow, error) {
 	rows, err := q.db.QueryContext(ctx, listShareRoots, snapshotID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []ShareRoot
+	var items []ListShareRootsRow
 	for rows.Next() {
-		var i ShareRoot
+		var i ListShareRootsRow
 		if err := rows.Scan(
 			&i.SnapshotID,
 			&i.Ordinal,
