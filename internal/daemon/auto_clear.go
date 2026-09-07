@@ -1,7 +1,30 @@
 package daemon
 
+// clearUploadLocked commits the terminal row before deleting its history.
+// Never remove a data file or the owner watermark guarding late callbacks.
+func (s *Service) clearUploadLocked(id string, expected uploadOwner) error {
+	tr, ok := s.transfers[id]
+	if !ok {
+		delete(s.uploadCancelEligible, id)
+		return nil
+	}
+	if s.uploadOwners[id] != expected {
+		return nil
+	}
+	if err := s.persistUploadLocked(id); err != nil {
+		return err
+	}
+	delete(s.transfers, id)
+	if err := s.persistUploadLocked(id); err != nil {
+		s.transfers[id] = tr
+		return err
+	}
+	delete(s.uploadCancelEligible, id)
+	s.forgetTransferLocked(id)
+	return nil
+}
+
 // A completion worker must not use TransferAction: that action joins workers.
-// Delete history and commit its accounting together; never remove a data file.
 func (s *Service) clearCompletedDownload(id string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

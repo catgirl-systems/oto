@@ -116,6 +116,7 @@ func (s *Service) uploadAccepted(session uint64, e soulseek.TransferEvent) error
 		return err
 	}
 	s.uploadKeys[key] = id
+	delete(s.uploadCancelEligible, id)
 	s.uploadOwners[id] = uploadOwner{session: session, target: soulseek.UploadTarget{Username: e.Username, Filename: e.Filename, Attempt: e.Attempt}}
 	s.transfers[id] = tr
 	s.prepareTransferLocked(id)

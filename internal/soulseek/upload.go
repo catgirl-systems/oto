@@ -430,7 +430,7 @@ func (c *Client) notifyUpload(a *uploadAttempt, message Message) {
 
 // StopUploads marks every target before releasing any scheduler slot, then joins
 // all stopped workers. Unknown or retired attempt identities are harmless.
-func (c *Client) StopUploads(targets []UploadTarget, notify bool) {
+func (c *Client) StopUploads(targets []UploadTarget, notify bool) []UploadTarget {
 	var stopped []*uploadAttempt
 	var jobs []*UploadJob
 	c.mu.Lock()
@@ -454,9 +454,16 @@ func (c *Client) StopUploads(targets []UploadTarget, notify bool) {
 		a.cancel()
 	}
 	c.mu.Unlock()
+	cancelled := make([]UploadTarget, 0, len(stopped))
 	for _, a := range stopped {
 		<-a.done
+		a.mu.Lock()
+		if a.state == "cancelled" {
+			cancelled = append(cancelled, a.target)
+		}
+		a.mu.Unlock()
 	}
+	return cancelled
 }
 
 func (c *Client) failPendingDownload(username, filename string, err error) {

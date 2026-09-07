@@ -136,9 +136,16 @@ func TestSearchDefaultsCompatibilityAndValidation(t *testing.T) {
 
 func TestUploadConfigRoundTripAndValidation(t *testing.T) {
 	cfg := Default()
+	if cfg.Uploads.AutoClearCancelled {
+		t.Fatal("cancelled cleanup must default off")
+	}
+	if err := json.Unmarshal([]byte(`{"uploads":{"auto_clear_completed":true}}`), &cfg); err != nil || cfg.Uploads.AutoClearCancelled {
+		t.Fatalf("omitted cancelled cleanup changed compatibility: %v", err)
+	}
 	cfg.Soulseek.Username, cfg.Soulseek.Password = "u", "p"
 	cfg.Bandwidth = Bandwidth{Profiles: []BandwidthProfile{{Name: "Fast", UploadSpeedLimitKiB: 1000}, {Name: "Night", UploadSpeedLimitKiB: 25, DownloadSpeedLimitKiB: 100}}, ActiveProfile: "Night"}
 	cfg.Uploads.LimitScope, cfg.Uploads.Scheduling = UploadLimitPerTransfer, UploadSchedulingSmallestFirst
+	cfg.Uploads.AutoClearCancelled = true
 	cfg.Uploads.MaxQueuedFilesPerUser, cfg.Uploads.MaxQueuedBytesPerUser = 1000000, 1<<63-1
 	cfg.Shares = []Share{{Name: "Music", Path: "/music"}, {Name: "music", Path: "/other"}}
 	path := filepath.Join(t.TempDir(), "config.json")

@@ -43,6 +43,7 @@
     "max_queued_files_per_user": 0,
     "max_queued_bytes_per_user": 0,
     "auto_clear_completed": false,
+    "auto_clear_cancelled": false,
     "wait_for_active_uploads_on_quit": false,
     "limit_scope": "total",
     "scheduling": "fifo"

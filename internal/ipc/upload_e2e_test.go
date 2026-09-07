@@ -152,6 +152,7 @@ func TestUploadControlsEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	svc.SetConfigPath(filepath.Join(t.TempDir(), "config.json"))
 	defer svc.Close()
 	if err := svc.Start(ctx); err != nil {
 		t.Fatal(err)
@@ -242,6 +243,21 @@ func TestUploadControlsEndToEnd(t *testing.T) {
 	state(two, "queued")
 	action(daemon.UploadActionRequest{Action: "clear", States: []string{"queued"}}, 1)
 	action(daemon.UploadActionRequest{Action: "clear", All: true}, 1)
+	wait(func(rows []daemon.Transfer) bool { return len(rows) == 0 })
+	cfg.Uploads.AutoClearCancelled = true
+	saved, err := client.UpdateConfig(ctx, cfg)
+	if err != nil || !saved.Uploads.AutoClearCancelled {
+		t.Fatalf("auto-clear config round trip: %+v %v", saved, err)
+	}
+	queue("one")
+	state("upload:3", "running")
+	queue("two")
+	state("upload:4", "queued")
+	action(daemon.UploadActionRequest{Action: "cancel", Usernames: []string{"receiver"}}, 2)
+	wait(func(rows []daemon.Transfer) bool { return len(rows) == 0 })
+	queue("one")
+	state("upload:5", "running")
+	action(daemon.UploadActionRequest{Action: "cancel", IDs: []string{"upload:5"}}, 1)
 	wait(func(rows []daemon.Transfer) bool { return len(rows) == 0 })
 	for _, name := range []string{"one", "two"} {
 		got, err := os.ReadFile(filepath.Join(root, name))

@@ -204,6 +204,7 @@ type Service struct {
 	uploadEpoch            uint64
 	uploadAccounts         map[uint64]string
 	uploadOwners           map[string]uploadOwner
+	uploadCancelEligible   map[string]uploadOwner
 	uploadKeys             map[string]string
 	cfg                    config.Config
 	configPath             string
@@ -314,7 +315,7 @@ func New(cfg config.Config, path string) (*Service, error) {
 		return client.Search(ctx, query)
 	}, wishlistNotify: notifyWishlist, browses: make(map[string]loadedBrowse), browseProgress: make(map[string]trackedBrowse), fullBrowse: func(ctx context.Context, client *soulseek.Client, username string, progress func(received, total uint64)) ([]soulseek.ShareEntry, error) {
 		return client.BrowseUserWithProgress(ctx, username, "", progress)
-	}, transfers: make(map[string]Transfer), completionRetries: make(map[string]completionRetry), downloadSlots: make(chan struct{}, cfg.DownloadSlots), downloadCancels: make(map[string]context.CancelFunc), downloadDone: make(map[string]chan struct{}), downloadPeers: make(map[string]chan struct{}), shareScanGate: make(chan struct{}, 1), shareRescanDelay: DefaultShareRescanDelay, listenPortInterval: DefaultListenPortReconcileInterval, portCheck: defaultListeningPortCheck, reconnectWake: make(chan struct{}, 1), status: StatusStopped, presence: PresenceOffline, journalPath: path}
+	}, transfers: make(map[string]Transfer), uploadCancelEligible: make(map[string]uploadOwner), completionRetries: make(map[string]completionRetry), downloadSlots: make(chan struct{}, cfg.DownloadSlots), downloadCancels: make(map[string]context.CancelFunc), downloadDone: make(map[string]chan struct{}), downloadPeers: make(map[string]chan struct{}), shareScanGate: make(chan struct{}, 1), shareRescanDelay: DefaultShareRescanDelay, listenPortInterval: DefaultListenPortReconcileInterval, portCheck: defaultListeningPortCheck, reconnectWake: make(chan struct{}, 1), status: StatusStopped, presence: PresenceOffline, journalPath: path}
 	s.portMapOpen = func(ctx context.Context, port uint16, natPMP, upnp bool, changed func(uint16)) (portMapping, error) {
 		return portmap.OpenWithLogger(ctx, port, natPMP, upnp, changed, s.logger())
 	}
@@ -1588,6 +1589,9 @@ func (s *Service) UpdateConfig(c config.Config) (updateErr error) {
 		err := c.Save(s.configPath)
 		if err == nil {
 			s.cfg = c
+			if !c.Uploads.AutoClearCancelled {
+				clear(s.uploadCancelEligible)
+			}
 		}
 		s.mu.Unlock()
 		if err == nil {
@@ -1634,6 +1638,9 @@ func (s *Service) UpdateConfig(c config.Config) (updateErr error) {
 		}
 		s.mu.Lock()
 		s.cfg, s.shares = c, index
+		if !c.Uploads.AutoClearCancelled {
+			clear(s.uploadCancelEligible)
+		}
 		s.shareIndexRevision++
 		if reconnect {
 			s.downloadSlots = make(chan struct{}, c.DownloadSlots)

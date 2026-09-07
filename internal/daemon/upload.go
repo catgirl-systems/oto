@@ -58,6 +58,7 @@ func (s *Service) uploadUpdate(session uint64, event soulseek.TransferEvent) {
 			s.uploadEvent("upload_persist_failed", slog.LevelError, persistenceErr, loggedID, session, event)
 		}
 	}()
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed || session != s.uploadEpoch {
@@ -71,7 +72,8 @@ func (s *Service) uploadUpdate(session uint64, event soulseek.TransferEvent) {
 	}
 	s.progressTransferLocked(id, event.Done)
 	oldState := s.transfers[id].State
-	loggedID, logTransition = id, oldState != event.State
+	logTransition = oldState != event.State
+	loggedID = id
 	s.transfers[id] = Transfer{ID: id, Username: event.Username, Filename: event.Filename, Direction: "upload", State: event.State, Done: event.Done, Total: event.Total, Error: event.Error}
 	if s.telemetry != nil {
 		s.telemetry.dirtyUploads[id] = true
@@ -79,7 +81,13 @@ func (s *Service) uploadUpdate(session uint64, event soulseek.TransferEvent) {
 	if event.State != "running" {
 		s.stopTransferLocked(id)
 	}
-	if oldState != event.State {
+	autoClear := (event.State == "cancelled" && s.cfg.Uploads.AutoClearCancelled) || (event.State == "completed" && s.cfg.Uploads.AutoClearCompleted)
+	// Record eligibility before persistence so a failed terminal UPDATE can be
+	// retried by telemetry without sweeping older cancelled history.
+	if event.State == "cancelled" && s.cfg.Uploads.AutoClearCancelled {
+		s.uploadCancelEligible[id] = owner
+	}
+	if logTransition {
 		s.statsStateLocked(id, event.State)
 		if err := s.persistUploadLocked(id); err != nil {
 			persistenceErr = err
@@ -89,15 +97,14 @@ func (s *Service) uploadUpdate(session uint64, event soulseek.TransferEvent) {
 			return
 		}
 	}
-	if event.State == "completed" && s.cfg.Uploads.AutoClearCompleted {
-		tr := s.transfers[id]
-		delete(s.transfers, id)
-		if err := s.persistUploadLocked(id); err != nil {
-			s.transfers[id] = tr
+	if autoClear {
+		if err := s.clearUploadLocked(id, owner); err != nil {
 			persistenceErr = err
-			return
+			if s.telemetry != nil {
+				s.telemetry.warning = "Persistence: " + err.Error()
+			}
+			s.event(slog.LevelWarn, "upload_auto_clear_failed", err)
 		}
-		s.forgetTransferLocked(id)
 	}
 }
 
@@ -255,6 +262,10 @@ func (s *Service) UploadAction(req UploadActionRequest) (UploadActionResult, err
 	}
 	sort.Slice(targets, func(i, j int) bool { return targets[i].transfer.ID < targets[j].transfer.ID })
 	s.mu.Unlock()
+	var cancelledTargets map[soulseek.UploadTarget]bool
+	if req.Action == "cancel" || req.Action == "clear" {
+		cancelledTargets = make(map[soulseek.UploadTarget]bool)
+	}
 	if req.Action != "retry" && client != nil {
 		var live []soulseek.UploadTarget
 		for _, item := range targets {
@@ -262,7 +273,9 @@ func (s *Service) UploadAction(req UploadActionRequest) (UploadActionResult, err
 				live = append(live, item.owner.target)
 			}
 		}
-		client.StopUploads(live, req.Action == "cancel")
+		for _, target := range client.StopUploads(live, req.Action == "cancel") {
+			cancelledTargets[target] = true
+		}
 	}
 	if req.Action == "clear" {
 		if err := s.flushStats(); err != nil {
@@ -273,9 +286,19 @@ func (s *Service) UploadAction(req UploadActionRequest) (UploadActionResult, err
 		id := item.transfer.ID
 		s.mu.Lock()
 		current, exists := s.transfers[id]
-		if !exists || s.uploadOwners[id] != item.owner {
+		ownerMatches := s.uploadOwners[id] == item.owner
+		if !ownerMatches {
 			s.mu.Unlock()
 			result.Skipped++
+			continue
+		}
+		if !exists {
+			if (req.Action == "cancel" || req.Action == "clear") && cancelledTargets[item.owner.target] {
+				result.Changed++
+			} else {
+				result.Skipped++
+			}
+			s.mu.Unlock()
 			continue
 		}
 		switch req.Action {
@@ -309,20 +332,23 @@ func (s *Service) UploadAction(req UploadActionRequest) (UploadActionResult, err
 					s.restoreLocked(previousState)
 					result.Changed--
 					result.Errors = append(result.Errors, UploadActionError{id, err.Error()})
+				} else if s.cfg.Uploads.AutoClearCancelled {
+					s.uploadCancelEligible[id] = item.owner
+					if err := s.clearUploadLocked(id, item.owner); err != nil {
+						if s.telemetry != nil {
+							s.telemetry.warning = "Persistence: " + err.Error()
+						}
+						s.event(slog.LevelWarn, "upload_cancelled_clear_failed", err)
+					}
 				}
 			}
 			s.mu.Unlock()
 		case "clear":
-			delete(s.transfers, id)
-			if err := s.persistUploadLocked(id); err != nil {
-				s.transfers[id] = current
+			if err := s.clearUploadLocked(id, item.owner); err != nil {
 				result.Errors = append(result.Errors, UploadActionError{id, err.Error()})
-				s.mu.Unlock()
-				continue
+			} else if _, stillThere := s.transfers[id]; !stillThere {
+				result.Changed++
 			}
-			// Retain the attempt watermark until this session is retired.
-			s.forgetTransferLocked(id)
-			result.Changed++
 			s.mu.Unlock()
 		}
 	}
