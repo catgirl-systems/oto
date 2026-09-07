@@ -198,6 +198,7 @@ type portMappingOpener func(context.Context, uint16, bool, bool, func(uint16)) (
 type Service struct {
 	diagnostics            *diagnostics.Manager
 	telemetry              *telemetryState
+	community              communityState
 	mu                     sync.RWMutex
 	lifecycleMu            sync.Mutex
 	uploadMu               sync.Mutex
@@ -330,6 +331,9 @@ func New(cfg config.Config, path string) (*Service, error) {
 	fail := func(err error) (*Service, error) { scanCancel(); _ = s.stateDB.Close(); return nil, err }
 	if err = s.loadState(); err != nil {
 		return fail(fmt.Errorf("daemon: load state: %w", err))
+	}
+	if err = s.loadCommunityLocked(context.Background()); err != nil {
+		return fail(fmt.Errorf("daemon: load community: %w", err))
 	}
 	// Load durable records before recovering abandoned attempts.
 	if err = s.loadWishlist(); err != nil {
@@ -586,6 +590,7 @@ func (s *Service) stopSessionLocked(offline bool) {
 	s.uploadMu.Lock()
 	s.mu.Lock()
 	s.retireUploadsLocked()
+	s.retireCommunityLocked()
 	cancel, client, mapping := s.cancel, s.client, s.mapping
 	s.ctx, s.cancel, s.client, s.mapping = nil, nil, nil, nil
 	s.wishlistServerInterval = 0
@@ -668,12 +673,17 @@ func (s *Service) connectOnce(ctx context.Context) error {
 		s.mu.Unlock()
 		return context.Canceled
 	}
+	if err := s.loadCommunityLocked(ctx); err != nil {
+		s.mu.Unlock()
+		return err
+	}
 	s.uploadEpoch++
 	epoch := s.uploadEpoch
 	if s.uploadAccounts == nil {
 		s.uploadAccounts = map[uint64]string{}
 	}
 	s.uploadAccounts[epoch] = accountKey(cfg)
+	identity := CommunityIdentity{Account: accountKey(cfg), Session: epoch}
 	s.mu.Unlock()
 	uploadsReady := make(chan struct{})
 	defer close(uploadsReady)
@@ -693,6 +703,9 @@ func (s *Service) connectOnce(ctx context.Context) error {
 		UploadRejected:              func(event soulseek.TransferEvent) { s.uploadRejected(epoch, event) },
 		UploadUpdate:                func(event soulseek.TransferEvent) { s.uploadUpdate(epoch, event) },
 		UploadStreamStart:           func(event soulseek.TransferEvent) { s.uploadStreamStart(epoch, event) },
+		SocialUpdate: func(ctx context.Context, message soulseek.SocialMessage) error {
+			return s.communityUpdate(ctx, identity, message)
+		},
 	})
 	if err := client.Connect(ctx); err != nil {
 		return err
@@ -746,6 +759,8 @@ func (s *Service) connectOnce(ctx context.Context) error {
 	client.ConfigureIncomingSearch(incomingSearchPolicy(s.cfg))
 	client.ConfigureBrowseLimits(browseLimits(s.cfg))
 	s.client, s.mapping = client, mapping
+	s.community.identity, s.community.online = identity, true
+	s.community.revision++
 	idx = s.shares
 	s.status, s.lastErr = StatusConnected, ""
 	s.mu.Unlock()
@@ -812,6 +827,11 @@ func (s *Service) reconnectLoop(ctx context.Context) {
 			eventsDone := make(chan struct{})
 			go func() { s.consumeClientEvents(eventCtx, client); close(eventsDone) }()
 			err = client.Run(ctx)
+			s.mu.Lock()
+			if s.client == client {
+				s.retireCommunityLocked()
+			}
+			s.mu.Unlock()
 			s.event(slog.LevelWarn, "session_disconnected", err)
 			stopEvents()
 			<-eventsDone
@@ -903,6 +923,7 @@ func (s *Service) Close() error {
 		return nil
 	}
 	s.retireUploadsLocked()
+	s.retireCommunityLocked()
 	s.closed = true
 	s.requeueDownloads = s.cancel != nil
 	runCancel, cancel, client, mapping := s.runCancel, s.cancel, s.client, s.mapping

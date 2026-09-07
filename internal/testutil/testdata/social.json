@@ -255,6 +255,22 @@
         "slotsavail": true,
         "uploadallowed": 0
       }
+    },
+    {
+      "name": "GetPeerAddress-request",
+      "class": "GetPeerAddress",
+      "direction": "client",
+      "code": 3,
+      "payload_hex": "05000000416c696365",
+      "arguments": {"user": "Alice"}
+    },
+    {
+      "name": "peer-address",
+      "class": "GetPeerAddress",
+      "direction": "server",
+      "code": 3,
+      "payload_hex": "05000000416c6963650100007fba080000000000000000",
+      "expected": {"user": "Alice", "ip_address": "127.0.0.1", "port": 2234, "obfuscation_type": 0, "obfuscated_port": 0}
     }
   ]
 }
