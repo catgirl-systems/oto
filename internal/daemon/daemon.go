@@ -68,6 +68,7 @@ type ShareScan struct {
 
 type Snapshot struct {
 	Logging              *diagnostics.Status  `json:"logging,omitempty"`
+	Shutdown             *ShutdownStatus      `json:"shutdown,omitempty"`
 	StatsWarning         string               `json:"stats_warning,omitempty"`
 	Status               Status               `json:"status"`
 	Presence             Presence             `json:"presence"`
@@ -256,6 +257,8 @@ type Service struct {
 	listenPort             uint16
 	reconnectWake          chan struct{}
 	closed                 bool
+	shuttingDown           bool
+	shutdownClient         *soulseek.Client
 	requeueDownloads       bool
 	status                 Status
 	presence               Presence
@@ -380,6 +383,12 @@ func (s *Service) Snapshot() Snapshot {
 		warning = s.telemetry.warning
 	}
 	snapshot := Snapshot{Logging: logging, StatsWarning: warning, Status: s.status, Presence: s.presence, Error: s.lastErr, PublicIP: publicIP, PublicPort: publicPort, Config: s.cfg.Redacted(), Shares: append([]config.Share(nil), s.cfg.Shares...), ShareScan: scan, ShareIndexRevision: s.shareIndexRevision, DownloadNotification: s.downloadNotification, Downloads: append([]Download(nil), s.journal.Downloads...), Transfers: s.transferValuesLocked(now)}
+	if s.shuttingDown {
+		snapshot.Shutdown = &ShutdownStatus{}
+		if s.shutdownClient != nil {
+			snapshot.Shutdown.Draining, snapshot.Shutdown.ActiveUploads = s.shutdownClient.UploadDrainStatus()
+		}
+	}
 	s.mu.RUnlock()
 	addDownloadWaits(snapshot.Transfers, client, now)
 	return snapshot
@@ -391,7 +400,7 @@ func (s *Service) Start(ctx context.Context) error {
 	defer s.lifecycleMu.Unlock()
 
 	s.mu.Lock()
-	if s.closed {
+	if s.closed || s.shuttingDown {
 		s.mu.Unlock()
 		return ErrClosed
 	}
@@ -430,7 +439,7 @@ func (s *Service) Start(ctx context.Context) error {
 	}
 
 	s.mu.Lock()
-	if s.closed {
+	if s.closed || s.shuttingDown {
 		s.mu.Unlock()
 		return ErrClosed
 	}
@@ -454,7 +463,7 @@ func (s *Service) SetPresence(presence Presence) error {
 	s.lifecycleMu.Lock()
 	defer s.lifecycleMu.Unlock()
 	s.mu.RLock()
-	closed := s.closed
+	closed := s.closed || s.shuttingDown
 	s.mu.RUnlock()
 	if closed {
 		return ErrClosed
@@ -477,6 +486,10 @@ func (s *Service) ChangePassword(ctx context.Context, password string) (Password
 	s.lifecycleMu.Lock()
 	defer s.lifecycleMu.Unlock()
 	s.mu.RLock()
+	if s.shuttingDown {
+		s.mu.RUnlock()
+		return PasswordChangeResult{}, ErrClosed
+	}
 	client := s.client
 	s.mu.RUnlock()
 	if client == nil {
@@ -501,7 +514,7 @@ func (s *Service) ChangePassword(ctx context.Context, password string) (Password
 
 func (s *Service) setPresenceLocked(presence Presence) error {
 	s.mu.Lock()
-	if s.closed {
+	if s.closed || s.shuttingDown {
 		s.mu.Unlock()
 		return ErrClosed
 	}
@@ -537,7 +550,7 @@ func (s *Service) setPresenceLocked(presence Presence) error {
 
 func (s *Service) startSessionLocked() error {
 	s.mu.Lock()
-	if s.closed {
+	if s.closed || s.shuttingDown {
 		s.mu.Unlock()
 		return ErrClosed
 	}
@@ -631,7 +644,7 @@ func newUploadManager(c config.Config) *soulseek.UploadManager {
 func (s *Service) connectOnce(ctx context.Context) error {
 	s.event(slog.LevelInfo, "session_connect_started", nil)
 	s.mu.RLock()
-	if s.ctx != ctx {
+	if s.ctx != ctx || s.shuttingDown {
 		s.mu.RUnlock()
 		return context.Canceled
 	}
@@ -650,7 +663,7 @@ func (s *Service) connectOnce(ctx context.Context) error {
 	}
 	searchPolicy := incomingSearchPolicy(cfg)
 	s.mu.Lock()
-	if s.closed || s.ctx != ctx || s.presence == PresenceOffline {
+	if s.closed || s.shuttingDown || s.ctx != ctx || s.presence == PresenceOffline {
 		s.mu.Unlock()
 		return context.Canceled
 	}
@@ -712,7 +725,7 @@ func (s *Service) connectOnce(ctx context.Context) error {
 		return err
 	}
 	s.mu.Lock()
-	if s.closed || s.ctx != ctx || s.presence == PresenceOffline {
+	if s.closed || s.shuttingDown || s.ctx != ctx || s.presence == PresenceOffline {
 		s.mu.Unlock()
 		s.closePortMapping(mapping)
 		_ = client.Close()
@@ -752,7 +765,7 @@ func (s *Service) closePortMapping(mapping portMapping) {
 func (s *Service) setSessionStatus(ctx context.Context, status Status, message string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.ctx != ctx {
+	if s.ctx != ctx || s.shuttingDown {
 		return false
 	}
 	s.status, s.lastErr = status, message
@@ -784,7 +797,7 @@ func (s *Service) reconnectLoop(ctx context.Context) {
 		}
 
 		s.mu.RLock()
-		client, mapping, current := s.client, s.mapping, s.ctx == ctx
+		client, mapping, current := s.client, s.mapping, s.ctx == ctx && !s.shuttingDown
 		s.mu.RUnlock()
 		if !current || ctx.Err() != nil {
 			return
@@ -1563,7 +1576,7 @@ func (s *Service) UpdateConfig(c config.Config) (updateErr error) {
 	defer s.lifecycleMu.Unlock()
 
 	s.mu.Lock()
-	if s.closed {
+	if s.closed || s.shuttingDown {
 		s.mu.Unlock()
 		return ErrClosed
 	}

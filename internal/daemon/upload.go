@@ -196,7 +196,7 @@ func (s *Service) UploadAction(req UploadActionRequest) (UploadActionResult, err
 	s.uploadMu.Lock()
 	defer s.uploadMu.Unlock()
 	s.mu.Lock()
-	if s.closed {
+	if s.closed || s.shuttingDown {
 		s.mu.Unlock()
 		return result, ErrClosed
 	}

@@ -105,6 +105,9 @@ func (c *Client) registerUploadWithOptions(username, filename string, peerRequeu
 	c.uploadAdmissionMu.Lock()
 	defer c.uploadAdmissionMu.Unlock()
 	for {
+		if draining, _ := c.cfg.Uploads.DrainStatus(); draining {
+			return nil, false, ErrUploadsDraining
+		}
 		wire, localPath, size, err := c.validateUpload(username, filename)
 		if err != nil {
 			return nil, false, err
@@ -191,7 +194,7 @@ func (c *Client) RestoreUpload(username, filename, fingerprint string) (bool, er
 }
 
 func uploadDenial(err error) string {
-	if errors.Is(err, ErrTooManyUploadFiles) || errors.Is(err, ErrTooManyUploadBytes) {
+	if errors.Is(err, ErrTooManyUploadFiles) || errors.Is(err, ErrTooManyUploadBytes) || errors.Is(err, ErrUploadsDraining) {
 		return err.Error()
 	}
 	return "File not shared"
@@ -201,6 +204,18 @@ func uploadDenial(err error) string {
 func (c *Client) QueueUpload(username, filename string) (bool, error) {
 	_, started, err := c.registerUpload(username, filename, false)
 	return started, err
+}
+
+// DrainUploads serializes the cutoff with requeues, including their retirement
+// of an old attempt. No requeue can cancel an active attempt after this returns.
+func (c *Client) DrainUploads() <-chan struct{} {
+	c.uploadAdmissionMu.Lock()
+	defer c.uploadAdmissionMu.Unlock()
+	return c.cfg.Uploads.Drain()
+}
+
+func (c *Client) UploadDrainStatus() (bool, int) {
+	return c.cfg.Uploads.DrainStatus()
 }
 
 func (c *Client) executeUpload(a *uploadAttempt) {
@@ -213,6 +228,11 @@ func (c *Client) executeUpload(a *uploadAttempt) {
 		}
 	}
 	err := c.cfg.Uploads.Wait(setupCtx, a.job)
+	frozen := errors.Is(err, ErrUploadsDraining)
+	if frozen {
+		<-a.ctx.Done() // Preserve the queued attempt until final client cleanup.
+		err = a.ctx.Err()
+	}
 	if err == nil {
 		err = a.ctx.Err()
 	}
@@ -250,7 +270,7 @@ func (c *Client) executeUpload(a *uploadAttempt) {
 	}
 	// F closure already reports a token-bound failure. A filename-only message
 	// on a new P connection could abort a replacement download instead.
-	if state == "failed" && !fileStarted {
+	if state == "failed" && !fileStarted && !frozen {
 		c.notifyUpload(a, QueueFailedMessage{Filename: a.target.Filename})
 	}
 	c.cfg.Uploads.Done(a.job)

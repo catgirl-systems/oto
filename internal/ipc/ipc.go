@@ -88,12 +88,13 @@ func (s *Server) Serve(ctx context.Context) error {
 	return err
 }
 func (s *Server) Close() error {
+	if s.listener == nil {
+		return nil // Listen failed; this server never owned the socket.
+	}
 	if s.http != nil {
 		_ = s.http.Shutdown(context.Background())
 	}
-	if s.listener != nil {
-		_ = s.listener.Close()
-	}
+	_ = s.listener.Close()
 	return os.Remove(s.path)
 }
 

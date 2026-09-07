@@ -210,6 +210,7 @@ type UploadManager struct {
 	totalPace             paceState
 	paceChanged           chan struct{}
 	chooseRandom          func(int) int
+	drainDone             chan struct{}
 }
 
 func NewUploadManager(maxSlots int) *UploadManager {
@@ -244,9 +245,30 @@ func (m *UploadManager) Policy() UploadPolicy {
 	return m.policy
 }
 
+// Drain freezes admission and promotion; only jobs already holding slots finish.
+// Done is called after upload completion callbacks have persisted their state.
+func (m *UploadManager) Drain() <-chan struct{} {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.drainDone == nil {
+		m.drainDone = make(chan struct{})
+		if m.active == 0 {
+			close(m.drainDone)
+		}
+	}
+	return m.drainDone
+}
+
+func (m *UploadManager) DrainStatus() (bool, int) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.drainDone != nil, m.active
+}
+
 var (
 	ErrTooManyUploadFiles = errors.New("Too many files")
 	ErrTooManyUploadBytes = errors.New("Too many megabytes")
+	ErrUploadsDraining    = errors.New("Shutting down")
 	// Short aliases keep callers independent of the wire wording.
 	ErrUploadTooManyFiles = ErrTooManyUploadFiles
 	ErrUploadTooManyBytes = ErrTooManyUploadBytes
@@ -271,6 +293,9 @@ func (m *UploadManager) TryEnqueue(user string, r TransferRequest) (*UploadJob, 
 func (m *UploadManager) enqueue(user string, r TransferRequest, enforce bool) (*UploadJob, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.drainDone != nil {
+		return nil, ErrUploadsDraining
+	}
 	if enforce {
 		if max := m.policy.MaxQueuedFilesPerUser; max != 0 && m.outstandingFiles[user]+1 > max {
 			return nil, ErrTooManyUploadFiles
@@ -336,7 +361,7 @@ func (m *UploadManager) nextIndex() int {
 }
 
 func (m *UploadManager) promote() {
-	for len(m.q) > 0 && m.active < m.max {
+	for m.drainDone == nil && len(m.q) > 0 && m.active < m.max {
 		i := m.nextIndex()
 		if i < 0 {
 			return
@@ -380,6 +405,13 @@ func (m *UploadManager) Done(job *UploadJob) {
 		}
 	}
 	m.promote()
+	if m.drainDone != nil && m.active == 0 {
+		select {
+		case <-m.drainDone:
+		default:
+			close(m.drainDone)
+		}
+	}
 }
 
 // CancelJobs prevents promotion of the entire batch before any worker exits.
@@ -398,6 +430,9 @@ func (m *UploadManager) Wait(ctx context.Context, job *UploadJob) error {
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.drainDone != nil && !job.active && !job.cancelled {
+		return ErrUploadsDraining // A frozen queue must not expire during a long drain.
+	}
 	if ctx.Err() != nil || job.cancelled {
 		return ErrTransferCancelled
 	}
