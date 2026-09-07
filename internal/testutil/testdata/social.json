@@ -1,0 +1,260 @@
+{
+  "nicotine_revision": "0e2a467269255572906f8360e89f70ddc40f7076",
+  "fixtures": [
+    {
+      "name": "login-ok",
+      "class": "Login",
+      "direction": "server",
+      "code": 1,
+      "payload_hex": "01080000006c6f6f706261636b0100007f0000000000",
+      "expected": {
+        "success": true,
+        "banner": "loopback",
+        "ip_address": "127.0.0.1",
+        "is_supporter": false
+      }
+    },
+    {
+      "name": "WatchUser-request",
+      "class": "WatchUser",
+      "direction": "client",
+      "code": 5,
+      "payload_hex": "05000000416c696365",
+      "arguments": {
+        "user": "Alice"
+      }
+    },
+    {
+      "name": "UnwatchUser-request",
+      "class": "UnwatchUser",
+      "direction": "client",
+      "code": 6,
+      "payload_hex": "05000000416c696365",
+      "arguments": {
+        "user": "Alice"
+      }
+    },
+    {
+      "name": "GetUserStatus-request",
+      "class": "GetUserStatus",
+      "direction": "client",
+      "code": 7,
+      "payload_hex": "05000000416c696365",
+      "arguments": {
+        "user": "Alice"
+      }
+    },
+    {
+      "name": "GetUserStats-request",
+      "class": "GetUserStats",
+      "direction": "client",
+      "code": 36,
+      "payload_hex": "05000000416c696365",
+      "arguments": {
+        "user": "Alice"
+      }
+    },
+    {
+      "name": "watch-online",
+      "class": "WatchUser",
+      "direction": "server",
+      "code": 5,
+      "payload_hex": "05000000416c6963650102000000e80300000c000000000000006300000004000000020000004652",
+      "expected": {
+        "user": "Alice",
+        "userexists": true,
+        "status": 2,
+        "avgspeed": 1000,
+        "uploadnum": 12,
+        "unknown": 0,
+        "files": 99,
+        "dirs": 4,
+        "country": "FR"
+      }
+    },
+    {
+      "name": "watch-missing",
+      "class": "WatchUser",
+      "direction": "server",
+      "code": 5,
+      "payload_hex": "05000000616c69636500",
+      "expected": {
+        "user": "alice",
+        "userexists": false
+      }
+    },
+    {
+      "name": "status-away",
+      "class": "GetUserStatus",
+      "direction": "server",
+      "code": 7,
+      "payload_hex": "05000000416c6963650100000001",
+      "expected": {
+        "user": "Alice",
+        "status": 1,
+        "privileged": true
+      }
+    },
+    {
+      "name": "user-stats",
+      "class": "GetUserStats",
+      "direction": "server",
+      "code": 36,
+      "payload_hex": "05000000416c696365e80300000c000000000000006300000004000000",
+      "expected": {
+        "user": "Alice",
+        "avgspeed": 1000,
+        "uploadnum": 12,
+        "unknown": 0,
+        "files": 99,
+        "dirs": 4
+      }
+    },
+    {
+      "name": "pm-send",
+      "class": "MessageUser",
+      "direction": "client",
+      "code": 22,
+      "payload_hex": "05000000416c6963650c00000068656c6c6f20e4b896e7958c",
+      "arguments": {
+        "user": "Alice",
+        "message": "hello 世界"
+      }
+    },
+    {
+      "name": "pm-online",
+      "class": "MessageUser",
+      "direction": "server",
+      "code": 22,
+      "payload_hex": "2a00000000f1536505000000416c6963650c00000068656c6c6f20e4b896e7958c01",
+      "expected": {
+        "user": "Alice",
+        "message": "hello 世界",
+        "message_id": 42,
+        "timestamp": 1700000000,
+        "is_new_message": true
+      }
+    },
+    {
+      "name": "pm-offline",
+      "class": "MessageUser",
+      "direction": "server",
+      "code": 22,
+      "payload_hex": "2a00000000f1536505000000416c6963650c00000068656c6c6f20e4b896e7958c00",
+      "expected": {
+        "user": "Alice",
+        "message": "hello 世界",
+        "message_id": 42,
+        "timestamp": 1700000000,
+        "is_new_message": false
+      }
+    },
+    {
+      "name": "pm-ack",
+      "class": "MessageAcked",
+      "direction": "client",
+      "code": 23,
+      "payload_hex": "2a000000",
+      "arguments": {
+        "msgid": 42
+      }
+    },
+    {
+      "name": "room-join-public",
+      "class": "JoinRoom",
+      "direction": "client",
+      "code": 14,
+      "payload_hex": "080000006f746f207465737400000000",
+      "arguments": {
+        "room": "oto test",
+        "private": false
+      }
+    },
+    {
+      "name": "room-join-private",
+      "class": "JoinRoom",
+      "direction": "client",
+      "code": 14,
+      "payload_hex": "080000006f746f207465737401000000",
+      "arguments": {
+        "room": "oto test",
+        "private": true
+      }
+    },
+    {
+      "name": "room-leave",
+      "class": "LeaveRoom",
+      "direction": "client",
+      "code": 15,
+      "payload_hex": "080000006f746f2074657374",
+      "arguments": {
+        "room": "oto test"
+      }
+    },
+    {
+      "name": "room-send",
+      "class": "SayChatroom",
+      "direction": "client",
+      "code": 13,
+      "payload_hex": "080000006f746f20746573740c00000068656c6c6f20e4b896e7958c",
+      "arguments": {
+        "room": "oto test",
+        "message": "hello 世界"
+      }
+    },
+    {
+      "name": "room-echo",
+      "class": "SayChatroom",
+      "direction": "server",
+      "code": 13,
+      "payload_hex": "080000006f746f207465737405000000416c6963650c00000068656c6c6f20e4b896e7958c",
+      "expected": {
+        "room": "oto test",
+        "user": "Alice",
+        "message": "hello 世界"
+      }
+    },
+    {
+      "name": "privilege-check",
+      "class": "CheckPrivileges",
+      "direction": "client",
+      "code": 92,
+      "payload_hex": "",
+      "arguments": {}
+    },
+    {
+      "name": "privilege-gift",
+      "class": "GivePrivileges",
+      "direction": "client",
+      "code": 123,
+      "payload_hex": "05000000416c69636501000000",
+      "arguments": {
+        "user": "Alice",
+        "days": 1
+      }
+    },
+    {
+      "name": "profile",
+      "class": "UserInfoResponse",
+      "direction": "peer",
+      "code": 16,
+      "payload_hex": "0c00000068656c6c6f20e4b896e7958c0003000000070000000100000000",
+      "arguments": {
+        "descr": "hello 世界",
+        "pic": null,
+        "totalupl": 3,
+        "queuesize": 7,
+        "slotsavail": true,
+        "uploadallowed": 0
+      },
+      "expected": {
+        "descr": "hello 世界",
+        "pic": null,
+        "totalupl": 3,
+        "queuesize": 7,
+        "slotsavail": true,
+        "uploadallowed": 0
+      }
+    }
+  ]
+}
