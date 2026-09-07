@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -161,6 +162,104 @@ func TestAutoClearUploadsKeepsAttemptGuards(t *testing.T) {
 	}
 	if s.cfg.Downloads.AutoClearCompleted {
 		t.Fatal("upload option changed downloads")
+	}
+}
+
+func TestAutoClearCancelledOnlyNewAndRestart(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.sqlite3")
+	cfg := testConfig(t)
+	s, err := New(cfg, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	event := soulseek.TransferEvent{Direction: "upload", Username: "peer", Filename: "old", Attempt: 1, State: "queued", Total: 1}
+	s.uploadUpdate(s.uploadEpoch, event)
+	event.State = "cancelled"
+	s.uploadUpdate(s.uploadEpoch, event)
+	if len(s.Transfers()) != 1 {
+		t.Fatal("disabled auto-clear removed old cancellation")
+	}
+	next := s.cfg
+	next.Uploads.AutoClearCancelled = true
+	s.SetConfigPath(filepath.Join(t.TempDir(), "config.json"))
+	if err := s.UpdateConfig(next); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.flushStats(); err != nil {
+		t.Fatal(err)
+	}
+	if len(s.Transfers()) != 1 {
+		t.Fatal("enabling auto-clear swept old cancellation")
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	restored, err := New(next, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	newEvent := soulseek.TransferEvent{Direction: "upload", Username: "peer", Filename: "new", Attempt: 2, State: "queued", Total: 1}
+	restored.uploadUpdate(restored.uploadEpoch, newEvent)
+	newEvent.State = "cancelled"
+	restored.uploadUpdate(restored.uploadEpoch, newEvent)
+	if rows := restored.Transfers(); len(rows) != 1 || rows[0].Filename != "old" {
+		t.Fatalf("restart/new cancellation cleanup: %+v", rows)
+	}
+	if err := restored.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestAutoClearCancelledRetriesUpdateAndDelete(t *testing.T) {
+	s := downloadService(t)
+	s.cfg.Uploads.AutoClearCancelled = true
+	event := soulseek.TransferEvent{Direction: "upload", Username: "peer", Filename: "update", Attempt: 1, State: "queued", Total: 1}
+	s.uploadUpdate(s.uploadEpoch, event)
+	event.State = "running"
+	s.uploadUpdate(s.uploadEpoch, event)
+	id := s.journal.Uploads[0].ID
+	storageTrigger(t, s, "fail_cancel_update", fmt.Sprintf("CREATE TRIGGER fail_cancel_update BEFORE UPDATE OF state ON uploads WHEN NEW.id = '%s' AND NEW.state = 'cancelled' BEGIN SELECT RAISE(ABORT, 'cancel update failure'); END", id))
+	event.State = "cancelled"
+	s.uploadUpdate(s.uploadEpoch, event)
+	if got := uploadRow(t, s, "peer", "update"); got.State != "cancelled" {
+		t.Fatalf("in-memory cancellation: %+v", got)
+	}
+	var state string
+	if err := s.stateDB.SQL().QueryRow("SELECT state FROM uploads WHERE id = ?", id).Scan(&state); err != nil {
+		t.Fatal(err)
+	}
+	if state != "running" {
+		t.Fatalf("failed update reached disk: %s", state)
+	}
+	dropStorageTrigger(t, s, "fail_cancel_update")
+	if err := s.flushStats(); err != nil {
+		t.Fatal(err)
+	}
+	if count, totals := storageCount(t, s, "SELECT count(*) FROM uploads WHERE id = ?", id), storageUploadStats(t, s); count != 0 || totals.AttemptsCancelled != 1 {
+		t.Fatalf("telemetry did not retry cancelled update and deletion: count=%d totals=%+v", count, totals)
+	}
+
+	event.Filename, event.Attempt, event.State = "delete", 2, "queued"
+	s.uploadUpdate(s.uploadEpoch, event)
+	deleteID := uploadRow(t, s, "peer", "delete").ID
+	storageTrigger(t, s, "fail_cancel_delete", "CREATE TRIGGER fail_cancel_delete BEFORE DELETE ON uploads BEGIN SELECT RAISE(ABORT, 'cancel delete failure'); END")
+	event.State = "cancelled"
+	s.uploadUpdate(s.uploadEpoch, event)
+	if len(s.Transfers()) != 1 {
+		t.Fatal("delete failure lost cancelled history")
+	}
+	if err := s.flushStats(); err != nil {
+		t.Fatal(err)
+	}
+	if storageCount(t, s, "SELECT count(*) FROM uploads WHERE id = ?", deleteID) != 1 {
+		t.Fatal("delete failure removed history")
+	}
+	dropStorageTrigger(t, s, "fail_cancel_delete")
+	if err := s.flushStats(); err != nil {
+		t.Fatal(err)
+	}
+	if storageCount(t, s, "SELECT count(*) FROM uploads WHERE id = ?", deleteID) != 0 {
+		t.Fatal("telemetry did not retry cancelled deletion")
 	}
 }
 

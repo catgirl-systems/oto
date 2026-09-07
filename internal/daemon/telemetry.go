@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"errors"
 	"fmt"
+	"log/slog"
 	"path/filepath"
 	"slices"
 	"sync"
@@ -328,12 +329,27 @@ func (s *Service) flushStatsContext(ctx context.Context) error {
 	for id := range t.dirtyDownloads {
 		ids[id] = true
 	}
-	var clearUploads []string
+	clearUploads := make(map[string]uploadOwner)
 	for id := range t.dirtyUploads {
 		ids[id] = true
 		if s.cfg.Uploads.AutoClearCompleted && s.transfers[id].State == "completed" {
-			clearUploads = append(clearUploads, id)
+			if owner, ok := s.uploadOwners[id]; ok && owner != (uploadOwner{}) {
+				clearUploads[id] = owner
+			}
 		}
+	}
+	clearCancelled := make(map[string]uploadOwner)
+	if !s.cfg.Uploads.AutoClearCancelled {
+		clear(s.uploadCancelEligible)
+	}
+	for id, owner := range s.uploadCancelEligible {
+		tr, ok := s.transfers[id]
+		if !ok || tr.State != "cancelled" || s.uploadOwners[id] != owner {
+			delete(s.uploadCancelEligible, id)
+			continue
+		}
+		clearCancelled[id] = owner
+		ids[id] = true
 	}
 	for id := range t.activeDirty {
 		ids[id] = true
@@ -388,16 +404,32 @@ func (s *Service) flushStatsContext(ctx context.Context) error {
 	for _, retry := range retries {
 		s.runCompletionEffects(retry)
 	}
-	for _, id := range clearUploads {
+	for id, owner := range clearUploads {
 		s.mu.Lock()
-		if tr, ok := s.transfers[id]; ok && tr.State == "completed" {
-			delete(s.transfers, id)
-			if err := s.persistUploadLocked(id); err != nil {
-				s.transfers[id] = tr
+		if tr, ok := s.transfers[id]; ok && tr.State == "completed" && s.uploadOwners[id] == owner {
+			if err := s.clearUploadLocked(id, owner); err != nil {
 				t.warning = err.Error()
-			} else {
-				s.forgetTransferLocked(id)
+				s.event(slog.LevelWarn, "upload_completion_clear_failed", err)
 			}
+		}
+		s.mu.Unlock()
+	}
+	for id, owner := range clearCancelled {
+		s.mu.Lock()
+		// Recheck every condition under the lock: the candidate snapshot can
+		// become stale while the database transaction is running.
+		tr, ok := s.transfers[id]
+		eligibleOwner, eligible := s.uploadCancelEligible[id]
+		if !s.cfg.Uploads.AutoClearCancelled || !eligible || eligibleOwner != owner || !ok || tr.State != "cancelled" || s.uploadOwners[id] != owner {
+			if eligible && eligibleOwner == owner {
+				delete(s.uploadCancelEligible, id)
+			}
+			s.mu.Unlock()
+			continue
+		}
+		if err := s.clearUploadLocked(id, owner); err != nil {
+			t.warning = err.Error()
+			s.event(slog.LevelWarn, "upload_cancelled_clear_failed", err)
 		}
 		s.mu.Unlock()
 	}

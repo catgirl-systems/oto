@@ -101,6 +101,30 @@ func TestUploadActionsLifecycle(t *testing.T) {
 	}
 }
 
+func TestUploadClearCountsCallbackAutoClear(t *testing.T) {
+	s, _, _, _ := uploadService(t)
+	s.cfg.Uploads.AutoClearCancelled = true
+	if _, err := s.client.QueueUpload("peer", `Music\one`); err != nil {
+		t.Fatal(err)
+	}
+	id := uploadRow(t, s, "peer", `Music\one`).ID
+	result, err := s.UploadAction(UploadActionRequest{Action: "clear", IDs: []string{id}})
+	if err != nil || result.Changed != 1 || result.Skipped != 0 || len(result.Errors) != 0 {
+		t.Fatalf("clear callback result: %+v %v", result, err)
+	}
+	if len(s.Transfers()) != 0 {
+		t.Fatal("callback-cleared upload remains visible")
+	}
+	if _, err := s.client.QueueUpload("peer", `Music\two`); err != nil {
+		t.Fatal(err)
+	}
+	id = uploadRow(t, s, "peer", `Music\two`).ID
+	result, err = s.UploadAction(UploadActionRequest{Action: "cancel", IDs: []string{id}})
+	if err != nil || result.Changed != 1 || result.Skipped != 0 || len(result.Errors) != 0 {
+		t.Fatalf("cancel callback result: %+v %v", result, err)
+	}
+}
+
 func TestUploadActionValidationAndStates(t *testing.T) {
 	s, _, _, _ := uploadService(t)
 	if _, err := s.client.QueueUpload("a", `Music\one`); err != nil {
