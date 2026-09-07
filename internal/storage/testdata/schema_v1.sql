@@ -2,9 +2,9 @@ PRAGMA foreign_keys = ON;
 
 CREATE TABLE storage_schema (
     id INTEGER PRIMARY KEY CHECK (id = 1),
-    version INTEGER NOT NULL CHECK (version = 2)
+    version INTEGER NOT NULL CHECK (version = 1)
 );
-INSERT INTO storage_schema(id, version) VALUES (1, 2);
+INSERT INTO storage_schema(id, version) VALUES (1, 1);
 
 CREATE TABLE state_meta (
     id INTEGER PRIMARY KEY CHECK (id = 1),
@@ -148,7 +148,6 @@ CREATE TABLE share_roots (
     ordinal INTEGER NOT NULL,
     name TEXT NOT NULL,
     path TEXT NOT NULL,
-    access TEXT NOT NULL DEFAULT 'public' CHECK (access IN ('public', 'buddy', 'trusted')),
     PRIMARY KEY(snapshot_id, ordinal)
 );
 CREATE TABLE share_exclusions (
@@ -183,4 +182,4 @@ CREATE TABLE share_entries (
 );
 CREATE INDEX share_entries_lookup ON share_entries(snapshot_id, kind, root, path, name, ordinal);
 
-PRAGMA user_version = 2;
+PRAGMA user_version = 1;
