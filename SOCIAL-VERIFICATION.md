@@ -127,7 +127,7 @@ exact test names and evidence as their sequential commits land.
 | Gate | Required verification | Evidence |
 |---|---|---|
 | G01 | Schema fresh/upgrade/rollback/WAL backup/concurrent legacy history/downgrade | `internal/storage`: `TestCommunityMigration*`, `TestCommunityFreshBootstrapRollback`, `TestCommunityStorage*` |
-| G02 | Reliable callback/backpressure/unlocked dispatch/watches/stale epochs/reconnect | Pending step 3 |
+| G02 | Reliable callback/backpressure/unlocked dispatch/watches/stale epochs/reconnect | `internal/soulseek`: `TestCommunityDispatch*`, `TestCommunityAddress*`, `TestCommunityInterruptedFrameRetiresTransport`, `TestCommunityCancelledRequestDoesNotWrite`; `internal/daemon`: `TestCommunityWatch*`, `TestCommunityPresenceFreshnessAndEpoch` |
 | G03 | Two TUIs: drafts/read markers/no focus theft/scroll anchors/detach | Pending steps 4–5 |
 | G04 | 120×40, 80×24, 40×16, tiny; resize while editing; Unicode/CJK/emoji; NO_COLOR | Pending steps 4–18 |
 | G05 | Search/browse/folder/admission/active/recovery permission matrix | Pending step 10 |
@@ -170,9 +170,29 @@ exact test names and evidence as their sequential commits land.
   and ten terminal smoke repetitions passed; repeated sqlc generation is stable.
   This is storage evidence only; user-facing feature rows remain pending.
 
+### 3. Reliable dispatch and shared watches
+
+- Synchronous, cancellation-aware authoritative server callbacks, isolated from
+  lossy diagnostics and the overlapping peer command namespace. Typed watch,
+  presence and statistics codecs; existing address correlation reused and bounded.
+  Interrupted frame writes retire the transport instead of corrupting later sends.
+- Daemon account/session fencing; shared watch ownership with expiring frontend
+  leases, exact-case identities, coalesced-release/reacquire hydration, paged
+  restoration of buddies/open conversations, reconnect resubscription and stale
+  live metadata. Last-seen advances only on observed remote offline transitions;
+  failed persistence does not publish the update.
+- `TestCommunityUserProtocol` checks 10 frozen reference fixtures. Corpus now has
+  23 reference-checked fixtures. `TestCommunityDispatchBurst` verifies 1,024 reliable
+  updates while the diagnostic buffer is full. Watch tests include 205 persisted
+  buddies, multiple consumers, detach expiry, offline lease capacity and reconnect.
+- Full race/vet suites, 20 targeted race repetitions, 10 terminal smoke repetitions,
+  and a 10-second bounded decoder fuzz run passed. Independent review findings
+  gained regression tests and fixes. This is scripted/reference evidence, not
+  real-server social interoperability or complete user-facing feature coverage.
+
 ## Remaining commit sequence
 
-3 reliable dispatch/watches → 4 Community shell/user actions
+4 Community shell/user actions
 → 5 private chat → 6 public rooms/feed → 7 private roles/walls → 8 buddies
 → 9 profiles/discovery → 10 permissions → 11 upload policies → 12 privileges
 → 13 scoped search → 14 text/commands → 15 away/broadcasts → 16 manual sends

@@ -34,6 +34,8 @@ type ClientConfig struct {
 	// Returning an error rolls the reservation back.
 	UploadAccepted func(TransferEvent) error
 	UploadRejected func(TransferEvent)
+	// SocialUpdate is authoritative; Events is only a lossy diagnostic stream.
+	SocialUpdate func(context.Context, SocialMessage) error
 	// UploadsReady gates new admissions and streaming until recovery is complete.
 	UploadsReady   <-chan struct{}
 	IncomingSearch *IncomingSearchPolicy
@@ -54,8 +56,9 @@ func defaultIncomingSearchPolicy() IncomingSearchPolicy {
 type UserStatus uint32
 
 const (
-	UserStatusAway   UserStatus = 1
-	UserStatusOnline UserStatus = 2
+	UserStatusOffline UserStatus = 0
+	UserStatusAway    UserStatus = 1
+	UserStatusOnline  UserStatus = 2
 )
 
 type Event struct {
@@ -524,6 +527,10 @@ func (c *Client) Run(ctx context.Context) error {
 	if conn == nil {
 		return ErrNotConnected
 	}
+	ctx, cancel := context.WithCancel(ctx)
+	stopClose := context.AfterFunc(c.uploadRoot, cancel)
+	stopRead := context.AfterFunc(ctx, func() { _ = conn.SetReadDeadline(time.Now()) })
+	defer func() { stopClose(); stopRead(); cancel() }()
 	defer close(c.done)
 	defer func() {
 		c.mu.Lock()
@@ -539,12 +546,23 @@ func (c *Client) Run(ctx context.Context) error {
 			c.emit(Event{Err: e})
 			return e
 		}
-		m, e := DecodeMessage(cmd, p)
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		m, e := DecodeServerMessage(cmd, p)
 		if e != nil {
 			c.emit(Event{Command: cmd, Err: e})
+			if _, social := m.(SocialMessage); social {
+				return e // An authoritative update cannot be silently skipped.
+			}
 			continue
 		}
 		c.route(cmd, m)
+		if message, ok := m.(SocialMessage); ok && c.cfg.SocialUpdate != nil {
+			if err := c.cfg.SocialUpdate(ctx, message); err != nil {
+				return fmt.Errorf("soulseek: social update: %w", err)
+			}
+		}
 	}
 }
 func (c *Client) route(cmd uint32, m any) {
@@ -646,6 +664,10 @@ func (c *Client) sendContext(ctx context.Context, m Message) error {
 	case <-ctx.Done():
 		return ctx.Err()
 	}
+	if err := ctx.Err(); err != nil {
+		<-c.writeMu
+		return err
+	}
 	done := make(chan struct{})
 	stop := context.AfterFunc(ctx, func() { _ = conn.SetWriteDeadline(time.Now()); close(done) })
 	defer func() {
@@ -655,7 +677,13 @@ func (c *Client) sendContext(ctx context.Context, m Message) error {
 		_ = conn.SetWriteDeadline(time.Time{})
 		<-c.writeMu
 	}()
-	return writeAll(conn, b)
+	if err := writeAll(conn, b); err != nil {
+		// A partial frame cannot be followed by another frame safely. Only close
+		// the transport here: Close may wait for the very upload doing this write.
+		_ = conn.Close()
+		return err
+	}
+	return nil
 }
 
 // Search collects token-matched responses for five seconds.
@@ -887,8 +915,13 @@ func (c *Client) connectUserType(ctx context.Context, username, kind string) (ne
 
 func (c *Client) lookupPeerAddress(ctx context.Context, username string) (PeerAddress, error) {
 	c.mu.Lock()
+	done := c.done
 	lookup := c.addresses[username]
 	owner := lookup == nil
+	if owner && len(c.addresses) >= 256 {
+		c.mu.Unlock()
+		return PeerAddress{}, errors.New("soulseek: too many pending address lookups")
+	}
 	if owner {
 		lookup = &peerAddressLookup{done: make(chan struct{})}
 		c.addresses[username] = lookup
@@ -909,6 +942,10 @@ func (c *Client) lookupPeerAddress(ctx context.Context, username string) (PeerAd
 	select {
 	case <-ctx.Done():
 		return PeerAddress{}, ctx.Err()
+	case <-c.uploadRoot.Done():
+		return PeerAddress{}, ErrNotConnected
+	case <-done:
+		return PeerAddress{}, ErrNotConnected
 	case <-lookup.done:
 		return lookup.address, lookup.err
 	}
