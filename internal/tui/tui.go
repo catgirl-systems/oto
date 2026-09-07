@@ -14,6 +14,7 @@ import (
 	"github.com/catgirl-systems/oto/internal/config"
 	"github.com/catgirl-systems/oto/internal/daemon"
 	"github.com/catgirl-systems/oto/internal/ipc"
+	"github.com/catgirl-systems/oto/internal/soulseek"
 	"github.com/catgirl-systems/oto/internal/storage"
 )
 
@@ -556,6 +557,15 @@ func (m *model) switchWorkspace(next workspace) {
 	} else if m.workspace == workspaceShares {
 		m.shareCursor = m.cursor
 	}
+	if m.workspace == workspaceCommunity && next != workspaceCommunity {
+		c := &m.community
+		if c.userCancel != nil {
+			c.userCancel()
+			c.userCancel = nil
+		}
+		c.userRequest++
+		c.userLoading, c.userRefreshed = false, time.Time{}
+	}
 	m.workspace = (next + workspaceCount) % workspaceCount
 	if m.workspace == workspaceSearch {
 		if len(m.searchTabs) > 0 {
@@ -667,16 +677,15 @@ func (m *model) closeBrowseTab() {
 }
 
 func (m *model) openBrowse(user, target string, refresh bool) tea.Cmd {
-	user = strings.TrimSpace(user)
-	if user == "" {
+	// Keep the selected identity exact; saved archives are labeled separately.
+	if err := soulseek.ValidateUsername(user); err != nil {
+		m.setNotice(err.Error())
 		return nil
 	}
-	if m.workspace == workspaceBrowse {
-		m.saveBrowseTab()
-	}
+	m.switchWorkspace(workspaceBrowse)
 	index := -1
 	for i := range m.browseTabs {
-		if strings.EqualFold(m.browseTabs[i].user, user) {
+		if m.browseTabs[i].user == user {
 			index = i
 			break
 		}
@@ -690,7 +699,6 @@ func (m *model) openBrowse(user, target string, refresh bool) tea.Cmd {
 	if tab.target != "" {
 		tab.filter = ""
 	}
-	m.workspace = workspaceBrowse
 	if tab.loaded && !refresh {
 		m.loadBrowseTab(index)
 		if tab.target != "" && tab.paged {
@@ -742,10 +750,14 @@ func (m model) Init() tea.Cmd {
 	if m.setup {
 		return nil
 	}
-	return tea.Batch(m.loadStatus(), m.loadTransfers(), m.loadShares(), m.loadSavedBrowses(), m.loadWishlist(), tick())
+	return tea.Batch(m.loadStatus(), m.loadTransfers(), m.loadShares(), m.loadSavedBrowses(), m.loadWishlist(), m.communitySummaryCmd(0), tick())
 }
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch x := msg.(type) {
+	case communitySummaryMsg:
+		return m, m.applyCommunitySummary(x)
+	case communityUserMsg:
+		m.applyCommunityUser(x)
 	case statsMsg:
 		if x.request == m.stats.request {
 			m.stats.loading = false
@@ -776,7 +788,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.notice != "" && !time.Time(x).Before(m.noticeUntil) {
 			m.notice = ""
 		}
-		return m, tea.Batch(m.loadStatus(), m.loadTransfers(), m.loadShares(), m.loadWishlist(), m.loadStats(), tick())
+		return m, tea.Batch(m.loadStatus(), m.loadTransfers(), m.loadShares(), m.loadWishlist(), m.loadStats(), m.loadCommunitySummary(), tick())
 	case activityTickMsg:
 		if !m.activityRunning {
 			break
@@ -1174,6 +1186,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.cursor = m.transferCursors[m.transferTab]
 		}
 	case tea.PasteMsg:
+		if m.workspace == workspaceCommunity && m.community.inspectEditing && m.userActions == nil && !m.help {
+			m.pasteCommunityUser(x.Content)
+			return m, nil
+		}
 		if m.downloadAs != nil {
 			m.pasteDownloadAs(x.Content)
 			return m, nil

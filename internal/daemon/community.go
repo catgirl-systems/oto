@@ -18,9 +18,10 @@ import (
 var ErrCommunitySession = errors.New("community: account or session changed; refresh and try again")
 
 // CommunityIdentity fences network operations, including replies to old TUIs.
-// Session is the existing connection generation, not the configured username.
+// Session advances on account changes and uses the connection-generation counter.
 type CommunityIdentity struct {
 	Account string `json:"account"`
+	Daemon  string `json:"daemon"` // Random process identity fences an attached TUI across restarts.
 	Session uint64 `json:"session"`
 }
 
@@ -69,7 +70,7 @@ func (s *Service) loadCommunityLocked(ctx context.Context) error {
 	if err := s.stateDB.WriteTx(ctx, func(tx *sql.Tx) error { return db.New(tx).EnsureCommunityAccount(ctx, account) }); err != nil {
 		return err
 	}
-	next := communityState{identity: CommunityIdentity{Account: account}, users: map[string]CommunityUser{}, watches: map[string]userWatchLease{}, wake: make(chan struct{}, 1)}
+	next := communityState{identity: CommunityIdentity{Account: account, Daemon: s.community.identity.Daemon}, users: map[string]CommunityUser{}, watches: map[string]userWatchLease{}, wake: make(chan struct{}, 1)}
 	err := s.stateDB.ReadSnapshot(ctx, func(tx *storage.ReadTx) error {
 		q := tx.Queries()
 		settings, err := q.GetCommunityAccount(ctx, account)
@@ -119,6 +120,9 @@ func (s *Service) loadCommunityLocked(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	// Account changes must fence offline requests too, including A -> B -> A.
+	s.uploadEpoch++
+	next.identity.Session = s.uploadEpoch
 	s.community = next
 	s.desiredUserWatchesLocked(time.Now())
 	return nil
@@ -264,6 +268,7 @@ func (s *Service) desiredUserWatchesLocked(now time.Time) map[string]uint64 {
 	for username := range s.community.users {
 		if wanted[username] == 0 {
 			delete(s.community.users, username)
+			s.community.revision++
 		}
 	}
 	for username := range wanted {
@@ -271,6 +276,7 @@ func (s *Service) desiredUserWatchesLocked(now time.Time) map[string]uint64 {
 		if user.watchVersion == 0 {
 			s.community.nextWatch++
 			user.Username, user.watchVersion = username, s.community.nextWatch
+			s.community.revision++
 			s.community.users[username] = user
 		}
 		wanted[username] = user.watchVersion

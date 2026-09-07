@@ -67,21 +67,22 @@ type ShareScan struct {
 }
 
 type Snapshot struct {
-	Logging              *diagnostics.Status  `json:"logging,omitempty"`
-	Shutdown             *ShutdownStatus      `json:"shutdown,omitempty"`
-	StatsWarning         string               `json:"stats_warning,omitempty"`
-	Status               Status               `json:"status"`
-	Presence             Presence             `json:"presence"`
-	Error                string               `json:"error,omitempty"`
-	PublicIP             string               `json:"public_ip,omitempty"`
-	PublicPort           uint16               `json:"public_port,omitempty"`
-	Config               config.SafeConfig    `json:"config"`
-	Shares               []config.Share       `json:"shares"`
-	ShareScan            *ShareScan           `json:"share_scan,omitempty"`
-	ShareIndexRevision   uint64               `json:"share_index_revision"`
-	DownloadNotification DownloadNotification `json:"download_notification"`
-	Downloads            []Download           `json:"downloads"`
-	Transfers            []Transfer           `json:"transfers"`
+	CommunityCapabilities []string             `json:"community_capabilities"`
+	Logging               *diagnostics.Status  `json:"logging,omitempty"`
+	Shutdown              *ShutdownStatus      `json:"shutdown,omitempty"`
+	StatsWarning          string               `json:"stats_warning,omitempty"`
+	Status                Status               `json:"status"`
+	Presence              Presence             `json:"presence"`
+	Error                 string               `json:"error,omitempty"`
+	PublicIP              string               `json:"public_ip,omitempty"`
+	PublicPort            uint16               `json:"public_port,omitempty"`
+	Config                config.SafeConfig    `json:"config"`
+	Shares                []config.Share       `json:"shares"`
+	ShareScan             *ShareScan           `json:"share_scan,omitempty"`
+	ShareIndexRevision    uint64               `json:"share_index_revision"`
+	DownloadNotification  DownloadNotification `json:"download_notification"`
+	Downloads             []Download           `json:"downloads"`
+	Transfers             []Transfer           `json:"transfers"`
 }
 
 type PasswordChangeResult struct {
@@ -343,6 +344,7 @@ func New(cfg config.Config, path string) (*Service, error) {
 		return fail(fmt.Errorf("daemon: init share storage: %w", err))
 	}
 	s.initTelemetry()
+	s.community.identity.Daemon = s.telemetry.session
 	if err = s.ensureStatsSince(); err != nil {
 		return fail(fmt.Errorf("daemon: save statistics start: %w", err))
 	}
@@ -388,6 +390,7 @@ func (s *Service) Snapshot() Snapshot {
 		warning = s.telemetry.warning
 	}
 	snapshot := Snapshot{Logging: logging, StatsWarning: warning, Status: s.status, Presence: s.presence, Error: s.lastErr, PublicIP: publicIP, PublicPort: publicPort, Config: s.cfg.Redacted(), Shares: append([]config.Share(nil), s.cfg.Shares...), ShareScan: scan, ShareIndexRevision: s.shareIndexRevision, DownloadNotification: s.downloadNotification, Downloads: append([]Download(nil), s.journal.Downloads...), Transfers: s.transferValuesLocked(now)}
+	snapshot.CommunityCapabilities = communityCapabilities()
 	if s.shuttingDown {
 		snapshot.Shutdown = &ShutdownStatus{}
 		if s.shutdownClient != nil {
@@ -683,7 +686,7 @@ func (s *Service) connectOnce(ctx context.Context) error {
 		s.uploadAccounts = map[uint64]string{}
 	}
 	s.uploadAccounts[epoch] = accountKey(cfg)
-	identity := CommunityIdentity{Account: accountKey(cfg), Session: epoch}
+	identity := CommunityIdentity{Account: accountKey(cfg), Daemon: s.community.identity.Daemon, Session: epoch}
 	s.mu.Unlock()
 	uploadsReady := make(chan struct{})
 	defer close(uploadsReady)
@@ -1658,6 +1661,11 @@ func (s *Service) UpdateConfig(c config.Config) (updateErr error) {
 			s.stopSessionLocked(false)
 		}
 		s.mu.Lock()
+		if accountKey(s.cfg) != accountKey(c) {
+			// Invalidate at publication, even offline and without a summary poll.
+			// The next load restores durable preferences with a new generation.
+			s.community = communityState{identity: CommunityIdentity{Daemon: s.community.identity.Daemon}}
+		}
 		s.cfg, s.shares = c, index
 		if !c.Uploads.AutoClearCancelled {
 			clear(s.uploadCancelEligible)

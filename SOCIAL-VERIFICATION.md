@@ -128,8 +128,8 @@ exact test names and evidence as their sequential commits land.
 |---|---|---|
 | G01 | Schema fresh/upgrade/rollback/WAL backup/concurrent legacy history/downgrade | `internal/storage`: `TestCommunityMigration*`, `TestCommunityFreshBootstrapRollback`, `TestCommunityStorage*` |
 | G02 | Reliable callback/backpressure/unlocked dispatch/watches/stale epochs/reconnect | `internal/soulseek`: `TestCommunityDispatch*`, `TestCommunityAddress*`, `TestCommunityInterruptedFrameRetiresTransport`, `TestCommunityCancelledRequestDoesNotWrite`; `internal/daemon`: `TestCommunityWatch*`, `TestCommunityPresenceFreshnessAndEpoch` |
-| G03 | Two TUIs: drafts/read markers/no focus theft/scroll anchors/detach | Pending steps 4–5 |
-| G04 | 120×40, 80×24, 40×16, tiny; resize while editing; Unicode/CJK/emoji; NO_COLOR | Pending steps 4–18 |
+| G03 | Two TUIs: drafts/read markers/no focus theft/scroll anchors/detach | Shell/user details: `TestCommunityRealIPCRefreshAndFrontendIsolation`, `TestCommunityStaleResponsesAndPartialState`, `TestCommunityTerminalShellAndUserActions`; conversation drafts/read markers remain pending step 5 |
+| G04 | 120×40, 80×24, 40×16, tiny; resize while editing; Unicode/CJK/emoji; NO_COLOR | Shell: `TestCommunityResponsiveLayout`, `TestCommunityNavigationAndInputPrecedence`, `TestCommunityInspectorControlSafety`, `TestCommunityTerminalShellAndUserActions`; final social workflows remain pending steps 5–18 |
 | G05 | Search/browse/folder/admission/active/recovery permission matrix | Pending step 10 |
 | G06 | Large histories/directories/bursts during transfers/discovery bounds/performance | Pending step 18 |
 | G07 | `go test -race ./...`; `go vet ./...` | Baseline race suite passes; final run pending |
@@ -190,10 +190,31 @@ exact test names and evidence as their sequential commits land.
   gained regression tests and fixes. This is scripted/reference evidence, not
   real-server social interoperability or complete user-facing feature coverage.
 
+### 4. Community navigation and user actions
+
+- Responsive, width-aware workspace/subview tabs; List/Content/Inspector focus,
+  narrow-screen breadcrumbs, overlay and tiny fallback. User actions from Search,
+  Browse, Transfers and the inspector reuse working inspect/browse/search paths.
+  Exact-case user details never use legacy browse archive keys.
+- Bounded summary/users/watch IPC, process/account/session fencing, one in-flight
+  refresh per resource, expiring independent frontend leases, cancellation and
+  rejection of obsolete results. Only implemented capabilities are advertised.
+- Tests cover input/paste/modal precedence, preserved navigation, long Unicode
+  identities, partial/offline/error views, pagination and body budgets, and actual
+  offline A→B→A configuration changes without intervening summary polling.
+  Independent review findings gained failing regression tests and fixes.
+- Full race/vet, 20 targeted Community race repetitions, stable sqlc regeneration,
+  reference fixtures and ten terminal repetitions passed. Terminal coverage uses
+  real daemon/IPC and two TUIs, independently checked watch frames, Unicode paste,
+  four layouts, resizing and disconnect freshness; this is scripted-server evidence.
+- Messaging/composer/read state, room/buddy/discovery content and additional menu
+  actions remain with their subsequent feature slices. Permission-sensitive live
+  browse caches still require the step-10 separation from legacy saved archives.
+  No social feature row is marked complete merely for this navigation shell.
+
 ## Remaining commit sequence
 
-4 Community shell/user actions
-→ 5 private chat → 6 public rooms/feed → 7 private roles/walls → 8 buddies
+5 private chat → 6 public rooms/feed → 7 private roles/walls → 8 buddies
 → 9 profiles/discovery → 10 permissions → 11 upload policies → 12 privileges
 → 13 scoped search → 14 text/commands → 15 away/broadcasts → 16 manual sends
 → 17 consented receiving → 18 full verification → 19 verified README matrix.

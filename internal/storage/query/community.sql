@@ -158,3 +158,9 @@ ORDER BY name LIMIT min(max(CAST(sqlc.arg(page_size) AS INTEGER), 1), 200);
 
 -- name: DeleteCommunityAlias :execrows
 DELETE FROM community_aliases WHERE account = ? AND name = ?;
+
+-- name: CommunityUnreadTotals :one
+SELECT count(m.id) AS unread, CAST(coalesce(sum(m.mention), 0) AS INTEGER) AS mentions
+FROM community_conversations c
+JOIN community_messages m ON m.account = c.account AND m.conversation_id = c.id
+WHERE c.account = ? AND m.id > c.read_through AND m.direction = 'incoming' AND m.state = 'received';

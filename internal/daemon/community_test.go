@@ -428,3 +428,45 @@ func TestCommunityExpiredWatchAdmissionOffline(t *testing.T) {
 		t.Fatal("expired offline cache not reclaimed")
 	}
 }
+
+func TestCommunityOfflineAccountCycleFencesRequests(t *testing.T) {
+	s := downloadService(t)
+	ctx := context.Background()
+	before, err := s.CommunitySummary(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.WatchCommunityUsers(before.CommunityIdentity, "old", []string{"Alice"}); err != nil {
+		t.Fatal(err)
+	}
+	s.mu.RLock()
+	original := s.cfg
+	s.mu.RUnlock()
+	other := original
+	other.Soulseek.Username = "other"
+	if err := s.UpdateConfig(other); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpdateConfig(original); err != nil {
+		t.Fatal(err)
+	}
+	// No summary or connection between A -> B -> A: polling must not be
+	// responsible for invalidating mutations or clearing frontend leases.
+	if err := s.WatchCommunityUsers(before.CommunityIdentity, "old", []string{"Alice"}); !errors.Is(err, ErrCommunitySession) {
+		t.Fatalf("old mutation survived offline account cycle: %v", err)
+	}
+	if _, err := s.CommunityUsers(ctx, CommunityUsersRequest{CommunityIdentity: before.CommunityIdentity}); !errors.Is(err, ErrCommunitySession) {
+		t.Fatalf("old read survived offline account cycle: %v", err)
+	}
+	after, err := s.CommunitySummary(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if before.Account != after.Account || before.Daemon != after.Daemon || after.Session <= before.Session {
+		t.Fatalf("reused identity: %+v %+v", before, after)
+	}
+	users, err := s.CommunityUsers(ctx, CommunityUsersRequest{CommunityIdentity: after.CommunityIdentity})
+	if err != nil || len(users.Users) != 0 {
+		t.Fatalf("old leases restored: %+v %v", users, err)
+	}
+}
