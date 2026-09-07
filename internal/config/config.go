@@ -100,11 +100,12 @@ type Bandwidth struct {
 }
 
 type Uploads struct {
-	MaxQueuedFilesPerUser uint64           `json:"max_queued_files_per_user" validate:"max=1000000"`
-	MaxQueuedBytesPerUser uint64           `json:"max_queued_bytes_per_user" validate:"max=9223372036854775807"`
-	AutoClearCompleted    bool             `json:"auto_clear_completed"`
-	LimitScope            UploadLimitScope `json:"limit_scope" validate:"oneof=total per_transfer"`
-	Scheduling            UploadScheduling `json:"scheduling" validate:"oneof=fifo round_robin random smallest_first"`
+	MaxQueuedFilesPerUser      uint64           `json:"max_queued_files_per_user" validate:"max=1000000"`
+	MaxQueuedBytesPerUser      uint64           `json:"max_queued_bytes_per_user" validate:"max=9223372036854775807"`
+	AutoClearCompleted         bool             `json:"auto_clear_completed"`
+	WaitForActiveUploadsOnQuit bool             `json:"wait_for_active_uploads_on_quit"`
+	LimitScope                 UploadLimitScope `json:"limit_scope" validate:"oneof=total per_transfer"`
+	Scheduling                 UploadScheduling `json:"scheduling" validate:"oneof=fifo round_robin random smallest_first"`
 }
 
 type legacyUploadProfile struct {

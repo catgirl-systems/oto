@@ -177,7 +177,7 @@ func (s *Service) recoverUploads(client *soulseek.Client, epoch uint64) {
 			continue
 		}
 		s.mu.RLock()
-		valid := !s.closed && s.client == client && s.uploadEpoch == epoch
+		valid := !s.closed && !s.shuttingDown && s.client == client && s.uploadEpoch == epoch
 		s.mu.RUnlock()
 		if !valid {
 			return
@@ -187,6 +187,10 @@ func (s *Service) recoverUploads(client *soulseek.Client, epoch uint64) {
 			continue
 		}
 		s.mu.Lock()
+		if s.shuttingDown {
+			s.mu.Unlock()
+			return // Keep not-yet-restored uploads recoverable.
+		}
 		tr := s.transfers[u.ID]
 		tr.State, tr.Error = "failed", err.Error()
 		s.transfers[u.ID] = tr

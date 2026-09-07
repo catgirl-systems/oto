@@ -325,6 +325,10 @@ func (c *Client) SetAdvertisedPort(port uint16) error {
 // SetListenPort replaces the incoming listener and advertises it without
 // interrupting the Soulseek session.
 func (c *Client) SetListenPort(port uint16) error {
+	// Port replacement participates in the daemon's shutdown cutoff. Bound its
+	// advertisement so a stalled server cannot hold that cutoff indefinitely.
+	ctx, cancel := context.WithTimeout(c.baseContext(), 2*time.Second)
+	defer cancel()
 	c.mu.Lock()
 	host, _, err := net.SplitHostPort(c.cfg.ListenAddr)
 	if err != nil {
@@ -337,7 +341,7 @@ func (c *Client) SetListenPort(port uint16) error {
 		c.cfg.ListenAddr, c.advertisedPort = address, port
 		c.mu.Unlock()
 		if changed && loggedIn {
-			return c.send(ListenPort{Port: uint32(port)})
+			return c.sendContext(ctx, ListenPort{Port: uint32(port)})
 		}
 		return nil
 	}
@@ -346,7 +350,7 @@ func (c *Client) SetListenPort(port uint16) error {
 		c.mu.Unlock()
 		return nil
 	}
-	listener, err := c.listenConfig.Listen(context.Background(), "tcp", address)
+	listener, err := c.listenConfig.Listen(ctx, "tcp", address)
 	if err != nil {
 		c.mu.Unlock()
 		return err
@@ -355,7 +359,7 @@ func (c *Client) SetListenPort(port uint16) error {
 	c.listener, c.cfg.ListenAddr, c.advertisedPort = listener, address, port
 	c.mu.Unlock()
 	go c.acceptLoop(listener)
-	if err := c.send(ListenPort{Port: uint32(port)}); err != nil {
+	if err := c.sendContext(ctx, ListenPort{Port: uint32(port)}); err != nil {
 		c.mu.Lock()
 		if c.listener == listener {
 			c.listener, c.cfg.ListenAddr, c.advertisedPort = oldListener, oldAddress, oldAdvertisedPort

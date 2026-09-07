@@ -115,14 +115,7 @@ func tuiCommand(args []string) error {
 		}
 		transient = true
 		defer func() {
-			_ = keepAlive.Close()
-			done := make(chan struct{})
-			go func() { _ = child.Wait(); close(done) }()
-			select {
-			case <-done:
-			case <-time.After(3 * time.Second):
-				_ = child.Process.Kill()
-			}
+			waitForChild(child, keepAlive, client, os.Stderr)
 		}()
 	}
 	return tui.RunWithTransient(ctx, client, *path, transient)
@@ -161,7 +154,7 @@ func startChild(ctx context.Context, path string) (*exec.Cmd, io.Closer, error) 
 	if err != nil {
 		return nil, nil, err
 	}
-	cmd := exec.CommandContext(ctx, exe, "daemon", "--child", "--config", path)
+	cmd := exec.Command(exe, "daemon", "--child", "--config", path)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Stdin = reader
 	cmd.Stdout = io.Discard
@@ -279,27 +272,16 @@ func daemonCommand(args []string) error {
 		return err
 	}
 	service.SetConfigPath(options.configPath)
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
+	signals := make(chan os.Signal, 2)
+	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(signals)
+	var eof <-chan struct{}
 	if options.child {
-		ctx, stop = daemon.ContextWithEOF(ctx, os.Stdin)
+		parent, stop := daemon.ContextWithEOF(context.Background(), os.Stdin)
 		defer stop()
+		eof = parent.Done()
 	}
-	server := ipc.NewServer(service, config.SocketPath())
-	defer server.Close()
-	serverErr := make(chan error, 1)
-	go func() { serverErr <- server.Serve(ctx) }()
-	if err := service.Start(ctx); err != nil {
-		diagnostics.Event(logger, slog.LevelWarn, "session_start_failed", err)
-	}
-	select {
-	case <-ctx.Done():
-		diagnostics.Event(logger, slog.LevelInfo, "daemon_stopping", ctx.Err(), slog.String("reason", "signal_or_parent_eof"))
-	case err := <-serverErr:
-		diagnostics.Event(logger, slog.LevelError, "ipc_server_stopped", err)
-		return err
-	}
-	return nil
+	return runDaemon(service, ipc.NewServer(service, config.SocketPath()), signals, eof)
 }
 
 func transfersCommand(args []string) error {
@@ -398,6 +380,9 @@ func statusCommand(args []string) error {
 		return json.NewEncoder(os.Stdout).Encode(s)
 	}
 	fmt.Printf("%s presence=%s user=%s shares=%d transfers=%d", s.Status, s.Presence, s.Config.Soulseek.Username, len(s.Shares), len(s.Transfers))
+	if s.Shutdown != nil {
+		fmt.Printf(" draining=%t active_uploads=%d", s.Shutdown.Draining, s.Shutdown.ActiveUploads)
+	}
 	if s.ShareScan != nil && (s.ShareScan.State == "scanning" || s.ShareScan.State == "publishing") {
 		fmt.Printf(" scan=%s root=%q files=%d dirs=%d elapsed=%dms", s.ShareScan.State, s.ShareScan.Root, s.ShareScan.Files, s.ShareScan.Directories, s.ShareScan.ElapsedMS)
 	}

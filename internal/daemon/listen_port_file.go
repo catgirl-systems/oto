@@ -52,11 +52,14 @@ func (s *Service) startListenPortWatcherLocked() {
 }
 
 func (s *Service) applyListenPort(port uint16, available bool) {
+	// Serialize an in-flight listener replacement with the shutdown cutoff.
+	s.uploadMu.Lock()
+	defer s.uploadMu.Unlock()
 	if !available {
 		port = 0
 	}
 	s.mu.Lock()
-	if s.closed || s.listenPortFile == "" || s.listenPort == port {
+	if s.closed || s.shuttingDown || s.listenPortFile == "" || s.listenPort == port {
 		s.mu.Unlock()
 		return
 	}
