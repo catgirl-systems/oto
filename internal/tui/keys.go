@@ -23,6 +23,9 @@ func (m *model) key(k tea.KeyPressMsg) tea.Cmd {
 	if m.searchScope != nil {
 		return m.searchScopeKey(k)
 	}
+	if m.userActions != nil {
+		return m.userActionsKey(k)
+	}
 	if m.passwordForm {
 		return m.passwordFormKey(k)
 	}
@@ -71,6 +74,9 @@ func (m *model) key(k tea.KeyPressMsg) tea.Cmd {
 	if m.editing {
 		return m.editKey(k)
 	}
+	if m.workspace == workspaceCommunity && (m.community.inspectEditing || s != "tab" && s != "shift+tab" && s != "q" && s != "ctrl+c" && s != "?" && s != "o") {
+		return m.communityKey(k)
+	}
 	if m.workspace == workspaceStats && s != "tab" && s != "shift+tab" && s != "q" && s != "ctrl+c" && s != "?" && s != "o" {
 		return m.statsKey(k)
 	}
@@ -87,6 +93,8 @@ func (m *model) key(k tea.KeyPressMsg) tea.Cmd {
 		m.openStatusMenu()
 	case "u":
 		m.openSearchScope()
+	case "U":
+		m.openUserActions()
 	case "F":
 		m.confirmForceDownloads()
 	case "ctrl+pgup":

@@ -54,6 +54,7 @@ const (
 	workspaceWishlist
 	workspaceBrowse
 	workspaceTransfers
+	workspaceCommunity
 	workspaceStats
 	workspaceShares
 	workspaceSettings
@@ -233,6 +234,8 @@ type model struct {
 	passwordForm, passwordChanging         bool
 	width, height                          int
 	workspace                              workspace
+	community                              communityModel
+	userActions                            *userActions
 	settingsSection                        settingsSection
 	transferTab                            transferTab
 	cursor, statusMenuChoice               int
@@ -312,6 +315,8 @@ func (m model) rows() int {
 		return len(m.browseTree.visible)
 	case workspaceTransfers:
 		return len(m.transferTrees[m.transferTab].visible)
+	case workspaceCommunity:
+		return 0 // Community owns its per-pane cursors.
 	case workspaceShares:
 		return len(m.shareTree.visible)
 	default:

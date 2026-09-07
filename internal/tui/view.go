@@ -20,6 +20,8 @@ func (m model) View() tea.View {
 		content = m.downloadAsView()
 	} else if m.searchScope != nil {
 		content = m.searchScopeView()
+	} else if m.userActions != nil {
+		content = m.userActionsView()
 	} else if m.passwordForm {
 		content = m.passwordFormView()
 	} else if m.folderMenu {
@@ -117,7 +119,7 @@ func (m model) passwordFormView() string {
 }
 
 func (m model) workspaceNames() []string {
-	names := []string{"Search", "Wishlist", "Browse", "Transfers", "Stats", "Shares", "Settings"}
+	names := []string{"Search", "Wishlist", "Browse", "Transfers", "Community", "Stats", "Shares", "Settings"}
 	unread, downloads, uploads := 0, 0, 0
 	for _, item := range m.wishlist {
 		if item.Unread {
@@ -145,7 +147,6 @@ func (m model) mainView() string {
 		return m.compactView()
 	}
 
-	names := m.workspaceNames()
 	left := styled("oto", lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#CBA6F7"))) + muted("  Soulseek for your terminal")
 	header := spread(left, m.statusView(), m.width-2)
 	hs := lipgloss.NewStyle().Width(m.width).Padding(0, 1)
@@ -154,18 +155,7 @@ func (m model) mainView() string {
 	}
 	header = hs.Render(header)
 
-	var tabs strings.Builder
-	for i, name := range names {
-		if i > 0 {
-			tabs.WriteString("  ")
-		}
-		if workspace(i) == m.workspace {
-			tabs.WriteString(styled(" "+name+" ", lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#11111B")).Background(lipgloss.Color("#CBA6F7"))))
-		} else {
-			tabs.WriteString(muted(" " + name + " "))
-		}
-	}
-	tabLine := lipgloss.NewStyle().Width(m.width).Padding(0, 1).Render(tabs.String())
+	tabLine := lipgloss.NewStyle().Width(m.width).Padding(0, 1).Render(m.workspaceTabs(m.width - 2))
 
 	panelHeight := max(4, m.height-4)
 	innerWidth := max(10, m.width-4)
@@ -180,6 +170,8 @@ func (m model) mainView() string {
 		body = m.renderBrowse(innerWidth, innerHeight)
 	case workspaceTransfers:
 		body = m.renderTransfers(innerWidth, innerHeight)
+	case workspaceCommunity:
+		body = m.renderCommunity(innerWidth, innerHeight)
 	case workspaceStats:
 		body = m.renderStats(innerWidth, innerHeight)
 	case workspaceShares:
@@ -194,7 +186,9 @@ func (m model) mainView() string {
 }
 
 func (m model) compactView() string {
-	names := m.workspaceNames()
+	if m.workspace == workspaceCommunity && m.community.inspectEditing {
+		return strings.Join([]string{m.workspaceTabs(m.width), renderInputWindow(m.community.input, m.community.inputCursor, m.width), trunc(m.community.inputErr, m.width), trunc("Esc back · Enter inspect", m.width)}, "\n")
+	}
 	footer := "tab switch  o status  ? help  q quit"
 	if activity := m.activityView(m.width); activity != "" {
 		footer = activity
@@ -206,7 +200,7 @@ func (m model) compactView() string {
 	}
 	lines := []string{
 		trunc("oto  "+m.statusText(), m.width),
-		trunc("["+names[m.workspace]+"]", m.width),
+		m.workspaceTabs(m.width),
 		trunc(m.errorText(), m.width),
 		trunc(footer, m.width),
 	}
@@ -324,7 +318,7 @@ func (m model) helpView() string {
 			{"page up/down", "move by a page"},
 			{"← →", "expand / collapse; change Settings section"},
 			{"home / end", "first / last item; line boundary while editing"},
-			{"ctrl+page up/down", "switch search, browse, or transfer tabs"},
+			{"ctrl+page up/down", "switch Search, Browse, Transfers or Community tabs"},
 		}},
 		{"Editing", [][2]string{
 			{"ctrl+← → / ctrl+⌫", "move / delete by word"},
@@ -335,6 +329,9 @@ func (m model) helpView() string {
 		{"Files & actions", [][2]string{
 			{"enter", "toggle folder / download Search or Browse file"},
 			{"i", "show file details"},
+			{"U", "User actions: inspect / browse / search selected user"},
+			{"F6 / shift+F6", "Community: next / previous pane; Esc goes back"},
+			{"/ (Community)", "inspect an exact username"},
 			{"f", "edit Search filters / find in loaded Browse list"},
 			{"c", "clear / restore search filters"},
 			{"w (search)", "save the active query and filter to Wishlist"},
@@ -646,7 +643,7 @@ func (m model) footerHints() []string {
 
 	switch m.workspace {
 	case workspaceSearch:
-		hints := []string{"/ search", "f filter", "w wishlist"}
+		hints := []string{"/ search", "U user actions", "f filter", "w wishlist"}
 		_, node := m.searchTree.node(m.cursor)
 		if node == nil {
 			return hints
@@ -665,7 +662,7 @@ func (m model) footerHints() []string {
 		if len(m.browseTabs) == 0 {
 			return []string{"enter open", "r refresh"}
 		}
-		hints := []string{"s save list", "r refresh"}
+		hints := []string{"U user actions", "s save list", "r refresh"}
 		if m.browseLoaded {
 			hints = append([]string{"f find"}, hints...)
 		}
@@ -681,11 +678,16 @@ func (m model) footerHints() []string {
 		}
 		return append([]string{"enter expand"}, hints...)
 	case workspaceTransfers:
-		hints := []string{"s search", "S folder search"}
+		hints := []string{"U user actions", "s search", "S folder search"}
 		if m.transferTab == transferDownloads {
 			return append(hints, "space mark files", "F download anyway", "p pause", "r resume/retry", "d cancel", "c clear")
 		}
 		return append(hints, "space mark", "r retry", "d abort", "D abort users", "c clear selected", "C clear status")
+	case workspaceCommunity:
+		if m.community.inspectEditing {
+			return []string{"enter inspect", "esc back"}
+		}
+		return []string{"F6 panes", "ctrl+pgup/down views", "/ inspect", "U actions", "esc back"}
 	case workspaceStats:
 		if m.stats.edit != "" {
 			return []string{"enter apply", "esc cancel"}

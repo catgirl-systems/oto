@@ -74,6 +74,25 @@ func (q *Queries) CommunityUnread(ctx context.Context, account string) ([]Commun
 	return items, nil
 }
 
+const communityUnreadTotals = `-- name: CommunityUnreadTotals :one
+SELECT count(m.id) AS unread, CAST(coalesce(sum(m.mention), 0) AS INTEGER) AS mentions
+FROM community_conversations c
+JOIN community_messages m ON m.account = c.account AND m.conversation_id = c.id
+WHERE c.account = ? AND m.id > c.read_through AND m.direction = 'incoming' AND m.state = 'received'
+`
+
+type CommunityUnreadTotalsRow struct {
+	Unread   int64 `json:"unread"`
+	Mentions int64 `json:"mentions"`
+}
+
+func (q *Queries) CommunityUnreadTotals(ctx context.Context, account string) (CommunityUnreadTotalsRow, error) {
+	row := q.db.QueryRowContext(ctx, communityUnreadTotals, account)
+	var i CommunityUnreadTotalsRow
+	err := row.Scan(&i.Unread, &i.Mentions)
+	return i, err
+}
+
 const deleteCommunityAlias = `-- name: DeleteCommunityAlias :execrows
 DELETE FROM community_aliases WHERE account = ? AND name = ?
 `
