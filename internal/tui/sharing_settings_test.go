@@ -78,14 +78,26 @@ func TestStagedShareExclusionEditorAndAutoClear(t *testing.T) {
 	for _, section := range []settingsSection{settingsDownloads, settingsUploads} {
 		m.settingsSection = section
 		for i, field := range m.settingFields() {
-			if field.id == settingAutoClearDownloads || field.id == settingAutoClearUploads {
+			if field.id == settingAutoClearDownloads || field.id == settingAutoClearUploads || field.id == settingAutoClearCancelledUploads {
 				m.cursor = i
 				m.key(key("enter"))
 			}
 		}
 	}
-	if !m.cfg.Downloads.AutoClearCompleted || !m.cfg.Uploads.AutoClearCompleted {
+	if !m.cfg.Downloads.AutoClearCompleted || !m.cfg.Uploads.AutoClearCompleted || !m.cfg.Uploads.AutoClearCancelled {
 		t.Fatal("independent auto-clear toggles missing")
+	}
+	for i, field := range m.settingFields() {
+		if field.id == settingAutoClearCancelledUploads {
+			m.cursor = i
+			m.key(key("enter"))
+		}
+	}
+	if m.cfg.Uploads.AutoClearCancelled || !m.cfg.Uploads.AutoClearCompleted || !m.cfg.Downloads.AutoClearCompleted {
+		t.Fatal("cancelled toggle changed another setting")
+	}
+	if cmd := m.key(key("s")); cmd == nil || !m.settingsSaving {
+		t.Fatal("upload cleanup settings did not use the normal save path")
 	}
 }
 

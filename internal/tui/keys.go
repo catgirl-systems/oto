@@ -245,6 +245,8 @@ func (m *model) key(k tea.KeyPressMsg) tea.Cmd {
 				m.cfg.Downloads.AutoClearCompleted = !m.cfg.Downloads.AutoClearCompleted
 			case settingAutoClearUploads:
 				m.cfg.Uploads.AutoClearCompleted = !m.cfg.Uploads.AutoClearCompleted
+			case settingAutoClearCancelledUploads:
+				m.cfg.Uploads.AutoClearCancelled = !m.cfg.Uploads.AutoClearCancelled
 			case settingWaitForActiveUploadsOnQuit:
 				m.cfg.Uploads.WaitForActiveUploadsOnQuit = !m.cfg.Uploads.WaitForActiveUploadsOnQuit
 			case settingChangePassword:
