@@ -184,6 +184,7 @@ const (
 	settingFolderNotifications
 	settingAutoClearDownloads
 	settingAutoClearUploads
+	settingAutoClearCancelledUploads
 	settingWaitForActiveUploadsOnQuit
 	settingManageShareExclusions
 	settingBrowseMaxEntries
