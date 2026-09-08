@@ -265,6 +265,7 @@ func (d *sharedListStreamDecoder) parse(maxEntries int) ([]ShareDirectory, error
 func (c *Client) browseSharedDirectories(ctx context.Context, peer net.Conn, progress func(uint64, uint64), limits BrowseLimits) ([]ShareDirectory, error) {
 	ctx, operationID := c.browseContext(ctx)
 	ctx, peer = c.browsePeer(ctx, peer)
+	configurePeerRead(peer, progress, limits.MaxCompressedSize)
 	c.log(ctx, slog.LevelInfo, "browse_operation_start", nil, slog.String("operation_id", operationID), slog.String("browse_type", "group"))
 	select {
 	case c.browseSlot <- struct{}{}:

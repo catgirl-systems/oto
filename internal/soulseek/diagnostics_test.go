@@ -257,3 +257,24 @@ func TestDownloadWaitSeconds(t *testing.T) {
 		})
 	}
 }
+
+func TestReusedPeerOperationLogs(t *testing.T) {
+	logger := protocolLogger(t, func(records []map[string]any) {
+		first, second := requireEvent(t, records, "first_operation"), requireEvent(t, records, "second_operation")
+		if first["operation_id"] != "first" || second["operation_id"] != "second" || first["connection_id"] == nil || first["connection_id"] != second["connection_id"] {
+			t.Fatal("reused socket lost operation/connection identity")
+		}
+	})
+	c := NewClient(ClientConfig{Logger: logger})
+	defer c.Close()
+	left, right := net.Pipe()
+	defer right.Close()
+	initial := diagnostics.WithLogger(context.Background(), logger.With("operation_id", "initial"))
+	p := c.installPeer("remote", c.traceConn(initial, left, "remote", "P", "incoming"), true)
+	for _, id := range []string{"first", "second"} {
+		lease := p.lease()
+		ctx := diagnostics.WithLogger(context.Background(), logger.With("operation_id", id))
+		c.peerLogger(ctx, lease).Info(id + "_operation")
+		_ = lease.Close()
+	}
+}

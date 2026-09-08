@@ -212,10 +212,43 @@ func TestUploadControlsEndToEnd(t *testing.T) {
 	if err := soulseek.WriteInitFrame(incoming, byte(soulseek.PeerInit), init.Payload()); err != nil {
 		t.Fatal(err)
 	}
+	// Offers now reuse the incoming P connection instead of requiring a fresh dial.
+	places := make(chan error, 4)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for {
+			command, payload, err := soulseek.ReadFrame(incoming)
+			if err != nil {
+				select {
+				case places <- err:
+				default:
+				}
+				return
+			}
+			switch command {
+			case soulseek.PeerPlaceInQueue:
+				places <- nil
+			case soulseek.PeerTransferRequest:
+				req, err := soulseek.DecodeTransferRequest(payload)
+				if err != nil {
+					places <- err
+					return
+				}
+				send(incoming, soulseek.TransferResponse{Token: req.Token, Accepted: offered.Add(1) > 1, Reason: "test rejection"})
+			}
+		}
+	}()
 	queue := func(name string) {
+		t.Helper()
 		send(incoming, soulseek.QueueRequest{Filename: `Music\` + name})
-		if _, _, err := soulseek.ReadFrame(incoming); err != nil {
-			t.Fatal(err)
+		select {
+		case err := <-places:
+			if err != nil {
+				t.Fatal(err)
+			}
+		case <-ctx.Done():
+			t.Fatal(ctx.Err())
 		}
 	}
 	action := func(req daemon.UploadActionRequest, changed int) {

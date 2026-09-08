@@ -158,6 +158,9 @@ func ReadFrameWithProgress(r io.Reader, progress func(received, total uint64)) (
 }
 
 func readFrame(r io.Reader, progress func(received, total uint64), maxFrameSize int) (uint32, []byte, error) {
+	if lease := leasedPeer(r); lease != nil {
+		return lease.readFrame(progress, maxFrameSize)
+	}
 	body, err := readBody(r, 4, progress, maxFrameSize)
 	if err != nil {
 		return 0, nil, err
