@@ -174,6 +174,8 @@ func DecodeServerMessage(command uint32, payload []byte) (any, error) {
 		return DecodeUserPresence(payload)
 	case ServerUserStats:
 		return DecodeUserStatistics(payload)
+	case ServerPrivateMessage:
+		return DecodePrivateMessage(payload)
 	default:
 		return DecodeMessage(command, payload)
 	}

@@ -2,6 +2,7 @@ package ipc
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"net/http"
 	"net/url"
@@ -14,15 +15,19 @@ func (s *Server) registerCommunity(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/community", s.communitySummary)
 	mux.HandleFunc("GET /v1/community/users", s.communityUsers)
 	mux.HandleFunc("PUT /v1/community/watches", s.communityWatches)
+	s.registerCommunityChats(mux)
 }
 
 func communityError(w http.ResponseWriter, err error) {
 	status := http.StatusBadRequest
-	if errors.Is(err, daemon.ErrCommunitySession) {
+	if errors.Is(err, daemon.ErrCommunitySession) || errors.Is(err, daemon.ErrCommunityMessageState) {
 		status = http.StatusConflict
 	}
 	if errors.Is(err, daemon.ErrClosed) {
 		status = http.StatusServiceUnavailable
+	}
+	if errors.Is(err, sql.ErrNoRows) {
+		status = http.StatusNotFound
 	}
 	writeErr(w, status, err)
 }

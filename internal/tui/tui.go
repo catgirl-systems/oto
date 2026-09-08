@@ -542,6 +542,7 @@ func (m *model) loadBrowseTab(index int) {
 }
 
 func (m *model) switchWorkspace(next workspace) {
+	m.community.chats.navigation++
 	if m.workspace == workspaceSearch {
 		m.saveSearchTab()
 	} else if m.workspace == workspaceWishlist {
@@ -565,6 +566,7 @@ func (m *model) switchWorkspace(next workspace) {
 		}
 		c.userRequest++
 		c.userLoading, c.userRefreshed = false, time.Time{}
+		c.chats.cancelLoad()
 	}
 	m.workspace = (next + workspaceCount) % workspaceCount
 	if m.workspace == workspaceSearch {
@@ -754,6 +756,17 @@ func (m model) Init() tea.Cmd {
 }
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch x := msg.(type) {
+	case chatDataMsg:
+		return m, m.applyChatData(x)
+	case chatOperationMsg:
+		return m, m.applyChatOperation(x)
+	case chatReadMsg:
+		return m, m.applyChatRead(x)
+	case tea.BlurMsg:
+		m.community.chats.blurred = true
+	case tea.FocusMsg:
+		m.community.chats.blurred = false
+		return m, m.readCommunityChat()
 	case communitySummaryMsg:
 		return m, m.applyCommunitySummary(x)
 	case communityUserMsg:
@@ -1186,6 +1199,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.cursor = m.transferCursors[m.transferTab]
 		}
 	case tea.PasteMsg:
+		if m.workspace == workspaceCommunity && (m.community.chats.composing || m.community.chats.form != "") && m.community.chats.dialog == nil && m.userActions == nil && !m.help && !m.community.inspectEditing {
+			m.pasteCommunityChat(x.Content)
+			return m, nil
+		}
 		if m.workspace == workspaceCommunity && m.community.inspectEditing && m.userActions == nil && !m.help {
 			m.pasteCommunityUser(x.Content)
 			return m, nil

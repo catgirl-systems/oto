@@ -60,9 +60,9 @@ exact test names and evidence as their sequential commits land.
 
 | ID | README row | Required scenario family / step | Evidence |
 |---|---|---|---|
-| S01 | Private messages | PM send/receive; two clients / 5 | Pending |
-| S02 | Queued and offline private messages | PM outbox/replay/ambiguous writes / 5 | Pending |
-| S03 | Persistent private-message history | PM restart/read/clear/export / 5 | Pending |
+| S01 | Private messages | PM send/receive; two clients / 5 | Slice 5: `TestCommunityPrivate*`, `TestSoulfindPrivateChatOnlineOffline`, `TestCommunityTerminalPrivateChatLifecycle` |
+| S02 | Queued and offline private messages | PM outbox/replay/ambiguous writes / 5 | Slice 5: `TestCommunityPrivateOutbox*`, `TestCommunityPrivateUnknownRequiresExplicitRetry`, real-server online/offline test and terminal lifecycle |
+| S03 | Persistent private-message history | PM restart/read/clear/export / 5 | Slice 5: daemon/IPC history tests, `TestCommunityPrivateExport*`, terminal restart/clear/replay |
 | S04 | Broadcast a private message to buddies or downloading users | Audience preview/pacing/partial outcomes / 15 | Pending |
 | S05 | Join public chat rooms | Confirmed membership/roster/echo / 6 | Pending |
 | S06 | Browse the room directory | Pagination/filter/population / 6 | Pending |
@@ -117,7 +117,7 @@ exact test names and evidence as their sequential commits land.
 | N16 | Trusted-buddy-only shares | Cumulative serving matrix / 10 | Pending |
 | N17 | Reveal restricted share tiers selectively | Locked disclosure vs permission / 10 | Pending |
 | N18 | Use buddy trust as a share permission | Self exclusion/revocation/cache/recovery / 10 | Pending |
-| N19 | Persistent private-chat logs | SQLite searchable history/text+JSON export / 5 | Pending |
+| N19 | Persistent private-chat logs | SQLite searchable history/text+JSON export / 5 | Slice 5: `TestCommunityPrivateIPCWorkflows`, `TestCommunityPrivatePagingReadAndTwoFrontends`, `TestCommunityPrivateExport*` |
 | N20 | Persistent chat-room logs | Retention/export/history gaps / 6 | Pending |
 | N21 | Interactive command console in headless mode | Real binary/daemon console / 14 | Pending |
 | N22 | Extensible chat and headless commands | Registry/alias args/cycles/no execution / 14 | Pending |
@@ -128,13 +128,13 @@ exact test names and evidence as their sequential commits land.
 |---|---|---|
 | G01 | Schema fresh/upgrade/rollback/WAL backup/concurrent legacy history/downgrade | `internal/storage`: `TestCommunityMigration*`, `TestCommunityFreshBootstrapRollback`, `TestCommunityStorage*` |
 | G02 | Reliable callback/backpressure/unlocked dispatch/watches/stale epochs/reconnect | `internal/soulseek`: `TestCommunityDispatch*`, `TestCommunityAddress*`, `TestCommunityInterruptedFrameRetiresTransport`, `TestCommunityCancelledRequestDoesNotWrite`; `internal/daemon`: `TestCommunityWatch*`, `TestCommunityPresenceFreshnessAndEpoch` |
-| G03 | Two TUIs: drafts/read markers/no focus theft/scroll anchors/detach | Shell/user details: `TestCommunityRealIPCRefreshAndFrontendIsolation`, `TestCommunityStaleResponsesAndPartialState`, `TestCommunityTerminalShellAndUserActions`; conversation drafts/read markers remain pending step 5 |
-| G04 | 120×40, 80×24, 40×16, tiny; resize while editing; Unicode/CJK/emoji; NO_COLOR | Shell: `TestCommunityResponsiveLayout`, `TestCommunityNavigationAndInputPrecedence`, `TestCommunityInspectorControlSafety`, `TestCommunityTerminalShellAndUserActions`; final social workflows remain pending steps 5–18 |
+| G03 | Two TUIs: drafts/read markers/no focus theft/scroll anchors/detach | Shell/user details and private chat: `TestCommunityRealIPCRefreshAndFrontendIsolation`, `TestCommunityStaleResponsesAndPartialState`, `TestCommunityTerminalShellAndUserActions`, `TestCommunityTerminalPrivateChatLifecycle`; additional room workflows remain pending |
+| G04 | 120×40, 80×24, 40×16, tiny; resize while editing; Unicode/CJK/emoji; NO_COLOR | Shell and private chat: `TestCommunityResponsiveLayout`, `TestCommunityPrivateInputAndResponsiveRendering`, `TestCommunityPrivateTinyConfirmationControlsStayVisible`, both terminal shell/chat workflows; final social workflows remain pending steps 6–18 |
 | G05 | Search/browse/folder/admission/active/recovery permission matrix | Pending step 10 |
 | G06 | Large histories/directories/bursts during transfers/discovery bounds/performance | Pending step 18 |
 | G07 | `go test -race ./...`; `go vet ./...` | Baseline race suite passes; final run pending |
 | G08 | `sqlc generate` with no generated diff | Pending final run |
-| G09 | Existing `TestSoulfind` integration command extended with social tests | Pending steps 5–18 |
+| G09 | Existing `TestSoulfind` integration command extended with social tests | `TestSoulfindPrivateChatOnlineOffline` passes against pinned real Soulfind; full slskd/Nicotine+ peer and later social workflows remain pending |
 | G10 | Mandatory terminal CI; 20 social race repetitions; 10 terminal repetitions | Pending final workflows |
 | G11 | Bounded decoder fuzz/cancellation/shutdown | Pending steps 3–18 |
 | G12 | CGO=0 linux amd64/arm64 builds; unchanged container behavior | Pending final run |
@@ -212,9 +212,52 @@ exact test names and evidence as their sequential commits land.
   browse caches still require the step-10 separation from legacy saved archives.
   No social feature row is marked complete merely for this navigation shell.
 
+### 5. Durable private messaging and recovery
+
+- PM codecs use the independent send/online/offline/ACK fixtures. Daemon commits
+  receipt and sanitized transcript before ACK; replay protection survives clear
+  and restart. Raw fingerprints use unchanged wire bytes; display decoding uses
+  Nicotine+'s UTF-8/Latin-1 behavior. PM bodies never enter diagnostic events.
+- Durable idempotent outbox: offline queue, sending, sent, failed, cancelled,
+  and unknown. Interrupted writes/restarts never automatically retry uncertainty;
+  explicit retry confirmation warns about duplicate delivery. Sent means a socket
+  write completed, not recipient delivery/read confirmation. Upload drain keeps
+  authoritative incoming PM processing alive while suspending producers.
+- Bounded account/session-fenced conversation/history/search/read/clear/export IPC;
+  read-only operations never advance read state. Clear/export capture fixed upper
+  message IDs. Text/JSON exports use private files and refuse existing paths.
+- Chats UI: independent account/user drafts, safe completion/paste, explicit
+  multiline preview, unread separator and next-unread navigation across pages,
+  closed-history access, message selection/copy, pagination/search, paused anchors,
+  error/unknown actions, and Cancel-default clear/retry/quit confirmations.
+  Outgoing line breaks become spaces in preview, stored history and wire text,
+  matching Nicotine+ privatechat's server-compatibility behavior.
+- Regression tests first reproduced and then verified fixes for upload-drain
+  authority, inconsistent conversation aggregates, delayed response focus theft,
+  unreachable middle messages, tiny confirmation choices, and late exports
+  closing newer forms. Bounded independent re-review accepted its three UI fixes.
+- `TestCommunityTerminalPrivateChatLifecycle`: built binary, real daemon/IPC,
+  two isolated PTYs and reference-checked scripted server. Covers incoming ACK,
+  exact outgoing bytes, synchronized reads, independent drafts, Unicode paste,
+  no focus theft, paused history, offline queue/cancel/retry, daemon restart,
+  detach/reattach and clear followed by duplicate replay. This is not a fake model.
+- `TestSoulfindPrivateChatOnlineOffline`: 20 race-enabled repetitions against
+  `ghcr.io/soulfind-dev/soulfind@sha256:714f9eb97793bdd3b88ebebe2bc6a63d7dbf343f93da7f09d3de95a456efb910`,
+  using two temporary oto accounts, online Unicode PM, observed disconnect,
+  offline queue and reconnect delivery. Real-server evidence, not slskd-peer PM
+  evidence; existing CI's `TestSoulfind` command includes this test.
+- Slice gates passed: `go test -race ./...`, `go vet ./...`, 20 Community race
+  repetitions across daemon/IPC/soulseek/TUI, another 20 private-chat TUI
+  repetitions after the final export fix, and ten whole terminal repetitions.
+  PM fuzz: 10 seconds / 331,135 executions. All 23 reference fixtures, stable
+  sqlc regeneration, tagged terminal vet, and CGO=0 linux amd64/arm64 builds pass.
+- Ignore/held-message policy, configurable retention, text rules/mentions/commands,
+  automation and remaining contextual actions retain their later implementation
+  gates; they are not implied complete by the private-chat slice.
+
 ## Remaining commit sequence
 
-5 private chat → 6 public rooms/feed → 7 private roles/walls → 8 buddies
+6 public rooms/feed → 7 private roles/walls → 8 buddies
 → 9 profiles/discovery → 10 permissions → 11 upload policies → 12 privileges
 → 13 scoped search → 14 text/commands → 15 away/broadcasts → 16 manual sends
 → 17 consented receiving → 18 full verification → 19 verified README matrix.

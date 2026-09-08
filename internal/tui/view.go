@@ -37,8 +37,12 @@ func (m model) View() tea.View {
 	} else if m.details {
 		content = m.detailView()
 	}
+	if m.community.chats.dialog != nil {
+		content = m.chatDialogView()
+	}
 	v := tea.NewView(content)
 	v.AltScreen = true
+	v.ReportFocus = true
 	return v
 }
 
@@ -143,7 +147,7 @@ func (m model) workspaceNames() []string {
 	return names
 }
 func (m model) mainView() string {
-	if m.width < 36 || m.height < 8 {
+	if m.width < 36 || m.height < 8 || m.workspace == workspaceCommunity && m.community.chats.composing && m.height < 14 {
 		return m.compactView()
 	}
 
@@ -188,6 +192,13 @@ func (m model) mainView() string {
 func (m model) compactView() string {
 	if m.workspace == workspaceCommunity && m.community.inspectEditing {
 		return strings.Join([]string{m.workspaceTabs(m.width), renderInputWindow(m.community.input, m.community.inputCursor, m.width), trunc(m.community.inputErr, m.width), trunc("Esc back · Enter inspect", m.width)}, "\n")
+	}
+	if m.workspace == workspaceCommunity && m.community.chats.form != "" {
+		return strings.Join(m.chatFormView(m.width, m.height), "\n")
+	}
+	if m.workspace == workspaceCommunity && m.community.chats.composing {
+		d := m.community.chats.drafts[m.chatKey()]
+		return strings.Join(communityPane([]string{"Compose to " + m.community.chats.conversation.Target, renderInputWindow(strings.ReplaceAll(strings.ReplaceAll(d.text, "\n", "↵"), "\t", "⇥"), d.cursor, m.width), m.community.chats.err, "Enter send · Esc navigate"}, m.width, m.height, 0), "\n")
 	}
 	footer := "tab switch  o status  ? help  q quit"
 	if activity := m.activityView(m.width); activity != "" {
@@ -332,6 +343,14 @@ func (m model) helpView() string {
 			{"U", "User actions: inspect / browse / search selected user"},
 			{"F6 / shift+F6", "Community: next / previous pane; Esc goes back"},
 			{"/ (Community)", "inspect an exact username"},
+			{"N / ctrl+n (Chats)", "new / next unread conversation"},
+			{"i / Enter (chat)", "compose; multiline Enter previews before send"},
+			{"Tab / Esc (composer)", "complete username / return to navigation"},
+			{"f / p n / End (chat)", "find history / older-newer pages / reach latest"},
+			{"y / e E (chat)", "copy selected / export text or JSON to new file"},
+			{"↑↓ / j k (chat)", "select message; page up/down scroll the transcript"},
+			{"R / X / C (chat)", "confirm retry / cancel selected / clear history"},
+			{"ctrl+w / h (Chats list)", "close (keep history/draft) / show closed history"},
 			{"f", "edit Search filters / find in loaded Browse list"},
 			{"c", "clear / restore search filters"},
 			{"w (search)", "save the active query and filter to Wishlist"},
@@ -686,6 +705,15 @@ func (m model) footerHints() []string {
 	case workspaceCommunity:
 		if m.community.inspectEditing {
 			return []string{"enter inspect", "esc back"}
+		}
+		if m.community.chats.composing {
+			return []string{"enter send/preview", "tab complete", "esc navigate"}
+		}
+		if m.community.chats.form != "" {
+			return []string{"enter submit", "esc cancel"}
+		}
+		if m.community.view == 0 && m.community.supports("private-chat") {
+			return []string{"N new chat", "i compose", "ctrl+n unread", "F6 panes", "f find", "e/E export", "R/X retry/cancel", "C clear"}
 		}
 		return []string{"F6 panes", "ctrl+pgup/down views", "/ inspect", "U actions", "esc back"}
 	case workspaceStats:

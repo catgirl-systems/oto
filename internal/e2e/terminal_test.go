@@ -58,6 +58,7 @@ type terminal struct {
 	client     *ipc.Client
 	configPath string
 	screens    []string
+	stopDaemon func()
 }
 
 func newTerminal(t *testing.T, server string) *terminal {
@@ -98,7 +99,14 @@ func newTerminal(t *testing.T, server string) *terminal {
 	if err := cfg.Save(h.configPath); err != nil {
 		t.Fatal(err)
 	}
-	log, err := os.Create(filepath.Join(root, "daemon.log"))
+	h.startDaemon()
+	return h
+}
+
+func (h *terminal) startDaemon() {
+	t := h.t
+	root := h.root
+	log, err := os.OpenFile(filepath.Join(root, "daemon.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -110,7 +118,12 @@ func newTerminal(t *testing.T, server string) *terminal {
 	}
 	done := make(chan error, 1)
 	go func() { done <- cmd.Wait() }()
-	t.Cleanup(func() {
+	stopped := false
+	h.stopDaemon = func() {
+		if stopped {
+			return
+		}
+		stopped = true
 		_ = cmd.Process.Signal(os.Interrupt)
 		select {
 		case err := <-done:
@@ -123,14 +136,14 @@ func newTerminal(t *testing.T, server string) *terminal {
 			t.Error("daemon failed to shut down")
 		}
 		_ = log.Close()
-	})
+	}
+	t.Cleanup(h.stopDaemon)
 	h.wait("daemon ready", func() bool {
 		ctx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
 		defer cancel()
 		state, err := h.client.Status(ctx)
 		return err == nil && state.Status == daemon.StatusConnected
 	})
-	return h
 }
 
 func (h *terminal) tmux(args ...string) (string, error) {
@@ -172,12 +185,12 @@ func (h *terminal) wait(label string, check func() bool) {
 func (h *terminal) screen(name, text string) string {
 	h.t.Helper()
 	var screen string
+	defer func() { h.screens = append(h.screens, name+": "+text+"\n"+screen) }()
 	h.wait("screen containing "+text, func() bool {
 		var err error
 		screen, err = h.tmux("capture-pane", "-p", "-t", name)
 		return err == nil && strings.Contains(screen, text)
 	})
-	h.screens = append(h.screens, name+": "+text+"\n"+screen)
 	return screen
 }
 

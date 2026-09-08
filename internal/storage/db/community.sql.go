@@ -37,6 +37,49 @@ func (q *Queries) ClearCommunityHistory(ctx context.Context, arg ClearCommunityH
 	return result.RowsAffected()
 }
 
+const clearCommunityHistoryThrough = `-- name: ClearCommunityHistoryThrough :execrows
+DELETE FROM community_messages WHERE account = ? AND conversation_id = ? AND id <= ?3
+AND state IN ('received', 'sent', 'failed', 'cancelled')
+`
+
+type ClearCommunityHistoryThroughParams struct {
+	Account        string `json:"account"`
+	ConversationID int64  `json:"conversation_id"`
+	ThroughID      int64  `json:"through_id"`
+}
+
+func (q *Queries) ClearCommunityHistoryThrough(ctx context.Context, arg ClearCommunityHistoryThroughParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, clearCommunityHistoryThrough, arg.Account, arg.ConversationID, arg.ThroughID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const communityHistoryInfo = `-- name: CommunityHistoryInfo :one
+SELECT
+    (SELECT CAST(coalesce(max(m.id), 0) AS INTEGER) FROM community_messages m WHERE m.account = ?1 AND m.conversation_id = ?2 AND m.state <> 'held') AS latest_id,
+    (SELECT count(*) FROM community_messages n WHERE n.account = ?1 AND n.conversation_id = ?2 AND n.state <> 'held' AND n.id > ?3) AS newer_count
+`
+
+type CommunityHistoryInfoParams struct {
+	Account        string `json:"account"`
+	ConversationID int64  `json:"conversation_id"`
+	NewerThan      int64  `json:"newer_than"`
+}
+
+type CommunityHistoryInfoRow struct {
+	LatestID   int64 `json:"latest_id"`
+	NewerCount int64 `json:"newer_count"`
+}
+
+func (q *Queries) CommunityHistoryInfo(ctx context.Context, arg CommunityHistoryInfoParams) (CommunityHistoryInfoRow, error) {
+	row := q.db.QueryRowContext(ctx, communityHistoryInfo, arg.Account, arg.ConversationID, arg.NewerThan)
+	var i CommunityHistoryInfoRow
+	err := row.Scan(&i.LatestID, &i.NewerCount)
+	return i, err
+}
+
 const communityUnread = `-- name: CommunityUnread :many
 SELECT c.id, count(m.id) AS unread, CAST(coalesce(sum(m.mention), 0) AS INTEGER) AS mentions
 FROM community_conversations c
@@ -240,6 +283,64 @@ func (q *Queries) EnsureCommunityConversation(ctx context.Context, arg EnsureCom
 		&i.Closed,
 	)
 	return i, err
+}
+
+const exportCommunityMessages = `-- name: ExportCommunityMessages :many
+SELECT id, account, conversation_id, sender, direction, body, created_at, server_time, state, mention, error FROM community_messages WHERE account = ? AND conversation_id = ? AND state <> 'held'
+AND id > ?3 AND id <= ?4
+AND instr(body, CAST(?5 AS TEXT)) > 0
+ORDER BY id LIMIT min(max(CAST(?6 AS INTEGER), 1), 200)
+`
+
+type ExportCommunityMessagesParams struct {
+	Account        string `json:"account"`
+	ConversationID int64  `json:"conversation_id"`
+	AfterID        int64  `json:"after_id"`
+	ThroughID      int64  `json:"through_id"`
+	SearchText     string `json:"search_text"`
+	PageSize       int64  `json:"page_size"`
+}
+
+func (q *Queries) ExportCommunityMessages(ctx context.Context, arg ExportCommunityMessagesParams) ([]CommunityMessage, error) {
+	rows, err := q.db.QueryContext(ctx, exportCommunityMessages,
+		arg.Account,
+		arg.ConversationID,
+		arg.AfterID,
+		arg.ThroughID,
+		arg.SearchText,
+		arg.PageSize,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []CommunityMessage
+	for rows.Next() {
+		var i CommunityMessage
+		if err := rows.Scan(
+			&i.ID,
+			&i.Account,
+			&i.ConversationID,
+			&i.Sender,
+			&i.Direction,
+			&i.Body,
+			&i.CreatedAt,
+			&i.ServerTime,
+			&i.State,
+			&i.Mention,
+			&i.Error,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const getCommunityAccount = `-- name: GetCommunityAccount :one
@@ -943,6 +1044,79 @@ func (q *Queries) MarkCommunityRead(ctx context.Context, arg MarkCommunityReadPa
 	return result.RowsAffected()
 }
 
+const pageCommunityConversations = `-- name: PageCommunityConversations :many
+SELECT c.id, c.account, c.kind, c.target, c.read_through, c.closed,
+    (SELECT count(*) FROM community_messages m WHERE m.account = c.account AND m.conversation_id = c.id AND m.id > c.read_through AND m.direction = 'incoming' AND m.state = 'received') AS unread,
+    (SELECT CAST(coalesce(sum(m.mention), 0) AS INTEGER) FROM community_messages m WHERE m.account = c.account AND m.conversation_id = c.id AND m.id > c.read_through AND m.direction = 'incoming' AND m.state = 'received') AS mentions,
+    (SELECT CAST(coalesce(max(m.id), 0) AS INTEGER) FROM community_messages m WHERE m.account = c.account AND m.conversation_id = c.id AND m.state <> 'held') AS latest_id
+FROM community_conversations c WHERE c.account = ?1 AND c.id > ?2
+AND (CAST(?3 AS TEXT) = '' OR c.kind = ?3)
+AND (CAST(?4 AS INTEGER) <> 0 OR c.closed = 0)
+AND instr(c.target, CAST(?5 AS TEXT)) > 0
+ORDER BY c.id LIMIT min(max(CAST(?6 AS INTEGER), 1), 200)
+`
+
+type PageCommunityConversationsParams struct {
+	Account       string `json:"account"`
+	AfterID       int64  `json:"after_id"`
+	Kind          string `json:"kind"`
+	IncludeClosed int64  `json:"include_closed"`
+	SearchText    string `json:"search_text"`
+	PageSize      int64  `json:"page_size"`
+}
+
+type PageCommunityConversationsRow struct {
+	ID          int64  `json:"id"`
+	Account     string `json:"account"`
+	Kind        string `json:"kind"`
+	Target      string `json:"target"`
+	ReadThrough int64  `json:"read_through"`
+	Closed      int64  `json:"closed"`
+	Unread      int64  `json:"unread"`
+	Mentions    int64  `json:"mentions"`
+	LatestID    int64  `json:"latest_id"`
+}
+
+func (q *Queries) PageCommunityConversations(ctx context.Context, arg PageCommunityConversationsParams) ([]PageCommunityConversationsRow, error) {
+	rows, err := q.db.QueryContext(ctx, pageCommunityConversations,
+		arg.Account,
+		arg.AfterID,
+		arg.Kind,
+		arg.IncludeClosed,
+		arg.SearchText,
+		arg.PageSize,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []PageCommunityConversationsRow
+	for rows.Next() {
+		var i PageCommunityConversationsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Account,
+			&i.Kind,
+			&i.Target,
+			&i.ReadThrough,
+			&i.Closed,
+			&i.Unread,
+			&i.Mentions,
+			&i.LatestID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const pruneCommunityHistory = `-- name: PruneCommunityHistory :execrows
 DELETE FROM community_messages WHERE account = ? AND created_at < ?2 AND state IN ('received', 'sent', 'failed', 'cancelled')
 `
@@ -1076,7 +1250,7 @@ func (q *Queries) PutCommunityRule(ctx context.Context, arg PutCommunityRulePara
 }
 
 const recoverCommunityOutbox = `-- name: RecoverCommunityOutbox :execrows
-UPDATE community_messages SET state = 'unknown' WHERE account = ? AND direction = 'outgoing' AND state = 'sending'
+UPDATE community_messages SET state = 'unknown' WHERE (CAST(?1 AS TEXT) = '' OR account = ?1) AND direction = 'outgoing' AND state = 'sending'
 `
 
 func (q *Queries) RecoverCommunityOutbox(ctx context.Context, account string) (int64, error) {

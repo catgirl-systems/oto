@@ -18,11 +18,15 @@ func (s *Service) consumeClientEvents(ctx context.Context, client *soulseek.Clie
 	refresh := true
 	for {
 		if refresh {
-			if err := s.syncUserWatches(ctx, client, identity, sent); err != nil {
+			err := s.syncUserWatches(ctx, client, identity, sent)
+			if err == nil {
+				err = s.syncCommunityOutbox(ctx, client, identity)
+			}
+			if err != nil {
 				if ctx.Err() == nil {
-					s.event(slog.LevelWarn, "community_watch_failed", err)
+					s.event(slog.LevelWarn, "community_sync_failed", err)
 				}
-				_ = client.Close() // Interrupted watch writes require a new session.
+				_ = client.Close() // Interrupted writes require a new session.
 				return
 			}
 			refresh = false

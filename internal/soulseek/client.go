@@ -35,6 +35,8 @@ type ClientConfig struct {
 	UploadAccepted func(TransferEvent) error
 	UploadRejected func(TransferEvent)
 	// SocialUpdate is authoritative; Events is only a lossy diagnostic stream.
+	// A successful PrivateMessage callback must have committed content or a
+	// deliberate-discard receipt: Run sends its acknowledgement only afterward.
 	SocialUpdate func(context.Context, SocialMessage) error
 	// UploadsReady gates new admissions and streaming until recovery is complete.
 	UploadsReady   <-chan struct{}
@@ -562,11 +564,24 @@ func (c *Client) Run(ctx context.Context) error {
 			if err := c.cfg.SocialUpdate(ctx, message); err != nil {
 				return fmt.Errorf("soulseek: social update: %w", err)
 			}
+			if private, ok := message.(PrivateMessage); ok {
+				// Callback success promises durable content or a discard receipt.
+				ackCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+				err := c.sendContext(ackCtx, PrivateMessageAck{ID: private.ID})
+				cancel()
+				if err != nil {
+					return fmt.Errorf("soulseek: private message acknowledgement: %w", err)
+				}
+			}
 		}
 	}
 }
 func (c *Client) route(cmd uint32, m any) {
 	switch message := m.(type) {
+	case PrivateMessage:
+		// Private content belongs only to the authoritative callback, not diagnostics.
+		c.emit(Event{Command: cmd})
+		return
 	case SearchResponse:
 		c.mu.Lock()
 		ch := c.pending[message.Token]
@@ -649,24 +664,37 @@ func (c *Client) nextToken() uint32 {
 func (c *Client) send(m Message) error { return c.sendContext(c.baseContext(), m) }
 
 func (c *Client) sendContext(ctx context.Context, m Message) error {
+	_, err := c.sendTracked(ctx, m, nil)
+	return err
+}
+
+func (c *Client) sendTracked(ctx context.Context, m Message, beforeWrite func() error) (bool, error) {
+	b, err := EncodeMessage(m)
+	if err != nil {
+		return false, err
+	}
 	c.mu.Lock()
 	conn := c.conn
 	c.mu.Unlock()
 	if conn == nil {
-		return ErrNotConnected
-	}
-	b, e := EncodeMessage(m)
-	if e != nil {
-		return e
+		return false, ErrNotConnected
 	}
 	select {
 	case c.writeMu <- struct{}{}:
 	case <-ctx.Done():
-		return ctx.Err()
+		return false, ctx.Err()
+	}
+	defer func() { <-c.writeMu }()
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	if beforeWrite != nil {
+		if err := beforeWrite(); err != nil {
+			return false, err
+		}
 	}
 	if err := ctx.Err(); err != nil {
-		<-c.writeMu
-		return err
+		return false, err
 	}
 	done := make(chan struct{})
 	stop := context.AfterFunc(ctx, func() { _ = conn.SetWriteDeadline(time.Now()); close(done) })
@@ -675,15 +703,14 @@ func (c *Client) sendContext(ctx context.Context, m Message) error {
 			<-done
 		}
 		_ = conn.SetWriteDeadline(time.Time{})
-		<-c.writeMu
 	}()
 	if err := writeAll(conn, b); err != nil {
 		// A partial frame cannot be followed by another frame safely. Only close
 		// the transport here: Close may wait for the very upload doing this write.
 		_ = conn.Close()
-		return err
+		return true, err
 	}
-	return nil
+	return true, nil
 }
 
 // Search collects token-matched responses for five seconds.
