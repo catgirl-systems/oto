@@ -232,6 +232,32 @@ func TestChildShutdownUploads(t *testing.T) {
 			if err := soulseek.WriteInitFrame(p, byte(soulseek.PeerInit), init.Payload()); err != nil {
 				t.Fatal(err)
 			}
+			// A bidirectional P connection also carries the subsequent upload offers.
+			readerDone := make(chan struct{})
+			defer func() { _ = p.Close(); <-readerDone }()
+			go func() {
+				defer close(readerDone)
+				for {
+					command, payload, err := soulseek.ReadFrame(p)
+					if err != nil {
+						return
+					}
+					if command != soulseek.PeerTransferRequest {
+						continue
+					}
+					req, err := soulseek.DecodeTransferRequest(payload)
+					if err != nil {
+						return
+					}
+					b, err := soulseek.EncodeMessage(soulseek.TransferResponse{Token: req.Token, Accepted: true})
+					if err != nil {
+						return
+					}
+					if _, err := p.Write(b); err != nil {
+						return
+					}
+				}
+			}()
 			for _, name := range []string{`Music\one`, `Music\two`} {
 				msg, err := soulseek.EncodeMessage(soulseek.QueueRequest{Filename: name})
 				if err != nil {

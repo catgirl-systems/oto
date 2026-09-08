@@ -124,6 +124,9 @@ type Client struct {
 	passwordChange        chan string
 	addresses             map[string]*peerAddressLookup
 	pierce                map[uint32]chan net.Conn
+	peers                 map[string]*messagePeer
+	peerConnecting        map[string]chan struct{}
+	peerWG                sync.WaitGroup
 	requested             map[string]*pendingDownload
 	downloads             map[uint32]*pendingDownload
 	observations          map[string]*transferObservation
@@ -152,7 +155,7 @@ func NewClient(cfg ClientConfig) *Client {
 	}
 	control := bindToDevice(cfg.NetworkInterface)
 	uploadRoot, uploadCancel := context.WithCancel(context.Background())
-	client := &Client{cfg: cfg, writeMu: make(chan struct{}, 1), dialer: net.Dialer{Control: control}, listenConfig: net.ListenConfig{Control: control}, events: make(chan Event, 32), pending: make(map[uint32]chan SearchResponse), addresses: make(map[string]*peerAddressLookup), pierce: make(map[uint32]chan net.Conn), requested: make(map[string]*pendingDownload), downloads: make(map[uint32]*pendingDownload), uploads: make(map[string]*uploadAttempt), uploadRoot: uploadRoot, uploadCancel: uploadCancel, distributed: NewDistributedNode(), incomingSearch: policy, browseSlot: make(chan struct{}, 1), searchSlots: make(chan struct{}, 2)}
+	client := &Client{cfg: cfg, peers: make(map[string]*messagePeer), peerConnecting: make(map[string]chan struct{}), writeMu: make(chan struct{}, 1), dialer: net.Dialer{Control: control}, listenConfig: net.ListenConfig{Control: control}, events: make(chan Event, 32), pending: make(map[uint32]chan SearchResponse), addresses: make(map[string]*peerAddressLookup), pierce: make(map[uint32]chan net.Conn), requested: make(map[string]*pendingDownload), downloads: make(map[uint32]*pendingDownload), uploads: make(map[string]*uploadAttempt), uploadRoot: uploadRoot, uploadCancel: uploadCancel, distributed: NewDistributedNode(), incomingSearch: policy, browseSlot: make(chan struct{}, 1), searchSlots: make(chan struct{}, 2)}
 	client.ConfigureDownloadLimit(cfg.DownloadLimitBytesPerSecond)
 	return client
 }
@@ -742,6 +745,7 @@ func (c *Client) browse(ctx context.Context, peer net.Conn, path string, progres
 	limits := c.BrowseLimits()
 	ctx, operationID := c.browseContext(ctx)
 	ctx, peer = c.browsePeer(ctx, peer)
+	configurePeerRead(peer, progress, limits.MaxCompressedSize)
 	c.log(ctx, slog.LevelInfo, "browse_operation_start", nil, slog.String("operation_id", operationID), slog.String("browse_type", map[bool]string{true: "group", false: "flat"}[path == ""]))
 	if path == "" {
 		select {
@@ -807,6 +811,9 @@ func (c *Client) browse(ctx context.Context, peer net.Conn, path string, progres
 	return response.Entries, nil
 }
 func writeMessage(w net.Conn, m Message) error {
+	if lease := leasedPeer(w); lease != nil {
+		return lease.writeMessage(m)
+	}
 	b, e := EncodeMessage(m)
 	if e != nil {
 		return e
@@ -852,7 +859,7 @@ func (c *Client) connectAddress(ctx context.Context, addr, kind string) (net.Con
 }
 
 func (c *Client) connectUser(ctx context.Context, username string) (net.Conn, error) {
-	return c.connectUserType(ctx, username, "P")
+	return c.acquirePeer(ctx, username)
 }
 
 func (c *Client) connectUserType(ctx context.Context, username, kind string) (net.Conn, error) {
@@ -862,27 +869,31 @@ func (c *Client) connectUserType(ctx context.Context, username, kind string) (ne
 	if username == "" {
 		return nil, errors.New("soulseek: empty username")
 	}
+	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+	stop := context.AfterFunc(c.uploadRoot, cancel)
+	defer stop()
 	address, err := c.lookupPeerAddress(ctx, username)
 	if err != nil {
 		return nil, err
 	}
-	var directErr error
-	if address.IP != "0.0.0.0" && address.Port != 0 {
-		if peer, err := c.connectAddress(ctx, net.JoinHostPort(address.IP, fmt.Sprint(address.Port)), kind); err == nil {
-			c.log(ctx, slog.LevelDebug, "connect_user_complete", nil, slog.String("stage", "direct"), slog.String("type", kind), slog.String("peer_username", username), slog.Duration("duration", time.Since(started)))
-			return peer, nil
-		} else {
-			directErr = err
-		}
+	if address.IP == "0.0.0.0" {
+		return nil, errors.New("soulseek: peer is offline")
 	}
-	peer, err := c.connectIndirect(ctx, username, kind)
-	if err == nil {
-		c.log(ctx, slog.LevelDebug, "connect_user_complete", nil, slog.String("stage", "reverse"), slog.String("type", kind), slog.String("peer_username", username), slog.Duration("duration", time.Since(started)))
-	}
-	if err != nil && directErr != nil {
-		return nil, fmt.Errorf("direct: %v; indirect: %w", directErr, err)
-	}
-	return peer, err
+	// Like Nicotine+, resolve the address first, then overlap both routes.
+	return racePeerConnections(ctx,
+		func(ctx context.Context) (net.Conn, error) {
+			ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+			defer cancel()
+			if address.Port == 0 {
+				return nil, errors.New("soulseek: peer has no listening port")
+			}
+			return c.connectAddress(ctx, net.JoinHostPort(address.IP, fmt.Sprint(address.Port)), kind)
+		},
+		func(ctx context.Context) (net.Conn, error) { return c.connectIndirect(ctx, username, kind) },
+		func(route string) {
+			c.log(ctx, slog.LevelDebug, "connect_user_complete", nil, slog.String("stage", route), slog.String("type", kind), slog.String("peer_username", username), slog.Duration("duration", time.Since(started)))
+		})
 }
 
 func (c *Client) lookupPeerAddress(ctx context.Context, username string) (PeerAddress, error) {
@@ -921,7 +932,16 @@ func (c *Client) connectIndirect(ctx context.Context, username, kind string) (ne
 	c.mu.Lock()
 	c.pierce[token] = connection
 	c.mu.Unlock()
-	defer func() { c.mu.Lock(); delete(c.pierce, token); c.mu.Unlock() }()
+	defer func() {
+		c.mu.Lock()
+		delete(c.pierce, token)
+		select {
+		case peer := <-connection:
+			_ = peer.Close()
+		default:
+		}
+		c.mu.Unlock()
+	}()
 	if err := c.sendContext(ctx, ConnectPeer{Token: token, Username: username, Kind: kind}); err != nil {
 		return nil, err
 	}
@@ -1393,8 +1413,11 @@ func (c *Client) acceptLoop(ln net.Listener) {
 }
 func (c *Client) servePeer(p net.Conn) {
 	p = c.traceConn(context.Background(), p, "", "", "incoming")
+	_ = p.SetReadDeadline(time.Now().Add(2 * time.Second))
 	initCmd, b, e := ReadInitFrame(p)
+	_ = p.SetReadDeadline(time.Time{})
 	if e != nil {
+		_ = p.Close()
 		return
 	}
 	if initCmd == PeerPierceFirewall {
@@ -1406,7 +1429,7 @@ func (c *Client) servePeer(p net.Conn) {
 		}
 		c.mu.Lock()
 		connection := c.pierce[token]
-		c.mu.Unlock()
+		defer c.mu.Unlock()
 		if connection == nil {
 			_ = p.Close()
 			return
@@ -1452,97 +1475,94 @@ func countryCodeForAddress(addr net.Addr) string {
 }
 
 func (c *Client) serveMessagePeer(peer net.Conn, peerInfo PeerInitMessage) {
-	stop := context.AfterFunc(c.uploadRoot, func() { _ = peer.Close() })
-	defer stop()
-	for {
-		command, payload, err := ReadFrame(peer)
+	p := c.installPeer(peerInfo.Username, peer, true)
+	<-p.done
+}
+
+func (c *Client) handleMessagePeer(peer net.Conn, peerInfo PeerInitMessage, command uint32, payload []byte) {
+	switch command {
+	case PeerGetSharedList:
+		if len(payload) == 0 {
+			_ = writeMessage(peer, SharedListResponse{Entries: c.shareEntries()})
+		}
+	case PeerFolderContents:
+		d := NewDecoder(payload)
+		token, err := d.U32()
 		if err != nil {
 			return
 		}
-		switch command {
-		case PeerGetSharedList:
-			if len(payload) == 0 {
-				_ = writeMessage(peer, SharedListResponse{Entries: c.shareEntries()})
-			}
-		case PeerFolderContents:
-			d := NewDecoder(payload)
-			token, err := d.U32()
-			if err != nil {
-				continue
-			}
-			path, err := d.String()
-			if err != nil || d.Done() != nil {
-				continue
-			}
-			entries, _ := c.shareIndex().Subtree(path)
-			_ = writeMessage(peer, FolderResponse{Token: token, Path: path, Entries: entries})
-		case PeerSearch:
-			response, err := DecodeSearchResponse(payload)
-			if err == nil {
-				countryCode := countryCodeForAddress(peer.RemoteAddr())
-				for index := range response.Results {
-					response.Results[index].CountryCode = countryCode
-				}
-				c.route(command, response)
-			}
-		case PeerUploadDenied:
-			message, err := DecodeQueueDenied(payload)
-			if err == nil {
-				reason := message.Reason
-				if reason == "" {
-					reason = "upload denied"
-				}
-				c.failPendingDownload(peerInfo.Username, message.Filename, &DownloadRejectedError{Reason: reason})
-			}
-		case PeerUploadFailed:
-			message, err := DecodeQueueFailed(payload)
-			if err == nil {
-				c.failPendingDownload(peerInfo.Username, message.Filename, ErrUploadFailed)
-			}
-		case PeerTransferRequest:
-			request, err := DecodeTransferRequest(payload)
-			if err != nil {
-				continue
-			}
-			if request.Direction == 0 {
-				_, _, err := c.registerUpload(peerInfo.Username, request.Filename, true)
-				if err != nil {
-					_ = writeMessage(peer, TransferResponse{Token: request.Token, Accepted: false, Reason: uploadDenial(err)})
-					continue
-				}
-				_ = writeMessage(peer, TransferResponse{Token: request.Token, Accepted: false, Reason: "Queued"})
-				continue
-			}
-			if request.Direction != 1 {
-				continue
-			}
-			clean, cleanErr := NormalizePath(request.Filename)
-			if cleanErr != nil {
-				_ = writeMessage(peer, TransferResponse{Token: request.Token, Accepted: false, Reason: "Cancelled"})
-				continue
-			}
-			c.mu.Lock()
-			pending := c.requested[downloadKey(peerInfo.Username, clean)]
-			c.mu.Unlock()
-			if pending == nil {
-				_ = writeMessage(peer, TransferResponse{Token: request.Token, Accepted: false, Reason: "Cancelled"})
-				continue
-			}
-			if err := c.acceptDownload(peer, pending, request); err != nil {
-				pending.finish(err)
-			}
-		case PeerQueueUpload:
-			filename, err := parseStringPayload(payload)
-			if err != nil {
-				continue
-			}
-			a, _, err := c.registerUpload(peerInfo.Username, filename, true)
-			if err != nil {
-				_ = writeMessage(peer, QueueDenied{Filename: filename, Reason: uploadDenial(err)})
-				continue
-			}
-			_ = writeMessage(peer, QueuePlace{Filename: a.target.Filename, Place: 1})
+		path, err := d.String()
+		if err != nil || d.Done() != nil {
+			return
 		}
+		entries, _ := c.shareIndex().Subtree(path)
+		_ = writeMessage(peer, FolderResponse{Token: token, Path: path, Entries: entries})
+	case PeerSearch:
+		response, err := DecodeSearchResponse(payload)
+		if err == nil {
+			countryCode := countryCodeForAddress(peer.RemoteAddr())
+			for index := range response.Results {
+				response.Results[index].CountryCode = countryCode
+			}
+			c.route(command, response)
+		}
+	case PeerUploadDenied:
+		message, err := DecodeQueueDenied(payload)
+		if err == nil {
+			reason := message.Reason
+			if reason == "" {
+				reason = "upload denied"
+			}
+			c.failPendingDownload(peerInfo.Username, message.Filename, &DownloadRejectedError{Reason: reason})
+		}
+	case PeerUploadFailed:
+		message, err := DecodeQueueFailed(payload)
+		if err == nil {
+			c.failPendingDownload(peerInfo.Username, message.Filename, ErrUploadFailed)
+		}
+	case PeerTransferRequest:
+		request, err := DecodeTransferRequest(payload)
+		if err != nil {
+			return
+		}
+		if request.Direction == 0 {
+			_, _, err := c.registerUpload(peerInfo.Username, request.Filename, true)
+			if err != nil {
+				_ = writeMessage(peer, TransferResponse{Token: request.Token, Accepted: false, Reason: uploadDenial(err)})
+				return
+			}
+			_ = writeMessage(peer, TransferResponse{Token: request.Token, Accepted: false, Reason: "Queued"})
+			return
+		}
+		if request.Direction != 1 {
+			return
+		}
+		clean, cleanErr := NormalizePath(request.Filename)
+		if cleanErr != nil {
+			_ = writeMessage(peer, TransferResponse{Token: request.Token, Accepted: false, Reason: "Cancelled"})
+			return
+		}
+		c.mu.Lock()
+		pending := c.requested[downloadKey(peerInfo.Username, clean)]
+		c.mu.Unlock()
+		if pending == nil {
+			_ = writeMessage(peer, TransferResponse{Token: request.Token, Accepted: false, Reason: "Cancelled"})
+			return
+		}
+		if err := c.acceptDownload(peer, pending, request); err != nil {
+			pending.finish(err)
+		}
+	case PeerQueueUpload:
+		filename, err := parseStringPayload(payload)
+		if err != nil {
+			return
+		}
+		a, _, err := c.registerUpload(peerInfo.Username, filename, true)
+		if err != nil {
+			_ = writeMessage(peer, QueueDenied{Filename: filename, Reason: uploadDenial(err)})
+			return
+		}
+		_ = writeMessage(peer, QueuePlace{Filename: a.target.Filename, Place: 1})
 	}
 }
 
@@ -1599,5 +1619,6 @@ func (c *Client) Close() error {
 		closeErr = conn.Close()
 	}
 	c.uploadWG.Wait()
+	c.peerWG.Wait()
 	return closeErr
 }
