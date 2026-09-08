@@ -129,7 +129,8 @@ func (s *Service) loadCommunityLocked(ctx context.Context) error {
 }
 
 func (s *Service) communityCurrentLocked(identity CommunityIdentity) bool {
-	return !s.closed && !s.shuttingDown && s.client != nil && s.community.online && s.community.identity == identity && accountKey(s.cfg) == identity.Account
+	// Incoming authority stays live while uploads drain; only new work is frozen.
+	return !s.closed && s.client != nil && s.community.online && s.community.identity == identity && accountKey(s.cfg) == identity.Account
 }
 
 func (s *Service) retireCommunityLocked() {
@@ -143,6 +144,9 @@ func (s *Service) retireCommunityLocked() {
 }
 
 func (s *Service) communityUpdate(ctx context.Context, identity CommunityIdentity, message soulseek.SocialMessage) error {
+	if private, ok := message.(soulseek.PrivateMessage); ok {
+		return s.receiveCommunityPrivate(ctx, identity, private)
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if err := ctx.Err(); err != nil {
@@ -292,6 +296,10 @@ func (s *Service) syncUserWatches(ctx context.Context, client *soulseek.Client, 
 		s.mu.Unlock()
 		return ErrCommunitySession
 	}
+	if s.shuttingDown {
+		s.mu.Unlock()
+		return nil
+	}
 	wanted := s.desiredUserWatchesLocked(time.Now())
 	s.mu.Unlock()
 	var add, remove []string
@@ -311,7 +319,11 @@ func (s *Service) syncUserWatches(ctx context.Context, client *soulseek.Client, 
 		for _, username := range usernames {
 			s.mu.RLock()
 			current := s.communityCurrentLocked(identity) && s.client == client
+			draining := s.shuttingDown
 			s.mu.RUnlock()
+			if draining {
+				return nil
+			}
 			if !current {
 				return ErrCommunitySession
 			}

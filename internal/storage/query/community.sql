@@ -76,7 +76,7 @@ UPDATE community_messages SET state = sqlc.arg(new_state), error = sqlc.arg(erro
 WHERE account = sqlc.arg(account) AND id = sqlc.arg(id) AND state = sqlc.arg(old_state);
 
 -- name: RecoverCommunityOutbox :execrows
-UPDATE community_messages SET state = 'unknown' WHERE account = ? AND direction = 'outgoing' AND state = 'sending';
+UPDATE community_messages SET state = 'unknown' WHERE (CAST(sqlc.arg(account) AS TEXT) = '' OR account = sqlc.arg(account)) AND direction = 'outgoing' AND state = 'sending';
 
 -- name: ListCommunityOutbox :many
 SELECT * FROM community_messages WHERE account = ? AND direction = 'outgoing' AND state = 'queued' AND id > sqlc.arg(after_id)
@@ -164,3 +164,32 @@ SELECT count(m.id) AS unread, CAST(coalesce(sum(m.mention), 0) AS INTEGER) AS me
 FROM community_conversations c
 JOIN community_messages m ON m.account = c.account AND m.conversation_id = c.id
 WHERE c.account = ? AND m.id > c.read_through AND m.direction = 'incoming' AND m.state = 'received';
+
+
+-- name: PageCommunityConversations :many
+SELECT c.*,
+    (SELECT count(*) FROM community_messages m WHERE m.account = c.account AND m.conversation_id = c.id AND m.id > c.read_through AND m.direction = 'incoming' AND m.state = 'received') AS unread,
+    (SELECT CAST(coalesce(sum(m.mention), 0) AS INTEGER) FROM community_messages m WHERE m.account = c.account AND m.conversation_id = c.id AND m.id > c.read_through AND m.direction = 'incoming' AND m.state = 'received') AS mentions,
+    (SELECT CAST(coalesce(max(m.id), 0) AS INTEGER) FROM community_messages m WHERE m.account = c.account AND m.conversation_id = c.id AND m.state <> 'held') AS latest_id
+FROM community_conversations c WHERE c.account = sqlc.arg(account) AND c.id > sqlc.arg(after_id)
+AND (CAST(sqlc.arg(kind) AS TEXT) = '' OR c.kind = sqlc.arg(kind))
+AND (CAST(sqlc.arg(include_closed) AS INTEGER) <> 0 OR c.closed = 0)
+AND instr(c.target, CAST(sqlc.arg(search_text) AS TEXT)) > 0
+ORDER BY c.id LIMIT min(max(CAST(sqlc.arg(page_size) AS INTEGER), 1), 200);
+
+-- name: CommunityHistoryInfo :one
+SELECT
+    (SELECT CAST(coalesce(max(m.id), 0) AS INTEGER) FROM community_messages m WHERE m.account = sqlc.arg(account) AND m.conversation_id = sqlc.arg(conversation_id) AND m.state <> 'held') AS latest_id,
+    (SELECT count(*) FROM community_messages n WHERE n.account = sqlc.arg(account) AND n.conversation_id = sqlc.arg(conversation_id) AND n.state <> 'held' AND n.id > sqlc.arg(newer_than)) AS newer_count;
+
+
+-- name: ClearCommunityHistoryThrough :execrows
+DELETE FROM community_messages WHERE account = ? AND conversation_id = ? AND id <= sqlc.arg(through_id)
+AND state IN ('received', 'sent', 'failed', 'cancelled');
+
+
+-- name: ExportCommunityMessages :many
+SELECT * FROM community_messages WHERE account = ? AND conversation_id = ? AND state <> 'held'
+AND id > sqlc.arg(after_id) AND id <= sqlc.arg(through_id)
+AND instr(body, CAST(sqlc.arg(search_text) AS TEXT)) > 0
+ORDER BY id LIMIT min(max(CAST(sqlc.arg(page_size) AS INTEGER), 1), 200);

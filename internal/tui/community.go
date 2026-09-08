@@ -36,6 +36,7 @@ type communityModel struct {
 	inspectEditing            bool
 	input, inputErr           string
 	inputCursor               int
+	chats                     communityChatsModel
 }
 
 type communitySummaryMsg struct {
@@ -89,16 +90,18 @@ func (m *model) applyCommunitySummary(x communitySummaryMsg) tea.Cmd {
 	}
 	if c.summary.CommunityIdentity != x.summary.CommunityIdentity {
 		c.resetUser()
+		m.resetCommunityChats(c.summary.Account != x.summary.Account)
 		if c.summary.Account != "" && c.summary.Account != x.summary.Account {
 			c.target, c.input = "", ""
 			c.inspectEditing = false
 		}
 	}
 	c.summary, c.ready = x.summary, true
+	var user tea.Cmd
 	if c.target != "" && m.workspace == workspaceCommunity && (c.userRevision != c.summary.Revision || time.Since(c.userRefreshed) >= 30*time.Second) {
-		return m.loadCommunityUser()
+		user = m.loadCommunityUser()
 	}
-	return nil
+	return tea.Batch(user, m.loadCommunityChats(false))
 }
 
 func (c communityModel) supports(capability string) bool {
@@ -205,6 +208,9 @@ func (m *model) communityKey(k tea.KeyPressMsg) tea.Cmd {
 			}
 		}
 		return nil
+	}
+	if handled, cmd := m.chatKeyPress(k); handled {
+		return cmd
 	}
 	switch k.String() {
 	case "ctrl+pgup":
@@ -412,18 +418,21 @@ func (m model) renderCommunity(width, height int) string {
 		body := []string{"Inspect user · Esc back", renderInputWindow(c.input, c.inputCursor, width), c.inputErr, "Enter inspect · paste never submits"}
 		return strings.Join(append(lines, communityPane(body, width, remaining, 0)...), "\n")
 	}
+	if c.chats.form != "" && c.view == 0 {
+		return strings.Join(append(lines, m.chatFormView(width, remaining)...), "\n")
+	}
 	list := []string{"No " + strings.ToLower(communityViews[c.view]) + " loaded.", "", "/ inspect a user", "U user actions"}
 	content := []string{communityViews[c.view], "", "This daemon does not advertise", "this service yet.", "", "User details remain available", "with / or U from file lists."}
 	panes := [][]string{list, content, c.inspectorLines()}
 	if m.width < 80 || m.width < 110 && c.pane == 2 {
 		breadcrumb := communityViews[c.view] + " / " + communityPanes[c.pane] + " · Esc back"
+		if c.view == 0 && c.supports("private-chat") {
+			panes[c.pane] = m.chatPane(c.pane, width, max(0, remaining-1))
+		}
 		body := append([]string{accent(breadcrumb)}, communityPane(panes[c.pane], width, max(0, remaining-1), c.paneScroll())...)
 		return strings.Join(append(lines, communityPane(body, width, remaining, 0)...), "\n")
 	}
-	sizes := []int{min(24, width/3), width - min(24, width/3) - 3}
-	if m.width >= 110 && c.target != "" || c.pane == 2 {
-		sizes = []int{24, width - 57, 27}
-	}
+	sizes := m.communityColumnSizes(width)
 	columns := make([][]string, len(sizes))
 	for i, size := range sizes {
 		label := communityPanes[i]
@@ -433,6 +442,9 @@ func (m model) renderCommunity(width, height int) string {
 		scroll := 0
 		if i == 2 {
 			scroll = c.inspectorScroll
+		}
+		if c.view == 0 && c.supports("private-chat") && i < 2 {
+			panes[i] = m.chatPane(i, size, max(0, remaining-1))
 		}
 		body := append([]string{accent(label)}, communityPane(panes[i], size, max(0, remaining-1), scroll)...)
 		columns[i] = communityPane(body, size, remaining, 0)

@@ -1,0 +1,93 @@
+package daemon
+
+import (
+	"context"
+	"crypto/sha256"
+	"database/sql"
+	"slices"
+	"strings"
+	"time"
+	"unicode"
+	"unicode/utf8"
+
+	"github.com/catgirl-systems/oto/internal/soulseek"
+	"github.com/catgirl-systems/oto/internal/storage/db"
+	"golang.org/x/text/encoding/charmap"
+)
+
+// communityDisplayText follows Nicotine+'s UTF-8/Latin-1 fallback only for
+// display text. Keep the original bytes in the receipt fingerprint, not logs.
+func communityDisplayText(text string) string {
+	if !utf8.ValidString(text) {
+		text, _ = charmap.ISO8859_1.NewDecoder().String(text)
+	}
+	text = strings.ReplaceAll(text, "\r\n", "\n")
+	return strings.Map(func(r rune) rune {
+		if r != '\n' && r != '\t' && (unicode.IsControl(r) || unicode.Is(unicode.Bidi_Control, r)) {
+			return '\ufffd'
+		}
+		return r
+	}, text)
+}
+
+func (s *Service) receiveCommunityPrivate(ctx context.Context, identity CommunityIdentity, message soulseek.PrivateMessage) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if !s.communityCurrentLocked(identity) {
+		return ErrCommunitySession
+	}
+	now := time.Now().UTC().UnixMilli()
+	fingerprint := sha256.Sum256([]byte(message.Text))
+	inserted := false
+	err := s.stateDB.WriteTx(ctx, func(tx *sql.Tx) error {
+		q := db.New(tx)
+		n, err := q.InsertCommunityReceipt(ctx, db.InsertCommunityReceiptParams{
+			Account: identity.Account, Sender: message.Username,
+			ServerID: int64(message.ID), ServerTime: int64(message.Timestamp),
+			Fingerprint: fingerprint[:], Disposition: "stored", CreatedAt: now,
+		})
+		if err != nil || n == 0 {
+			return err // A replay remains acknowledged even after its content was cleared.
+		}
+		conversation, err := q.EnsureCommunityConversation(ctx, db.EnsureCommunityConversationParams{
+			Account: identity.Account, Kind: "private", Target: message.Username,
+		})
+		if err != nil {
+			return err
+		}
+		serverTime := int64(message.Timestamp)
+		if _, err = q.InsertCommunityMessage(ctx, db.InsertCommunityMessageParams{
+			Account: identity.Account, ConversationID: conversation.ID, Sender: message.Username,
+			Direction: "incoming", Body: communityDisplayText(message.Text), CreatedAt: now,
+			ServerTime: &serverTime, State: "received",
+		}); err != nil {
+			return err
+		}
+		if _, err = q.SetCommunityConversationClosed(ctx, db.SetCommunityConversationClosedParams{Account: identity.Account, ID: conversation.ID}); err != nil {
+			return err
+		}
+		_, err = q.BumpCommunityRevision(ctx, identity.Account)
+		inserted = err == nil
+		return err
+	})
+	if err == nil && inserted {
+		s.watchConversationLocked(message.Username, true)
+	}
+	return err // Only the client may ACK, after this transaction has committed.
+}
+
+func (s *Service) watchConversationLocked(username string, open bool) {
+	lease := s.community.watches["conversations"]
+	if slices.Contains(lease.users, username) == open {
+		return
+	}
+	if open {
+		lease.users = append(lease.users, username)
+	} else {
+		lease.users = slices.DeleteFunc(lease.users, func(user string) bool { return user == username })
+	}
+	s.setUserWatchesLocked("conversations", lease.users, time.Time{})
+}

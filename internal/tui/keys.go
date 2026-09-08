@@ -14,6 +14,10 @@ import (
 
 func (m *model) key(k tea.KeyPressMsg) tea.Cmd {
 	s := k.String()
+	m.community.chats.navigation++
+	if m.community.chats.dialog != nil {
+		return m.chatDialogKey(k)
+	}
 	if m.downloadAs != nil {
 		return m.downloadAsKey(k)
 	}
@@ -74,7 +78,7 @@ func (m *model) key(k tea.KeyPressMsg) tea.Cmd {
 	if m.editing {
 		return m.editKey(k)
 	}
-	if m.workspace == workspaceCommunity && (m.community.inspectEditing || s != "tab" && s != "shift+tab" && s != "q" && s != "ctrl+c" && s != "?" && s != "o") {
+	if m.workspace == workspaceCommunity && (m.community.inspectEditing || m.community.chats.composing || m.community.chats.form != "" || s != "tab" && s != "shift+tab" && s != "q" && s != "ctrl+c" && s != "?" && s != "o") {
 		return m.communityKey(k)
 	}
 	if m.workspace == workspaceStats && s != "tab" && s != "shift+tab" && s != "q" && s != "ctrl+c" && s != "?" && s != "o" {
@@ -82,6 +86,9 @@ func (m *model) key(k tea.KeyPressMsg) tea.Cmd {
 	}
 	switch s {
 	case "q", "ctrl+c":
+		if m.confirmChatDraftQuit() {
+			return nil
+		}
 		if m.transient && m.active() {
 			m.confirm = true
 			return nil

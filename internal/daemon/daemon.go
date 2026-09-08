@@ -333,6 +333,9 @@ func New(cfg config.Config, path string) (*Service, error) {
 	if err = s.loadState(); err != nil {
 		return fail(fmt.Errorf("daemon: load state: %w", err))
 	}
+	if err = s.recoverCommunityOutbox(context.Background(), ""); err != nil {
+		return fail(fmt.Errorf("daemon: recover private outbox: %w", err))
+	}
 	if err = s.loadCommunityLocked(context.Background()); err != nil {
 		return fail(fmt.Errorf("daemon: load community: %w", err))
 	}
@@ -677,6 +680,10 @@ func (s *Service) connectOnce(ctx context.Context) error {
 		return context.Canceled
 	}
 	if err := s.loadCommunityLocked(ctx); err != nil {
+		s.mu.Unlock()
+		return err
+	}
+	if err := s.recoverCommunityOutbox(ctx, accountKey(cfg)); err != nil {
 		s.mu.Unlock()
 		return err
 	}

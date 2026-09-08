@@ -8,7 +8,7 @@ import (
 
 // Only actions backed by implemented APIs are offered. Later capabilities add
 // their actions here, rather than giving each workspace its own menu.
-var userActionNames = []string{"Inspect user", "Browse shared files", "Search user's files"}
+var userActionNames = []string{"Inspect user", "Browse shared files", "Search user's files", "Message user"}
 
 type userActions struct {
 	username string
@@ -19,6 +19,15 @@ type userActions struct {
 
 func (m *model) contextualUser() string {
 	if m.workspace == workspaceCommunity {
+		c := m.community.chats
+		if m.community.view == 0 {
+			if m.community.pane == 0 && c.listRow < len(c.conversations) {
+				return c.conversations[c.listRow].Target
+			}
+			if m.community.pane == 1 && c.conversation.Target != "" {
+				return c.conversation.Target
+			}
+		}
 		return m.community.target
 	}
 	if m.workspace == workspaceBrowse {
@@ -81,6 +90,13 @@ func (m *model) userActionsKey(k tea.KeyPressMsg) tea.Cmd {
 		case 2:
 			m.userActions = nil
 			m.searchScope = &searchScope{users: []string{d.username}, row: 1, editing: true}
+		case 3:
+			if !m.community.supports("private-chat") {
+				d.err = "Private messaging unavailable; refresh Community / restart daemon."
+				return nil
+			}
+			m.userActions = nil
+			return m.openCommunityChat(d.username, true)
 		}
 	}
 	return nil
