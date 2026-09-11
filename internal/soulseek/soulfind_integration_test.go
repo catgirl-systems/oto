@@ -296,23 +296,23 @@ func TestSoulfindReconnectDuringSearch(t *testing.T) {
 	runDone := runSoulfind(observer)
 
 	searchCtx, cancelSearch := context.WithCancel(context.Background())
+	defer cancelSearch()
 	searchDone := make(chan error, 1)
 	go func() {
 		_, err := observer.Search(searchCtx, filename)
 		searchDone <- err
 	}()
-	deadline := time.Now().Add(time.Second)
-	for {
-		observer.mu.Lock()
-		active := len(observer.pending) > 0
-		observer.mu.Unlock()
-		if active {
-			break
+	// Wait for an actual reply, not just local registration: Soulfind may
+	// broadcast a queued search to clients created by the next test otherwise.
+	deadline := time.After(3 * time.Second)
+	for replied := false; !replied; {
+		select {
+		case event := <-observer.Events():
+			response, ok := event.Message.(SearchResponse)
+			replied = ok && response.Username == target.cfg.Username
+		case <-deadline:
+			t.Fatal("search did not receive a reply")
 		}
-		if time.Now().After(deadline) {
-			t.Fatal("search did not start")
-		}
-		time.Sleep(10 * time.Millisecond)
 	}
 	if err := clientConn(observer).Close(); err != nil {
 		t.Fatal(err)

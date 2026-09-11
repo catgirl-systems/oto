@@ -19,6 +19,107 @@ func testMessagePeer(t *testing.T) (*Client, *messagePeer, net.Conn) {
 	return c, p, remote
 }
 
+func TestUnusedIncomingPeerPreservesActiveConnection(t *testing.T) {
+	c, p, remote := testMessagePeer(t)
+	lease := p.lease()
+	defer lease.Close()
+	p.mu.Lock()
+	lease.request = QueueRequest{Filename: "music/song.flac"}
+	p.mu.Unlock()
+	unused, loser := net.Pipe()
+	defer unused.Close()
+	_ = loser.Close() // A losing direct/reverse route sends no application frame.
+	c.serveMessagePeer(unused, PeerInitMessage{Username: "remote", Type: "P"})
+	select {
+	case <-p.done:
+		t.Fatal("unused incoming connection closed the active peer")
+	default:
+	}
+	sent := make(chan error, 1)
+	go func() { sent <- writeMessage(remote, QueuePlace{Filename: "music/song.flac", Place: 2}) }()
+	_ = lease.SetReadDeadline(time.Now().Add(time.Second))
+	if command, _, err := ReadFrame(lease); err != nil || command != PeerPlaceInQueue {
+		t.Fatalf("active request lost: command=%d error=%v", command, err)
+	}
+	if err := <-sent; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestIncomingSearchPreservesActiveConnection(t *testing.T) {
+	c, p, _ := testMessagePeer(t)
+	lease := p.lease()
+	defer lease.Close()
+	searches := make(chan SearchResponse, 1)
+	c.mu.Lock()
+	c.pending[7] = searches
+	c.mu.Unlock()
+	incoming, remote := net.Pipe()
+	defer incoming.Close()
+	defer remote.Close()
+	_ = remote.SetDeadline(time.Now().Add(time.Second))
+	done := make(chan struct{})
+	go func() {
+		c.serveMessagePeer(incoming, PeerInitMessage{Username: "remote", Type: "P"})
+		close(done)
+	}()
+	if err := writeMessage(remote, SearchResponse{Username: "remote", Token: 7}); err != nil {
+		t.Fatal(err)
+	}
+	_ = remote.Close()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("search connection did not finish")
+	}
+	select {
+	case <-searches:
+	default:
+		t.Fatal("lost search response")
+	}
+	select {
+	case <-p.done:
+		t.Fatal("search response replaced the active peer")
+	default:
+	}
+}
+
+func TestPeerConnectionAfterReconnect(t *testing.T) {
+	server, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer server.Close()
+	c := NewClient(ClientConfig{Username: "local", Address: server.Addr().String(), ListenAddr: "127.0.0.1:0"})
+	t.Cleanup(func() { _ = c.Close() })
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	for range 2 {
+		if err := c.Connect(ctx); err != nil {
+			t.Fatal(err)
+		}
+		conn, err := server.Accept()
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer conn.Close()
+		local, remote := net.Pipe()
+		defer remote.Close()
+		c.installPeer("remote", local, true)
+		lease, err := c.acquirePeer(ctx, "remote")
+		if err != nil {
+			t.Fatalf("peer after connect: %v", err)
+		}
+		if err := c.uploadRoot.Err(); err != nil {
+			t.Fatalf("connection lifetime is already canceled: %v", err)
+		}
+		_ = lease.Close()
+		if err := c.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
 func TestPeerConnectionReuse(t *testing.T) {
 	c, p, remote := testMessagePeer(t)
 	errs := make(chan error, 1)
