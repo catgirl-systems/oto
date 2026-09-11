@@ -5,7 +5,7 @@
 <p align="center">
   <a href="https://github.com/catgirl-systems/oto/releases/latest"><img src="https://img.shields.io/github/v/release/catgirl-systems/oto" alt="Latest release"></a>
   <a href="https://github.com/catgirl-systems/oto/actions/workflows/release.yml"><img src="https://github.com/catgirl-systems/oto/actions/workflows/release.yml/badge.svg" alt="Release CI"></a>
-  <a href="https://github.com/catgirl-systems/oto/releases/tag/v0.3.0"><img src="https://img.shields.io/badge/coverage%20v0.3.0-74.7%25-green" alt="Statement coverage: 74.7% at v0.3.0"></a>
+  <a href="https://github.com/catgirl-systems/oto/releases/tag/v0.3.2"><img src="https://img.shields.io/badge/coverage%20v0.3.2-76.0%25-green" alt="Statement coverage: 76.0% at v0.3.2"></a>
   <a href="https://github.com/catgirl-systems/oto/pkgs/container/oto"><img src="https://img.shields.io/badge/GHCR-oto-blue?logo=docker" alt="Container image"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0--only-blue" alt="License: AGPL-3.0-only"></a>
 </p>
@@ -75,7 +75,7 @@ docker compose up -d
 docker compose exec --user abc oto oto --config /config/config.json
 ```
 
-The last command opens the TUI; quitting it leaves transfers running. The image includes ffmpeg and supports amd64/arm64. Pin `:0.3.0` instead of `:latest` to avoid automatic version changes when pulling.
+The last command opens the TUI; quitting it leaves transfers running. The image includes ffmpeg and supports amd64/arm64. Pin `:0.3.2` instead of `:latest` to avoid automatic version changes when pulling.
 
 Configuration is created at `./oto-config/config.json`; state also lives under `./oto-config`. The default share is `/shares/music`. Edit settings in the TUI, or stop the container before editing the file and start it again afterward. Environment values override the file. Treat the Compose file as a secret; don't commit it.
 
