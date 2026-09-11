@@ -106,7 +106,8 @@ jobs:
           OTO_SLSKD_API: http://127.0.0.1:5030
           OTO_SLSKD_USERNAME: slskdpeer
           OTO_SLSKD_DOWNLOAD_DIR: /tmp/oto-slskd/downloads
-        run: go test -count=1 -run '^TestSoulfind' -v ./internal/soulseek ./internal/daemon ./internal/ipc
+        # Packages share one server; concurrent broadcasts can exhaust search admission slots.
+        run: go test -p 1 -count=1 -run '^TestSoulfind' -v ./internal/soulseek ./internal/daemon ./internal/ipc
 
   audio-and-static-builds:
     needs: generated

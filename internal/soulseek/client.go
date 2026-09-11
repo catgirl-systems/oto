@@ -1,6 +1,7 @@
 package soulseek
 
 import (
+	"bufio"
 	"context"
 	"crypto/md5"
 	"crypto/rand"
@@ -268,6 +269,10 @@ func (c *Client) Connect(ctx context.Context) error {
 	conn = c.traceConn(ctx, conn, "", "S", "server")
 	diagnostics.Event(c.peerLogger(ctx, conn), slog.LevelInfo, "server_connected", nil, slog.Int64("elapsed_ms", time.Since(started).Milliseconds()))
 	c.mu.Lock()
+	if c.closing {
+		c.uploadRoot, c.uploadCancel = context.WithCancel(context.Background())
+		c.closing = false
+	}
 	c.conn = conn
 	c.ctx, c.cancel = context.WithCancel(context.Background())
 	c.done = make(chan struct{})
@@ -1290,7 +1295,8 @@ func (c *Client) respondSearch(search IncomingSearch) {
 		}
 		ctx, cancel := context.WithTimeout(c.baseContext(), 10*time.Second)
 		defer cancel()
-		peer, err := c.connectUser(ctx, search.Username)
+		// Search replies are one-shot: receivers may close after each response.
+		peer, err := c.connectUserType(ctx, search.Username, "P")
 		if err != nil {
 			return
 		}
@@ -1475,6 +1481,32 @@ func countryCodeForAddress(addr net.Addr) string {
 }
 
 func (c *Client) serveMessagePeer(peer net.Conn, peerInfo PeerInitMessage) {
+	// A completed handshake can still be the losing direct/reverse route.
+	// Only replace the active socket once the remote actually uses this one.
+	conn := peer
+	c.mu.Lock()
+	stop := context.AfterFunc(c.uploadRoot, func() { _ = conn.Close() })
+	c.mu.Unlock()
+	defer stop()
+	_ = conn.SetReadDeadline(time.Now().Add(20 * time.Second))
+	buffer := bufio.NewReader(conn)
+	header, err := buffer.Peek(8)
+	if err != nil {
+		return
+	}
+	_ = conn.SetReadDeadline(time.Time{})
+	peer = &bufferedPeer{Conn: conn, reader: buffer}
+	if d, ok := conn.(*diagnosticConn); ok {
+		peer = &diagnosticConn{Conn: peer, logger: d.logger, id: d.id, opened: d.opened}
+	}
+	// A separate search response must not evict a browse or transfer socket.
+	if binary.LittleEndian.Uint32(header[4:]) == PeerSearch {
+		command, payload, err := ReadFrame(peer)
+		if err == nil {
+			c.handleMessagePeer(peer, peerInfo, command, payload)
+		}
+		return
+	}
 	p := c.installPeer(peerInfo.Username, peer, true)
 	<-p.done
 }
