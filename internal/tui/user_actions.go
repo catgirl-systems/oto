@@ -8,7 +8,7 @@ import (
 
 // Only actions backed by implemented APIs are offered. Later capabilities add
 // their actions here, rather than giving each workspace its own menu.
-var userActionNames = []string{"Inspect user", "Browse shared files", "Search user's files", "Message user"}
+var userActionNames = []string{"Inspect user", "Browse shared files", "Search user's files", "Message user", "Buddy / note / trust / priority"}
 
 type userActions struct {
 	username string
@@ -27,6 +27,12 @@ func (m *model) contextualUser() string {
 			if m.community.pane == 1 && c.conversation.Target != "" {
 				return c.conversation.Target
 			}
+		}
+		if m.community.view == 2 && m.community.pane < 2 {
+			if buddy, ok := m.selectedBuddy(); ok {
+				return buddy.Username
+			}
+			return m.community.buddies.selected
 		}
 		return m.community.target
 	}
@@ -97,6 +103,15 @@ func (m *model) userActionsKey(k tea.KeyPressMsg) tea.Cmd {
 			}
 			m.userActions = nil
 			return m.openCommunityChat(d.username, true)
+		case 4:
+			if !m.community.supports("buddies") {
+				d.err = "Buddies unavailable; refresh Community / restart daemon."
+				return nil
+			}
+			m.userActions = nil
+			m.switchWorkspace(workspaceCommunity)
+			m.community.view, m.community.pane = 2, 1
+			return tea.Batch(m.openBuddyEditor(d.username, false), m.loadCommunityBuddies(true))
 		}
 	}
 	return nil

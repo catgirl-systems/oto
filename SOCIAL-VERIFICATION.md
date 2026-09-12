@@ -73,12 +73,12 @@ exact test names and evidence as their sequential commits land.
 | S11 | Private-room invitations | Membership grants/invitation preference / 7 | `TestCommunityPrivateRoomInvitationAndWallRestart`, paginated invitation IPC, terminal preference/restart workflow |
 | S12 | Private-room member, operator, and owner management | All supported roles/revocation / 7 | Role matrix, deduplication/revision/unknown/revocation daemon tests, private-room UI and terminal workflows |
 | S13 | Persistent room-wall messages | Ticker update/remove/rejoin restoration / 7 | Wall bounds/paging/cache tests, daemon restart test, terminal clear/rejoin/daemon-restart restoration |
-| S14 | Buddy list | Account/exact-user isolation; CRUD / 8 | Pending |
-| S15 | Buddy notes | Edit/restart/frontends / 8 | Pending |
-| S16 | Buddy online-status notifications | Hydration suppression/transitions / 8 | Pending |
-| S17 | Buddy last-seen timestamps | Remote offline vs local disconnect / 8 | Pending |
-| S18 | Prioritized buddies | Flags and actual queue effect / 8,11 | Pending |
-| S19 | Trusted buddies | Flags and actual share effect / 8,10 | Pending |
+| S14 | Buddy list | Account/exact-user isolation; CRUD / 8 | `TestCommunityBuddiesCRUDVersionsAndWatchOwnership`, `TestCommunityBuddiesIPCFrontendsAndValidation`, `TestCommunityTerminalBuddies` |
+| S15 | Buddy notes | Edit/restart/frontends / 8 | `TestCommunityBuddiesEditorWorkflow`, `TestCommunityBuddiesConflictsPagingAndContext`, terminal two-editor conflict/reload/restart |
+| S16 | Buddy online-status notifications | Hydration suppression/transitions / 8 | `TestCommunityBuddiesNotificationsHydrationAndRestart`, `TestCommunityBuddiesNotificationAccountRoundtrip`, UI baseline/focus tests and terminal transitions |
+| S17 | Buddy last-seen timestamps | Remote offline vs local disconnect / 8 | Daemon hydration/restart test and terminal observed-offline/restart assertions; timestamps persist at millisecond precision |
+| S18 | Prioritized buddies | Flags and actual queue effect / 8,11 | Persistent editable flag verified in slice 8; actual queue effect pending step 11 |
+| S19 | Trusted buddies | Flags and actual share effect / 8,10 | Persistent editable flag verified in slice 8; actual share effect pending step 10 |
 | S20 | Personal likes and dislikes | Normalize/persist/republish / 9 | Pending |
 | S21 | Interest-based recommendations | Global/item/partial responses / 9 | Pending |
 | S22 | Similar-user discovery | Queries/cancellation/200-watch bound / 9 | Pending |
@@ -321,10 +321,44 @@ exact test names and evidence as their sequential commits land.
   or privileges were used. Ignore/text policies and configurable retention remain
   later gates, as do all subsequent feature slices.
 
+### 8. Persistent buddies and presence controls
+
+- Account/exact-user buddy CRUD reuses existing storage queries and daemon-owned
+  watches. Notes and notification/priority/trust flags persist atomically; editable
+  metadata revisions exclude presence churn. Stale edits/removals are rejected,
+  identical retries reconcile lost responses, and removal preserves other watches
+  and chat history. Paging/filtering sorts the complete buddy set before applying
+  bounded keyset pages, including maximum-size HTML-escaped note/query cursors.
+- Buddies UI provides list/detail/inspector, filtering, eight sort orders, paging,
+  exact-user add/edit/remove, shared contextual actions, Unicode cursor editing,
+  safe multiline paste, and Cancel-default removal/reload/quit. Local drafts stay
+  independent per frontend/account and survive reconnect; polling never replaces
+  an editor. Unversioned mutation replies refresh rather than roll back metadata.
+- Fresh offline-to-connected transitions notify; initial/reconnect hydration,
+  duplicate presence and online-to-away changes do not. TUI attachment takes a
+  baseline without replay/focus theft; the daemon coalesces desktop alerts. The
+  account-generation identity prevents A→B→A notification deduplication collisions.
+  Last-seen labels explicitly describe observed offline events, not local disconnects.
+- `TestCommunityTerminalBuddies` drives the actual binary, daemon/socket and two
+  isolated PTYs through add/all flags, Unicode paste and four resize layouts,
+  concurrent-note conflict/cancel/reload, presence/notification transitions,
+  persisted metadata and unsaved drafts across daemon restart, Cancel-default
+  removal, watch ownership and draft-aware detach. Presence frames are independently
+  reference-checked scripted-server evidence, not a real-server buddy UI claim.
+- Slice gates passed: `go test -race ./...`; `go vet ./...`; tagged E2E vet;
+  `go test -race ./internal/daemon ./internal/ipc ./internal/tui -run
+  'CommunityBuddies|CommunityPrivateRooms' -count=20`; another 20 final buddy UI
+  repetitions; `go test -tags communitye2e ./internal/e2e -count=10` (229.278s).
+  Stable sqlc 1.31.1 regeneration and CGO=0 linux amd64/arm64 builds passed.
+  All 67 independent fixtures passed; user decoder fuzz ran ten seconds with
+  270,095 executions. Existing real Soulfind public-room/private-chat tests passed
+  20 race repetitions against the pinned image. A bounded read-only review found
+  no issues in buddy request/session/revision fencing and draft handling; this
+  was not a whole-plan review. Priority/trust serving effects remain steps 10/11.
+
 ## Remaining commit sequence
 
-8 buddies
-→ 9 profiles/discovery → 10 permissions → 11 upload policies → 12 privileges
+9 profiles/discovery → 10 permissions → 11 upload policies → 12 privileges
 → 13 scoped search → 14 text/commands → 15 away/broadcasts → 16 manual sends
 → 17 consented receiving → 18 full verification → 19 verified README matrix.
 Each slice includes applicable tests before the next commit. Nothing is complete

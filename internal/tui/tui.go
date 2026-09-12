@@ -568,6 +568,7 @@ func (m *model) switchWorkspace(next workspace) {
 		c.userLoading, c.userRefreshed = false, time.Time{}
 		c.chats.cancelLoad()
 		c.rooms.cancelLoads()
+		c.buddies.cancelLoad()
 	}
 	m.workspace = (next + workspaceCount) % workspaceCount
 	if m.workspace == workspaceSearch {
@@ -777,6 +778,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.applyCommunityWall(x)
 	case privateRoomActionMsg:
 		return m, m.applyPrivateRoomAction(x)
+	case buddyPageMsg:
+		return m, m.applyBuddyPage(x)
+	case buddyOpenMsg:
+		return m, m.applyBuddyOpen(x)
+	case buddyActionMsg:
+		return m, m.applyBuddyAction(x)
 	case tea.BlurMsg:
 		m.community.chats.blurred = true
 	case tea.FocusMsg:
@@ -1214,6 +1221,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.cursor = m.transferCursors[m.transferTab]
 		}
 	case tea.PasteMsg:
+		if m.workspace == workspaceCommunity && m.community.view == 2 && (m.community.buddies.editor != nil || m.community.buddies.form != "") && m.community.chats.dialog == nil && m.community.buddies.dialog == nil && m.userActions == nil && !m.help {
+			m.pasteCommunityBuddy(x.Content)
+			return m, nil
+		}
 		if m.workspace == workspaceCommunity && m.community.view == 1 && m.community.rooms.private.editing() && m.community.rooms.private.dialog == nil && m.userActions == nil && !m.help {
 			m.pasteCommunityPrivate(x.Content)
 			return m, nil

@@ -12,16 +12,17 @@ import (
 
 // Capabilities are additive and advertise only wired backend functionality.
 func communityCapabilities() []string {
-	return []string{"users", "watches", "private-chat", "public-rooms", "private-rooms"}
+	return []string{"users", "watches", "private-chat", "public-rooms", "private-rooms", "buddies"}
 }
 
 type CommunitySummary struct {
 	CommunityIdentity
-	Revision     uint64   `json:"revision"`
-	Connected    bool     `json:"connected"`
-	Unread       int64    `json:"unread"`
-	Mentions     int64    `json:"mentions"`
-	Capabilities []string `json:"capabilities"`
+	Revision          uint64               `json:"revision"`
+	Connected         bool                 `json:"connected"`
+	Unread            int64                `json:"unread"`
+	Mentions          int64                `json:"mentions"`
+	Capabilities      []string             `json:"capabilities"`
+	BuddyNotification DownloadNotification `json:"buddy_notification"`
 }
 
 func (s *Service) CommunitySummary(ctx context.Context) (CommunitySummary, error) {
@@ -38,6 +39,7 @@ func (s *Service) CommunitySummary(ctx context.Context) (CommunitySummary, error
 	}
 	s.desiredUserWatchesLocked(time.Now())
 	out := CommunitySummary{CommunityIdentity: s.community.identity, Connected: s.community.online, Revision: s.community.revision, Capabilities: communityCapabilities()}
+	out.BuddyNotification = s.community.buddyNotification
 	err := s.stateDB.ReadSnapshot(ctx, func(tx *storage.ReadTx) error {
 		account, err := tx.Queries().GetCommunityAccount(ctx, out.Account)
 		if err != nil {

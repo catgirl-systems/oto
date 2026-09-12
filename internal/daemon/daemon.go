@@ -81,6 +81,7 @@ type Snapshot struct {
 	ShareScan             *ShareScan           `json:"share_scan,omitempty"`
 	ShareIndexRevision    uint64               `json:"share_index_revision"`
 	DownloadNotification  DownloadNotification `json:"download_notification"`
+	BuddyNotification     DownloadNotification `json:"buddy_notification"`
 	Downloads             []Download           `json:"downloads"`
 	Transfers             []Transfer           `json:"transfers"`
 }
@@ -243,6 +244,7 @@ type Service struct {
 	shareWatchCancel       context.CancelFunc
 	shareIndexBuilder      func(context.Context, []config.Share) (*soulseek.ShareIndex, error)
 	downloadNotification   DownloadNotification
+	buddyNotifyActive      bool
 	desktopNotify          func(context.Context, string, string) error
 	shareScanGate          chan struct{}
 	scanCtx                context.Context
@@ -394,6 +396,7 @@ func (s *Service) Snapshot() Snapshot {
 	}
 	snapshot := Snapshot{Logging: logging, StatsWarning: warning, Status: s.status, Presence: s.presence, Error: s.lastErr, PublicIP: publicIP, PublicPort: publicPort, Config: s.cfg.Redacted(), Shares: append([]config.Share(nil), s.cfg.Shares...), ShareScan: scan, ShareIndexRevision: s.shareIndexRevision, DownloadNotification: s.downloadNotification, Downloads: append([]Download(nil), s.journal.Downloads...), Transfers: s.transferValuesLocked(now)}
 	snapshot.CommunityCapabilities = communityCapabilities()
+	snapshot.BuddyNotification = s.community.buddyNotification
 	if s.shuttingDown {
 		snapshot.Shutdown = &ShutdownStatus{}
 		if s.shutdownClient != nil {
