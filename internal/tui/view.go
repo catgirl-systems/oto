@@ -39,6 +39,8 @@ func (m model) View() tea.View {
 	}
 	if m.community.chats.dialog != nil {
 		content = m.chatDialogView()
+	} else if m.community.rooms.dialog != nil {
+		content = m.roomDialogView()
 	}
 	v := tea.NewView(content)
 	v.AltScreen = true
@@ -196,6 +198,9 @@ func (m model) compactView() string {
 	if m.workspace == workspaceCommunity && m.community.chats.form != "" {
 		return strings.Join(m.chatFormView(m.width, m.height), "\n")
 	}
+	if m.workspace == workspaceCommunity && m.community.rooms.form != "" {
+		return strings.Join(m.roomFormView(m.width, m.height), "\n")
+	}
 	if m.workspace == workspaceCommunity && m.community.chats.composing {
 		d := m.community.chats.drafts[m.chatKey()]
 		return strings.Join(communityPane([]string{"Compose to " + m.community.chats.conversation.Target, renderInputWindow(strings.ReplaceAll(strings.ReplaceAll(d.text, "\n", "↵"), "\t", "⇥"), d.cursor, m.width), m.community.chats.err, "Enter send · Esc navigate"}, m.width, m.height, 0), "\n")
@@ -349,8 +354,14 @@ func (m model) helpView() string {
 			{"f / p n / End (chat)", "find history / older-newer pages / reach latest"},
 			{"y / e E (chat)", "copy selected / export text or JSON to new file"},
 			{"↑↓ / j k (chat)", "select message; page up/down scroll the transcript"},
-			{"R / X / C (chat)", "confirm retry / cancel selected / clear history"},
+			{"R / X / C (private chat)", "confirm retry / cancel selected / clear history"},
 			{"ctrl+w / h (Chats list)", "close (keep history/draft) / show closed history"},
+			{"N / J (Rooms)", "join/create form / join selected room"},
+			{"Enter / ctrl+w (room)", "open / close history; neither changes membership"},
+			{"L / R / F (room)", "leave now / remember autojoin / forget autojoin"},
+			{"f / m / p n (Rooms list)", "filter / all-remembered-joined-history / pages"},
+			{"G / g (public feed)", "view read-only feed / explicitly subscribe or stop"},
+			{"F6 then U (room)", "focus members, choose user, open User actions"},
 			{"f", "edit Search filters / find in loaded Browse list"},
 			{"c", "clear / restore search filters"},
 			{"w (search)", "save the active query and filter to Wishlist"},
@@ -711,6 +722,15 @@ func (m model) footerHints() []string {
 		}
 		if m.community.chats.form != "" {
 			return []string{"enter submit", "esc cancel"}
+		}
+		if m.community.view == 1 && m.community.supports("public-rooms") {
+			if m.community.rooms.form != "" {
+				return []string{"enter submit", "tab autojoin", "esc cancel"}
+			}
+			if m.community.rooms.feedView {
+				return []string{"g subscribe/off", "up/down scroll", "p/n pages", "esc back"}
+			}
+			return []string{"J join", "L leave", "R remember", "F forget", "F6 members", "G feed", "C clear", "e/E export"}
 		}
 		if m.community.view == 0 && m.community.supports("private-chat") {
 			return []string{"N new chat", "i compose", "ctrl+n unread", "F6 panes", "f find", "e/E export", "R/X retry/cancel", "C clear"}

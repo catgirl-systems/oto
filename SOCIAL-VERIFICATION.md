@@ -64,11 +64,11 @@ exact test names and evidence as their sequential commits land.
 | S02 | Queued and offline private messages | PM outbox/replay/ambiguous writes / 5 | Slice 5: `TestCommunityPrivateOutbox*`, `TestCommunityPrivateUnknownRequiresExplicitRetry`, real-server online/offline test and terminal lifecycle |
 | S03 | Persistent private-message history | PM restart/read/clear/export / 5 | Slice 5: daemon/IPC history tests, `TestCommunityPrivateExport*`, terminal restart/clear/replay |
 | S04 | Broadcast a private message to buddies or downloading users | Audience preview/pacing/partial outcomes / 15 | Pending |
-| S05 | Join public chat rooms | Confirmed membership/roster/echo / 6 | Pending |
-| S06 | Browse the room directory | Pagination/filter/population / 6 | Pending |
-| S07 | Public feed of room messages | Explicit read-only bounded feed / 6 | Pending |
-| S08 | Create chat rooms | Name validation/server errors / 6 | Pending |
-| S09 | Remember and rejoin rooms | Reconnect/gaps/forget vs leave / 6 | Pending |
+| S05 | Join public chat rooms | Confirmed membership/roster/echo / 6 | `TestCommunityRoomLifecycleHistoryAndWatches`, `TestSoulfindPublicRoomLifecycle`, `TestCommunityTerminalPublicRooms` |
+| S06 | Browse the room directory | Pagination/filter/population / 6 | `TestCommunityRoomPagesAndBoundedFeed`, `TestCommunityRoomsOfflinePagesHistoryAndDraftIsolation`, terminal room workflow |
+| S07 | Public feed of room messages | Explicit read-only bounded feed / 6 | Scripted daemon/TUI tests, real Soulfind lifecycle and terminal room workflow |
+| S08 | Create chat rooms | Name validation/server errors / 6 | Room wire tests, `TestCommunityRoomFailuresAndReadOnlyOpen`, real Soulfind and terminal room workflows |
+| S09 | Remember and rejoin rooms | Reconnect/gaps/forget vs leave / 6 | `TestCommunityRoomPreferencesSurviveRestart`, terminal room restart/rejoin workflow |
 | S10 | Create and join private rooms | Private room authority / 7 | Pending |
 | S11 | Private-room invitations | Membership grants/invitation preference / 7 | Pending |
 | S12 | Private-room member, operator, and owner management | All supported roles/revocation / 7 | Pending |
@@ -118,7 +118,7 @@ exact test names and evidence as their sequential commits land.
 | N17 | Reveal restricted share tiers selectively | Locked disclosure vs permission / 10 | Pending |
 | N18 | Use buddy trust as a share permission | Self exclusion/revocation/cache/recovery / 10 | Pending |
 | N19 | Persistent private-chat logs | SQLite searchable history/text+JSON export / 5 | Slice 5: `TestCommunityPrivateIPCWorkflows`, `TestCommunityPrivatePagingReadAndTwoFrontends`, `TestCommunityPrivateExport*` |
-| N20 | Persistent chat-room logs | Retention/export/history gaps / 6 | Pending |
+| N20 | Persistent chat-room logs | Retention/export/history gaps / 6 | Slice 6 room history/export/restart tests; configurable retention remains a later settings gate |
 | N21 | Interactive command console in headless mode | Real binary/daemon console / 14 | Pending |
 | N22 | Extensible chat and headless commands | Registry/alias args/cycles/no execution / 14 | Pending |
 
@@ -255,9 +255,41 @@ exact test names and evidence as their sequential commits land.
   automation and remaining contextual actions retain their later implementation
   gates; they are not implied complete by the private-chat slice.
 
+### 6. Public rooms, history and public feed
+
+- Typed, bounded room directory/roster/join/leave/message/feed codecs; 35 independent
+  wire fixtures checked against pinned Nicotine+. Partial parallel arrays preserve
+  unknown statistics rather than inventing values. Authoritative dispatch remains
+  separate from lossy events.
+- Daemon-owned membership/intents, paged rosters and directory, public room
+  creation, persistent autojoin preferences, restored room watches, and durable
+  transcript history boundaries. Closing history, leaving now and forgetting
+  autojoin are separate operations. Server echo alone creates sent transcript
+  entries; persisted send receipts fence duplicate submissions.
+- Additive room/feed IPC and responsive Rooms UI reuse chat history/read/export,
+  draft and confirmation handling. Private and room names cannot collide in draft
+  keys. Room failure/uncertainty keeps drafts; feed is explicit/read-only/bounded
+  and not logged. Offline history stays usable. Stale resource responses cannot
+  replace current state; reconnect preserves the selected room without retaining
+  membership authority.
+- `TestCommunityTerminalPublicRooms` drives a real binary/daemon/socket/PTY through
+  create/join, autojoin choice, directory filtering, independent outgoing bytes,
+  own echo, roster/inspector, four layouts with drafts, Cancel-default leave,
+  rejoin/history gaps, explicit feed, offline history and daemon restart. This is
+  scripted-server evidence, not real-server interoperability.
+- `TestSoulfindPublicRoomLifecycle` passed 20 race-enabled repetitions against the
+  existing pinned Soulfind image: two local accounts, creation, join/leave/rejoin,
+  directory, roster arrival/departure, both recipients' room echo and public feed.
+  Private-chat real-server regression also passed 20 repetitions.
+- Slice gates: full `go test -race ./...`, `go vet ./...`, tagged terminal vet,
+  20 targeted Community race repetitions, ten full terminal-suite repetitions,
+  unchanged pinned sqlc regeneration, CGO=0 linux amd64/arm64 builds, and a
+  10-second room decoder fuzz run (256,369 executions). Later private roles,
+  walls, ignore/text policies and configurable retention remain their own gates.
+
 ## Remaining commit sequence
 
-6 public rooms/feed → 7 private roles/walls → 8 buddies
+7 private roles/walls → 8 buddies
 → 9 profiles/discovery → 10 permissions → 11 upload policies → 12 privileges
 → 13 scoped search → 14 text/commands → 15 away/broadcasts → 16 manual sends
 → 17 consented receiving → 18 full verification → 19 verified README matrix.

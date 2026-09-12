@@ -19,7 +19,7 @@ func (m model) communityColumnSizes(width int) []int {
 	if m.width < 80 || m.width < 110 && m.community.pane == 2 {
 		return []int{width}
 	}
-	if m.width >= 110 && m.community.target != "" || m.community.pane == 2 {
+	if m.width >= 110 && (m.community.target != "" || m.community.view == 1 && m.community.rooms.selected != "") || m.community.pane == 2 {
 		return []int{24, width - 57, 27}
 	}
 	return []int{min(24, width/3), width - min(24, width/3) - 3}
@@ -43,7 +43,7 @@ func (m model) chatTranscriptHeight(height int) int {
 }
 func (m model) chatTranscriptVisible() bool {
 	c := m.community
-	if m.workspace != workspaceCommunity || c.view != 0 || c.chats.blurred || m.width < 36 || m.height < 8 || c.inspectEditing || c.chats.form != "" || c.chats.dialog != nil || m.setup || m.help || m.details || m.confirm || m.userActions != nil || m.searchScope != nil || m.downloadAs != nil || m.passwordForm || m.folderMenu || m.statusMenu || m.uploadStatusMenu || m.uploadConfirm {
+	if m.workspace != workspaceCommunity || !m.communityTranscriptSelected() || c.chats.blurred || m.width < 36 || m.height < 8 || c.inspectEditing || c.chats.form != "" || c.rooms.form != "" || c.chats.dialog != nil || c.rooms.dialog != nil || m.setup || m.help || m.details || m.confirm || m.userActions != nil || m.searchScope != nil || m.downloadAs != nil || m.passwordForm || m.folderMenu || m.statusMenu || m.uploadStatusMenu || m.uploadConfirm {
 		return false
 	}
 	if m.width < 80 && c.pane != 1 || m.width < 110 && c.pane == 2 {
@@ -232,7 +232,7 @@ func (m model) chatListPane(width, height int) []string {
 		if conversation.Closed {
 			flags += " closed"
 		}
-		if m.community.chats.drafts[chatKey{m.community.summary.Account, conversation.Target}].text != "" {
+		if m.community.chats.drafts[chatDraftKey(m.community.summary.Account, conversation.Target, conversation.Kind)].text != "" {
 			flags += " draft"
 		}
 		name := ansi.Truncate(conversation.Target, max(1, width-len(flags)-1), "…")
@@ -246,7 +246,7 @@ func (m model) chatListPane(width, height int) []string {
 }
 func (m model) chatContentPane(width, height int) []string {
 	c := m.community.chats
-	if c.conversation.Target == "" {
+	if c.conversation.Target == "" || !m.communityTranscriptSelected() {
 		return communityPane([]string{"Select a chat or N new chat.", "", "Messages are stored by the daemon.", "Offline sends stay queued; Unknown sends need an explicit retry."}, width, height, 0)
 	}
 	label := c.conversation.Target

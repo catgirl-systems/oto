@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"database/sql"
+	"errors"
 	"slices"
 	"strings"
 	"time"
@@ -28,6 +29,19 @@ func communityDisplayText(text string) string {
 		}
 		return r
 	}, text)
+}
+
+// Persist and preview the same single-line text sent to the server, following
+// Nicotine+'s room and private-chat behavior. Validate after transformations.
+func communityOutgoingText(text string) (string, error) {
+	text = strings.ReplaceAll(strings.ReplaceAll(text, "\r\n", "\n"), "\n", " ")
+	if err := soulseek.ValidateChatText(text); err != nil {
+		return "", err
+	}
+	if strings.IndexFunc(text, func(r rune) bool { return r != '\t' && (unicode.IsControl(r) || unicode.Is(unicode.Bidi_Control, r)) }) >= 0 {
+		return "", errors.New("community: chat text contains terminal controls")
+	}
+	return text, nil
 }
 
 func (s *Service) receiveCommunityPrivate(ctx context.Context, identity CommunityIdentity, message soulseek.PrivateMessage) error {
@@ -75,6 +89,7 @@ func (s *Service) receiveCommunityPrivate(ctx context.Context, identity Communit
 	})
 	if err == nil && inserted {
 		s.watchConversationLocked(message.Username, true)
+		s.communityRoomNoticeLocked(message)
 	}
 	return err // Only the client may ACK, after this transaction has committed.
 }

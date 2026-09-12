@@ -271,6 +271,47 @@
       "code": 3,
       "payload_hex": "05000000416c6963650100007fba080000000000000000",
       "expected": {"user": "Alice", "ip_address": "127.0.0.1", "port": 2234, "obfuscation_type": 0, "obfuscated_port": 0}
-    }
+    },
+    {"name":"room-directory-request","class":"RoomList","direction":"client","code":64,"payload_hex":"","arguments":{}},
+    {"name":"public-feed-subscribe","class":"JoinGlobalRoom","direction":"client","code":150,"payload_hex":"","arguments":{}},
+    {"name":"public-feed-unsubscribe","class":"LeaveGlobalRoom","direction":"client","code":151,"payload_hex":"","arguments":{}},
+    {
+      "name":"room-directory","class":"RoomList","direction":"server","code":64,
+      "payload_hex":"02000000080000006f746f2074657374050000004d7573696302000000020000002a00000001000000050000007175696574010000000300000001000000070000006d656d62657273010000000500000001000000050000007175696574",
+      "expected":{"rooms":[["oto test",2],["Music",42]],"rooms_owner":[["quiet",3]],"rooms_member":[["members",5]],"rooms_operator":["quiet"]}
+    },
+    {
+      "name":"room-joined","class":"JoinRoom","direction":"server","code":14,
+      "payload_hex":"080000006f746f20746573740200000005000000416c69636503000000426f62020000000200000001000000020000000010000003000000000000000c000000020000000004000002000000630000000a0000000100000002000000000000000100000002000000020000004e4c020000004445",
+      "expected":{"room":"oto test","private":false,"owner":null,"operators":[],"users":[
+        {"username":"Alice","status":2,"avgspeed":4096,"uploadnum":3,"unknown":0,"files":12,"dirs":2,"slotsfull":0,"country":"NL"},
+        {"username":"Bob","status":1,"avgspeed":1024,"uploadnum":2,"unknown":99,"files":10,"dirs":1,"slotsfull":1,"country":"DE"}
+      ]}
+    },
+    {
+      "name":"room-partial-joined","class":"JoinRoom","direction":"server","code":14,
+      "payload_hex":"080000006f746f20746573740200000005000000416c69636503000000426f620100000002000000000000000000000000000000",
+      "expected":{"room":"oto test","private":false,"users":[
+        {"username":"Alice","status":2,"avgspeed":null,"uploadnum":null,"unknown":null,"files":null,"dirs":null,"slotsfull":null,"country":null},
+        {"username":"Bob","status":null,"avgspeed":null,"uploadnum":null,"unknown":null,"files":null,"dirs":null,"slotsfull":null,"country":null}
+      ]}
+    },
+    {
+      "name":"room-private-joined","class":"JoinRoom","direction":"server","code":14,
+      "payload_hex":"0500000071756965740200000005000000416c69636503000000426f62020000000200000001000000020000000010000003000000000000000c000000020000000004000002000000630000000a0000000100000002000000000000000100000002000000020000004e4c020000004445050000004f776e65720200000005000000416c696365020000004f70",
+      "expected":{"room":"quiet","private":true,"owner":"Owner","operators":["Alice","Op"],"users":[
+        {"username":"Alice","status":2,"avgspeed":4096,"uploadnum":3,"unknown":0,"files":12,"dirs":2,"slotsfull":0,"country":"NL"},
+        {"username":"Bob","status":1,"avgspeed":1024,"uploadnum":2,"unknown":99,"files":10,"dirs":1,"slotsfull":1,"country":"DE"}
+      ]}
+    },
+    {
+      "name":"room-user-joined","class":"UserJoinedRoom","direction":"server","code":16,
+      "payload_hex":"080000006f746f207465737403000000426f62010000000004000002000000630000000a0000000100000001000000020000004445",
+      "expected":{"room":"oto test","userdata":{"username":"Bob","status":1,"avgspeed":1024,"uploadnum":2,"unknown":99,"files":10,"dirs":1,"slotsfull":1,"country":"DE"}}
+    },
+    {"name":"room-user-left","class":"UserLeftRoom","direction":"server","code":17,"payload_hex":"080000006f746f207465737403000000426f62","expected":{"room":"oto test","username":"Bob"}},
+    {"name":"room-left","class":"LeaveRoom","direction":"server","code":15,"payload_hex":"080000006f746f2074657374","expected":{"room":"oto test"}},
+    {"name":"public-feed-message","class":"GlobalRoomMessage","direction":"server","code":152,"payload_hex":"080000006f746f207465737403000000426f6204000000636166e9","expected":{"room":"oto test","user":"Bob","message":"café"}},
+    {"name":"room-partial-directory","class":"RoomList","direction":"server","code":64,"payload_hex":"02000000030000006f6e650300000074776f01000000070000000000000000000000000000000000000000000000","expected":{"rooms":[["one",7],["two",null]],"rooms_owner":[],"rooms_member":[],"rooms_operator":[]}}
   ]
 }

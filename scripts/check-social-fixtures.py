@@ -21,6 +21,15 @@ assert not subprocess.check_output([
 sys.path.insert(0, str(reference))
 from pynicotine import slskmessages as messages  # noqa: E402
 
+
+def plain(value):
+    """Make the reference's slotted roster entries comparable with frozen JSON."""
+    if isinstance(value, messages.UserData):
+        return {key: getattr(value, key) for key in value.__slots__}
+    if isinstance(value, list):
+        return [plain(item) for item in value]
+    return value
+
 names = set()
 for fixture in corpus["fixtures"]:
     name = fixture["name"]
@@ -38,6 +47,6 @@ for fixture in corpus["fixtures"]:
         message = cls(msg_content=memoryview(payload))
         message.parse_network_message()
         for key, value in fixture["expected"].items():
-            assert getattr(message, key) == value, f"{name}: field {key} differs"
+            assert plain(getattr(message, key)) == value, f"{name}: field {key} differs"
         assert not message.has_remaining_content(), f"{name}: unconsumed bytes"
 print(f"Verified {len(names)} independent wire fixtures against Nicotine+ {revision}")

@@ -145,10 +145,20 @@ func (s *Service) CommunityConversations(ctx context.Context, req CommunityConve
 type CommunityOpenConversationRequest struct {
 	CommunityIdentity
 	Username string `json:"username"`
+	Room     string `json:"room,omitempty"` // Mutually exclusive with Username; opening history never joins.
 }
 
 func (s *Service) OpenCommunityConversation(ctx context.Context, req CommunityOpenConversationRequest) (CommunityConversation, error) {
-	if err := soulseek.ValidateUsername(req.Username); err != nil {
+	kind, target := "private", req.Username
+	if req.Room != "" {
+		if req.Username != "" {
+			return CommunityConversation{}, errors.New("community: select either username or room")
+		}
+		if err := soulseek.ValidateRoomName(req.Room); err != nil {
+			return CommunityConversation{}, err
+		}
+		kind, target = "room", req.Room
+	} else if err := soulseek.ValidateUsername(req.Username); err != nil {
 		return CommunityConversation{}, err
 	}
 	s.mu.Lock()
@@ -159,7 +169,7 @@ func (s *Service) OpenCommunityConversation(ctx context.Context, req CommunityOp
 	var out CommunityConversation
 	err := s.stateDB.WriteTx(ctx, func(tx *sql.Tx) error {
 		q := db.New(tx)
-		row, err := q.EnsureCommunityConversation(ctx, db.EnsureCommunityConversationParams{Account: req.Account, Kind: "private", Target: req.Username})
+		row, err := q.EnsureCommunityConversation(ctx, db.EnsureCommunityConversationParams{Account: req.Account, Kind: kind, Target: target})
 		if err != nil {
 			return err
 		}
@@ -173,7 +183,16 @@ func (s *Service) OpenCommunityConversation(ctx context.Context, req CommunityOp
 		return err
 	})
 	if err == nil {
-		s.watchConversationLocked(req.Username, true)
+		if kind == "private" {
+			s.watchConversationLocked(target, true)
+		} else {
+			r := s.community.rooms[target]
+			if r == nil {
+				r = &communityRoomState{}
+				s.community.rooms[target] = r
+			}
+			r.conversationID = out.ID
+		}
 	}
 	return out, err
 }

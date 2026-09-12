@@ -176,6 +176,18 @@ func DecodeServerMessage(command uint32, payload []byte) (any, error) {
 		return DecodeUserStatistics(payload)
 	case ServerPrivateMessage:
 		return DecodePrivateMessage(payload)
+	case ServerRoomMessage, ServerPublicFeedMessage:
+		return DecodeRoomMessage(payload, command == ServerPublicFeedMessage)
+	case ServerJoinRoom:
+		return DecodeRoomJoined(payload)
+	case ServerLeaveRoom:
+		return DecodeRoomLeft(payload)
+	case ServerRoomUserJoined:
+		return DecodeRoomUserJoined(payload)
+	case ServerRoomUserLeft:
+		return DecodeRoomUserLeft(payload)
+	case ServerRoomList:
+		return DecodeRoomDirectory(payload)
 	default:
 		return DecodeMessage(command, payload)
 	}

@@ -20,6 +20,9 @@ func (s *Service) consumeClientEvents(ctx context.Context, client *soulseek.Clie
 		if refresh {
 			err := s.syncUserWatches(ctx, client, identity, sent)
 			if err == nil {
+				err = s.syncCommunityRooms(ctx, client, identity)
+			}
+			if err == nil {
 				err = s.syncCommunityOutbox(ctx, client, identity)
 			}
 			if err != nil {

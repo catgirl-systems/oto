@@ -11,7 +11,9 @@ import (
 )
 
 // Capabilities are additive and advertise only wired backend functionality.
-func communityCapabilities() []string { return []string{"users", "watches", "private-chat"} }
+func communityCapabilities() []string {
+	return []string{"users", "watches", "private-chat", "public-rooms"}
+}
 
 type CommunitySummary struct {
 	CommunityIdentity

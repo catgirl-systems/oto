@@ -16,6 +16,7 @@ func (s *Server) registerCommunity(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/community/users", s.communityUsers)
 	mux.HandleFunc("PUT /v1/community/watches", s.communityWatches)
 	s.registerCommunityChats(mux)
+	s.registerCommunityRooms(mux)
 }
 
 func communityError(w http.ResponseWriter, err error) {
