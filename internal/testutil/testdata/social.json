@@ -95,6 +95,8 @@
         "privileged": true
       }
     },
+    {"name":"status-offline","class":"GetUserStatus","direction":"server","code":7,"payload_hex":"05000000416c6963650000000001","expected":{"user":"Alice","status":0,"privileged":true}},
+    {"name":"status-online","class":"GetUserStatus","direction":"server","code":7,"payload_hex":"05000000416c6963650200000001","expected":{"user":"Alice","status":2,"privileged":true}},
     {
       "name": "user-stats",
       "class": "GetUserStats",

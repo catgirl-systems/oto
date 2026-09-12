@@ -561,13 +561,17 @@ func (m model) privateRoomFormView(width, height int) []string {
 }
 func (m model) privateRoomDialogView() string {
 	d := m.community.rooms.private.dialog
-	width, height := max(1, m.width), max(1, m.height)
-	lines := communityPane([]string{d.label}, width, max(0, height-2), d.scroll)
+	return communityConfirmationView(d.label, d.confirm, d.scroll, m.width, m.height)
+}
+
+func communityConfirmationView(label string, confirm bool, scroll, width, height int) string {
+	width, height = max(1, width), max(1, height)
+	lines := communityPane([]string{label}, width, max(0, height-2), scroll)
 	for len(lines) < height-2 {
 		lines = append(lines, "")
 	}
 	choices := "[Cancel] Confirm"
-	if d.confirm {
+	if confirm {
 		choices = "Cancel [Confirm]"
 	}
 	lines = append(lines, ansi.Truncate(choices, width, "…"), ansi.Truncate("↑↓ preview · ←→ choose · Enter/Esc", width, "…"))

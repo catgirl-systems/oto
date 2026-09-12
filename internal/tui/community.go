@@ -38,6 +38,7 @@ type communityModel struct {
 	inputCursor               int
 	chats                     communityChatsModel
 	rooms                     communityRoomsModel
+	buddies                   communityBuddiesModel
 }
 
 type communitySummaryMsg struct {
@@ -89,12 +90,15 @@ func (m *model) applyCommunitySummary(x communitySummaryMsg) tea.Cmd {
 	if c.summary.CommunityIdentity == x.summary.CommunityIdentity && x.summary.Revision < c.summary.Revision {
 		return nil
 	}
+	m.applyBuddyNotification(x.summary)
 	if c.summary.CommunityIdentity != x.summary.CommunityIdentity {
 		wallEditing := c.rooms.private.wallForm
 		privateView := c.rooms.private.view
 		c.resetUser()
 		m.resetCommunityChats(c.summary.Account != x.summary.Account)
 		c.rooms.reset()
+		m.saveBuddyDraft()
+		c.buddies.reset(c.summary.Account != x.summary.Account)
 		if c.summary.Account == x.summary.Account && c.chats.conversation.Kind == "room" {
 			c.rooms.selected = c.chats.conversation.Target
 			c.rooms.active = daemon.CommunityRoom{Name: c.rooms.selected, State: "offline"}
@@ -115,7 +119,7 @@ func (m *model) applyCommunitySummary(x communitySummaryMsg) tea.Cmd {
 	if c.target != "" && m.workspace == workspaceCommunity && (c.userRevision != c.summary.Revision || time.Since(c.userRefreshed) >= 30*time.Second) {
 		user = m.loadCommunityUser()
 	}
-	return tea.Batch(user, m.loadCommunityChats(false), m.loadCommunityRooms(false), m.loadCommunityMembers(false), m.loadCommunityFeed(false), m.loadCommunityWall(false))
+	return tea.Batch(user, m.loadCommunityChats(false), m.loadCommunityRooms(false), m.loadCommunityMembers(false), m.loadCommunityFeed(false), m.loadCommunityWall(false), m.loadCommunityBuddies(false))
 }
 
 func (c communityModel) supports(capability string) bool {
@@ -229,6 +233,9 @@ func (m *model) communityKey(k tea.KeyPressMsg) tea.Cmd {
 	if c.view == 1 && c.rooms.private.editing() {
 		return m.privateRoomFormKey(k)
 	}
+	if c.view == 2 && (c.buddies.editor != nil || c.buddies.form != "") {
+		return m.buddyKey(k)
+	}
 	if c.chats.composing || c.chats.form != "" {
 		_, cmd := m.chatKeyPress(k)
 		return cmd
@@ -242,8 +249,9 @@ func (m *model) communityKey(k tea.KeyPressMsg) tea.Cmd {
 		c.chats.navigation++
 		c.chats.cancelLoad()
 		c.rooms.cancelLoads()
+		c.buddies.cancelLoad()
 		c.view = (c.view + len(communityViews) + delta) % len(communityViews)
-		return tea.Batch(m.loadCommunityChats(false), m.loadCommunityRooms(false), m.loadCommunityMembers(false), m.loadCommunityFeed(false), m.loadCommunityWall(false))
+		return tea.Batch(m.loadCommunityChats(false), m.loadCommunityRooms(false), m.loadCommunityMembers(false), m.loadCommunityFeed(false), m.loadCommunityWall(false), m.loadCommunityBuddies(false))
 	case "f6":
 		c.pane = (c.pane + 1) % len(communityPanes)
 		return m.loadCommunityMembers(false)
@@ -255,6 +263,9 @@ func (m *model) communityKey(k tea.KeyPressMsg) tea.Cmd {
 	}
 	if c.view == 1 {
 		return m.roomKey(k)
+	}
+	if c.view == 2 && c.pane != 2 {
+		return m.buddyKey(k)
 	}
 	if handled, cmd := m.chatKeyPress(k); handled {
 		return cmd
@@ -466,6 +477,9 @@ func (m model) renderCommunity(width, height int) string {
 	if c.rooms.private.editing() && c.view == 1 {
 		return strings.Join(append(lines, m.privateRoomFormView(width, remaining)...), "\n")
 	}
+	if c.view == 2 && (c.buddies.editor != nil || c.buddies.form != "") {
+		return strings.Join(append(lines, m.buddyEditorView(width, remaining)...), "\n")
+	}
 	list := []string{"No " + strings.ToLower(communityViews[c.view]) + " loaded.", "", "/ inspect a user", "U user actions"}
 	content := []string{communityViews[c.view], "", "This daemon does not advertise", "this service yet.", "", "User details remain available", "with / or U from file lists."}
 	panes := [][]string{list, content, c.inspectorLines()}
@@ -481,6 +495,13 @@ func (m model) renderCommunity(width, height int) string {
 				panes[c.pane] = m.roomContentPane(width, max(0, remaining-1))
 			case 2:
 				panes[c.pane] = m.roomRosterPane(width, max(0, remaining-1))
+			}
+		}
+		if c.view == 2 && c.supports("buddies") && c.pane < 2 {
+			if c.pane == 0 {
+				panes[0] = m.buddyListPane(width, max(0, remaining-1))
+			} else {
+				panes[1] = m.buddyDetailPane(width, max(0, remaining-1))
 			}
 		}
 		body := append([]string{accent(breadcrumb)}, communityPane(panes[c.pane], width, max(0, remaining-1), c.paneScroll())...)
@@ -507,6 +528,13 @@ func (m model) renderCommunity(width, height int) string {
 				panes[i] = m.roomContentPane(size, max(0, remaining-1))
 			case 2:
 				panes[i] = m.roomRosterPane(size, max(0, remaining-1))
+			}
+		}
+		if c.view == 2 && c.supports("buddies") && i < 2 {
+			if i == 0 {
+				panes[0] = m.buddyListPane(size, max(0, remaining-1))
+			} else {
+				panes[1] = m.buddyDetailPane(size, max(0, remaining-1))
 			}
 		}
 		body := append([]string{accent(label)}, communityPane(panes[i], size, max(0, remaining-1), scroll)...)
@@ -564,6 +592,9 @@ func (m model) userActionsView() string {
 	lines := []string{strong("User actions"), trunc(fmt.Sprintf("%q", d.username), max(1, width-4)), ""}
 	for i, label := range userActionNames {
 		if i == 0 && !m.community.supports("users") {
+			label += " (unavailable)"
+		}
+		if i == 4 && !m.community.supports("buddies") {
 			label += " (unavailable)"
 		}
 		lines = append(lines, selectedRow(label, d.row == i))

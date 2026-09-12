@@ -45,6 +45,9 @@ func (m model) View() tea.View {
 	if m.community.rooms.private.dialog != nil {
 		content = m.privateRoomDialogView()
 	}
+	if m.community.buddies.dialog != nil {
+		content = m.buddyDialogView()
+	}
 	v := tea.NewView(content)
 	v.AltScreen = true
 	v.ReportFocus = true
@@ -206,6 +209,9 @@ func (m model) compactView() string {
 	}
 	if m.workspace == workspaceCommunity && m.community.rooms.private.editing() {
 		return strings.Join(m.privateRoomFormView(m.width, m.height), "\n")
+	}
+	if m.workspace == workspaceCommunity && m.community.view == 2 && (m.community.buddies.editor != nil || m.community.buddies.form != "") {
+		return strings.Join(m.buddyEditorView(m.width, m.height), "\n")
 	}
 	if m.workspace == workspaceCommunity && m.community.chats.composing {
 		d := m.community.chats.drafts[m.chatKey()]
@@ -375,6 +381,10 @@ func (m model) helpView() string {
 			{"r (private roles)", "reconcile last request ID, never duplicate an uncertain write"},
 			{"i / C (wall)", "edit desired text / clear own ticker; restored after rejoin"},
 			{"F6 then U (room)", "focus members, choose user, open User actions"},
+			{"a / e / D (Buddies)", "add / edit note and flags / remove exact buddy (Cancel default)"},
+			{"f / s / p / n (Buddies)", "filter username/note / sort all buddies / previous/next page"},
+			{"Tab / Space (buddy editor)", "choose field / toggle notification, priority, or trust"},
+			{"Ctrl+R / Esc (buddy editor)", "confirm reloading saved metadata / retain local draft"},
 			{"f", "edit Search filters / find in loaded Browse list"},
 			{"c", "clear / restore search filters"},
 			{"w (search)", "save the active query and filter to Wishlist"},
@@ -735,6 +745,9 @@ func (m model) footerHints() []string {
 		}
 		if m.community.chats.form != "" {
 			return []string{"enter submit", "esc cancel"}
+		}
+		if m.community.view == 2 && m.community.supports("buddies") {
+			return []string{"a add", "e edit", "D remove", "f filter", "s sort", "p/n pages", "U actions"}
 		}
 		if m.community.view == 1 && m.community.supports("public-rooms") {
 			if m.community.rooms.private.editing() {

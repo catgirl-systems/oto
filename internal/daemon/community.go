@@ -70,6 +70,8 @@ type communityState struct {
 	invitationsWritten, invitationsConfirmed           *bool
 	invitationsDeadline                                time.Time
 	wallBytes                                          int
+	buddies                                            map[string]CommunityBuddy
+	buddyNotification                                  DownloadNotification
 }
 
 // loadCommunityLocked loads preferences, never durable authoritative presence.
@@ -83,6 +85,7 @@ func (s *Service) loadCommunityLocked(ctx context.Context) error {
 		return err
 	}
 	next := communityState{identity: CommunityIdentity{Account: account, Daemon: s.community.identity.Daemon}, users: map[string]CommunityUser{}, watches: map[string]userWatchLease{}, wake: make(chan struct{}, 1)}
+	next.buddies = make(map[string]CommunityBuddy)
 	err := s.stateDB.ReadSnapshot(ctx, func(tx *storage.ReadTx) error {
 		q := tx.Queries()
 		settings, err := q.GetCommunityAccount(ctx, account)
@@ -102,6 +105,7 @@ func (s *Service) loadCommunityLocked(ctx context.Context) error {
 			}
 			for _, row := range rows {
 				buddies = append(buddies, row.Username)
+				next.buddies[row.Username] = communityBuddyFromRow(row, next.revision)
 				user := CommunityUser{Username: row.Username}
 				if row.LastSeen != nil {
 					user.LastSeen = time.UnixMilli(*row.LastSeen).UTC()
@@ -201,6 +205,7 @@ func (s *Service) communityUpdate(ctx context.Context, identity CommunityIdentit
 		return nil
 	} // Late unwatch replies and unsolicited users aren't cached.
 	now := time.Now().UTC()
+	buddyOnline := false
 	switch m := message.(type) {
 	case soulseek.WatchUserResponse:
 		user.Exists, user.Status, user.Stats, user.Country = m.Exists, m.Status, m.Stats, m.Country
@@ -210,6 +215,7 @@ func (s *Service) communityUpdate(ctx context.Context, identity CommunityIdentit
 			user.StatsUpdatedAt = now
 		}
 	case soulseek.UserPresence:
+		buddyOnline = user.StatusFresh && user.Status == soulseek.UserStatusOffline && m.Status != soulseek.UserStatusOffline
 		if user.StatusFresh && user.Status != soulseek.UserStatusOffline && m.Status == soulseek.UserStatusOffline {
 			if err := s.stateDB.WriteTx(ctx, func(tx *sql.Tx) error {
 				return db.New(tx).SetCommunityBuddyLastSeen(ctx, db.SetCommunityBuddyLastSeenParams{Account: identity.Account, Username: username, SeenAt: now.UnixMilli()})
@@ -234,6 +240,9 @@ func (s *Service) communityUpdate(ctx context.Context, identity CommunityIdentit
 		}
 	}
 	s.community.users[username] = user
+	if buddyOnline {
+		s.notifyBuddyOnlineLocked(username)
+	}
 	s.community.revision++
 	return nil
 }
