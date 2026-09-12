@@ -19,6 +19,7 @@ type CommunityRoomActionRequest struct {
 	Room      string `json:"room"`
 	Action    string `json:"action"`   // join, leave, remember, forget; close/clear use conversation operations.
 	Remember  bool   `json:"remember"` // Joining can also opt in to remembering; false does not forget an existing preference.
+	Private   bool   `json:"private"`  // Explicit creation of a new private room.
 	RequestID string `json:"request_id"`
 	Revision  uint64 `json:"revision"` // Required for preference-only edits.
 }
@@ -38,7 +39,13 @@ func (s *Service) CommunityRoomAction(ctx context.Context, req CommunityRoomActi
 	if req.Action != "join" && req.Action != "leave" && req.Action != "remember" && req.Action != "forget" {
 		return CommunityRoomActionResult{}, errors.New("community: invalid room action")
 	}
+	if req.Private && req.Action != "join" {
+		return CommunityRoomActionResult{}, errors.New("community: private creation is a join action")
+	}
 	fingerprint := sha256.Sum256(fmt.Appendf(nil, "%s\x00%s:%t", req.Room, req.Action, req.Remember))
+	if req.Private {
+		fingerprint = sha256.Sum256(fmt.Appendf(nil, "%s\x00%s:%t:private", req.Room, req.Action, req.Remember))
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if err := s.checkCommunityIdentityLocked(ctx, req.CommunityIdentity); err != nil {
@@ -47,6 +54,7 @@ func (s *Service) CommunityRoomAction(ctx context.Context, req CommunityRoomActi
 	out := CommunityRoomActionResult{CommunityIdentity: req.CommunityIdentity}
 	var preference db.CommunityRoom
 	var conversationID int64
+	creating := false
 	err := s.stateDB.WriteTx(ctx, func(tx *sql.Tx) error {
 		q := db.New(tx)
 		previous, err := q.GetCommunitySubmission(ctx, db.GetCommunitySubmissionParams{Account: req.Account, RequestID: req.RequestID})
@@ -76,8 +84,14 @@ func (s *Service) CommunityRoomAction(ctx context.Context, req CommunityRoomActi
 		} else if err != nil {
 			return err
 		}
-		if req.Action == "join" && (preference.PrivateRoom != 0 || s.community.directory[req.Room].private) {
-			return errors.New("community: private-room joining is not yet available")
+		r := s.community.rooms[req.Room]
+		knownPrivate := preference.PrivateRoom != 0 || s.community.directory[req.Room].private || r != nil && r.private
+		if req.Action == "join" && knownPrivate && (r == nil || !r.roleFresh || r.role == "none" || r.role == "") {
+			return errors.New("community: private-room membership is not confirmed; refresh the directory or request an invitation")
+		}
+		creating = req.Action == "join" && req.Private && !knownPrivate
+		if req.Private || knownPrivate {
+			preference.PrivateRoom = 1
 		}
 		if req.Action == "remember" || req.Action == "join" && req.Remember {
 			preference.Autojoin = 1
@@ -114,6 +128,10 @@ func (s *Service) CommunityRoomAction(ctx context.Context, req CommunityRoomActi
 			s.community.rooms[req.Room] = r
 		}
 		r.autojoin = preference.Autojoin != 0
+		r.private = preference.PrivateRoom != 0
+		if req.Action == "join" {
+			r.creating = creating
+		}
 		if conversationID != 0 {
 			r.conversationID = conversationID
 		}

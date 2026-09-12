@@ -22,7 +22,7 @@ func chatDraftKey(account, target, kind string) chatKey {
 
 func (m model) communityTranscriptSelected() bool {
 	c := m.community
-	return c.view == 0 && c.chats.conversation.Kind != "room" || c.view == 1 && !c.rooms.feedView && c.chats.conversation.Kind == "room" && c.chats.conversation.Target == c.rooms.selected
+	return c.view == 0 && c.chats.conversation.Kind != "room" || c.view == 1 && !c.rooms.feedView && c.rooms.private.view == "" && c.chats.conversation.Kind == "room" && c.chats.conversation.Target == c.rooms.selected
 }
 
 type chatDraft struct {

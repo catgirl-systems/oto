@@ -69,10 +69,10 @@ exact test names and evidence as their sequential commits land.
 | S07 | Public feed of room messages | Explicit read-only bounded feed / 6 | Scripted daemon/TUI tests, real Soulfind lifecycle and terminal room workflow |
 | S08 | Create chat rooms | Name validation/server errors / 6 | Room wire tests, `TestCommunityRoomFailuresAndReadOnlyOpen`, real Soulfind and terminal room workflows |
 | S09 | Remember and rejoin rooms | Reconnect/gaps/forget vs leave / 6 | `TestCommunityRoomPreferencesSurviveRestart`, terminal room restart/rejoin workflow |
-| S10 | Create and join private rooms | Private room authority / 7 | Pending |
-| S11 | Private-room invitations | Membership grants/invitation preference / 7 | Pending |
-| S12 | Private-room member, operator, and owner management | All supported roles/revocation / 7 | Pending |
-| S13 | Persistent room-wall messages | Ticker update/remove/rejoin restoration / 7 | Pending |
+| S10 | Create and join private rooms | Private room authority / 7 | `TestCommunityPrivateRoomRolesAndRevocation`, creation/ordering regressions, `TestCommunityTerminalPrivateRooms` |
+| S11 | Private-room invitations | Membership grants/invitation preference / 7 | `TestCommunityPrivateRoomInvitationAndWallRestart`, paginated invitation IPC, terminal preference/restart workflow |
+| S12 | Private-room member, operator, and owner management | All supported roles/revocation / 7 | Role matrix, deduplication/revision/unknown/revocation daemon tests, private-room UI and terminal workflows |
+| S13 | Persistent room-wall messages | Ticker update/remove/rejoin restoration / 7 | Wall bounds/paging/cache tests, daemon restart test, terminal clear/rejoin/daemon-restart restoration |
 | S14 | Buddy list | Account/exact-user isolation; CRUD / 8 | Pending |
 | S15 | Buddy notes | Edit/restart/frontends / 8 | Pending |
 | S16 | Buddy online-status notifications | Hydration suppression/transitions / 8 | Pending |
@@ -287,9 +287,43 @@ exact test names and evidence as their sequential commits land.
   10-second room decoder fuzz run (256,369 executions). Later private roles,
   walls, ignore/text policies and configurable retention remain their own gates.
 
+### 7. Private-room management and walls
+
+- Explicit private creation, authoritative membership grants and invitation
+  preferences, member/operator changes and supported relinquishment. No invented
+  invitation acceptance or ownership transfer. Mutations use persisted request
+  fingerprints; uncertain outcomes are reconciled without automatic replay.
+- Authority is checked again immediately before reserving a write. Revocation
+  durably disables autojoin, retains history, releases caches and rejects late
+  join confirmations. Remote wall/role caches have per-room and aggregate bounds.
+- Paginated roles/walls IPC and capability-gated TUI controls: M roles, W wall,
+  I invitation preference, private toggle in creation, and invitation list mode.
+  Cancel-default exact-target confirmations have scrollable previews. Wall drafts
+  remain per frontend/account/room, survive reconnect, and participate in quit
+  confirmation. Hidden roles/walls do not mark transcripts read.
+- `TestCommunityTerminalPrivateRooms` runs the built binary, real daemon/IPC and
+  isolated PTY through private creation, own wall update/clear/rejoin and daemon
+  restart restoration, Unicode/paste/resizing, member/operator changes, ownership
+  relinquishment, invitation preference restart, and membership revocation with
+  autojoin disabled. Advanced private-room behavior is scripted/reference-checked,
+  not claimed as real Soulfind private-room interoperability.
+- Independent review findings gained regression tests for cross-resource and
+  unversioned-response authority rollback, pane focus, selected-row visibility,
+  complete confirmation previews, draft retention, and unavailable/revoked wall
+  freshness. Bounded re-review accepted the four reported UI fixes.
+- Slice gates passed: full race/vet and tagged E2E vet; 20 targeted room/private-room
+  race repetitions across daemon/IPC/protocol/TUI; 20 final focused UI repetitions;
+  ten whole terminal-suite repetitions; stable pinned sqlc regeneration; CGO=0
+  linux amd64/arm64 builds. Private-room decoder fuzz: 10 seconds, 1,382,398
+  executions. All 65 corpus fixtures pass the pinned independent reference check.
+- Existing real Soulfind public-room and private-chat tests passed 20 race-enabled
+  repetitions against the same pinned image as slice 6. No public-network accounts
+  or privileges were used. Ignore/text policies and configurable retention remain
+  later gates, as do all subsequent feature slices.
+
 ## Remaining commit sequence
 
-7 private roles/walls → 8 buddies
+8 buddies
 → 9 profiles/discovery → 10 permissions → 11 upload policies → 12 privileges
 → 13 scoped search → 14 text/commands → 15 away/broadcasts → 16 manual sends
 → 17 consented receiving → 18 full verification → 19 verified README matrix.

@@ -773,6 +773,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.applyRoomFeed(x)
 	case roomFeedActionMsg:
 		return m, m.applyRoomFeedAction(x)
+	case roomWallMsg:
+		return m, m.applyCommunityWall(x)
+	case privateRoomActionMsg:
+		return m, m.applyPrivateRoomAction(x)
 	case tea.BlurMsg:
 		m.community.chats.blurred = true
 	case tea.FocusMsg:
@@ -812,7 +816,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.notice != "" && !time.Time(x).Before(m.noticeUntil) {
 			m.notice = ""
 		}
-		return m, tea.Batch(m.loadStatus(), m.loadTransfers(), m.loadShares(), m.loadWishlist(), m.loadStats(), m.loadCommunitySummary(), m.loadCommunityRooms(false), m.loadCommunityMembers(false), m.loadCommunityFeed(false), tick())
+		return m, tea.Batch(m.loadStatus(), m.loadTransfers(), m.loadShares(), m.loadWishlist(), m.loadStats(), m.loadCommunitySummary(), m.loadCommunityRooms(false), m.loadCommunityMembers(false), m.loadCommunityFeed(false), m.loadCommunityWall(false), tick())
 	case activityTickMsg:
 		if !m.activityRunning {
 			break
@@ -1210,6 +1214,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.cursor = m.transferCursors[m.transferTab]
 		}
 	case tea.PasteMsg:
+		if m.workspace == workspaceCommunity && m.community.view == 1 && m.community.rooms.private.editing() && m.community.rooms.private.dialog == nil && m.userActions == nil && !m.help {
+			m.pasteCommunityPrivate(x.Content)
+			return m, nil
+		}
 		if m.workspace == workspaceCommunity && (m.community.chats.composing || m.community.chats.form != "" || m.community.rooms.form != "") && m.community.chats.dialog == nil && m.community.rooms.dialog == nil && m.userActions == nil && !m.help && !m.community.inspectEditing {
 			if m.community.rooms.form != "" {
 				m.pasteCommunityRoom(x.Content)

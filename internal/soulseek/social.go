@@ -188,6 +188,17 @@ func DecodeServerMessage(command uint32, payload []byte) (any, error) {
 		return DecodeRoomUserLeft(payload)
 	case ServerRoomList:
 		return DecodeRoomDirectory(payload)
+	case ServerRoomMembers, ServerRoomOperators:
+		return DecodeRoomRoleList(payload, command == ServerRoomOperators)
+	case ServerAddRoomMember, ServerRemoveRoomMember, ServerAddRoomOperator, ServerRemoveRoomOperator,
+		ServerRoomMembershipGranted, ServerRoomMembershipRevoked, ServerRoomOperatorshipGranted, ServerRoomOperatorshipRevoked, ServerCannotCreateRoom:
+		return DecodeRoomRoleUpdate(payload, command)
+	case ServerRoomInvitations:
+		return DecodeRoomInvitations(payload)
+	case ServerRoomWallSnapshot:
+		return DecodeRoomWallSnapshot(payload)
+	case ServerRoomWallAdded, ServerRoomWallRemoved:
+		return DecodeRoomWallUpdate(payload, command == ServerRoomWallRemoved)
 	default:
 		return DecodeMessage(command, payload)
 	}

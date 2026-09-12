@@ -26,7 +26,7 @@ def plain(value):
     """Make the reference's slotted roster entries comparable with frozen JSON."""
     if isinstance(value, messages.UserData):
         return {key: getattr(value, key) for key in value.__slots__}
-    if isinstance(value, list):
+    if isinstance(value, (list, tuple)):
         return [plain(item) for item in value]
     return value
 

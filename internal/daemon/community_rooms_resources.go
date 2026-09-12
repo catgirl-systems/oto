@@ -12,18 +12,21 @@ import (
 )
 
 type CommunityRoom struct {
-	Name            string `json:"name"`
-	Population      uint32 `json:"population"`
-	PopulationKnown bool   `json:"population_known"`
-	Private         bool   `json:"private"`
-	Role            string `json:"role"`
-	DirectoryFresh  bool   `json:"directory_fresh"`
-	Remembered      bool   `json:"remembered"`
-	Joined          bool   `json:"joined"`
-	RosterFresh     bool   `json:"roster_fresh"`
-	State           string `json:"state"`
-	ConversationID  int64  `json:"conversation_id"`
-	Error           string `json:"error,omitempty"`
+	Name            string                   `json:"name"`
+	Population      uint32                   `json:"population"`
+	PopulationKnown bool                     `json:"population_known"`
+	Private         bool                     `json:"private"`
+	Role            string                   `json:"role"`
+	DirectoryFresh  bool                     `json:"directory_fresh"`
+	Remembered      bool                     `json:"remembered"`
+	Joined          bool                     `json:"joined"`
+	RosterFresh     bool                     `json:"roster_fresh"`
+	State           string                   `json:"state"`
+	ConversationID  int64                    `json:"conversation_id"`
+	Error           string                   `json:"error,omitempty"`
+	RoleFresh       bool                     `json:"role_fresh"`
+	Owner           string                   `json:"owner"`
+	LastRoleAction  *CommunityRoomRoleResult `json:"last_role_action,omitempty"`
 }
 type CommunityRoomsRequest struct {
 	CommunityIdentity
@@ -35,11 +38,13 @@ type CommunityRoomsRequest struct {
 }
 type CommunityRoomsPage struct {
 	CommunityIdentity
-	Rooms          []CommunityRoom `json:"rooms"`
-	NextCursor     string          `json:"next_cursor"`
-	Revision       uint64          `json:"revision"`
-	DirectoryFresh bool            `json:"directory_fresh"`
-	Refreshing     bool            `json:"refreshing"`
+	Rooms              []CommunityRoom `json:"rooms"`
+	NextCursor         string          `json:"next_cursor"`
+	Revision           uint64          `json:"revision"`
+	DirectoryFresh     bool            `json:"directory_fresh"`
+	Refreshing         bool            `json:"refreshing"`
+	InvitationsEnabled bool            `json:"invitations_enabled"`
+	InvitationsState   string          `json:"invitations_state"`
 }
 
 func (s *Service) communityRoomLocked(name string) CommunityRoom {
@@ -49,17 +54,13 @@ func (s *Service) communityRoomLocked(name string) CommunityRoom {
 	if r != nil {
 		out.Remembered, out.Joined, out.RosterFresh, out.ConversationID, out.Error = r.autojoin, r.joined, r.joined && s.community.online, r.conversationID, r.err
 		out.Private = out.Private || r.private
+		out.Role, out.RoleFresh, out.Owner = r.role, s.community.online && r.roleFresh, r.owner
+		if r.roleMutation != nil {
+			action := r.roleMutation.CommunityRoomRoleResult
+			out.LastRoleAction = &action
+		}
 		if out.RosterFresh {
 			out.Population, out.PopulationKnown = uint32(len(r.members)), true
-			if r.private {
-				out.Role = "member"
-				if slices.Contains(r.operators, s.cfg.Soulseek.Username) {
-					out.Role = "operator"
-				}
-				if r.owner == s.cfg.Soulseek.Username {
-					out.Role = "owner"
-				}
-			}
 		}
 	}
 	return out
@@ -74,7 +75,7 @@ func (s *Service) CommunityRooms(ctx context.Context, req CommunityRoomsRequest)
 			return CommunityRoomsPage{}, err
 		}
 	}
-	if req.Mode != "" && req.Mode != "all" && req.Mode != "remembered" && req.Mode != "joined" && req.Mode != "history" {
+	if req.Mode != "" && req.Mode != "all" && req.Mode != "remembered" && req.Mode != "joined" && req.Mode != "history" && req.Mode != "invitations" {
 		return CommunityRoomsPage{}, errors.New("community: invalid room list mode")
 	}
 	s.mu.RLock()
@@ -87,6 +88,22 @@ func (s *Service) CommunityRooms(ctx context.Context, req CommunityRoomsRequest)
 		return CommunityRoomsPage{}, err
 	}
 	out := CommunityRoomsPage{CommunityIdentity: req.CommunityIdentity, Rooms: []CommunityRoom{}, Revision: s.community.revision + uint64(account.Revision), DirectoryFresh: s.community.directoryFresh, Refreshing: s.community.directoryPending || s.community.directoryRefresh}
+	out.InvitationsEnabled, out.InvitationsState = s.community.invitationsWanted, "saved; reconnect pending"
+	if s.community.online {
+		out.InvitationsState = "queued"
+		if s.community.invitationsWritten != nil {
+			out.InvitationsState = "pending"
+			if s.community.invitationsDeadline.IsZero() {
+				out.InvitationsState = "unknown"
+			}
+		}
+		if s.community.invitationsConfirmed != nil {
+			out.InvitationsState = "server differs"
+			if *s.community.invitationsConfirmed == s.community.invitationsWanted {
+				out.InvitationsState = "confirmed"
+			}
+		}
+	}
 	if req.Room != "" {
 		out.Rooms = append(out.Rooms, s.communityRoomLocked(req.Room))
 		return out, nil
@@ -104,6 +121,9 @@ func (s *Service) CommunityRooms(ctx context.Context, req CommunityRoomsRequest)
 			continue
 		}
 		r := s.community.rooms[name]
+		if req.Mode == "invitations" && (r == nil || !r.private || !r.roleFresh || r.role == "none" || r.role == "" || r.joined) {
+			continue
+		}
 		if req.Mode == "remembered" && (r == nil || !r.autojoin) || req.Mode == "joined" && (r == nil || !r.joined) || req.Mode == "history" && (r == nil || r.conversationID == 0) {
 			continue
 		}
@@ -145,22 +165,25 @@ func (s *Service) RefreshCommunityRooms(ctx context.Context, identity CommunityI
 
 type CommunityRoomMembersRequest struct {
 	CommunityIdentity
-	Room   string `json:"room"`
-	Cursor string `json:"cursor"`
-	Query  string `json:"query"`
-	Limit  int    `json:"limit"`
+	Room    string `json:"room"`
+	Cursor  string `json:"cursor"`
+	Query   string `json:"query"`
+	Limit   int    `json:"limit"`
+	Private bool   `json:"private"` // Granted membership, including users not currently present.
 }
 type CommunityRoomMember struct {
 	CommunityUser
 	SlotsFull  uint32 `json:"slots_full"`
 	SlotsKnown bool   `json:"slots_known"`
+	Role       string `json:"role"`
 }
 type CommunityRoomMembersPage struct {
 	CommunityIdentity
-	Room       CommunityRoom         `json:"room"`
-	Members    []CommunityRoomMember `json:"members"`
-	NextCursor string                `json:"next_cursor"`
-	Revision   uint64                `json:"revision"`
+	Room         CommunityRoom         `json:"room"`
+	Members      []CommunityRoomMember `json:"members"`
+	NextCursor   string                `json:"next_cursor"`
+	Revision     uint64                `json:"revision"`
+	MembersFresh bool                  `json:"members_fresh"`
 }
 
 func (s *Service) CommunityRoomMembers(ctx context.Context, req CommunityRoomMembersRequest) (CommunityRoomMembersPage, error) {
@@ -185,8 +208,26 @@ func (s *Service) CommunityRoomMembers(ctx context.Context, req CommunityRoomMem
 	if r == nil {
 		return out, nil
 	}
-	var names []string
+	out.MembersFresh = out.Room.RosterFresh
+	set := map[string]bool{}
 	for name := range r.members {
+		set[name] = true
+	}
+	if req.Private {
+		out.MembersFresh = s.community.online && r.roleFresh && r.privateMembersFresh
+		set = map[string]bool{}
+		for name := range r.privateMembers {
+			set[name] = true
+		}
+		for _, name := range r.operators {
+			set[name] = true
+		}
+		if r.owner != "" {
+			set[r.owner] = true
+		}
+	}
+	var names []string
+	for name := range set {
 		if name > req.Cursor && strings.Contains(strings.ToLower(name), strings.ToLower(req.Query)) {
 			names = append(names, name)
 		}
@@ -201,6 +242,15 @@ func (s *Service) CommunityRoomMembers(ctx context.Context, req CommunityRoomMem
 			user = CommunityUser{Username: name, Exists: true, Status: member.Status, Stats: member.Stats, Country: member.Country}
 		}
 		row := CommunityRoomMember{CommunityUser: user, SlotsFull: member.SlotsFull, SlotsKnown: member.SlotsKnown && out.Room.RosterFresh}
+		if r.private {
+			row.Role = "member"
+			if slices.Contains(r.operators, name) {
+				row.Role = "operator"
+			}
+			if name == r.owner {
+				row.Role = "owner"
+			}
+		}
 		encoded, err := json.Marshal(row)
 		if err != nil {
 			return CommunityRoomMembersPage{}, err
