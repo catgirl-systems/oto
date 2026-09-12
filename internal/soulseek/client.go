@@ -578,8 +578,8 @@ func (c *Client) Run(ctx context.Context) error {
 }
 func (c *Client) route(cmd uint32, m any) {
 	switch message := m.(type) {
-	case PrivateMessage:
-		// Private content belongs only to the authoritative callback, not diagnostics.
+	case PrivateMessage, RoomMessage:
+		// Chat content belongs only to the authoritative callback, not diagnostics.
 		c.emit(Event{Command: cmd})
 		return
 	case SearchResponse:

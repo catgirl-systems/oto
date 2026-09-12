@@ -37,6 +37,9 @@ RETURNING *;
 -- name: GetCommunityConversation :one
 SELECT * FROM community_conversations WHERE account = ? AND id = ?;
 
+-- name: FindCommunityConversation :one
+SELECT * FROM community_conversations WHERE account = ? AND kind = ? AND target = ?;
+
 -- name: ListCommunityConversations :many
 SELECT * FROM community_conversations WHERE account = ? AND id > sqlc.arg(after_id)
 ORDER BY id LIMIT min(max(CAST(sqlc.arg(page_size) AS INTEGER), 1), 200);

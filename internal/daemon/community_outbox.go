@@ -8,9 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
-	"unicode"
 
 	"github.com/catgirl-systems/oto/internal/soulseek"
 	"github.com/catgirl-systems/oto/internal/storage/db"
@@ -45,17 +43,11 @@ func (s *Service) SendCommunityPrivate(ctx context.Context, req CommunitySendReq
 	if err := soulseek.ValidateUsername(req.Username); err != nil {
 		return CommunitySendResult{}, err
 	}
-	// Nicotine+ privatechat.send_message also flattens line breaks: the server
-	// may reject them in PMs as well as rooms. Persist the actual wire text.
-	req.Text = strings.ReplaceAll(strings.ReplaceAll(req.Text, "\r\n", "\n"), "\n", " ")
-	if err := soulseek.ValidateChatText(req.Text); err != nil {
+	text, err := communityOutgoingText(req.Text)
+	if err != nil {
 		return CommunitySendResult{}, err
 	}
-	if strings.IndexFunc(req.Text, func(r rune) bool {
-		return r != '\n' && r != '\t' && (unicode.IsControl(r) || unicode.Is(unicode.Bidi_Control, r))
-	}) >= 0 {
-		return CommunitySendResult{}, errors.New("community: chat text contains terminal controls")
-	}
+	req.Text = text
 	fingerprint := sha256.Sum256([]byte(req.Username + "\x00" + req.Text))
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -63,7 +55,7 @@ func (s *Service) SendCommunityPrivate(ctx context.Context, req CommunitySendReq
 		return CommunitySendResult{}, err
 	}
 	out := CommunitySendResult{CommunityIdentity: req.CommunityIdentity}
-	err := s.stateDB.WriteTx(ctx, func(tx *sql.Tx) error {
+	err = s.stateDB.WriteTx(ctx, func(tx *sql.Tx) error {
 		q := db.New(tx)
 		previous, err := q.GetCommunitySubmission(ctx, db.GetCommunitySubmissionParams{Account: req.Account, RequestID: req.RequestID})
 		if err == nil {

@@ -51,13 +51,21 @@ type userWatchLease struct {
 
 // All fields are protected by Service.mu. Network writes always happen outside it.
 type communityState struct {
-	identity  CommunityIdentity
-	online    bool
-	revision  uint64
-	nextWatch uint64
-	users     map[string]CommunityUser
-	watches   map[string]userWatchLease
-	wake      chan struct{}
+	identity                                           CommunityIdentity
+	online                                             bool
+	revision                                           uint64
+	nextWatch                                          uint64
+	users                                              map[string]CommunityUser
+	watches                                            map[string]userWatchLease
+	wake                                               chan struct{}
+	rooms                                              map[string]*communityRoomState
+	directory                                          map[string]communityRoomListing
+	directoryFresh, directoryRefresh, directoryPending bool
+	directoryDeadline                                  time.Time
+	feedWanted, feedWritten                            bool
+	feed                                               []CommunityFeedMessage
+	feedID                                             int64
+	feedBytes                                          int
 }
 
 // loadCommunityLocked loads preferences, never durable authoritative presence.
@@ -78,6 +86,9 @@ func (s *Service) loadCommunityLocked(ctx context.Context) error {
 			return err
 		}
 		next.revision = uint64(settings.Revision)
+		if err := loadCommunityRooms(ctx, q, account, &next); err != nil {
+			return err
+		}
 		var buddies []string
 		for after := ""; ; {
 			rows, err := q.ListCommunityBuddies(ctx, db.ListCommunityBuddiesParams{Account: account, AfterUsername: after, PageSize: 200})
@@ -107,6 +118,13 @@ func (s *Service) loadCommunityLocked(ctx context.Context) error {
 			for _, row := range rows {
 				if row.Kind == "private" && row.Closed == 0 {
 					conversations = append(conversations, row.Target)
+				} else if row.Kind == "room" {
+					r := next.rooms[row.Target]
+					if r == nil {
+						r = &communityRoomState{}
+						next.rooms[row.Target] = r
+					}
+					r.conversationID = row.ID
 				}
 				after = row.ID
 			}
@@ -135,6 +153,7 @@ func (s *Service) communityCurrentLocked(identity CommunityIdentity) bool {
 
 func (s *Service) retireCommunityLocked() {
 	s.community.online = false
+	s.retireCommunityRoomsLocked()
 	for username, user := range s.community.users {
 		user.StatusFresh, user.StatsFresh, user.AddressFresh = false, false, false
 		s.community.users[username] = user
@@ -154,6 +173,10 @@ func (s *Service) communityUpdate(ctx context.Context, identity CommunityIdentit
 	}
 	if !s.communityCurrentLocked(identity) {
 		return ErrCommunitySession
+	}
+	switch message.(type) {
+	case soulseek.RoomDirectory, soulseek.RoomJoined, soulseek.RoomLeft, soulseek.RoomUserJoined, soulseek.RoomUserLeft, soulseek.RoomMessage:
+		return s.updateCommunityRoomLocked(ctx, message)
 	}
 	var username string
 	switch m := message.(type) {

@@ -343,6 +343,30 @@ func (q *Queries) ExportCommunityMessages(ctx context.Context, arg ExportCommuni
 	return items, nil
 }
 
+const findCommunityConversation = `-- name: FindCommunityConversation :one
+SELECT id, account, kind, target, read_through, closed FROM community_conversations WHERE account = ? AND kind = ? AND target = ?
+`
+
+type FindCommunityConversationParams struct {
+	Account string `json:"account"`
+	Kind    string `json:"kind"`
+	Target  string `json:"target"`
+}
+
+func (q *Queries) FindCommunityConversation(ctx context.Context, arg FindCommunityConversationParams) (CommunityConversation, error) {
+	row := q.db.QueryRowContext(ctx, findCommunityConversation, arg.Account, arg.Kind, arg.Target)
+	var i CommunityConversation
+	err := row.Scan(
+		&i.ID,
+		&i.Account,
+		&i.Kind,
+		&i.Target,
+		&i.ReadThrough,
+		&i.Closed,
+	)
+	return i, err
+}
+
 const getCommunityAccount = `-- name: GetCommunityAccount :one
 SELECT account, revision, description, accept_invitations, retention_days, public_feed_logging FROM community_accounts WHERE account = ?
 `

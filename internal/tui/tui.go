@@ -567,6 +567,7 @@ func (m *model) switchWorkspace(next workspace) {
 		c.userRequest++
 		c.userLoading, c.userRefreshed = false, time.Time{}
 		c.chats.cancelLoad()
+		c.rooms.cancelLoads()
 	}
 	m.workspace = (next + workspaceCount) % workspaceCount
 	if m.workspace == workspaceSearch {
@@ -762,6 +763,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.applyChatOperation(x)
 	case chatReadMsg:
 		return m, m.applyChatRead(x)
+	case roomPageMsg:
+		return m, m.applyRoomPage(x)
+	case roomActionMsg:
+		return m, m.applyRoomAction(x)
+	case roomMembersMsg:
+		return m, m.applyRoomMembers(x)
+	case roomFeedMsg:
+		return m, m.applyRoomFeed(x)
+	case roomFeedActionMsg:
+		return m, m.applyRoomFeedAction(x)
 	case tea.BlurMsg:
 		m.community.chats.blurred = true
 	case tea.FocusMsg:
@@ -801,7 +812,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.notice != "" && !time.Time(x).Before(m.noticeUntil) {
 			m.notice = ""
 		}
-		return m, tea.Batch(m.loadStatus(), m.loadTransfers(), m.loadShares(), m.loadWishlist(), m.loadStats(), m.loadCommunitySummary(), tick())
+		return m, tea.Batch(m.loadStatus(), m.loadTransfers(), m.loadShares(), m.loadWishlist(), m.loadStats(), m.loadCommunitySummary(), m.loadCommunityRooms(false), m.loadCommunityMembers(false), m.loadCommunityFeed(false), tick())
 	case activityTickMsg:
 		if !m.activityRunning {
 			break
@@ -1199,8 +1210,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.cursor = m.transferCursors[m.transferTab]
 		}
 	case tea.PasteMsg:
-		if m.workspace == workspaceCommunity && (m.community.chats.composing || m.community.chats.form != "") && m.community.chats.dialog == nil && m.userActions == nil && !m.help && !m.community.inspectEditing {
-			m.pasteCommunityChat(x.Content)
+		if m.workspace == workspaceCommunity && (m.community.chats.composing || m.community.chats.form != "" || m.community.rooms.form != "") && m.community.chats.dialog == nil && m.community.rooms.dialog == nil && m.userActions == nil && !m.help && !m.community.inspectEditing {
+			if m.community.rooms.form != "" {
+				m.pasteCommunityRoom(x.Content)
+			} else {
+				m.pasteCommunityChat(x.Content)
+			}
 			return m, nil
 		}
 		if m.workspace == workspaceCommunity && m.community.inspectEditing && m.userActions == nil && !m.help {

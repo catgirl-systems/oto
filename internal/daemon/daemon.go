@@ -770,6 +770,7 @@ func (s *Service) connectOnce(ctx context.Context) error {
 	client.ConfigureBrowseLimits(browseLimits(s.cfg))
 	s.client, s.mapping = client, mapping
 	s.community.identity, s.community.online = identity, true
+	s.beginCommunityRoomsLocked()
 	s.community.revision++
 	idx = s.shares
 	s.status, s.lastErr = StatusConnected, ""

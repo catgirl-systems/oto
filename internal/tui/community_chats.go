@@ -11,7 +11,20 @@ import (
 	"github.com/catgirl-systems/oto/internal/soulseek"
 )
 
-type chatKey struct{ account, target string }
+type chatKey struct{ account, target, kind string }
+
+func chatDraftKey(account, target, kind string) chatKey {
+	if kind == "" {
+		kind = "private"
+	}
+	return chatKey{account: account, target: target, kind: kind}
+}
+
+func (m model) communityTranscriptSelected() bool {
+	c := m.community
+	return c.view == 0 && c.chats.conversation.Kind != "room" || c.view == 1 && !c.rooms.feedView && c.chats.conversation.Kind == "room" && c.chats.conversation.Target == c.rooms.selected
+}
+
 type chatDraft struct {
 	text, requestID string
 	cursor          int
@@ -117,7 +130,11 @@ func (m *model) resetCommunityChats(accountChanged bool) {
 	}
 }
 func (m model) chatKey() chatKey {
-	return chatKey{m.community.summary.Account, m.community.chats.conversation.Target}
+	kind := m.community.chats.conversation.Kind
+	if kind == "" {
+		kind = "private"
+	}
+	return chatDraftKey(m.community.summary.Account, m.community.chats.conversation.Target, kind)
 }
 func (m *model) saveChatPosition() {
 	c := &m.community.chats
@@ -133,7 +150,7 @@ func (m *model) saveChatPosition() {
 // One cancellable refresh per frontend; history remains a single bounded page.
 func (m *model) loadCommunityChats(force bool) tea.Cmd {
 	c := &m.community.chats
-	if m.client == nil || !m.community.supports("private-chat") || m.workspace != workspaceCommunity || m.community.view != 0 {
+	if m.client == nil || m.workspace != workspaceCommunity || (m.community.view != 0 && m.community.view != 1) || m.community.view == 0 && !m.community.supports("private-chat") || m.community.view == 1 && !m.community.supports("public-rooms") {
 		return nil
 	}
 	if force {
@@ -142,8 +159,9 @@ func (m *model) loadCommunityChats(force bool) tea.Cmd {
 	if c.loading {
 		return nil
 	}
-	list := force || !c.listReady || c.listRevision != m.community.summary.Revision
-	history := c.conversation.ID > 0 && (force || !c.historyReady || c.historyRevision != m.community.summary.Revision)
+	private := m.community.view == 0
+	list := private && (force || !c.listReady || c.listRevision != m.community.summary.Revision)
+	history := m.communityTranscriptSelected() && c.conversation.ID > 0 && (force || !c.historyReady || c.historyRevision != m.community.summary.Revision)
 	if !list && !history {
 		return m.readCommunityChat()
 	}
@@ -272,19 +290,29 @@ func (m *model) applyChatOperation(x chatOperationMsg) tea.Cmd {
 			m.setNotice("No unread conversations")
 			return nil
 		}
-		cmd := m.openCommunityChat(x.conversation.Target, false)
+		var cmd tea.Cmd
+		if x.conversation.Kind == "room" {
+			cmd = m.openCommunityRoom(x.conversation.Target)
+		} else {
+			cmd = m.openCommunityChat(x.conversation.Target, false)
+		}
 		c.position = chatPosition{follow: true}
 		return cmd
 	}
 	c.dialog = nil
 	switch x.kind {
 	case "open":
-		if x.conversation.Target != c.conversation.Target {
+		if x.conversation.Target != c.conversation.Target || x.conversation.Kind != c.conversation.Kind {
 			c.err = "Conversation changed; reopen chat"
 			return nil
 		}
 		c.conversation, c.unreadThrough = x.conversation, x.conversation.ReadThrough
 	case "send":
+		if x.key.kind == "room" && x.result.State != "sent" {
+			c.err = "Room send " + x.result.State + "; draft kept. Explicit retry may duplicate an earlier write."
+			c.dialog = &chatDialog{kind: "room-retry", label: c.err, identity: x.identity}
+			return nil
+		}
 		if x.result.CommunityIdentity != x.identity {
 			c.err = daemon.ErrCommunitySession.Error()
 			return nil
@@ -319,6 +347,10 @@ func (m *model) sendCommunityChat() tea.Cmd {
 	if c.busy || m.client == nil || c.conversation.ID == 0 {
 		return nil
 	}
+	if c.conversation.Kind == "room" && !m.community.rooms.selectedRoomJoined() {
+		c.err = "Room send requires confirmed membership"
+		return nil
+	}
 	key := m.chatKey()
 	d := c.drafts[key]
 	if err := validateChatDraft(d.text, false); err != nil {
@@ -331,6 +363,14 @@ func (m *model) sendCommunityChat() tea.Cmd {
 	}
 	ctx, cancel, op := m.beginChatOperation()
 	identity, client := m.community.summary.CommunityIdentity, m.client
+	if c.conversation.Kind == "room" {
+		req := daemon.CommunityRoomSendRequest{CommunityIdentity: identity, Room: key.target, Text: d.text, RequestID: d.requestID}
+		return func() tea.Msg {
+			defer cancel()
+			result, err := client.SendCommunityRoom(ctx, req)
+			return chatOperationMsg{operation: op, identity: identity, kind: "send", key: key, requestID: req.RequestID, result: result, err: err}
+		}
+	}
 	req := daemon.CommunitySendRequest{CommunityIdentity: identity, Username: key.target, Text: d.text, RequestID: d.requestID}
 	return func() tea.Msg {
 		defer cancel()
@@ -340,7 +380,7 @@ func (m *model) sendCommunityChat() tea.Cmd {
 }
 func (m *model) readCommunityChat() tea.Cmd {
 	c := &m.community.chats
-	if m.client == nil || c.reading || !c.historyReady || c.historyErr != "" || !m.community.supports("private-chat") || !m.chatTranscriptVisible() || !c.position.follow || c.position.query != "" || c.conversation.Unread == 0 || len(c.messages) == 0 || c.messages[0].ID != c.conversation.LatestID {
+	if m.client == nil || c.reading || !c.historyReady || c.historyErr != "" || c.conversation.Kind != "room" && !m.community.supports("private-chat") || !m.chatTranscriptVisible() || !c.position.follow || c.position.query != "" || c.conversation.Unread == 0 || len(c.messages) == 0 || c.messages[0].ID != c.conversation.LatestID {
 		return nil
 	}
 	if c.messages[0].ID <= c.conversation.ReadThrough {
@@ -385,7 +425,7 @@ func (m *model) nextUnreadChat() tea.Cmd {
 		defer cancel()
 		x := chatOperationMsg{operation: op, navigation: navigation, identity: identity, kind: "unread"}
 		var first daemon.CommunityConversation
-		req := daemon.CommunityConversationsRequest{CommunityIdentity: identity, Kind: "private", IncludeClosed: true}
+		req := daemon.CommunityConversationsRequest{CommunityIdentity: identity, IncludeClosed: true}
 		for {
 			page, err := client.CommunityConversations(ctx, req)
 			if err != nil {

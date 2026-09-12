@@ -18,7 +18,7 @@ func TestSoulfindPrivateChatOnlineOffline(t *testing.T) {
 	messages := make(chan PrivateMessage, 8)
 	statuses := make(chan UserPresence, 16)
 	start := func(name string) (*Client, func()) {
-		client := NewClient(ClientConfig{Address: addr, Username: name, Password: "local-only", ListenAddr: "127.0.0.1:0", SocialUpdate: func(ctx context.Context, update SocialMessage) error {
+		return startSoulfindSocial(t, ctx, addr, name, func(ctx context.Context, update SocialMessage) error {
 			switch x := update.(type) {
 			case PrivateMessage:
 				select {
@@ -34,25 +34,7 @@ func TestSoulfindPrivateChatOnlineOffline(t *testing.T) {
 				}
 			}
 			return nil
-		}})
-		connectSoulfind(t, client)
-		done := make(chan error, 1)
-		go func() { done <- client.Run(ctx) }()
-		stopped := false
-		stop := func() {
-			if stopped {
-				return
-			}
-			stopped = true
-			_ = client.Close()
-			select {
-			case <-done:
-			case <-time.After(3 * time.Second):
-				t.Error("social reader failed to stop")
-			}
-		}
-		t.Cleanup(stop)
-		return client, stop
+		})
 	}
 	_, stopAlice := start(aliceName)
 	bob, _ := start(bobName)

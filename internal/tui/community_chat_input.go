@@ -172,13 +172,17 @@ func (m *model) chatKeyPress(k tea.KeyPressMsg) (bool, tea.Cmd) {
 	if c.form != "" {
 		return true, m.chatFormKey(k)
 	}
-	if !m.community.supports("private-chat") {
+	room := m.community.view == 1 && m.communityTranscriptSelected()
+	if !room && !m.community.supports("private-chat") {
 		return false, nil
 	}
 	if k.String() == "ctrl+n" {
+		if room {
+			return false, nil
+		}
 		return true, m.nextUnreadChat()
 	}
-	if m.community.view != 0 {
+	if m.community.view != 0 && !room || m.community.view == 0 && m.community.pane != 0 && !m.communityTranscriptSelected() {
 		return false, nil
 	}
 	switch k.String() {
@@ -203,16 +207,27 @@ func (m *model) chatKeyPress(k tea.KeyPressMsg) (bool, tea.Cmd) {
 		}
 		return true, tea.Batch(m.loadCommunitySummary(), m.loadCommunityChats(true))
 	case "enter", "right":
+		if room && m.community.pane == 0 {
+			return false, nil
+		}
 		if m.community.pane == 0 && c.listRow < len(c.conversations) {
 			return true, m.openCommunityChat(c.conversations[c.listRow].Target, false)
 		}
 		if m.community.pane == 1 && c.conversation.ID > 0 {
+			if room && !m.community.rooms.selectedRoomJoined() {
+				c.err = "Join the room and wait for confirmed membership before sending"
+				return true, nil
+			}
 			c.composing = true
 			return true, nil
 		}
 		return false, nil
 	case "i":
 		if c.conversation.ID > 0 {
+			if room && !m.community.rooms.selectedRoomJoined() {
+				c.err = "Join the room and wait for confirmed membership before sending"
+				return true, nil
+			}
 			m.community.pane, c.composing = 1, true
 		}
 	case "up", "k", "down", "j", "pgup", "pgdown", "home", "end":
@@ -371,6 +386,13 @@ func (m *model) chatDialogKey(k tea.KeyPressMsg) tea.Cmd {
 			return nil
 		}
 		switch d.kind {
+		case "room-retry":
+			key := m.chatKey()
+			draft := c.drafts[key]
+			draft.requestID = rand.Text()
+			c.drafts[key] = draft
+			c.dialog = nil
+			return m.sendCommunityChat()
 		case "paste":
 			c.dialog = nil
 			return m.sendCommunityChat()
