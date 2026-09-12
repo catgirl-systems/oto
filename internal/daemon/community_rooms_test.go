@@ -83,7 +83,7 @@ func TestCommunityRoomLifecycleHistoryAndWatches(t *testing.T) {
 	if _, err := s.SendCommunityRoom(ctx, CommunityRoomSendRequest{CommunityIdentity: identity, Room: "oto test", Text: "too early", RequestID: "early"}); err == nil {
 		t.Fatal("sent without confirmation")
 	}
-	syncTestRooms(t, s, client, peer, identity, "room-join-public")
+	syncTestRooms(t, s, client, peer, identity, "room-join-public", "room-invitations-true-client")
 	if r := roomSnapshot(t, s, identity, "oto test"); r.Joined || r.State != "joining" {
 		t.Fatal(r)
 	}
@@ -177,7 +177,7 @@ func TestCommunityRoomFailuresAndReadOnlyOpen(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	syncTestRooms(t, s, client, peer, identity)
+	syncTestRooms(t, s, client, peer, identity, "room-invitations-true-client")
 	if s.community.rooms["oto test"].wanted {
 		t.Fatal("history open joined")
 	}
@@ -225,7 +225,7 @@ func TestCommunityRoomFailuresAndReadOnlyOpen(t *testing.T) {
 	s.community.rooms["oto test"].wanted = true
 	s.community.rooms["oto test"].intent++
 	s.mu.Unlock()
-	syncTestRooms(t, s, client, peer, identity, "room-join-public")
+	syncTestRooms(t, s, client, peer, identity, "room-join-public", "room-invitations-true-client")
 	if err := s.communityUpdate(ctx, identity, soulseek.PrivateMessage{ID: 1, Timestamp: 1, Username: "server", Text: "Could not create room", New: true}); err != nil {
 		t.Fatal(err)
 	}
@@ -263,6 +263,7 @@ func TestCommunityRoomPagesAndBoundedFeed(t *testing.T) {
 	if _, err := s.CommunityRoomAction(ctx, CommunityRoomActionRequest{CommunityIdentity: identity, Room: "oto test", Action: "join", RequestID: "join"}); err != nil {
 		t.Fatal(err)
 	}
+	syncTestRooms(t, s, client, peer, identity, "room-join-public", "room-invitations-true-client")
 	joined := soulseek.RoomJoined{Room: "oto test"}
 	for i := range 305 {
 		joined.Users = append(joined.Users, soulseek.RoomUser{Username: fmt.Sprintf("%03d", i) + strings.Repeat("<", 1000), Status: soulseek.UserStatusOnline, StatusKnown: true})
@@ -325,10 +326,11 @@ func TestCommunityRoomPreferencesSurviveRestart(t *testing.T) {
 	}
 	defer s.Close()
 	ctx := context.Background()
-	_, _, identity := communityTestConnection(t, s)
+	client, peer, identity := communityTestConnection(t, s)
 	if _, err := s.CommunityRoomAction(ctx, CommunityRoomActionRequest{CommunityIdentity: identity, Room: "oto test", Action: "join", Remember: true, RequestID: "join"}); err != nil {
 		t.Fatal(err)
 	}
+	syncTestRooms(t, s, client, peer, identity, "room-join-public", "room-invitations-true-client")
 	applyRoomFixture(t, s, identity, "room-joined")
 	if err := s.Close(); err != nil {
 		t.Fatal(err)
@@ -346,8 +348,8 @@ func TestCommunityRoomPreferencesSurviveRestart(t *testing.T) {
 	if _, err := s.CommunityRooms(ctx, CommunityRoomsRequest{CommunityIdentity: identity}); !errors.Is(err, ErrCommunitySession) {
 		t.Fatal("restart fence", err)
 	}
-	client, peer, fresh := communityTestConnection(t, s)
-	syncTestRooms(t, s, client, peer, fresh, "room-join-public")
+	client, peer, fresh = communityTestConnection(t, s)
+	syncTestRooms(t, s, client, peer, fresh, "room-join-public", "room-invitations-true-client")
 	applyRoomFixture(t, s, fresh, "room-joined")
 	page, err := s.CommunityMessages(ctx, CommunityMessagesRequest{CommunityIdentity: fresh, ConversationID: room.ConversationID})
 	if err != nil || len(page.Messages) != 2 || !strings.Contains(page.Messages[0].Text, "History gap") {

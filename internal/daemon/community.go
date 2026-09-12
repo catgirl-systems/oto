@@ -66,6 +66,10 @@ type communityState struct {
 	feed                                               []CommunityFeedMessage
 	feedID                                             int64
 	feedBytes                                          int
+	invitationsWanted                                  bool
+	invitationsWritten, invitationsConfirmed           *bool
+	invitationsDeadline                                time.Time
+	wallBytes                                          int
 }
 
 // loadCommunityLocked loads preferences, never durable authoritative presence.
@@ -86,6 +90,7 @@ func (s *Service) loadCommunityLocked(ctx context.Context) error {
 			return err
 		}
 		next.revision = uint64(settings.Revision)
+		next.invitationsWanted = settings.AcceptInvitations != 0
 		if err := loadCommunityRooms(ctx, q, account, &next); err != nil {
 			return err
 		}
@@ -177,6 +182,8 @@ func (s *Service) communityUpdate(ctx context.Context, identity CommunityIdentit
 	switch message.(type) {
 	case soulseek.RoomDirectory, soulseek.RoomJoined, soulseek.RoomLeft, soulseek.RoomUserJoined, soulseek.RoomUserLeft, soulseek.RoomMessage:
 		return s.updateCommunityRoomLocked(ctx, message)
+	case soulseek.RoomRoleList, soulseek.RoomRoleUpdate, soulseek.RoomInvitations, soulseek.RoomWallSnapshot, soulseek.RoomWallUpdate:
+		return s.updateCommunityRoomRolesLocked(ctx, message)
 	}
 	var username string
 	switch m := message.(type) {

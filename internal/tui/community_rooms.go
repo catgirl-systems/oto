@@ -19,6 +19,7 @@ type communityRoomsModel struct {
 	rooms              []daemon.CommunityRoom
 	selected           string // Open room, independent of the directory cursor.
 	active             daemon.CommunityRoom
+	activeRevision     uint64
 	row                int
 	cursor, next       string
 	back               []string
@@ -29,20 +30,21 @@ type communityRoomsModel struct {
 	request            uint64
 	cancel             context.CancelFunc
 
-	form, input, inputErr string
-	inputCursor           int
-	remember              bool
-	dialog                *roomDialog
-	busy                  bool
-	operation             uint64
-	actionCancel          context.CancelFunc
-	actionErr             string
+	form, input, inputErr   string
+	inputCursor             int
+	remember, createPrivate bool
+	dialog                  *roomDialog
+	busy                    bool
+	operation               uint64
+	actionCancel            context.CancelFunc
+	actionErr               string
 
 	members                         []daemon.CommunityRoomMember
 	memberRow                       int
 	memberCursor, memberNext        string
 	memberBack                      []string
 	membersReady, membersLoading    bool
+	membersFresh                    bool
 	membersRevision, membersRequest uint64
 	membersCancel                   context.CancelFunc
 	membersErr                      string
@@ -55,6 +57,9 @@ type communityRoomsModel struct {
 	feedCancel                                                context.CancelFunc
 	feedErr                                                   string
 	feedScroll                                                int
+	private                                                   privateRoomsModel
+	invitationsEnabled                                        bool
+	invitationsState                                          string
 }
 
 type roomDialog struct {
@@ -79,6 +84,7 @@ type roomMembersMsg struct {
 	request  uint64
 	identity daemon.CommunityIdentity
 	room     string
+	private  bool
 	page     daemon.CommunityRoomMembersPage
 	err      error
 }
@@ -102,6 +108,7 @@ func (r *communityRoomsModel) cancelLoads() {
 		}
 	}
 	r.cancel, r.membersCancel, r.feedCancel = nil, nil, nil
+	r.private.cancelLoad()
 	r.request++
 	r.membersRequest++
 	r.feedRequest++
@@ -112,7 +119,8 @@ func (r *communityRoomsModel) reset() {
 	if r.actionCancel != nil {
 		r.actionCancel()
 	}
-	*r = communityRoomsModel{request: r.request, membersRequest: r.membersRequest, feedRequest: r.feedRequest, operation: r.operation + 1}
+	r.private.reset()
+	*r = communityRoomsModel{request: r.request, membersRequest: r.membersRequest, feedRequest: r.feedRequest, operation: r.operation + 1, private: r.private}
 }
 func (r communityRoomsModel) available(c communityModel) bool { return c.supports("public-rooms") }
 func (r communityRoomsModel) selectedRoom() (daemon.CommunityRoom, bool) {
@@ -165,6 +173,7 @@ func (m *model) applyRoomPage(x roomPageMsg) tea.Cmd {
 	if x.err != nil || x.page.Revision < r.listRevision {
 		return nil
 	}
+	r.invitationsEnabled, r.invitationsState = x.page.InvitationsEnabled, x.page.InvitationsState
 	selected := ""
 	if r.row < len(r.rooms) {
 		selected = r.rooms[r.row].Name
@@ -175,11 +184,11 @@ func (m *model) applyRoomPage(x roomPageMsg) tea.Cmd {
 		if room.Name == selected {
 			r.row = i
 		}
-		if room.Name == r.selected {
-			r.active = room
+		if room.Name == r.selected && x.page.Revision >= r.activeRevision {
+			r.active, r.activeRevision = room, x.page.Revision
 		}
 	}
-	return m.loadCommunityMembers(false)
+	return tea.Batch(m.loadCommunityMembers(false), m.loadCommunityWall(false))
 }
 func (m *model) refreshCommunityDirectory() tea.Cmd {
 	r := &m.community.rooms
@@ -208,13 +217,15 @@ func (m *model) openCommunityRoom(name string) tea.Cmd {
 	m.saveChatPosition()
 	c.cancelLoad()
 	r.cancelLoads()
+	r.private.reset()
 	m.switchWorkspace(workspaceCommunity)
 	m.community.view, m.community.pane = 1, 1
 	r.selected, r.feedView = name, false
 	r.active = daemon.CommunityRoom{Name: name, State: "loading"}
+	r.activeRevision = 0
 	for _, room := range r.rooms {
 		if room.Name == name {
-			r.active = room
+			r.active, r.activeRevision = room, r.listRevision
 		}
 	}
 	m.community.resetUser()
@@ -238,8 +249,15 @@ func (m *model) openCommunityRoom(name string) tea.Cmd {
 	}
 }
 func (m *model) roomAction(action, name string, remember bool) tea.Cmd {
+	return m.roomActionPrivate(action, name, remember, false)
+}
+func (m *model) roomActionPrivate(action, name string, remember, private bool) tea.Cmd {
 	r := &m.community.rooms
 	if m.client == nil || r.busy {
+		return nil
+	}
+	if private && !r.private.available(m.community) {
+		r.actionErr = "Private room controls unavailable"
 		return nil
 	}
 	if err := soulseek.ValidateRoomName(name); err != nil {
@@ -254,9 +272,12 @@ func (m *model) roomAction(action, name string, remember bool) tea.Cmd {
 		r.dialog = &roomDialog{action: action, room: name, identity: m.community.summary.CommunityIdentity, label: label}
 		return nil
 	}
-	return m.sendRoomAction(action, name, remember)
+	return m.sendRoomActionPrivate(action, name, remember, private)
 }
 func (m *model) sendRoomAction(action, name string, remember bool) tea.Cmd {
+	return m.sendRoomActionPrivate(action, name, remember, false)
+}
+func (m *model) sendRoomActionPrivate(action, name string, remember, private bool) tea.Cmd {
 	r := &m.community.rooms
 	if r.busy || m.client == nil {
 		return nil
@@ -266,7 +287,7 @@ func (m *model) sendRoomAction(action, name string, remember bool) tea.Cmd {
 	ctx, cancel := context.WithTimeout(m.ctx, 30*time.Second)
 	r.actionCancel = cancel
 	operation, identity, client := r.operation, m.community.summary.CommunityIdentity, m.client
-	req := daemon.CommunityRoomActionRequest{CommunityIdentity: identity, Room: name, Action: action, Remember: remember, Revision: m.community.summary.Revision, RequestID: rand.Text()}
+	req := daemon.CommunityRoomActionRequest{CommunityIdentity: identity, Room: name, Action: action, Remember: remember, Private: private, Revision: m.community.summary.Revision, RequestID: rand.Text()}
 	return func() tea.Msg {
 		defer cancel()
 		result, err := client.CommunityRoomAction(ctx, req)
@@ -287,9 +308,7 @@ func (m *model) applyRoomAction(x roomActionMsg) tea.Cmd {
 		return nil
 	}
 	r.form = ""
-	if x.room == r.selected {
-		r.active = x.result.Room
-	}
+	// Only versioned resources may replace room authority.
 	m.setNotice("Room " + x.room + ": " + x.action + " requested; membership is confirmed by the server")
 	return tea.Batch(m.loadCommunitySummary(), m.loadCommunityRooms(true), m.loadCommunityMembers(true))
 }
@@ -312,16 +331,17 @@ func (m *model) loadCommunityMembers(force bool) tea.Cmd {
 	r.membersCancel, r.membersLoading = cancel, true
 	r.membersRequest++
 	request, identity, name, client := r.membersRequest, m.community.summary.CommunityIdentity, r.selected, m.client
-	req := daemon.CommunityRoomMembersRequest{CommunityIdentity: identity, Room: name, Cursor: r.memberCursor, Limit: 50}
+	private := r.private.view == "roles"
+	req := daemon.CommunityRoomMembersRequest{CommunityIdentity: identity, Room: name, Cursor: r.memberCursor, Limit: 50, Private: private}
 	return func() tea.Msg {
 		defer cancel()
 		page, err := client.CommunityRoomMembers(ctx, req)
-		return roomMembersMsg{request, identity, name, page, err}
+		return roomMembersMsg{request, identity, name, private, page, err}
 	}
 }
 func (m *model) applyRoomMembers(x roomMembersMsg) tea.Cmd {
 	r := &m.community.rooms
-	if x.request != r.membersRequest || x.identity != m.community.summary.CommunityIdentity || x.room != r.selected {
+	if x.request != r.membersRequest || x.identity != m.community.summary.CommunityIdentity || x.room != r.selected || x.private != (r.private.view == "roles") {
 		return nil
 	}
 	r.membersLoading, r.membersCancel = false, nil
@@ -336,7 +356,11 @@ func (m *model) applyRoomMembers(x roomMembersMsg) tea.Cmd {
 	if r.memberRow < len(r.members) {
 		selected = r.members[r.memberRow].Username
 	}
-	r.members, r.memberNext, r.membersRevision, r.membersReady, r.active = x.page.Members, x.page.NextCursor, x.page.Revision, true, x.page.Room
+	r.members, r.memberNext, r.membersRevision, r.membersReady = x.page.Members, x.page.NextCursor, x.page.Revision, true
+	if x.page.Revision >= r.activeRevision {
+		r.active, r.activeRevision = x.page.Room, x.page.Revision
+	}
+	r.membersFresh = x.page.MembersFresh
 	r.memberRow = max(0, min(r.memberRow, len(r.members)-1))
 	for i, member := range r.members {
 		if member.Username == selected {
@@ -427,6 +451,15 @@ func (m *model) roomFormKey(k tea.KeyPressMsg) tea.Cmd {
 		if r.form == "join" {
 			r.remember = !r.remember
 		}
+	case "ctrl+p":
+		if r.form == "join" {
+			if !r.createPrivate && !r.private.available(m.community) {
+				r.inputErr = "Private rooms unavailable (daemon lacks private-rooms)"
+			} else {
+				r.createPrivate = !r.createPrivate
+				r.inputErr = ""
+			}
+		}
 	case "enter":
 		if r.form == "filter" {
 			r.query, r.cursor, r.next, r.back, r.row, r.form = r.input, "", "", nil, 0, ""
@@ -436,7 +469,7 @@ func (m *model) roomFormKey(k tea.KeyPressMsg) tea.Cmd {
 			r.inputErr = err.Error()
 			return nil
 		}
-		return m.roomAction("join", r.input, r.remember)
+		return m.roomActionPrivate("join", r.input, r.remember, r.createPrivate)
 	default:
 		value, cursor, _ := editText(r.input, r.inputCursor, k)
 		if len(value) <= 1024 && strings.IndexFunc(value, unicode.IsControl) < 0 {
@@ -506,6 +539,21 @@ func (m *model) roomKey(k tea.KeyPressMsg) tea.Cmd {
 			return m.loadCommunityFeed(true)
 		}
 		return nil
+	}
+	if r.private.available(m.community) {
+		if k.String() == "I" {
+			r.private.dialog = &privateRoomDialog{kind: "invitations", identity: m.community.summary.CommunityIdentity, revision: m.privateRoomRevision(), enabled: !r.invitationsEnabled, label: fmt.Sprintf("Accept private-room membership invitations: %t?", !r.invitationsEnabled)}
+			return nil
+		}
+		if r.private.view != "" && m.community.pane == 1 {
+			return m.privateRoomKey(k)
+		}
+		if k.String() == "W" {
+			return m.privateRoomOpen("wall")
+		}
+		if k.String() == "M" {
+			return m.privateRoomOpen("roles")
+		}
 	}
 	if k.String() == "G" {
 		r.feedView = true
@@ -593,11 +641,15 @@ func (m *model) roomKey(k tea.KeyPressMsg) tea.Cmd {
 	}
 	switch k.String() {
 	case "N":
+		r.createPrivate = false
 		r.form, r.input, r.inputCursor, r.inputErr, r.remember = "join", "", 0, "", false
 	case "/", "f":
 		r.form, r.input, r.inputCursor, r.inputErr = "filter", r.query, utf8.RuneCountInString(r.query), ""
 	case "m":
 		modes := []string{"", "remembered", "joined", "history"}
+		if r.private.available(m.community) {
+			modes = append(modes, "invitations")
+		}
 		for i, mode := range modes {
 			if mode == r.mode {
 				r.mode = modes[(i+1)%len(modes)]
@@ -660,6 +712,9 @@ func (m model) roomListPane(width, height int) []string {
 		mode = "all"
 	}
 	lines := []string{"N join/create · f filter", mode + " · m change mode"}
+	if r.invitationsState != "" && r.private.available(m.community) {
+		lines = append(lines, fmt.Sprintf("Invitations: %t (%s) · I toggle", r.invitationsEnabled, r.invitationsState))
+	}
 	if r.query != "" {
 		lines = append(lines, ansi.Truncate("Find: "+r.query, width, "…"))
 	}
@@ -703,6 +758,9 @@ func (m model) roomListPane(width, height int) []string {
 		lines = append(lines, "")
 	}
 	lines = append(lines, "p/n pages · Enter open", "G public feed · r refresh")
+	if r.private.available(m.community) {
+		lines = append(lines, "M roles · W wall · I invitations")
+	}
 	return lines[:min(len(lines), max(0, height))]
 }
 func (m model) roomRosterPane(width, height int) []string {
@@ -736,6 +794,12 @@ func (m model) roomContentPane(width, height int) []string {
 	if r.feedView {
 		return m.roomFeedPane(width, height)
 	}
+	if r.private.view == "wall" {
+		return m.roomWallPane(width, height)
+	}
+	if r.private.view == "roles" {
+		return m.roomRolesPane(width, height)
+	}
 	if !m.communityTranscriptSelected() {
 		return communityPane([]string{"Select a room and Enter open.", "Opening history does not join.", "J join · L leave", "R remember · F forget", "G public feed (read-only)", r.actionErr}, width, height, 0)
 	}
@@ -765,7 +829,11 @@ func (m model) roomContentPane(width, height int) []string {
 		lines[1] = ansi.Truncate("! "+browseErrorText(err), width, "…")
 	}
 	if !m.community.chats.composing && len(lines) > 0 {
-		lines[len(lines)-1] = ansi.Truncate("i compose · J join · L leave · R remember · F forget · F6 members", width, "…")
+		label := "i compose · J join · L leave · R remember · F forget · F6 members"
+		if r.private.available(m.community) {
+			label = "i compose · M roles · W wall · J/L join/leave · R/F autojoin"
+		}
+		lines[len(lines)-1] = ansi.Truncate(label, width, "…")
 	}
 	return lines
 }
@@ -797,12 +865,15 @@ func (m model) roomFeedPane(width, height int) []string {
 func (m model) roomFormView(width, height int) []string {
 	r := m.community.rooms
 	label := "Join/create public room · exact name"
+	if r.form == "join" && r.createPrivate {
+		label = "Create private room · exact name"
+	}
 	if r.form == "filter" {
 		label = "Filter rooms · case-insensitive"
 	}
 	lines := []string{label, renderInputWindow(r.input, r.inputCursor, width)}
 	if r.form == "join" {
-		lines = append(lines, fmt.Sprintf("Remember/autojoin: %t · Tab toggle", r.remember))
+		lines = append(lines, fmt.Sprintf("Remember/autojoin: %t · Tab toggle", r.remember), fmt.Sprintf("Private room: %t · Ctrl+P toggle", r.createPrivate))
 	}
 	lines = append(lines, r.inputErr, r.actionErr, "Enter submit · Esc cancel · paste never submits")
 	return communityPane(lines, width, height, 0)

@@ -42,6 +42,9 @@ func (m model) View() tea.View {
 	} else if m.community.rooms.dialog != nil {
 		content = m.roomDialogView()
 	}
+	if m.community.rooms.private.dialog != nil {
+		content = m.privateRoomDialogView()
+	}
 	v := tea.NewView(content)
 	v.AltScreen = true
 	v.ReportFocus = true
@@ -201,6 +204,9 @@ func (m model) compactView() string {
 	if m.workspace == workspaceCommunity && m.community.rooms.form != "" {
 		return strings.Join(m.roomFormView(m.width, m.height), "\n")
 	}
+	if m.workspace == workspaceCommunity && m.community.rooms.private.editing() {
+		return strings.Join(m.privateRoomFormView(m.width, m.height), "\n")
+	}
 	if m.workspace == workspaceCommunity && m.community.chats.composing {
 		d := m.community.chats.drafts[m.chatKey()]
 		return strings.Join(communityPane([]string{"Compose to " + m.community.chats.conversation.Target, renderInputWindow(strings.ReplaceAll(strings.ReplaceAll(d.text, "\n", "↵"), "\t", "⇥"), d.cursor, m.width), m.community.chats.err, "Enter send · Esc navigate"}, m.width, m.height, 0), "\n")
@@ -359,8 +365,15 @@ func (m model) helpView() string {
 			{"N / J (Rooms)", "join/create form / join selected room"},
 			{"Enter / ctrl+w (room)", "open / close history; neither changes membership"},
 			{"L / R / F (room)", "leave now / remember autojoin / forget autojoin"},
-			{"f / m / p n (Rooms list)", "filter / all-remembered-joined-history / pages"},
+			{"f / m / p n (Rooms list)", "filter / all-remembered-joined-history-invitations / pages"},
 			{"G / g (public feed)", "view read-only feed / explicitly subscribe or stop"},
+			{"Ctrl+P (join form)", "explicit public/private creation"},
+			{"M / W / I (Rooms)", "private roles / room wall / invitation preference"},
+			{"a / A (private roles)", "add exact member / operator (confirmed role required)"},
+			{"o / O / d (private roles)", "grant / revoke operator / remove selected member"},
+			{"c / C (private roles)", "relinquish membership / ownership; retains history"},
+			{"r (private roles)", "reconcile last request ID, never duplicate an uncertain write"},
+			{"i / C (wall)", "edit desired text / clear own ticker; restored after rejoin"},
 			{"F6 then U (room)", "focus members, choose user, open User actions"},
 			{"f", "edit Search filters / find in loaded Browse list"},
 			{"c", "clear / restore search filters"},
@@ -724,6 +737,12 @@ func (m model) footerHints() []string {
 			return []string{"enter submit", "esc cancel"}
 		}
 		if m.community.view == 1 && m.community.supports("public-rooms") {
+			if m.community.rooms.private.editing() {
+				return []string{"enter submit/preview", "esc keep wall draft"}
+			}
+			if m.community.rooms.private.view != "" {
+				return []string{"p/n pages", "r refresh/reconcile", "esc back"}
+			}
 			if m.community.rooms.form != "" {
 				return []string{"enter submit", "tab autojoin", "esc cancel"}
 			}

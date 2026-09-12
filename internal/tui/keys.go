@@ -21,6 +21,9 @@ func (m *model) key(k tea.KeyPressMsg) tea.Cmd {
 	if m.community.rooms.dialog != nil {
 		return m.roomDialogKey(k)
 	}
+	if m.community.rooms.private.dialog != nil {
+		return m.privateRoomDialogKey(k)
+	}
 	if m.downloadAs != nil {
 		return m.downloadAsKey(k)
 	}
@@ -81,7 +84,7 @@ func (m *model) key(k tea.KeyPressMsg) tea.Cmd {
 	if m.editing {
 		return m.editKey(k)
 	}
-	if m.workspace == workspaceCommunity && (m.community.inspectEditing || m.community.chats.composing || m.community.chats.form != "" || m.community.rooms.form != "" || s != "tab" && s != "shift+tab" && s != "q" && s != "ctrl+c" && s != "?" && s != "o") {
+	if m.workspace == workspaceCommunity && (m.community.inspectEditing || m.community.chats.composing || m.community.chats.form != "" || m.community.rooms.form != "" || m.community.rooms.private.editing() || m.community.view == 1 && m.community.pane == 1 && m.community.rooms.private.view == "roles" && s == "o" || s != "tab" && s != "shift+tab" && s != "q" && s != "ctrl+c" && s != "?" && s != "o") {
 		return m.communityKey(k)
 	}
 	if m.workspace == workspaceStats && s != "tab" && s != "shift+tab" && s != "q" && s != "ctrl+c" && s != "?" && s != "o" {

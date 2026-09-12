@@ -15,15 +15,27 @@ import (
 // Only preferences/history survive restart. Membership and pending network
 // operations belong to one connection, protected by Service.mu.
 type communityRoomState struct {
-	conversationID                    int64
-	autojoin, private, wanted, joined bool
-	intent, issued                    uint64
-	pending                           string
-	deadline                          time.Time
-	err                               string
-	members                           map[string]soulseek.RoomUser
-	owner                             string
-	operators                         []string
+	conversationID                                           int64
+	autojoin, private, wanted, joined                        bool
+	intent, issued                                           uint64
+	pending                                                  string
+	deadline                                                 time.Time
+	err                                                      string
+	members                                                  map[string]soulseek.RoomUser
+	owner                                                    string
+	operators                                                []string
+	role                                                     string
+	roleFresh, operatorsFresh, privateMembersFresh, creating bool
+	privateMembers                                           map[string]bool
+	roleMutation                                             *communityRoomRoleMutation
+	ownWall                                                  string
+	wallIntent, wallIssued                                   uint64
+	wallFresh                                                bool
+	wallState                                                string
+	wallDeadline                                             time.Time
+	wall                                                     map[string]string
+	wallBytes                                                int
+	rejectJoin                                               bool
 }
 type communityRoomListing struct {
 	population               uint32
@@ -48,6 +60,12 @@ func loadCommunityRooms(ctx context.Context, q *db.Queries, account string, next
 		}
 		for _, row := range rows {
 			next.rooms[row.Room] = &communityRoomState{autojoin: row.Autojoin != 0, private: row.PrivateRoom != 0, wanted: row.Autojoin != 0, intent: 1}
+			r := next.rooms[row.Room]
+			r.ownWall = row.OwnWall
+			if r.ownWall != "" {
+				r.wallIntent = 1
+				r.wallState = "saved; awaiting confirmed join"
+			}
 			after = row.Room
 		}
 		if len(rows) < 200 {
@@ -60,10 +78,20 @@ func (s *Service) retireCommunityRoomsLocked() {
 	s.community.directoryFresh = false
 	s.community.directoryPending = false
 	s.community.feedWritten = false
+	s.community.invitationsWritten, s.community.invitationsConfirmed = nil, nil
 	for name, r := range s.community.rooms {
 		r.wanted, r.joined, r.pending = r.autojoin, false, ""
 		r.intent++
 		r.err = "Disconnected; room messages missed while away cannot be recovered."
+		r.roleFresh, r.operatorsFresh, r.privateMembersFresh, r.creating, r.wallFresh = false, false, false, false, false
+		if r.wallState == "pending" {
+			r.wallState = "unknown"
+		}
+		if r.roleMutation != nil && r.roleMutation.State == "pending" {
+			r.roleMutation.State = "unknown"
+		}
+		s.clearRoomCachesLocked(r)
+		r.rejectJoin = false
 		delete(s.community.watches, "room:"+name)
 	}
 }
@@ -90,16 +118,34 @@ func (s *Service) updateCommunityRoomLocked(ctx context.Context, message soulsee
 		}
 		s.community.directory = next
 		s.community.directoryFresh, s.community.directoryPending = true, false
+		if err := s.updateCommunityRoomDirectoryRolesLocked(ctx); err != nil {
+			return err
+		}
 	case soulseek.RoomJoined:
 		r := s.community.rooms[m.Room]
 		if r == nil {
+			r = &communityRoomState{}
+			s.community.rooms[m.Room] = r
+		}
+		if !r.wanted || !r.joined && r.issued != r.intent || r.private && !r.creating && (!r.roleFresh || r.role == "none" || r.role == "") {
+			r.wanted, r.rejectJoin = false, true
+			r.intent++
+			r.err = "Unsolicited or unauthorized join ignored; leaving the server room."
+			s.community.revision++
+			s.wakeCommunityOutboxLocked()
 			return nil
-		} // No local request/history/preference for an unsolicited room.
+		}
+		if !s.roomCacheFitsLocked(len(r.members)+len(r.operators), len(m.Users)+len(m.Operators)) {
+			return fmt.Errorf("community: room cache entry limit")
+		}
 		if !r.joined {
 			if err := s.stateDB.WriteTx(ctx, func(tx *sql.Tx) error {
 				q := db.New(tx)
 				c, err := q.EnsureCommunityConversation(ctx, db.EnsureCommunityConversationParams{Account: s.community.identity.Account, Kind: "room", Target: m.Room})
 				if err != nil {
+					return err
+				}
+				if err := q.PutCommunityRoom(ctx, db.PutCommunityRoomParams{Account: s.community.identity.Account, Room: m.Room, Autojoin: boolInt(r.autojoin), PrivateRoom: boolInt(m.Private), OwnWall: r.ownWall}); err != nil {
 					return err
 				}
 				text := "Joined room. Earlier room messages cannot be recovered."
@@ -128,6 +174,22 @@ func (s *Service) updateCommunityRoomLocked(ctx context.Context, message soulsee
 		}
 		r.conversationID, r.joined, r.private = conversation.ID, true, m.Private
 		r.owner, r.operators = m.Owner, slices.Clone(m.Operators)
+		r.role, r.roleFresh, r.operatorsFresh, r.creating = "", true, true, false
+		if m.Private {
+			r.role = "member"
+			if slices.Contains(r.operators, s.cfg.Soulseek.Username) {
+				r.role = "operator"
+			}
+			if r.owner == s.cfg.Soulseek.Username {
+				r.role = "owner"
+			}
+		}
+		s.clearRoomWallLocked(r)
+		r.wallIssued = 0
+		r.wallState = "waiting for wall snapshot"
+		if r.ownWall != "" {
+			r.wallIntent++
+		}
 		r.err = ""
 		if r.pending == "join" {
 			r.pending = ""
@@ -143,6 +205,12 @@ func (s *Service) updateCommunityRoomLocked(ctx context.Context, message soulsee
 	case soulseek.RoomLeft:
 		if r := s.community.rooms[m.Room]; r != nil {
 			r.joined = false
+			s.clearRoomCachesLocked(r)
+			r.rejectJoin = false
+			r.wallFresh = false
+			if r.wallState == "pending" {
+				r.wallState = "unknown"
+			}
 			r.members = nil
 			if r.pending == "leave" {
 				r.pending = ""
@@ -156,6 +224,9 @@ func (s *Service) updateCommunityRoomLocked(ctx context.Context, message soulsee
 				if _, ok := r.members[m.User.Username]; !ok {
 					return fmt.Errorf("community: room roster exceeds local limit")
 				}
+			}
+			if _, exists := r.members[m.User.Username]; !exists && !s.roomCacheFitsLocked(0, 1) {
+				return fmt.Errorf("community: room cache entry limit")
 			}
 			r.members[m.User.Username] = m.User
 			s.watchRoomLocked(m.Room, r)
@@ -259,6 +330,7 @@ func (s *Service) beginCommunityRoomsLocked() {
 	// A freshly connected socket needs a fresh full directory, not the limited
 	// unsolicited startup list. Never restore server-authoritative membership.
 	s.community.directoryRefresh = true
+	s.community.invitationsWritten, s.community.invitationsConfirmed = nil, nil
 	for _, r := range s.community.rooms {
 		r.joined, r.pending = false, ""
 		r.intent++

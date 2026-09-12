@@ -43,6 +43,9 @@ func (m model) chatTranscriptHeight(height int) int {
 }
 func (m model) chatTranscriptVisible() bool {
 	c := m.community
+	if c.rooms.private.editing() || c.rooms.private.dialog != nil {
+		return false
+	}
 	if m.workspace != workspaceCommunity || !m.communityTranscriptSelected() || c.chats.blurred || m.width < 36 || m.height < 8 || c.inspectEditing || c.chats.form != "" || c.rooms.form != "" || c.chats.dialog != nil || c.rooms.dialog != nil || m.setup || m.help || m.details || m.confirm || m.userActions != nil || m.searchScope != nil || m.downloadAs != nil || m.passwordForm || m.folderMenu || m.statusMenu || m.uploadStatusMenu || m.uploadConfirm {
 		return false
 	}

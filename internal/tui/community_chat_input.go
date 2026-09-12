@@ -425,7 +425,7 @@ func (m *model) chatConversationAction(kind string, conversation, through int64)
 	}
 }
 func (m model) chatDraftCount() int {
-	count := 0
+	count := len(m.community.rooms.private.wallDrafts)
 	for _, d := range m.community.chats.drafts {
 		if d.text != "" {
 			count++

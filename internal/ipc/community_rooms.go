@@ -17,6 +17,10 @@ func (s *Server) registerCommunityRooms(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/community/rooms/members", s.communityRoomMembers)
 	mux.HandleFunc("GET /v1/community/rooms/feed", s.communityFeed)
 	mux.HandleFunc("POST /v1/community/rooms/feed/subscription", s.communityFeedSubscription)
+	mux.HandleFunc("POST /v1/community/rooms/roles", s.communityRoomRole)
+	mux.HandleFunc("POST /v1/community/rooms/invitations", s.communityRoomInvitations)
+	mux.HandleFunc("GET /v1/community/rooms/wall", s.communityRoomWall)
+	mux.HandleFunc("POST /v1/community/rooms/wall", s.communityRoomWallSet)
 }
 
 func communityRoomIdentityQuery(q url.Values) (daemon.CommunityIdentity, error) {
@@ -113,7 +117,15 @@ func (s *Server) communityRoomMembers(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	out, err := s.service.CommunityRoomMembers(r.Context(), daemon.CommunityRoomMembersRequest{CommunityIdentity: identity, Room: q.Get("room"), Cursor: q.Get("cursor"), Query: q.Get("query"), Limit: limit})
+	private := false
+	if q.Get("private") != "" {
+		private, err = strconv.ParseBool(q.Get("private"))
+		if err != nil {
+			communityError(w, err)
+			return
+		}
+	}
+	out, err := s.service.CommunityRoomMembers(r.Context(), daemon.CommunityRoomMembersRequest{CommunityIdentity: identity, Room: q.Get("room"), Cursor: q.Get("cursor"), Query: q.Get("query"), Limit: limit, Private: private})
 	if err != nil {
 		communityError(w, err)
 		return
@@ -200,6 +212,7 @@ func (c *Client) CommunityRoomMembers(ctx context.Context, req daemon.CommunityR
 	q.Set("cursor", req.Cursor)
 	q.Set("query", req.Query)
 	q.Set("limit", strconv.Itoa(req.Limit))
+	q.Set("private", strconv.FormatBool(req.Private))
 	var out daemon.CommunityRoomMembersPage
 	err := c.Do(ctx, http.MethodGet, "/v1/community/rooms/members?"+q.Encode(), nil, &out)
 	return out, err
