@@ -125,7 +125,7 @@ oto focuses on file sharing and a detachable terminal UI. [Nicotine+](https://ni
 
 :white_check_mark: supported · :x: unavailable · :fast_forward: different approach
 
-### Network and session (19/23 - 83%)
+### Network and session (23/23 - 100%)
 
 | Feature | oto | Nicotine+ |
 | --- | --- | --- |
@@ -148,12 +148,12 @@ oto focuses on file sharing and a detachable terminal UI. [Nicotine+](https://ni
 | Public IP address lookup | :white_check_mark: | :white_check_mark: |
 | Change Soulseek password from the client | :white_check_mark: | :white_check_mark: |
 | Online, away, and offline status controls | :white_check_mark: | :white_check_mark: |
-| Automatic away status after inactivity | :x: | :white_check_mark: |
-| Automatic private-message reply while away | :x: | :white_check_mark: |
-| Check remaining Soulseek supporter privileges | :x: | :white_check_mark: |
-| Gift Soulseek privileges to another user | :x: | :white_check_mark: |
+| Automatic away status after inactivity | :white_check_mark: | :white_check_mark: |
+| Automatic private-message reply while away | :white_check_mark: | :white_check_mark: |
+| Check remaining Soulseek supporter privileges | :white_check_mark: | :white_check_mark: |
+| Gift Soulseek privileges to another user | :white_check_mark: | :white_check_mark: |
 
-### Search (30/32 - 94%)
+### Search (32/32 - 100%)
 
 | Feature | oto | Nicotine+ |
 | --- | --- | --- |
@@ -161,8 +161,8 @@ oto focuses on file sharing and a detachable terminal UI. [Nicotine+](https://ni
 | Exact quoted phrases | :white_check_mark: | :white_check_mark: |
 | Excluded search terms | :white_check_mark: | :white_check_mark: |
 | Partial-word search terms | :white_check_mark: | :white_check_mark: |
-| Search files in joined rooms | :x: | :white_check_mark: |
-| Search files shared by all buddies | :x: | :white_check_mark: |
+| Search files in joined rooms | :white_check_mark: | :white_check_mark: |
+| Search files shared by all buddies | :white_check_mark: | :white_check_mark: |
 | Search files shared by specific users | :white_check_mark: | :white_check_mark: |
 | Cache results and refilter without another network search | :white_check_mark: | :white_check_mark: |
 | Include-text result filter | :white_check_mark: | :white_check_mark: |
@@ -209,7 +209,7 @@ oto focuses on file sharing and a detachable terminal UI. [Nicotine+](https://ni
 | Show progress while retrieving large share lists | :white_check_mark: | :white_check_mark: |
 | View detailed file properties and media metadata | :white_check_mark: | :white_check_mark: |
 
-### Downloads (28/31 - 90%)
+### Downloads (30/31 - 97%)
 
 | Feature | oto | Nicotine+ |
 | --- | --- | --- |
@@ -226,7 +226,7 @@ oto focuses on file sharing and a detachable terminal UI. [Nicotine+](https://ni
 | Keep incomplete files separate from completed downloads | :white_check_mark: | :white_check_mark: |
 | Store downloads in per-user subfolders | :white_check_mark: | :white_check_mark: |
 | Avoid overwriting collisions by choosing an unused filename | :white_check_mark: | :white_check_mark: |
-| Separate folder for files manually sent by other users | :x: | :white_check_mark: |
+| Separate folder for files manually sent by other users | :white_check_mark: | :white_check_mark: |
 | Rename a file before downloading | :white_check_mark: | :x: |
 | Rename a destination folder before downloading | :white_check_mark: | :white_check_mark: |
 | Automatic filename-based download filters | :white_check_mark: | :white_check_mark: |
@@ -238,14 +238,14 @@ oto focuses on file sharing and a detachable terminal UI. [Nicotine+](https://ni
 | Notify when a file or folder finishes | :white_check_mark: | :white_check_mark: |
 | Automatically clear finished downloads | :white_check_mark: | :white_check_mark: |
 | Automatically clear filtered downloads | :x: | :white_check_mark: |
-| Allow selected users to send unsolicited files | :x: | :white_check_mark: |
+| Allow selected users to send unsolicited files | :white_check_mark: | :white_check_mark: |
 | Request and track remote queue position | :white_check_mark: | :white_check_mark: |
 | Show transfer speed and progress | :white_check_mark: | :white_check_mark: |
 | Estimate elapsed and remaining transfer time | :white_check_mark: | :white_check_mark: |
 | Search the network for a transfer's file or folder name | :white_check_mark: | :white_check_mark: |
 | Remove the associated incomplete file when deleting a transfer | :white_check_mark: | :white_check_mark: |
 
-### Uploads (23/30 - 77%)
+### Uploads (29/30 - 97%)
 
 | Feature | oto | Nicotine+ |
 | --- | --- | --- |
@@ -261,8 +261,8 @@ oto focuses on file sharing and a detachable terminal UI. [Nicotine+](https://ni
 | Clear uploads by status | :white_check_mark: | :white_check_mark: |
 | Automatically clear finished uploads | :white_check_mark: | :white_check_mark: |
 | Automatically clear cancelled uploads | :white_check_mark: | :white_check_mark: |
-| Manually send a file to another user | :x: | :white_check_mark: |
-| Manually send a folder to another user | :x: | :white_check_mark: |
+| Manually send a file to another user | :white_check_mark: | :white_check_mark: |
+| Manually send a folder to another user | :white_check_mark: | :white_check_mark: |
 | Global upload speed limit | :white_check_mark: | :white_check_mark: |
 | Named combined upload/download bandwidth profiles | :white_check_mark: | :x: |
 | Alternate upload speed-limit preset | :fast_forward: | :white_check_mark: |
@@ -272,15 +272,15 @@ oto focuses on file sharing and a detachable terminal UI. [Nicotine+](https://ni
 | Random upload scheduling | :white_check_mark: | :x: |
 | Smallest-file-first upload scheduling | :white_check_mark: | :x: |
 | Allocate upload slots until a bandwidth threshold is reached | :x: | :white_check_mark: |
-| Prioritize buddies in the upload queue | :x: | :white_check_mark: |
-| Prioritize Soulseek privileged users | :x: | :white_check_mark: |
+| Prioritize buddies in the upload queue | :white_check_mark: | :white_check_mark: |
+| Prioritize Soulseek privileged users | :white_check_mark: | :white_check_mark: |
 | Per-user queued-file limit (oto includes active files) | :white_check_mark: | :white_check_mark: |
 | Per-user queued-byte limit (oto includes active files) | :white_check_mark: | :white_check_mark: |
-| Exempt buddies from upload queue limits | :x: | :white_check_mark: |
+| Exempt buddies from upload queue limits | :white_check_mark: | :white_check_mark: |
 | Wait for active uploads to finish before quitting | :white_check_mark: | :white_check_mark: |
-| Message all users currently downloading | :x: | :white_check_mark: |
+| Message all users currently downloading | :white_check_mark: | :white_check_mark: |
 
-### Shares and permissions (14/19 - 74%)
+### Shares and permissions (18/19 - 95%)
 
 | Feature | oto | Nicotine+ |
 | --- | --- | --- |
@@ -299,63 +299,63 @@ oto focuses on file sharing and a detachable terminal UI. [Nicotine+](https://ni
 | Extract audio metadata while indexing local shares | :white_check_mark: | :white_check_mark: |
 | Publish shared folder and file counts | :white_check_mark: | :white_check_mark: |
 | Public shares | :white_check_mark: | :white_check_mark: |
-| Buddy-only shares | :x: | :white_check_mark: |
-| Trusted-buddy-only shares | :x: | :white_check_mark: |
-| Reveal restricted share tiers selectively | :x: | :white_check_mark: |
-| Use buddy trust as a share permission | :x: | :white_check_mark: |
+| Buddy-only shares | :white_check_mark: | :white_check_mark: |
+| Trusted-buddy-only shares | :white_check_mark: | :white_check_mark: |
+| Reveal restricted share tiers selectively | :white_check_mark: | :white_check_mark: |
+| Use buddy trust as a share permission | :white_check_mark: | :white_check_mark: |
 
 :fast_forward: oto watches share filesystem changes and reconciles after its quiet/max delays instead of waiting for a daily schedule.
 
-### Users, chat, and community (0/39 - 0%)
+### Users, chat, and community (38/39 - 97%)
 
 | Feature | oto | Nicotine+ |
 | --- | --- | --- |
-| Private messages | :x: | :white_check_mark: |
-| Queued and offline private messages | :x: | :white_check_mark: |
-| Persistent private-message history | :x: | :white_check_mark: |
-| Broadcast a private message to buddies or downloading users | :x: | :white_check_mark: |
-| Join public chat rooms | :x: | :white_check_mark: |
-| Browse the room directory | :x: | :white_check_mark: |
-| Public feed of room messages | :x: | :white_check_mark: |
-| Create chat rooms | :x: | :white_check_mark: |
-| Remember and rejoin rooms | :x: | :white_check_mark: |
-| Create and join private rooms | :x: | :white_check_mark: |
-| Private-room invitations | :x: | :white_check_mark: |
-| Private-room member, operator, and owner management | :x: | :white_check_mark: |
-| Persistent room-wall messages | :x: | :white_check_mark: |
-| Buddy list | :x: | :white_check_mark: |
-| Buddy notes | :x: | :white_check_mark: |
-| Buddy online-status notifications | :x: | :white_check_mark: |
-| Buddy last-seen timestamps | :x: | :white_check_mark: |
-| Prioritized buddies | :x: | :white_check_mark: |
-| Trusted buddies | :x: | :white_check_mark: |
-| Personal likes and dislikes | :x: | :white_check_mark: |
-| Interest-based recommendations | :x: | :white_check_mark: |
-| Similar-user discovery | :x: | :white_check_mark: |
-| View user profiles | :x: | :white_check_mark: |
-| Publish a self-description | :x: | :white_check_mark: |
-| View user country, interests, shares, speed, slots, and queue statistics | :x: | :white_check_mark: |
-| Resolve and display a user's IP address | :x: | :white_check_mark: |
-| Ignore users by username | :x: | :white_check_mark: |
-| Ignore users by IP address | :x: | :white_check_mark: |
-| Ban users by username | :x: | :white_check_mark: |
-| Ban users by IP address | :x: | :white_check_mark: |
-| Ban users by country | :x: | :white_check_mark: |
-| Custom ban and country-block messages | :x: | :white_check_mark: |
-| CTCP/client-information requests | :x: | :white_check_mark: |
-| Keyword and mention detection | :x: | :white_check_mark: |
-| Chat tab completion | :x: | :white_check_mark: |
+| Private messages | :white_check_mark: | :white_check_mark: |
+| Queued and offline private messages | :white_check_mark: | :white_check_mark: |
+| Persistent private-message history | :white_check_mark: | :white_check_mark: |
+| Broadcast a private message to buddies or downloading users | :white_check_mark: | :white_check_mark: |
+| Join public chat rooms | :white_check_mark: | :white_check_mark: |
+| Browse the room directory | :white_check_mark: | :white_check_mark: |
+| Public feed of room messages | :white_check_mark: | :white_check_mark: |
+| Create chat rooms | :white_check_mark: | :white_check_mark: |
+| Remember and rejoin rooms | :white_check_mark: | :white_check_mark: |
+| Create and join private rooms | :white_check_mark: | :white_check_mark: |
+| Private-room invitations | :white_check_mark: | :white_check_mark: |
+| Private-room member, operator, and owner management | :white_check_mark: | :white_check_mark: |
+| Persistent room-wall messages | :white_check_mark: | :white_check_mark: |
+| Buddy list | :white_check_mark: | :white_check_mark: |
+| Buddy notes | :white_check_mark: | :white_check_mark: |
+| Buddy online-status notifications | :white_check_mark: | :white_check_mark: |
+| Buddy last-seen timestamps | :white_check_mark: | :white_check_mark: |
+| Prioritized buddies | :white_check_mark: | :white_check_mark: |
+| Trusted buddies | :white_check_mark: | :white_check_mark: |
+| Personal likes and dislikes | :white_check_mark: | :white_check_mark: |
+| Interest-based recommendations | :white_check_mark: | :white_check_mark: |
+| Similar-user discovery | :white_check_mark: | :white_check_mark: |
+| View user profiles | :white_check_mark: | :white_check_mark: |
+| Publish a self-description | :white_check_mark: | :white_check_mark: |
+| View user country, interests, shares, speed, slots, and queue statistics | :white_check_mark: | :white_check_mark: |
+| Resolve and display a user's IP address | :white_check_mark: | :white_check_mark: |
+| Ignore users by username | :white_check_mark: | :white_check_mark: |
+| Ignore users by IP address | :white_check_mark: | :white_check_mark: |
+| Ban users by username | :white_check_mark: | :white_check_mark: |
+| Ban users by IP address | :white_check_mark: | :white_check_mark: |
+| Ban users by country | :white_check_mark: | :white_check_mark: |
+| Custom ban and country-block messages | :white_check_mark: | :white_check_mark: |
+| CTCP/client-information requests | :white_check_mark: | :white_check_mark: |
+| Keyword and mention detection | :white_check_mark: | :white_check_mark: |
+| Chat tab completion | :white_check_mark: | :white_check_mark: |
 | Chat spelling checks | :x: | :white_check_mark: |
-| Outgoing text substitutions | :x: | :white_check_mark: |
-| Incoming text censorship patterns | :x: | :white_check_mark: |
-| `/me` actions and extensible chat commands | :x: | :white_check_mark: |
+| Outgoing text substitutions | :white_check_mark: | :white_check_mark: |
+| Incoming text censorship patterns | :white_check_mark: | :white_check_mark: |
+| `/me` actions and extensible chat commands | :white_check_mark: | :white_check_mark: |
 
-### Extensibility, persistence, and operation (8/17 - 47%)
+### Extensibility, persistence, and operation (12/17 - 71%)
 
 | Feature | oto | Nicotine+ |
 | --- | --- | --- |
 | Run the Soulseek client headlessly | :white_check_mark: | :white_check_mark: |
-| Interactive command console in headless mode | :x: | :white_check_mark: |
+| Interactive command console in headless mode | :white_check_mark: | :white_check_mark: |
 | Scriptable transfer and rescan commands through a daemon socket | :white_check_mark: | :x: |
 | Run the network session as a standalone background service | :white_check_mark: | :x: |
 | Detach and later attach a frontend to the same live session | :white_check_mark: | :x: |
@@ -363,10 +363,10 @@ oto focuses on file sharing and a detachable terminal UI. [Nicotine+](https://ni
 | Plugin system | :x: | :white_check_mark: |
 | Install, enable, disable, reload, and configure plugins | :x: | :white_check_mark: |
 | Plugin hooks for chat, search, users, and transfers | :x: | :white_check_mark: |
-| Extensible chat and headless commands | :x: | :white_check_mark: |
+| Extensible chat and headless commands | :white_check_mark: | :white_check_mark: |
 | Built-in spam, anti-shout, leech-detection, and automation plugins | :x: | :white_check_mark: |
-| Persistent chat-room logs | :x: | :white_check_mark: |
-| Persistent private-chat logs | :x: | :white_check_mark: |
+| Persistent chat-room logs | :white_check_mark: | :white_check_mark: |
+| Persistent private-chat logs | :white_check_mark: | :white_check_mark: |
 | Persistent transfer logs | :white_check_mark: | :white_check_mark: |
 | Configurable diagnostic/debug logs | :white_check_mark: | :white_check_mark: |
 | Current-session and lifetime transfer statistics | :white_check_mark: | :white_check_mark: |
