@@ -56,6 +56,8 @@ func run(args []string) error {
 			return transferControlCommand("resume", args[1:])
 		case "rescan":
 			return rescanCommand(args[1:])
+		case "command":
+			return socialCommand(args[1:])
 		case "help", "--help", "-h":
 			usage()
 			return nil
@@ -73,6 +75,7 @@ func run(args []string) error {
 
 func usage() {
 	fmt.Printf("oto — Soulseek search, browse, shares, and transfers\n\nUsage:\n  oto [--config PATH]\n  oto daemon [--config PATH] [--share-rescan-delay DURATION] [--listen-port-file PATH] [--listen-port-reconcile-interval DURATION]\n  oto status [--json]\n  oto transfers [--json]\n  oto pause DOWNLOAD_ID\n  oto resume DOWNLOAD_ID\n  oto rescan [--cancel]\n\nSource: %s\nLicense: AGPL-3.0-only; no warranty.\n", sourceURL)
+	fmt.Println("Community: oto command [FLAGS] NAME [ARGS] (help, privileges, gift); flags precede NAME")
 }
 
 func configFlag(fs *flag.FlagSet) *string {

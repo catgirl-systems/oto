@@ -36,6 +36,9 @@ func (m *model) key(k tea.KeyPressMsg) tea.Cmd {
 	if m.searchScope != nil {
 		return m.searchScopeKey(k)
 	}
+	if m.privileges != nil && !m.confirm {
+		return m.privilegesKey(k)
+	}
 	if m.privacyRules != nil && !m.confirm {
 		return m.privacyRulesKey(k)
 	}
@@ -292,6 +295,8 @@ func (m *model) key(k tea.KeyPressMsg) tea.Cmd {
 				m.openPasswordForm()
 			case settingPrivacyRules:
 				return m.openPrivacyRules("", "")
+			case settingAccountPrivileges:
+				return m.openPrivileges("")
 			case settingClearSearchHistory:
 				m.clearHistory(false)
 			case settingClearFilterHistory:

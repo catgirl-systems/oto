@@ -12,7 +12,7 @@ import (
 
 // Capabilities are additive and advertise only wired backend functionality.
 func communityCapabilities() []string {
-	return []string{"users", "watches", "private-chat", "public-rooms", "private-rooms", "buddies", "interests", "self-profile", "discovery", "profiles", "privacy-rules", "share-access"}
+	return []string{"users", "watches", "private-chat", "public-rooms", "private-rooms", "buddies", "interests", "self-profile", "discovery", "profiles", "privacy-rules", "share-access", "account-privileges"}
 }
 
 type CommunitySummary struct {

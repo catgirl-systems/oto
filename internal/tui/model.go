@@ -243,6 +243,7 @@ type model struct {
 	userActions                            *userActions
 	privacyRules                           *privacyRulesEditor
 	privacyRulesRequest                    uint64
+	privileges                             *privilegeEditor
 	shareAccess                            *shareAccessEditor
 	shareAccessRequest                     uint64
 	settingsSection                        settingsSection

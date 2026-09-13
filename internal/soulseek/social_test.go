@@ -313,13 +313,13 @@ func TestCommunityAddressCancellationAndClose(t *testing.T) {
 }
 
 func FuzzCommunityUserDecode(f *testing.F) {
-	for _, name := range []string{"watch-online", "watch-missing", "status-away", "user-stats", "peer-address", "privileged-users", "supporter-connection", "supporter-expired"} {
+	for _, name := range []string{"watch-online", "watch-missing", "status-away", "user-stats", "peer-address", "privileged-users", "supporter-connection", "supporter-expired", "privilege-balance", "privilege-balance-empty"} {
 		fixture := communityFixture(f, name)
 		f.Add(fixture.Code, fixture.Payload(f))
 	}
 	f.Fuzz(func(t *testing.T, code uint32, payload []byte) {
 		switch code {
-		case ServerWatchUser, ServerUserStatus, ServerUserStats, ServerGetPeerAddress, ServerPrivilegedUsers, ServerConnectToPeer:
+		case ServerWatchUser, ServerUserStatus, ServerUserStats, ServerGetPeerAddress, ServerPrivilegedUsers, ServerConnectToPeer, ServerCheckPrivileges:
 			_, _ = DecodeServerMessage(code, payload)
 		}
 	})

@@ -805,6 +805,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.readCommunityChat()
 	case communitySummaryMsg:
 		return m, m.applyCommunitySummary(x)
+	case privilegeMsg:
+		m.applyPrivilegeMsg(x)
+		return m, nil
 	case privacyRulesPageMsg:
 		return m, m.applyPrivacyRulesPage(x)
 	case shareAccessMsg:
@@ -1243,6 +1246,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case tea.PasteMsg:
 		if m.shareAccess != nil {
+			return m, nil
+		}
+		if m.privileges != nil {
+			m.pastePrivileges(x.Content)
 			return m, nil
 		}
 		if m.privacyRules != nil {
