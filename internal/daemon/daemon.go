@@ -112,12 +112,14 @@ type SearchResult struct {
 	Public      bool   `json:"public"`
 }
 type Search struct {
+	SearchContext
 	Usernames []string `json:"usernames,omitempty"`
 	ID        string
 	Query     string
 	Results   []SearchResult
 }
 type SearchPage struct {
+	SearchContext
 	Usernames  []string       `json:"usernames,omitempty"`
 	ID         string         `json:"id"`
 	Query      string         `json:"query"`
@@ -240,6 +242,8 @@ type Service struct {
 	transferTiming         map[string]transferTiming
 	downloadSlots          chan struct{}
 	downloadCancels        map[string]context.CancelFunc
+	receivedOffers         map[string]*soulseek.DownloadOffer
+	receivedAddresses      map[string]netip.Addr
 	downloadDone           map[string]chan struct{}
 	downloadPeers          map[string]chan struct{}
 	ctx                    context.Context
@@ -467,6 +471,8 @@ func (s *Service) Start(ctx context.Context) error {
 	go s.wishlistLoop(s.runCtx)
 	s.wg.Add(1)
 	go s.telemetryLoop(s.runCtx)
+	s.wg.Add(1)
+	go s.awayLoop(s.runCtx)
 	s.mu.Unlock()
 	if connect {
 		return s.setPresenceLocked(PresenceOnline)
@@ -486,6 +492,10 @@ func (s *Service) SetPresence(presence Presence) error {
 	if closed {
 		return ErrClosed
 	}
+	s.mu.Lock()
+	s.community.away.automatic = false
+	s.noteCommunityActivityLocked(time.Now())
+	s.mu.Unlock()
 	if presence == PresenceOffline {
 		s.stopSessionLocked(true)
 		return nil
@@ -543,6 +553,9 @@ func (s *Service) setPresenceLocked(presence Presence) error {
 	if s.presence == presence && s.client != nil {
 		s.mu.Unlock()
 		return nil
+	}
+	if presence != s.presence || presence != PresenceAway {
+		s.community.away.replies = nil
 	}
 	s.presence = presence
 	client, active := s.client, s.cancel != nil
@@ -726,6 +739,7 @@ func (s *Service) connectOnce(ctx context.Context) error {
 		DownloadLimitBytesPerSecond: downloadLimit(cfg),
 		BrowseLimits:                browseLimits(cfg),
 		UploadAccepted:              func(event soulseek.TransferEvent) error { return s.uploadAccepted(epoch, event) },
+		DownloadOffered:             func(offer *soulseek.DownloadOffer) error { return s.queueReceivedOffer(identity, epoch, offer) },
 		UploadRejected:              func(event soulseek.TransferEvent) { s.uploadRejected(epoch, event) },
 		UploadUpdate:                func(event soulseek.TransferEvent) { s.uploadUpdate(epoch, event) },
 		UploadStreamStart:           func(event soulseek.TransferEvent) { s.uploadStreamStart(epoch, event) },
@@ -1024,31 +1038,7 @@ func (s *Service) Close() error {
 }
 
 func (s *Service) Search(ctx context.Context, query, expression string, users ...string) (SearchPage, error) {
-	targets, targetErr := soulseek.NormalizeSearchUsers(users)
-	if targetErr != nil {
-		return SearchPage{}, targetErr
-	}
-	filter, err := parseSearchFilter(expression)
-	if err != nil {
-		return SearchPage{}, err
-	}
-	s.mu.RLock()
-	c := s.client
-	s.mu.RUnlock()
-	if c == nil {
-		return SearchPage{}, ErrNotStarted
-	}
-	r, err := c.Search(ctx, query, targets...)
-	if err != nil {
-		return SearchPage{}, err
-	}
-	out := fromSoulseekResults(r)
-	sortSearchResults(out)
-	search := Search{Usernames: targets, ID: fmt.Sprintf("%d", time.Now().UnixNano()), Query: query, Results: out}
-	s.mu.Lock()
-	s.searches[search.ID] = search
-	s.mu.Unlock()
-	return filteredSearchPage(search, filter, 0), nil
+	return s.SearchScoped(ctx, ScopedSearchRequest{Query: query, Filter: expression, Usernames: users})
 }
 
 func sortSearchResults(results []SearchResult) {
@@ -1078,7 +1068,9 @@ func filteredSearchPage(search Search, filter searchFilter, cursor int) SearchPa
 	}
 	cursor = max(0, min(cursor, len(results)))
 	end := min(cursor+searchPageSize, len(results))
-	page := SearchPage{Usernames: slices.Clone(search.Usernames), ID: search.ID, Query: search.Query, Results: append([]SearchResult(nil), results[cursor:end]...), Cursor: cursor, Total: len(results), FoundTotal: len(search.Results)}
+	page := SearchPage{SearchContext: search.SearchContext, Usernames: slices.Clone(search.Usernames[:min(len(search.Usernames), 200)]), ID: search.ID, Query: search.Query, Results: append([]SearchResult(nil), results[cursor:end]...), Cursor: cursor, Total: len(results), FoundTotal: len(search.Results)}
+	page.Rooms = slices.Clone(search.Rooms[:min(len(search.Rooms), 200)])
+	page.TargetsTruncated = len(search.Usernames) > 200 || len(search.Rooms) > 200
 	if end < len(results) {
 		page.NextCursor = end
 	}
@@ -1264,6 +1256,10 @@ func (s *Service) QueueDownloads(reqs []DownloadRequest) ([]Download, error) {
 
 // A browse selection is checked under the same lock as durable admission.
 func (s *Service) queueDownloads(ctx context.Context, reqs []DownloadRequest, source *loadedBrowse) ([]Download, error) {
+	return s.queueDownloadsWithOffer(ctx, reqs, source, nil)
+}
+
+func (s *Service) queueDownloadsWithOffer(ctx context.Context, reqs []DownloadRequest, source *loadedBrowse, received *receivedOffer) ([]Download, error) {
 	s.mu.Lock()
 	if err := ctx.Err(); err != nil {
 		s.mu.Unlock()
@@ -1279,6 +1275,14 @@ func (s *Service) queueDownloads(ctx context.Context, reqs []DownloadRequest, so
 	if s.closed {
 		s.mu.Unlock()
 		return nil, ErrClosed
+	}
+	if received != nil {
+		var err error
+		reqs, err = s.prepareReceivedRequestLocked(ctx, received)
+		if err != nil {
+			s.mu.Unlock()
+			return nil, err
+		}
 	}
 	matcher, err := downloadMatcher(s.cfg)
 	if err != nil {
@@ -1331,6 +1335,10 @@ func (s *Service) queueDownloads(ctx context.Context, reqs []DownloadRequest, so
 				state, reason = "filtered", "Matched download filter"
 			}
 			out = append(out, Download{ID: fmt.Sprintf("d-%d", sequence), Username: req.Username, Filename: strings.ReplaceAll(name, "/", "\\"), Size: item.Size, Offset: item.Offset, DownloadDir: root, Destination: dest, State: state, Error: reason, CreatedAt: now, UpdatedAt: now})
+			if received != nil {
+				out[len(out)-1].ID = fmt.Sprintf("d-received-%d", sequence)
+				out[len(out)-1].StatsAccount = received.identity.Account
+			}
 		}
 	}
 	previous := s.journal
@@ -1367,6 +1375,16 @@ func (s *Service) queueDownloads(ctx context.Context, reqs []DownloadRequest, so
 	}
 	for _, d := range out {
 		s.transfers[d.ID] = Transfer{ID: d.ID, Username: d.Username, Filename: d.Filename, Direction: "download", State: d.State, Done: d.Offset, Total: d.Size, Error: d.Error}
+		if received != nil && d.State != "filtered" {
+			if s.receivedOffers == nil {
+				s.receivedOffers = make(map[string]*soulseek.DownloadOffer)
+			}
+			s.receivedOffers[d.ID] = received.offer
+			if s.receivedAddresses == nil {
+				s.receivedAddresses = make(map[string]netip.Addr)
+			}
+			s.receivedAddresses[d.ID] = received.offer.Address()
+		}
 	}
 	s.mu.Unlock()
 	for _, d := range out {
@@ -1669,6 +1687,11 @@ func (s *Service) UpdateConfig(c config.Config) (updateErr error) {
 		s.mu.Unlock()
 		return ErrClosed
 	}
+	// Account-scoped settings use their revision/consent-aware endpoints, not
+	// the bulk settings snapshot (which may omit or contain stale copies).
+	c.Receiving = s.cfg.Receiving
+	c.CommunityAway = s.cfg.CommunityAway
+	c.CommunityText = s.cfg.CommunityText
 	// A stale settings form must not silently reopen a restricted root.
 	currentShares := make(map[string]config.Share, len(s.cfg.Shares))
 	for _, root := range s.cfg.Shares {

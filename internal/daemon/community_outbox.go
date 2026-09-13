@@ -36,19 +36,41 @@ func validateCommunityRequestID(id string) error {
 	return nil
 }
 
+func communityPrivateFingerprint(username, text string, prepared bool) [32]byte {
+	prefix := ""
+	if prepared && text != communityCTCPVersionRequest {
+		prefix = "prepared-message\x00"
+	}
+	return sha256.Sum256([]byte(prefix + username + "\x00" + text))
+}
+
 func (s *Service) SendCommunityPrivate(ctx context.Context, req CommunitySendRequest) (CommunitySendResult, error) {
+	return s.sendCommunityPrivate(ctx, req, false)
+}
+
+func (s *Service) RequestCommunityVersion(ctx context.Context, req CommunitySendRequest) (CommunitySendResult, error) {
+	req.Text = communityCTCPVersionRequest
+	return s.sendCommunityPrivate(ctx, req, true)
+}
+
+func (s *Service) sendCommunityPrivate(ctx context.Context, req CommunitySendRequest, prepared bool) (CommunitySendResult, error) {
 	if err := validateCommunityRequestID(req.RequestID); err != nil {
 		return CommunitySendResult{}, err
 	}
 	if err := soulseek.ValidateUsername(req.Username); err != nil {
 		return CommunitySendResult{}, err
 	}
-	text, err := communityOutgoingText(req.Text)
+	text, err := req.Text, error(nil)
+	// Prepared bodies were transformed at preview. Only the fixed CTCP query
+	// may bypass ordinary text validation; no public caller controls this flag.
+	if !prepared || req.Text != communityCTCPVersionRequest {
+		text, err = communityOutgoingText(req.Text)
+	}
 	if err != nil {
 		return CommunitySendResult{}, err
 	}
 	req.Text = text
-	fingerprint := sha256.Sum256([]byte(req.Username + "\x00" + req.Text))
+	fingerprint := communityPrivateFingerprint(req.Username, req.Text, prepared)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if err := s.checkCommunityIdentityLocked(ctx, req.CommunityIdentity); err != nil {
@@ -77,13 +99,22 @@ func (s *Service) SendCommunityPrivate(ctx context.Context, req CommunitySendReq
 		if !errors.Is(err, sql.ErrNoRows) {
 			return err
 		}
+		text := req.Text
+		if !prepared {
+			text, err = s.community.text.outgoing(req.Text)
+		} else {
+			err = nil
+		}
+		if err != nil {
+			return err
+		}
 		conversation, err := q.EnsureCommunityConversation(ctx, db.EnsureCommunityConversationParams{Account: req.Account, Kind: "private", Target: req.Username})
 		if err != nil {
 			return err
 		}
 		now := time.Now().UTC().UnixMilli()
 		message, err := q.InsertCommunityMessage(ctx, db.InsertCommunityMessageParams{Account: req.Account, ConversationID: conversation.ID,
-			Sender: s.cfg.Soulseek.Username, Direction: "outgoing", Body: req.Text, State: "queued", CreatedAt: now})
+			Sender: s.cfg.Soulseek.Username, Direction: "outgoing", Body: text, State: "queued", CreatedAt: now})
 		if err != nil {
 			return err
 		}

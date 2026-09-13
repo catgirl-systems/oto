@@ -208,6 +208,10 @@ func (s *Service) SendCommunityRoom(ctx context.Context, req CommunityRoomSendRe
 		s.mu.Unlock()
 		return out, errors.New("community: room send requires confirmed membership")
 	}
+	if req.Text, err = s.community.text.outgoing(req.Text); err != nil {
+		s.mu.Unlock()
+		return out, err
+	}
 	intent := r.intent
 	out.ConversationID = r.conversationID
 	s.mu.Unlock()

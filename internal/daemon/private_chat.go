@@ -63,6 +63,11 @@ func (s *Service) receiveCommunityPrivate(ctx context.Context, identity Communit
 	} else if held {
 		disposition, state = "held", "held"
 	}
+	body, mentioned := s.community.text.incoming(message.Text, s.cfg.Soulseek.Username)
+	mention := int64(0)
+	if mentioned {
+		mention = 1
+	}
 	err := s.stateDB.WriteTx(ctx, func(tx *sql.Tx) error {
 		q := db.New(tx)
 		n, err := q.InsertCommunityReceipt(ctx, db.InsertCommunityReceiptParams{
@@ -96,7 +101,7 @@ func (s *Service) receiveCommunityPrivate(ctx context.Context, identity Communit
 		serverTime := int64(message.Timestamp)
 		if _, err = q.InsertCommunityMessage(ctx, db.InsertCommunityMessageParams{
 			Account: identity.Account, ConversationID: conversation.ID, Sender: message.Username,
-			Direction: "incoming", Body: communityDisplayText(message.Text), CreatedAt: now,
+			Direction: "incoming", Body: body, Mention: mention, CreatedAt: now,
 			ServerTime: &serverTime, State: state,
 		}); err != nil {
 			return err
@@ -111,6 +116,8 @@ func (s *Service) receiveCommunityPrivate(ctx context.Context, identity Communit
 	if err == nil && inserted && !held {
 		s.watchConversationLocked(message.Username, true)
 		s.communityRoomNoticeLocked(message)
+		s.queueCTCPReplyLocked(identity, message)
+		s.queueAwayReplyLocked(identity, message)
 	}
 	return err // Only the client may ACK, after this transaction has committed.
 }

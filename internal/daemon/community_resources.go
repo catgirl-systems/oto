@@ -12,7 +12,7 @@ import (
 
 // Capabilities are additive and advertise only wired backend functionality.
 func communityCapabilities() []string {
-	return []string{"users", "watches", "private-chat", "public-rooms", "private-rooms", "buddies", "interests", "self-profile", "discovery", "profiles", "privacy-rules", "share-access", "account-privileges"}
+	return []string{"users", "watches", "private-chat", "public-rooms", "private-rooms", "buddies", "interests", "self-profile", "discovery", "profiles", "privacy-rules", "share-access", "account-privileges", "commands", "text-tools", "activity", "broadcasts", "shared-send", "receiving"}
 }
 
 type CommunitySummary struct {
@@ -22,6 +22,8 @@ type CommunitySummary struct {
 	Unread            int64                `json:"unread"`
 	Mentions          int64                `json:"mentions"`
 	Capabilities      []string             `json:"capabilities"`
+	AutomaticAway     bool                 `json:"automatic_away"`
+	LastActivity      time.Time            `json:"last_activity"`
 	BuddyNotification DownloadNotification `json:"buddy_notification"`
 }
 
@@ -39,6 +41,8 @@ func (s *Service) CommunitySummary(ctx context.Context) (CommunitySummary, error
 	}
 	s.desiredUserWatchesLocked(time.Now())
 	out := CommunitySummary{CommunityIdentity: s.community.identity, Connected: s.community.online, Revision: s.community.revision, Capabilities: communityCapabilities()}
+	out.AutomaticAway = s.community.away.automatic
+	out.LastActivity = s.community.away.lastActivity
 	out.BuddyNotification = s.community.buddyNotification
 	err := s.stateDB.ReadSnapshot(ctx, func(tx *storage.ReadTx) error {
 		account, err := tx.Queries().GetCommunityAccount(ctx, out.Account)
