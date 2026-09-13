@@ -692,7 +692,7 @@ func (m model) buddyDetailPane(width, height int) []string {
 	if country != "unknown" && (!live || !buddy.StatusFresh) {
 		country += " (stale)"
 	}
-	lines := []string{"Buddy: " + buddy.Username, "Status: " + buddyStatus(*buddy, live), "Country: " + country, "Last seen (observed offline): " + seen, fmt.Sprintf("Notify online: %t", buddy.NotifyOnline), fmt.Sprintf("Priority preference: %t", buddy.Priority), fmt.Sprintf("Trusted preference: %t", buddy.Trusted), "Priority/trust serving effects are not active yet.", "Note:", strings.ReplaceAll(buddy.Note, "\t", "    "), b.err}
+	lines := []string{"Buddy: " + buddy.Username, "Status: " + buddyStatus(*buddy, live), "Country: " + country, "Last seen (observed offline): " + seen, fmt.Sprintf("Notify online: %t", buddy.NotifyOnline), fmt.Sprintf("Priority preference: %t", buddy.Priority), fmt.Sprintf("Trusted preference: %t", buddy.Trusted), "Priority: preferred upload class; running files continue.", "Trust: trusted roots (not self); bans still apply.", "Note:", strings.ReplaceAll(buddy.Note, "\t", "    "), b.err}
 	lines = communityPane(lines, width, max(0, height-1), b.scroll)
 	if height > 0 {
 		lines = append(lines, ansi.Truncate("↑↓ scroll · e edit · D remove · U actions", max(0, width), "…"))

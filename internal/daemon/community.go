@@ -58,6 +58,7 @@ type communityState struct {
 	revision                                           uint64
 	nextWatch                                          uint64
 	users                                              map[string]CommunityUser
+	privileged                                         map[string]time.Time
 	watches                                            map[string]userWatchLease
 	wake                                               chan struct{}
 	rooms                                              map[string]*communityRoomState
@@ -179,6 +180,8 @@ func (s *Service) communityCurrentLocked(identity CommunityIdentity) bool {
 func (s *Service) retireCommunityLocked() {
 	s.community.online = false
 	clear(s.community.ignoreAddresses)
+	clear(s.community.privileged)
+	s.applyUploadUserPoliciesLocked()
 	s.retireCommunityRoomsLocked()
 	s.retireDiscoveryLocked()
 	s.retireProfilesLocked()
@@ -206,6 +209,9 @@ func (s *Service) communityUpdate(ctx context.Context, identity CommunityIdentit
 		return ErrCommunitySession
 	}
 	switch message.(type) {
+	case soulseek.PrivilegedUsers, soulseek.ConnectPeerInstruction:
+		_, err := s.updateUploadPrivilegesLocked(message)
+		return err
 	case soulseek.RoomDirectory, soulseek.RoomJoined, soulseek.RoomLeft, soulseek.RoomUserJoined, soulseek.RoomUserLeft, soulseek.RoomMessage:
 		return s.updateCommunityRoomLocked(ctx, message)
 	case soulseek.RoomRoleList, soulseek.RoomRoleUpdate, soulseek.RoomInvitations, soulseek.RoomWallSnapshot, soulseek.RoomWallUpdate:
@@ -228,7 +234,8 @@ func (s *Service) communityUpdate(ctx context.Context, identity CommunityIdentit
 	}
 	user, wanted := s.community.users[username]
 	if !wanted {
-		return nil
+		_, err := s.updateUploadPrivilegesLocked(message)
+		return err
 	} // Late unwatch replies and unsolicited users aren't cached.
 	now := time.Now().UTC()
 	buddyOnline := false
@@ -272,6 +279,9 @@ func (s *Service) communityUpdate(ctx context.Context, identity CommunityIdentit
 		}
 	}
 	s.community.users[username] = user
+	if _, err := s.updateUploadPrivilegesLocked(message); err != nil {
+		return err
+	}
 	if buddyOnline {
 		s.notifyBuddyOnlineLocked(username)
 	}
@@ -351,6 +361,9 @@ func (s *Service) desiredUserWatchesLocked(now time.Time) map[string]uint64 {
 		if user.watchVersion == 0 {
 			s.community.nextWatch++
 			user.Username, user.watchVersion = username, s.community.nextWatch
+			if observed, ok := s.community.privileged[username]; ok {
+				user.Privileged, user.PrivilegeFresh, user.PrivilegeUpdatedAt = true, s.community.online, observed
+			}
 			s.community.revision++
 			s.community.users[username] = user
 		}

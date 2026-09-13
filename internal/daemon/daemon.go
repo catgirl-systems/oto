@@ -798,6 +798,7 @@ func (s *Service) connectOnce(ctx context.Context) error {
 	s.client, s.mapping = client, mapping
 	s.uploadRecoveryReady = uploadsReady
 	s.community.identity, s.community.online = identity, true
+	s.applyUploadUserPoliciesLocked()
 	s.beginCommunityRoomsLocked()
 	s.community.revision++
 	idx = s.shares
@@ -1683,10 +1684,14 @@ func (s *Service) UpdateConfig(c config.Config) (updateErr error) {
 	if !reconnect && slices.Equal(s.cfg.ShareExclusions, c.ShareExclusions) && s.cfg.AudioMetadata == c.AudioMetadata {
 		oldInterval := s.cfg.Search.WishlistIntervalMinutes
 		uploadsChanged := uploadPolicy(s.cfg) != uploadPolicy(c)
+		uploadUsersChanged := s.cfg.Uploads != c.Uploads
 		client := s.client
 		err := c.Save(s.configPath)
 		if err == nil {
 			s.cfg = c
+			if uploadUsersChanged {
+				s.applyUploadUserPoliciesLocked()
+			}
 			if !c.Uploads.AutoClearCancelled {
 				clear(s.uploadCancelEligible)
 			}
@@ -1742,6 +1747,7 @@ func (s *Service) UpdateConfig(c config.Config) (updateErr error) {
 			s.community = communityState{identity: CommunityIdentity{Daemon: s.community.identity.Daemon}}
 		}
 		s.cfg, s.shares = c, index
+		s.applyUploadUserPoliciesLocked()
 		if !c.Uploads.AutoClearCancelled {
 			clear(s.uploadCancelEligible)
 		}

@@ -177,7 +177,7 @@ func (c *Client) registerUploadWithAddress(username, filename string, peerRequeu
 		a.fingerprint = fingerprint
 		request := TransferRequest{Direction: 1, Token: randomToken(), Filename: wire, Size: size}
 		if restored {
-			a.job = c.cfg.Uploads.EnqueueRestored(username, request)
+			a.job, err = c.cfg.Uploads.TryEnqueueRestored(username, request)
 		} else {
 			a.job, err = c.cfg.Uploads.TryEnqueue(username, request)
 		}

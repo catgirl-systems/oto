@@ -77,7 +77,7 @@ exact test names and evidence as their sequential commits land.
 | S15 | Buddy notes | Edit/restart/frontends / 8 | `TestCommunityBuddiesEditorWorkflow`, `TestCommunityBuddiesConflictsPagingAndContext`, terminal two-editor conflict/reload/restart |
 | S16 | Buddy online-status notifications | Hydration suppression/transitions / 8 | `TestCommunityBuddiesNotificationsHydrationAndRestart`, `TestCommunityBuddiesNotificationAccountRoundtrip`, UI baseline/focus tests and terminal transitions |
 | S17 | Buddy last-seen timestamps | Remote offline vs local disconnect / 8 | Daemon hydration/restart test and terminal observed-offline/restart assertions; timestamps persist at millisecond precision |
-| S18 | Prioritized buddies | Flags and actual queue effect / 8,11 | Persistent editable flag verified in slice 8; actual queue effect pending step 11 |
+| S18 | Prioritized buddies | Flags and actual queue effect / 8,11 | Persistent buddy editor flags, `TestCommunityUploadPoliciesLiveFlagsAndPrivileges`, all-scheduler projection/selection tests |
 | S19 | Trusted buddies | Flags and actual share effect / 8,10 | Buddy editor tests, `TestCommunitySharePolicyMatrix`, real Nicotine+ trust grant/revocation |
 | S20 | Personal likes and dislikes | Normalize/persist/republish / 9 | `TestCommunityInterestsPersistenceVersionsAndAccountIsolation`, `TestCommunityInterestsWireSyncPagingAndRemoval`, terminal discovery workflow |
 | S21 | Interest-based recommendations | Global/item/partial responses / 9 | `TestCommunityDiscoveryCorrelationLateRepliesAndPaging`, reference wire fixtures and terminal discovery workflow (scripted server) |
@@ -109,9 +109,9 @@ exact test names and evidence as their sequential commits land.
 | N08 | Separate folder for files manually sent by other users | Containment/collision/filter/hooks / 17 | Pending |
 | N09 | Manually send a file to another user | Shared snapshot/preview/idempotency / 16 | Pending |
 | N10 | Manually send a folder to another user | Reference recipient/accept/reject / 16 | Pending |
-| N11 | Prioritize buddies in the upload queue | One preferred class/all scheduling modes / 11 | Pending |
-| N12 | Prioritize Soulseek privileged users | Privilege changes/one active per user / 11 | Pending |
-| N13 | Exempt buddies from upload queue limits | Opt-in/accounting/overflow/recovery / 11 | Pending |
+| N11 | Prioritize buddies in the upload queue | One preferred class/all scheduling modes / 11 | `TestUploadPreferredClassAndProjectedPositions`, live daemon flag changes and terminal preference persistence |
+| N12 | Prioritize Soulseek privileged users | Privilege changes/one active per user / 11 | Independent roster/status/connection fixtures, callback-before-routing, exact/session-scoped privilege tests and all-scheduler preferred class |
+| N13 | Exempt buddies from upload queue limits | Opt-in/accounting/overflow/recovery / 11 | `TestUploadUserPolicyChangesAndLimitExemption`, live buddy removal, failed settings saves and terminal restart |
 | N14 | Message all users currently downloading | Active-upload audience preview / 15 | Pending |
 | N15 | Buddy-only shares | Cumulative serving matrix / 10 | Policy matrix, Shares access editor, real Nicotine+ buddy grant/removal |
 | N16 | Trusted-buddy-only shares | Cumulative serving matrix / 10 | Policy matrix and real Nicotine+ trusted grant/removal |
@@ -407,9 +407,31 @@ exact test names and evidence as their sequential commits land.
   regeneration is unchanged. Bounded independent re-review accepted four repaired
   lifecycle-fencing issues; this is not a whole-plan approval.
 
+## Slice 11 completed — upload queue policies
+
+- Explicitly prioritized buddies, optionally all buddies, and optionally server-confirmed
+  supporters share one preferred class. All four scheduling modes retain global and
+  per-user slots; preference changes do not preempt active transfers. Opt-in exemptions
+  bypass configured caps only, retaining byte/file accounting and overflow checks.
+- Server roster/status/connection updates are bounded, exact-user/session-owned and
+  applied before peer routing. Config saves persist before publication; stale privilege
+  authority retires with the session. Buddy detail explains active queue/share effects.
+- Queue-position replies project actual scheduling without consuming random draws.
+  One cancellation-bounded projection runs at a time, outside the scheduler lock after
+  snapshotting. Future positions assume active batches complete together; real completion
+  order, arrivals and policy changes can alter them. Two-slot recovery selection is tested.
+- Recovery restores the complete accepted queue before reserving slots, including reused
+  client lifecycles. Upload settings have tested narrow layouts and real terminal/IPC
+  persistence across daemon restart; no public-network privilege activity was performed.
+- Verified full race/vet suites, all Community terminal workflows, 20 targeted race
+  repetitions, ten new terminal workflow repetitions, 88 independent Nicotine+ fixtures,
+  five seconds of social-decoder fuzzing, unchanged sqlc 1.31.1 regeneration, tagged
+  terminal vet and CGO=0 linux amd64/arm64 builds. Independent review found and accepted
+  the repaired multi-slot projection issue; this is not whole-plan approval.
+
 ## Remaining commit sequence
 
-11 upload policies → 12 privileges
+12 privileges
 → 13 scoped search → 14 text/commands → 15 away/broadcasts → 16 manual sends
 → 17 consented receiving → 18 full verification → 19 verified README matrix.
 Each slice includes applicable tests before the next commit. Nothing is complete

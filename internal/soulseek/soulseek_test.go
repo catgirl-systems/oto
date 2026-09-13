@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math/rand/v2"
 	"net"
 	"os"
 	"path/filepath"
@@ -626,18 +627,24 @@ func TestUploadRoundRobinUsers(t *testing.T) {
 }
 
 func TestUploadRandomChoosesEligibleUser(t *testing.T) {
-	m := NewUploadManager(1)
-	m.Configure(UploadPolicy{Scheduling: UploadScheduleRandom})
-	m.chooseRandom = func(n int) int { return n - 1 }
-	blocker := m.Enqueue("blocker", TransferRequest{})
-	a := m.Enqueue("a", TransferRequest{Filename: "a"})
-	b1 := m.Enqueue("b", TransferRequest{Filename: "first"})
-	b2 := m.Enqueue("b", TransferRequest{Filename: "second"})
-	m.Done(blocker)
-	if !uploadReady(b1) || uploadReady(a) || uploadReady(b2) {
-		t.Fatalf("random scheduler did not choose the selected user's oldest file")
+	for seed := uint64(0); seed < 20; seed++ {
+		m := NewUploadManager(1)
+		m.Configure(UploadPolicy{Scheduling: UploadScheduleRandom})
+		blocker := m.Enqueue("blocker", TransferRequest{})
+		m.random = rand.NewPCG(seed, seed+1)
+		a := m.Enqueue("a", TransferRequest{Filename: "a"})
+		b1 := m.Enqueue("b", TransferRequest{Filename: "first"})
+		b2 := m.Enqueue("b", TransferRequest{Filename: "second"})
+		random := *m.random
+		selected := rand.New(&random).IntN(2) // Two users, not three files.
+		m.Done(blocker)
+		if uploadReady(a) != (selected == 0) || uploadReady(b1) != (selected == 1) || uploadReady(b2) {
+			t.Fatalf("seed %d: random scheduler did not choose the selected user's oldest file", seed)
+		}
+		m.Done(a)
+		m.Done(b1)
+		m.Done(b2)
 	}
-	m.Done(b1)
 }
 
 func TestUploadSmallestFirstAndArrivalTie(t *testing.T) {

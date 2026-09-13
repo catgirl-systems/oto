@@ -30,11 +30,14 @@ func communityFixture(t testing.TB, name string) testutil.WireFixture {
 func TestCommunityUserProtocol(t *testing.T) {
 	stats := UserStats{AverageSpeed: 1000, UploadCount: 12, Files: 99, Directories: 4}
 	responses := map[string]any{
-		"watch-online":  WatchUserResponse{Username: "Alice", Exists: true, Status: UserStatusOnline, Stats: stats, Country: "FR"},
-		"watch-missing": WatchUserResponse{Username: "alice"},
-		"status-away":   UserPresence{Username: "Alice", Status: UserStatusAway, Privileged: true},
-		"user-stats":    UserStatistics{Username: "Alice", Stats: stats},
-		"peer-address":  PeerAddress{Username: "Alice", IP: "127.0.0.1", Port: 2234},
+		"watch-online":         WatchUserResponse{Username: "Alice", Exists: true, Status: UserStatusOnline, Stats: stats, Country: "FR"},
+		"watch-missing":        WatchUserResponse{Username: "alice"},
+		"status-away":          UserPresence{Username: "Alice", Status: UserStatusAway, Privileged: true},
+		"user-stats":           UserStatistics{Username: "Alice", Stats: stats},
+		"peer-address":         PeerAddress{Username: "Alice", IP: "127.0.0.1", Port: 2234},
+		"privileged-users":     PrivilegedUsers{Users: []string{"Supporter", "Another"}},
+		"supporter-connection": ConnectPeerInstruction{Username: "Supporter", Kind: "P", IP: "127.0.0.1", Port: 2323, Token: 41, Privileged: true},
+		"supporter-expired":    UserPresence{Username: "Supporter", Status: UserStatusOnline},
 	}
 	for name, expected := range responses {
 		t.Run(name, func(t *testing.T) {
@@ -46,7 +49,7 @@ func TestCommunityUserProtocol(t *testing.T) {
 			}
 			for n := range len(payload) {
 				// Country and obfuscation are optional complete suffixes.
-				if name == "watch-online" && n == len(payload)-6 || name == "peer-address" && n == len(payload)-6 {
+				if name == "watch-online" && n == len(payload)-6 || name == "peer-address" && n == len(payload)-6 || name == "supporter-connection" && n == len(payload)-8 {
 					continue
 				}
 				if _, err := DecodeServerMessage(fixture.Code, payload[:n]); err == nil {
@@ -310,13 +313,13 @@ func TestCommunityAddressCancellationAndClose(t *testing.T) {
 }
 
 func FuzzCommunityUserDecode(f *testing.F) {
-	for _, name := range []string{"watch-online", "watch-missing", "status-away", "user-stats", "peer-address"} {
+	for _, name := range []string{"watch-online", "watch-missing", "status-away", "user-stats", "peer-address", "privileged-users", "supporter-connection", "supporter-expired"} {
 		fixture := communityFixture(f, name)
 		f.Add(fixture.Code, fixture.Payload(f))
 	}
 	f.Fuzz(func(t *testing.T, code uint32, payload []byte) {
 		switch code {
-		case ServerWatchUser, ServerUserStatus, ServerUserStats, ServerGetPeerAddress:
+		case ServerWatchUser, ServerUserStatus, ServerUserStats, ServerGetPeerAddress, ServerPrivilegedUsers, ServerConnectToPeer:
 			_, _ = DecodeServerMessage(code, payload)
 		}
 	})
