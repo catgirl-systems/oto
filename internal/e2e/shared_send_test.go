@@ -5,6 +5,7 @@ package e2e
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
@@ -12,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 
@@ -22,7 +24,27 @@ import (
 )
 
 func TestSharedFolderSendTerminalPartialOutcomes(t *testing.T) {
+	var wireMu sync.Mutex
+	var pmPayload []byte
+	for _, f := range testutil.SocialFixtures(t) {
+		if f.Name == "pm-online" {
+			pmPayload = f.Payload(t)
+		}
+	}
+	if pmPayload == nil {
+		t.Fatal("missing pm-online fixture")
+	}
+	pm, err := soulseek.DecodePrivateMessage(pmPayload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := strings.Repeat("payload", 1<<20)
+	serverConn := make(chan net.Conn, 1)
+	burstDone := make(chan struct{})
+	var acknowledged atomic.Int32
 	send := func(conn net.Conn, message soulseek.Message) error {
+		wireMu.Lock()
+		defer wireMu.Unlock()
 		data, err := soulseek.EncodeMessage(message)
 		if err != nil {
 			return err
@@ -32,7 +54,7 @@ func TestSharedFolderSendTerminalPartialOutcomes(t *testing.T) {
 	}
 	var offers atomic.Int32
 	received := make(chan []byte, 2)
-	peer := testutil.ListenScript(t, func(_ context.Context, conn net.Conn) error {
+	peer := testutil.ListenScript(t, func(ctx context.Context, conn net.Conn) error {
 		_, body, err := soulseek.ReadInitFrame(conn)
 		if errors.Is(err, io.EOF) {
 			return nil
@@ -88,9 +110,35 @@ func TestSharedFolderSendTerminalPartialOutcomes(t *testing.T) {
 			if _, err := conn.Write(offset[:]); err != nil {
 				return err
 			}
+			first := make([]byte, 1)
+			if _, err := io.ReadFull(conn, first); err != nil {
+				return err
+			}
+			var server net.Conn
+			select {
+			case server = <-serverConn:
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+			// Keep the large F stream active while the server dispatches a burst.
+			for i := uint32(0); i < 256; i++ {
+				body := append([]byte(nil), pmPayload...)
+				binary.LittleEndian.PutUint32(body, 10000+i)
+				wireMu.Lock()
+				err := testutil.WritePacket(server, 22, body)
+				wireMu.Unlock()
+				if err != nil {
+					return err
+				}
+			}
+			select {
+			case <-burstDone:
+			case <-ctx.Done():
+				return ctx.Err()
+			}
 			data, err := io.ReadAll(conn)
 			if err == nil {
-				received <- data
+				received <- append(first, data...)
 			}
 			return err
 		}
@@ -106,7 +154,12 @@ func TestSharedFolderSendTerminalPartialOutcomes(t *testing.T) {
 				return err
 			}
 			switch code {
+			case 23:
+				if len(body) == 4 && binary.LittleEndian.Uint32(body) >= 10000 && binary.LittleEndian.Uint32(body) < 10256 && acknowledged.Add(1) == 256 {
+					close(burstDone)
+				}
 			case soulseek.ServerLogin:
+				serverConn <- conn
 				if err := send(conn, soulseek.LoginResponse{Success: true, IP: 0x7f000001}); err != nil {
 					return err
 				}
@@ -135,7 +188,7 @@ func TestSharedFolderSendTerminalPartialOutcomes(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, name := range []string{"accept", "deny"} {
-		if err := os.WriteFile(filepath.Join(root, name), []byte("payload"), 0600); err != nil {
+		if err := os.WriteFile(filepath.Join(root, name), []byte(payload), 0600); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -189,7 +242,7 @@ func TestSharedFolderSendTerminalPartialOutcomes(t *testing.T) {
 	h.wait("received expected bytes", func() bool {
 		select {
 		case data := <-received:
-			if string(data) != "payload" {
+			if string(data) != payload {
 				t.Fatal("incorrect file bytes")
 			}
 			return true
@@ -201,5 +254,17 @@ func TestSharedFolderSendTerminalPartialOutcomes(t *testing.T) {
 	h.screen("shared-send", `[failed] "Music\\deny"`)
 	if offers.Load() != 2 {
 		t.Fatal("duplicate or missing offers", offers.Load())
+	}
+	conversation, err := h.client.OpenCommunityConversation(ctx, daemon.CommunityOpenConversationRequest{CommunityIdentity: summary.CommunityIdentity, Username: pm.Username})
+	if err != nil {
+		t.Fatal(err)
+	}
+	page, err := h.client.CommunityMessages(ctx, daemon.CommunityMessagesRequest{CommunityIdentity: summary.CommunityIdentity, ConversationID: conversation.ID, Limit: 200})
+	if err != nil || len(page.Messages) != 200 || page.NextCursor == 0 {
+		t.Fatal("burst history lost or unbounded", err, len(page.Messages))
+	}
+	older, err := h.client.CommunityMessages(ctx, daemon.CommunityMessagesRequest{CommunityIdentity: summary.CommunityIdentity, ConversationID: conversation.ID, Limit: 200, Cursor: page.NextCursor})
+	if err != nil || len(older.Messages) != 56 || older.NextCursor != 0 || acknowledged.Load() != 256 {
+		t.Fatal("burst history pagination or ACK mismatch", err, len(older.Messages))
 	}
 }
