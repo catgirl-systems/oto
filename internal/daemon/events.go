@@ -25,6 +25,9 @@ func (s *Service) consumeClientEvents(ctx context.Context, client *soulseek.Clie
 			if err == nil {
 				err = s.syncCommunityOutbox(ctx, client, identity)
 			}
+			if err == nil {
+				err = s.syncCommunityInterests(ctx, client, identity)
+			}
 			if err != nil {
 				if ctx.Err() == nil {
 					s.event(slog.LevelWarn, "community_sync_failed", err)

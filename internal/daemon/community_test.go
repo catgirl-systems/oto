@@ -136,16 +136,19 @@ func TestCommunityPresenceFreshnessAndEpoch(t *testing.T) {
 	if !s.community.users["Alice"].LastSeen.IsZero() {
 		t.Fatal("initial hydration invented last seen")
 	}
-	apply(soulseek.UserPresence{Username: "Alice", Status: soulseek.UserStatusOnline})
+	if u := s.community.users["Alice"]; u.PrivilegeFresh || !u.PrivilegeUpdatedAt.IsZero() {
+		t.Fatal("watch hydration invented privilege information")
+	}
+	apply(soulseek.UserPresence{Username: "Alice", Status: soulseek.UserStatusOnline, Privileged: true})
 	apply(soulseek.UserStatistics{Username: "Alice", Stats: soulseek.UserStats{Files: 99}})
 	apply(soulseek.PeerAddress{Username: "Alice", IP: "1.1.1.1", Port: 2234})
-	if u := s.community.users["Alice"]; !u.StatusFresh || !u.StatsFresh || !u.AddressFresh {
+	if u := s.community.users["Alice"]; !u.StatusFresh || !u.StatsFresh || !u.AddressFresh || !u.PrivilegeFresh || !u.Privileged || u.PrivilegeUpdatedAt.IsZero() {
 		t.Fatalf("freshness: %+v", u)
 	}
 	s.mu.Lock()
 	s.retireCommunityLocked()
 	s.mu.Unlock()
-	if u := s.community.users["Alice"]; u.StatusFresh || u.StatsFresh || u.AddressFresh || !u.LastSeen.IsZero() {
+	if u := s.community.users["Alice"]; u.StatusFresh || u.StatsFresh || u.AddressFresh || u.PrivilegeFresh || !u.Privileged || u.PrivilegeUpdatedAt.IsZero() || !u.LastSeen.IsZero() {
 		t.Fatalf("disconnect: %+v", u)
 	}
 	if err := s.communityUpdate(ctx, identity, soulseek.UserPresence{Username: "Alice", Status: soulseek.UserStatusOffline}); !errors.Is(err, ErrCommunitySession) {

@@ -235,11 +235,21 @@ func (s *Service) CommunityBuddies(ctx context.Context, req CommunityBuddiesRequ
 		names = append(names, name)
 	}
 	slices.SortFunc(names, func(a, b string) int { return compare(keys[a], a, keys[b], b) })
+	budget := 0
 	for _, name := range names[:min(int(limit), len(names))] {
-		out.Buddies = append(out.Buddies, s.communityBuddyLocked(name))
+		row := s.communityBuddyLocked(name)
+		encoded, _ := json.Marshal(row)
+		if budget+len(encoded)+1 > communityPageBytes {
+			if len(out.Buddies) == 0 {
+				return out, errors.New("community: buddy exceeds page budget")
+			}
+			break
+		}
+		budget += len(encoded) + 1
+		out.Buddies = append(out.Buddies, row)
 	}
-	if len(names) > int(limit) {
-		last := names[limit-1]
+	if len(names) > len(out.Buddies) {
+		last := names[len(out.Buddies)-1]
 		data, _ := json.Marshal(communityBuddyCursor{Sort: req.Sort, Query: query, Key: keys[last], Username: last})
 		out.NextCursor = base64.RawURLEncoding.EncodeToString(data)
 	}

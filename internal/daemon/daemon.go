@@ -231,6 +231,7 @@ type Service struct {
 	browseProgress         map[string]trackedBrowse
 	fullBrowse             fullBrowseFunc
 	fullBrowseDirectories  func(context.Context, *soulseek.Client, string, func(uint64, uint64)) ([]soulseek.ShareDirectory, error)
+	profileFetch           func(context.Context, *soulseek.Client, string) (soulseek.PeerProfile, error)
 	browseSeq              uint64
 	browseProgressSeq      uint64
 	transfers              map[string]Transfer
@@ -697,6 +698,7 @@ func (s *Service) connectOnce(ctx context.Context) error {
 	}
 	s.uploadAccounts[epoch] = accountKey(cfg)
 	identity := CommunityIdentity{Account: accountKey(cfg), Daemon: s.community.identity.Daemon, Session: epoch}
+	description := s.community.discovery.description
 	s.mu.Unlock()
 	uploadsReady := make(chan struct{})
 	defer close(uploadsReady)
@@ -720,6 +722,10 @@ func (s *Service) connectOnce(ctx context.Context) error {
 			return s.communityUpdate(ctx, identity, message)
 		},
 	})
+	if err := client.SetSelfDescription(description); err != nil {
+		_ = client.Close()
+		return err
+	}
 	if err := client.Connect(ctx); err != nil {
 		return err
 	}
@@ -771,6 +777,13 @@ func (s *Service) connectOnce(ctx context.Context) error {
 	client.ConfigureDownloadLimit(downloadLimit(s.cfg))
 	client.ConfigureIncomingSearch(incomingSearchPolicy(s.cfg))
 	client.ConfigureBrowseLimits(browseLimits(s.cfg))
+	if err := client.SetSelfDescription(s.community.discovery.description); err != nil {
+		s.mu.Unlock()
+		s.closePortMapping(mapping)
+		_ = client.Close()
+		return err
+	}
+	s.community.discovery.written = map[string]string{}
 	s.client, s.mapping = client, mapping
 	s.community.identity, s.community.online = identity, true
 	s.beginCommunityRoomsLocked()
@@ -1674,6 +1687,7 @@ func (s *Service) UpdateConfig(c config.Config) (updateErr error) {
 		s.mu.Lock()
 		if accountKey(s.cfg) != accountKey(c) {
 			// Invalidate at publication, even offline and without a summary poll.
+			s.retireProfilesLocked()
 			// The next load restores durable preferences with a new generation.
 			s.community = communityState{identity: CommunityIdentity{Daemon: s.community.identity.Daemon}}
 		}

@@ -24,7 +24,9 @@ from pynicotine import slskmessages as messages  # noqa: E402
 
 def plain(value):
     """Make the reference's slotted roster entries comparable with frozen JSON."""
-    if isinstance(value, messages.UserData):
+    if isinstance(value, (bytes, bytearray, memoryview)):
+        return {"hex": bytes(value).hex()}
+    if isinstance(value, (messages.UserData, messages.SimilarUser)):
         return {key: getattr(value, key) for key in value.__slots__}
     if isinstance(value, (list, tuple)):
         return [plain(item) for item in value]
@@ -41,7 +43,9 @@ for fixture in corpus["fixtures"]:
     assert codes[cls] == fixture["code"], name
     payload = bytes.fromhex(fixture["payload_hex"])
     if direction in ("client", "peer"):
-        actual = cls(**fixture.get("arguments", {})).make_network_message()
+        arguments = {key: bytes.fromhex(value["hex"]) if isinstance(value, dict) and set(value) == {"hex"} else value
+                     for key, value in fixture.get("arguments", {}).items()}
+        actual = cls(**arguments).make_network_message()
         assert actual == payload, f"{name}: reference encoder differs"
     if direction in ("server", "peer"):
         message = cls(msg_content=memoryview(payload))

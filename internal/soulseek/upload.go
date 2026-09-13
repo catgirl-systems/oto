@@ -38,6 +38,7 @@ type uploadAttempt struct {
 	fingerprint    string
 	job            *UploadJob
 	ctx            context.Context
+	root           context.Context
 	cancel         context.CancelFunc
 	done           chan struct{}
 	mu             sync.Mutex
@@ -95,11 +96,14 @@ func (c *Client) registerUpload(username, filename string, peerRequeue bool) (*u
 }
 
 func (c *Client) registerUploadWithOptions(username, filename string, peerRequeue, restored bool, expectedFingerprint string) (*uploadAttempt, bool, error) {
+	c.mu.Lock()
+	root := c.uploadRoot
+	c.mu.Unlock()
 	if !restored && c.cfg.UploadsReady != nil {
 		select {
 		case <-c.cfg.UploadsReady:
-		case <-c.uploadRoot.Done():
-			return nil, false, c.uploadRoot.Err()
+		case <-root.Done():
+			return nil, false, root.Err()
 		}
 	}
 	c.uploadAdmissionMu.Lock()
@@ -121,7 +125,7 @@ func (c *Client) registerUploadWithOptions(username, filename string, peerRequeu
 		}
 		key := downloadKey(username, wire)
 		c.mu.Lock()
-		if c.closing {
+		if c.closing || c.uploadRoot != root {
 			c.mu.Unlock()
 			return nil, false, errors.New("soulseek: client closed")
 		}
@@ -145,8 +149,8 @@ func (c *Client) registerUploadWithOptions(username, filename string, peerRequeu
 			continue
 		}
 		c.uploadSeq++
-		ctx, cancel := context.WithCancel(c.uploadRoot)
-		a := &uploadAttempt{target: UploadTarget{Username: username, Filename: wire, Attempt: c.uploadSeq}, key: key, localPath: localPath, ctx: ctx, cancel: cancel, done: make(chan struct{}), state: "queued"}
+		ctx, cancel := context.WithCancel(root)
+		a := &uploadAttempt{target: UploadTarget{Username: username, Filename: wire, Attempt: c.uploadSeq}, key: key, localPath: localPath, root: root, ctx: ctx, cancel: cancel, done: make(chan struct{}), state: "queued"}
 		a.fingerprint = fingerprint
 		request := TransferRequest{Direction: 1, Token: randomToken(), Filename: wire, Size: size}
 		if restored {
@@ -416,7 +420,7 @@ func (w uploadProgressWriter) Write(p []byte) (int, error) {
 }
 
 func (c *Client) notifyUpload(a *uploadAttempt, message Message) {
-	ctx, cancel := context.WithTimeout(c.uploadRoot, 2*time.Second)
+	ctx, cancel := context.WithTimeout(a.root, 2*time.Second)
 	defer cancel()
 	peer, err := c.connectUser(ctx, a.target.Username)
 	if err != nil {

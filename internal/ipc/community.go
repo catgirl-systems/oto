@@ -20,6 +20,16 @@ func (s *Server) registerCommunity(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/community/buddies", s.communityBuddies)
 	mux.HandleFunc("PUT /v1/community/buddies", s.communityBuddySet)
 	mux.HandleFunc("DELETE /v1/community/buddies", s.communityBuddySet)
+	mux.HandleFunc("GET /v1/community/interests", s.communityInterests)
+	mux.HandleFunc("PUT /v1/community/interests", s.communityInterestSet)
+	mux.HandleFunc("DELETE /v1/community/interests", s.communityInterestSet)
+	mux.HandleFunc("GET /v1/community/profile/self", s.communitySelfProfile)
+	mux.HandleFunc("PUT /v1/community/profile/self", s.communitySelfProfileSet)
+	mux.HandleFunc("GET /v1/community/discovery", s.communityDiscovery)
+	mux.HandleFunc("POST /v1/community/discovery", s.communityDiscovery)
+	mux.HandleFunc("GET /v1/community/profile", s.communityProfile)
+	mux.HandleFunc("POST /v1/community/profile", s.communityProfile)
+	mux.HandleFunc("GET /v1/community/profile/picture", s.communityProfilePicture)
 }
 
 func communityError(w http.ResponseWriter, err error) {

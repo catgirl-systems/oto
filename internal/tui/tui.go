@@ -569,6 +569,8 @@ func (m *model) switchWorkspace(next workspace) {
 		c.chats.cancelLoad()
 		c.rooms.cancelLoads()
 		c.buddies.cancelLoad()
+		c.discover.cancelLoad()
+		c.peer.cancelLoad()
 	}
 	m.workspace = (next + workspaceCount) % workspaceCount
 	if m.workspace == workspaceSearch {
@@ -784,6 +786,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.applyBuddyOpen(x)
 	case buddyActionMsg:
 		return m, m.applyBuddyAction(x)
+	case discoverPageMsg:
+		return m, m.applyDiscoverPage(x)
+	case discoverInterestActionMsg:
+		return m, m.applyDiscoverInterest(x)
+	case discoverProfileMsg:
+		m.applyDiscoverProfile(x)
+	case discoverProfileSaveMsg:
+		return m, m.applyDiscoverProfileSave(x)
+	case communityPeerMsg:
+		m.applyCommunityPeer(x)
+	case communityPictureSavedMsg:
+		m.applyPeerPicture(x)
 	case tea.BlurMsg:
 		m.community.chats.blurred = true
 	case tea.FocusMsg:
@@ -823,7 +837,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.notice != "" && !time.Time(x).Before(m.noticeUntil) {
 			m.notice = ""
 		}
-		return m, tea.Batch(m.loadStatus(), m.loadTransfers(), m.loadShares(), m.loadWishlist(), m.loadStats(), m.loadCommunitySummary(), m.loadCommunityRooms(false), m.loadCommunityMembers(false), m.loadCommunityFeed(false), m.loadCommunityWall(false), tick())
+		return m, tea.Batch(m.loadStatus(), m.loadTransfers(), m.loadShares(), m.loadWishlist(), m.loadStats(), m.loadCommunitySummary(), m.loadCommunityRooms(false), m.loadCommunityMembers(false), m.loadCommunityFeed(false), m.loadCommunityWall(false), m.loadCommunityDiscover(false), tick())
 	case activityTickMsg:
 		if !m.activityRunning {
 			break
@@ -1221,12 +1235,20 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.cursor = m.transferCursors[m.transferTab]
 		}
 	case tea.PasteMsg:
+		if m.workspace == workspaceCommunity && m.community.peer.form && !m.help && m.userActions == nil {
+			m.pastePeerPath(x.Content)
+			return m, nil
+		}
 		if m.workspace == workspaceCommunity && m.community.view == 2 && (m.community.buddies.editor != nil || m.community.buddies.form != "") && m.community.chats.dialog == nil && m.community.buddies.dialog == nil && m.userActions == nil && !m.help {
 			m.pasteCommunityBuddy(x.Content)
 			return m, nil
 		}
 		if m.workspace == workspaceCommunity && m.community.view == 1 && m.community.rooms.private.editing() && m.community.rooms.private.dialog == nil && m.userActions == nil && !m.help {
 			m.pasteCommunityPrivate(x.Content)
+			return m, nil
+		}
+		if m.workspace == workspaceCommunity && m.community.view == 3 && (m.community.discover.form != "" || m.community.discover.kind() == "profile" && m.community.discover.profileDirty) && m.community.discover.dialog == nil && m.userActions == nil && !m.help {
+			m.pasteCommunityDiscover(x.Content)
 			return m, nil
 		}
 		if m.workspace == workspaceCommunity && (m.community.chats.composing || m.community.chats.form != "" || m.community.rooms.form != "") && m.community.chats.dialog == nil && m.community.rooms.dialog == nil && m.userActions == nil && !m.help && !m.community.inspectEditing {
