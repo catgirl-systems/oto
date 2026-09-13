@@ -77,6 +77,7 @@ type communityState struct {
 	buddyNotification                                  DownloadNotification
 	discovery                                          communityDiscoveryState
 	profiles                                           communityProfileState
+	privileges                                         communityPrivilegeState
 	rules                                              []CommunityRule
 	ignoreAddresses                                    map[string]communityIgnoreAddress
 }
@@ -179,6 +180,19 @@ func (s *Service) communityCurrentLocked(identity CommunityIdentity) bool {
 
 func (s *Service) retireCommunityLocked() {
 	s.community.online = false
+	if s.community.privileges.queryCancel != nil {
+		s.community.privileges.queryCancel()
+		s.community.privileges.queryCancel = nil
+	}
+	s.community.privileges.pending = false
+	if done := s.community.privileges.queryDone; done != nil {
+		close(done)
+		s.community.privileges.queryDone = nil
+	}
+	s.community.privileges.revision++
+	s.community.privileges.poisoned = false
+	s.community.privileges.giftActive = false
+	s.community.privileges.fresh = false
 	clear(s.community.ignoreAddresses)
 	clear(s.community.privileged)
 	s.applyUploadUserPoliciesLocked()
@@ -207,6 +221,10 @@ func (s *Service) communityUpdate(ctx context.Context, identity CommunityIdentit
 	}
 	if !s.communityCurrentLocked(identity) {
 		return ErrCommunitySession
+	}
+	if balance, ok := message.(soulseek.PrivilegeBalance); ok {
+		s.acceptCommunityPrivilegeBalanceLocked(identity, balance)
+		return nil
 	}
 	switch message.(type) {
 	case soulseek.PrivilegedUsers, soulseek.ConnectPeerInstruction:

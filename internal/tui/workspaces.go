@@ -721,6 +721,7 @@ func (m model) settingFields() []settingField {
 		return []settingField{
 			{settingUsername, "Username", m.cfg.Soulseek.Username, settingText},
 			{settingChangePassword, "Change Soulseek password", "Press Enter", settingAction},
+			{settingAccountPrivileges, "Supporter privileges / gifting", "Press Enter", settingAction},
 		}
 	case settingsCommunity:
 		return []settingField{{settingPrivacyRules, "Privacy / ignore / ban rules", "Press Enter", settingAction}}

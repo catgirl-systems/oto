@@ -8,7 +8,7 @@ import (
 
 // Only actions backed by implemented APIs are offered. Later capabilities add
 // their actions here, rather than giving each workspace its own menu.
-var userActionNames = []string{"Inspect user", "Browse shared files", "Search user's files", "Message user", "Buddy / note / trust / priority", "Privacy / ignore / ban"}
+var userActionNames = []string{"Inspect user", "Browse shared files", "Search user's files", "Message user", "Buddy / note / trust / priority", "Privacy / ignore / ban", "Gift supporter privileges"}
 
 type userActions struct {
 	username string
@@ -118,6 +118,9 @@ func (m *model) userActionsKey(k tea.KeyPressMsg) tea.Cmd {
 		case 5:
 			m.userActions = nil
 			return m.openPrivacyRules("ignore", d.username)
+		case 6:
+			m.userActions = nil
+			return m.openPrivileges(d.username)
 		}
 	}
 	return nil

@@ -34,6 +34,9 @@ func (s *Server) registerCommunity(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/community/profile", s.communityProfile)
 	mux.HandleFunc("POST /v1/community/profile", s.communityProfile)
 	mux.HandleFunc("GET /v1/community/profile/picture", s.communityProfilePicture)
+	mux.HandleFunc("GET /v1/account/privileges", s.accountPrivileges)
+	mux.HandleFunc("POST /v1/account/privileges/gift", s.accountPrivilegeGift)
+	mux.HandleFunc("POST /v1/commands", s.commands)
 }
 
 func communityError(w http.ResponseWriter, err error) {

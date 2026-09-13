@@ -20,6 +20,8 @@ func (m model) View() tea.View {
 		content = m.downloadAsView()
 	} else if m.searchScope != nil {
 		content = m.searchScopeView()
+	} else if m.privileges != nil && !m.confirm {
+		content = m.privilegesView()
 	} else if m.privacyRules != nil && !m.confirm {
 		content = m.privacyRulesView()
 	} else if m.shareAccess != nil && !m.confirm {

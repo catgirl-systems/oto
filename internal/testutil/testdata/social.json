@@ -367,6 +367,10 @@
     {"name":"supporter-connection","class":"ConnectToPeer","direction":"server","code":18,"payload_hex":"09000000537570706f7274657201000000500100007f1309000029000000010000000000000000","expected":{"user":"Supporter","conn_type":"P","ip_address":"127.0.0.1","port":2323,"token":41,"privileged":true}},
     {"name":"supporter-expired","class":"GetUserStatus","direction":"server","code":7,"payload_hex":"09000000537570706f727465720200000000","expected":{"user":"Supporter","status":2,"privileged":false}},
     {"name":"queue-position-request","class":"PlaceInQueueRequest","direction":"peer","code":51,"arguments":{"file":"Public\\song.mp3"},"payload_hex":"0f0000005075626c69635c736f6e672e6d7033","expected":{"file":"Public\\song.mp3"}},
+    {"name":"check-privileges-request","class":"CheckPrivileges","direction":"client","code":92,"payload_hex":"","arguments":{}},
+    {"name":"privilege-balance","class":"CheckPrivileges","direction":"server","code":92,"payload_hex":"bcf40300","expected":{"seconds":259260}},
+    {"name":"privilege-balance-empty","class":"CheckPrivileges","direction":"server","code":92,"payload_hex":"00000000","expected":{"seconds":0}},
+    {"name":"give-privileges-request","class":"GivePrivileges","direction":"client","code":123,"payload_hex":"05000000416c69636501000000","arguments":{"user":"Alice","days":1}},
     {"name":"profile-picture","class":"UserInfoResponse","direction":"peer","code":16,"payload_hex":"0c00000068656c6c6f20e4b896e7958c014600000089504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000d49444154789c63f8cfc0f01f00050001ff89993d1d0000000049454e44ae42608203000000070000000100000000","arguments":{"descr":"hello 世界","pic":{"hex":"89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000d49444154789c63f8cfc0f01f00050001ff89993d1d0000000049454e44ae426082"},"totalupl":3,"queuesize":7,"slotsavail":true,"uploadallowed":0},"expected":{"descr":"hello 世界","pic":{"hex":"89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000d49444154789c63f8cfc0f01f00050001ff89993d1d0000000049454e44ae426082"},"totalupl":3,"queuesize":7,"slotsavail":true,"uploadallowed":0}}
   ]
 }

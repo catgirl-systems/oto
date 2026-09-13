@@ -101,8 +101,8 @@ exact test names and evidence as their sequential commits land.
 | S39 | `/me` actions and extensible chat commands | Shared registry/aliases/slash/paste / 14 | Pending |
 | N01 | Automatic away status after inactivity | Real activity/manual vs automatic / 15 | Pending |
 | N02 | Automatic private-message reply while away | Once per sender/away period; exclusions / 15 | Pending |
-| N03 | Check remaining Soulseek supporter privileges | Balance/staleness/rejection / 12 | Pending |
-| N04 | Gift Soulseek privileges to another user | Preview/cancel/confirm/uncertain/no retry / 12 | Pending |
+| N03 | Check remaining Soulseek supporter privileges | Balance/staleness/rejection / 12 | Independent code-92 fixtures, coalesced/cancelled/late-response tests, Account settings and real terminal/headless command flow |
+| N04 | Gift Soulseek privileges to another user | Preview/cancel/confirm/uncertain/no retry / 12 | Pre-write journal/restart/partial-write tests, bounded TUI default-Cancel preview, CLI identity-bound confirmation and duplicate reconciliation |
 | N05 | Search files in joined rooms | Captured targets/no global fallback / 13 | Pending |
 | N06 | Search files shared by all buddies | More than 32/bounded fan-out / 13 | Pending |
 | N07 | Allow selected users to send unsolicited files | Consent/admission/bans/recovery / 17 | Pending |
@@ -429,10 +429,31 @@ exact test names and evidence as their sequential commits land.
   terminal vet and CGO=0 linux amd64/arm64 builds. Independent review found and accepted
   the repaired multi-slot projection issue; this is not whole-plan approval.
 
+## Slice 12 completed — supporter privileges
+
+- Account privilege queries coalesce without tying their lifetime to one caller.
+  Remaining seconds/freshness are session-owned; a timed-out tokenless correlation
+  fences further queries until reconnect. Late replies cannot authorize a gift.
+- Gifting validates exact recipient, positive whole days, available balance and the
+  preview revision again after acquiring the server writer. An unknown submission
+  receipt is committed before writing; retries reconcile its ID/fingerprint across
+  restart without repeating the gift. A partial write remains unknown.
+- The protocol has no gift acknowledgement. Even a completed write is not a confirmed
+  transfer; UI/API/commands retain Unknown and suggest checking balance/server notices.
+  Balance refresh cannot overlap the gift write and never silently resolves its outcome.
+- Account settings and contextual User actions expose bounded editors, default-Cancel
+  previews, paste safety, freshness and stale-session errors. A typed built-in command
+  registry starts with privileges/gift/help; the remaining commands/aliases/console
+  retain step 14. CLI confirmation carries the complete identity from its preview.
+- Verified full race/vet suites and all terminal workflows, 20 targeted race repetitions,
+  ten terminal-plus-CLI gifting repetitions, 92 independent fixtures, five seconds of
+  decoder fuzzing, unchanged sqlc regeneration, tagged terminal vet and CGO=0 linux
+  amd64/arm64 builds. All gifting uses a scripted loopback server, never public privileges.
+  Bounded independent review timed out without approval; no whole-plan approval claimed.
+
 ## Remaining commit sequence
 
-12 privileges
-→ 13 scoped search → 14 text/commands → 15 away/broadcasts → 16 manual sends
+13 scoped search → 14 text/commands → 15 away/broadcasts → 16 manual sends
 → 17 consented receiving → 18 full verification → 19 verified README matrix.
 Each slice includes applicable tests before the next commit. Nothing is complete
 merely because a fixture, test harness, planned test name, or compatible API exists.

@@ -426,6 +426,9 @@ func (m *model) chatConversationAction(kind string, conversation, through int64)
 }
 func (m model) chatDraftCount() int {
 	count := len(m.community.rooms.private.wallDrafts) + len(m.community.buddies.drafts) + len(m.community.discover.drafts)
+	if e := m.privileges; e != nil && (e.mode == "edit" || e.mode == "preview" || e.busy) {
+		count++
+	}
 	if m.privacyRules != nil && m.privacyRules.form != nil && m.privacyRules.form.dirty {
 		count++
 	}
