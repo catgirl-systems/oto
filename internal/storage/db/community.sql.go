@@ -221,6 +221,24 @@ func (q *Queries) DeleteCommunityRule(ctx context.Context, arg DeleteCommunityRu
 	return result.RowsAffected()
 }
 
+const deleteHeldCommunityMessages = `-- name: DeleteHeldCommunityMessages :execrows
+DELETE FROM community_messages WHERE account = ? AND sender = ? AND state = 'held' AND id <= ?3
+`
+
+type DeleteHeldCommunityMessagesParams struct {
+	Account   string `json:"account"`
+	Sender    string `json:"sender"`
+	ThroughID int64  `json:"through_id"`
+}
+
+func (q *Queries) DeleteHeldCommunityMessages(ctx context.Context, arg DeleteHeldCommunityMessagesParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, deleteHeldCommunityMessages, arg.Account, arg.Sender, arg.ThroughID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const editCommunityAccount = `-- name: EditCommunityAccount :execrows
 UPDATE community_accounts SET description = ?, accept_invitations = ?, retention_days = ?, public_feed_logging = ?, revision = revision + 1
 WHERE account = ? AND revision = ?
@@ -1068,6 +1086,23 @@ func (q *Queries) MarkCommunityRead(ctx context.Context, arg MarkCommunityReadPa
 	return result.RowsAffected()
 }
 
+const nextHeldCommunitySender = `-- name: NextHeldCommunitySender :one
+SELECT sender FROM community_messages WHERE account = ? AND state = 'held' AND sender > ?2
+GROUP BY sender ORDER BY sender LIMIT 1
+`
+
+type NextHeldCommunitySenderParams struct {
+	Account     string `json:"account"`
+	AfterSender string `json:"after_sender"`
+}
+
+func (q *Queries) NextHeldCommunitySender(ctx context.Context, arg NextHeldCommunitySenderParams) (string, error) {
+	row := q.db.QueryRowContext(ctx, nextHeldCommunitySender, arg.Account, arg.AfterSender)
+	var sender string
+	err := row.Scan(&sender)
+	return sender, err
+}
+
 const pageCommunityConversations = `-- name: PageCommunityConversations :many
 SELECT c.id, c.account, c.kind, c.target, c.read_through, c.closed,
     (SELECT count(*) FROM community_messages m WHERE m.account = c.account AND m.conversation_id = c.id AND m.id > c.read_through AND m.direction = 'incoming' AND m.state = 'received') AS unread,
@@ -1285,6 +1320,24 @@ func (q *Queries) RecoverCommunityOutbox(ctx context.Context, account string) (i
 	return result.RowsAffected()
 }
 
+const resolveHeldCommunityReceipts = `-- name: ResolveHeldCommunityReceipts :execrows
+UPDATE community_receipts SET disposition = ? WHERE account = ? AND sender = ? AND disposition = 'held'
+`
+
+type ResolveHeldCommunityReceiptsParams struct {
+	Disposition string `json:"disposition"`
+	Account     string `json:"account"`
+	Sender      string `json:"sender"`
+}
+
+func (q *Queries) ResolveHeldCommunityReceipts(ctx context.Context, arg ResolveHeldCommunityReceiptsParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, resolveHeldCommunityReceipts, arg.Disposition, arg.Account, arg.Sender)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const setCommunityBuddyLastSeen = `-- name: SetCommunityBuddyLastSeen :exec
 UPDATE community_buddies SET last_seen = max(coalesce(last_seen, 0), CAST(?1 AS INTEGER))
 WHERE account = ?2 AND username = ?3
@@ -1362,4 +1415,38 @@ func (q *Queries) SetCommunitySubmissionResult(ctx context.Context, arg SetCommu
 		return 0, err
 	}
 	return result.RowsAffected()
+}
+
+const updateCommunityRule = `-- name: UpdateCommunityRule :one
+UPDATE community_rules SET action = ?, kind = ?, value = ?, message = ? WHERE account = ? AND id = ? RETURNING id, account, "action", kind, value, message
+`
+
+type UpdateCommunityRuleParams struct {
+	Action  string `json:"action"`
+	Kind    string `json:"kind"`
+	Value   string `json:"value"`
+	Message string `json:"message"`
+	Account string `json:"account"`
+	ID      int64  `json:"id"`
+}
+
+func (q *Queries) UpdateCommunityRule(ctx context.Context, arg UpdateCommunityRuleParams) (CommunityRule, error) {
+	row := q.db.QueryRowContext(ctx, updateCommunityRule,
+		arg.Action,
+		arg.Kind,
+		arg.Value,
+		arg.Message,
+		arg.Account,
+		arg.ID,
+	)
+	var i CommunityRule
+	err := row.Scan(
+		&i.ID,
+		&i.Account,
+		&i.Action,
+		&i.Kind,
+		&i.Value,
+		&i.Message,
+	)
+	return i, err
 }

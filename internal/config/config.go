@@ -59,6 +59,9 @@ type Soulseek struct {
 type Share struct {
 	Name string `json:"name" validate:"required"`
 	Path string `json:"path" validate:"required"`
+	// Empty access preserves existing public roots. Reveal only discloses locked entries.
+	Access string `json:"access,omitempty" validate:"omitempty,oneof=public buddy trusted"`
+	Reveal bool   `json:"reveal,omitempty"`
 }
 
 type Search struct {

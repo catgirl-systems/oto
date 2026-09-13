@@ -51,11 +51,18 @@ def received_profile(message):
                                  "slots": message.totalupl, "queue": message.queuesize,
                                  "available": message.slotsavail, "upload_allowed": message.uploadallowed})
 
+def received_shares(message):
+    if message.username == "terminal":
+        publish(f"shares-{requested_shares}.json", {
+            "public": sorted(folder for folder, files in message.list if files),
+            "locked": sorted(folder for folder, files in message.privatelist if files),
+        })
+
 
 if __name__ == "__main__":
     # Nicotine's share scanner uses multiprocessing.spawn, which imports this file.
     core.init_components({"signal_handler", "network_thread", "users", "shares", "uploads", "downloads",
-                          "userinfo", "network_filter", "buddies", "statistics", "pluginhandler"}, isolated_mode=True)
+                          "userinfo", "userbrowse", "network_filter", "buddies", "statistics", "pluginhandler"}, isolated_mode=True)
     config.sections["server"].update(server=(host, int(port)), login="reference", passw="local-test-only",
                                      upnp=False, auto_connect_startup=False)
     config.sections["userinfo"].update(descr=repr("Nicotine reference 世界"), pic=str(state / "picture.png"))
@@ -64,15 +71,25 @@ if __name__ == "__main__":
     core.cli_listen_port = int(listen_port)
     events.connect("server-login", logged_in)
     events.connect("user-info-response", received_profile)
+    events.connect("shared-file-list-response", received_shares)
     core.start()
     core.connect()
     requested = False
+    requested_shares = 0
     stopping = False
     deadline = time.monotonic() + 45
     while events.process_thread_events():
         if (state / "request").exists() and not requested:
             requested = True
             core.userinfo.show_user("terminal", refresh=True)
+        browse_request = state / "browse-request.json"
+        if browse_request.exists():
+            sequence = json.loads(browse_request.read_text())
+            if not isinstance(sequence, int) or not 1 <= sequence <= 100:
+                raise RuntimeError("invalid local browse sequence")
+            if sequence != requested_shares:
+                requested_shares = sequence
+                core.userbrowse.browse_user("terminal", new_request=True)
         if (state / "stop").exists() and not stopping:
             stopping = True
             core.quit()

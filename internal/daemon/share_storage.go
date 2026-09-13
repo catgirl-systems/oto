@@ -347,7 +347,7 @@ func (s *Service) loadRemoteShareCache(username string) (remoteShareCache, error
 	if s.stateDB == nil {
 		return remoteShareCache{}, errors.New("daemon: state database is not open")
 	}
-	key, err := browseUsername(username)
+	key, err := archiveBrowseUsername(username)
 	if err != nil {
 		return remoteShareCache{}, err
 	}
@@ -395,7 +395,7 @@ func (s *Service) loadRemoteShareCache(username string) (remoteShareCache, error
 }
 
 func (s *Service) saveRemoteShareCache(cache remoteShareCache, revision uint64) error {
-	key, err := browseUsername(cache.Username)
+	key, err := archiveBrowseUsername(cache.Username)
 	if err != nil {
 		return err
 	}
@@ -421,7 +421,7 @@ func (s *Service) saveRemoteShareCache(cache remoteShareCache, revision uint64) 
 	// Keep the revision check and head publication under s.mu. This prevents a
 	// newer browse from being published between the check and the final head write.
 	s.mu.Lock()
-	loaded, ok := s.browses[key]
+	loaded, ok := s.browses[cache.Username]
 	current := ok && loaded.result.Revision == revision
 	if current {
 		err = publishShareSnapshot(ctx, s.stateDB, id, "remote", key)

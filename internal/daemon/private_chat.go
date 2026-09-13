@@ -56,15 +56,36 @@ func (s *Service) receiveCommunityPrivate(ctx context.Context, identity Communit
 	now := time.Now().UTC().UnixMilli()
 	fingerprint := sha256.Sum256([]byte(message.Text))
 	inserted := false
+	disposition, state := "stored", "received"
+	ignored, held := s.communityIgnoreLocked(message.Username)
+	if ignored {
+		disposition = "discarded"
+	} else if held {
+		disposition, state = "held", "held"
+	}
 	err := s.stateDB.WriteTx(ctx, func(tx *sql.Tx) error {
 		q := db.New(tx)
 		n, err := q.InsertCommunityReceipt(ctx, db.InsertCommunityReceiptParams{
 			Account: identity.Account, Sender: message.Username,
 			ServerID: int64(message.ID), ServerTime: int64(message.Timestamp),
-			Fingerprint: fingerprint[:], Disposition: "stored", CreatedAt: now,
+			Fingerprint: fingerprint[:], Disposition: disposition, CreatedAt: now,
 		})
 		if err != nil || n == 0 {
 			return err // A replay remains acknowledged even after its content was cleared.
+		}
+		if ignored {
+			return nil
+		}
+		closed := int64(0)
+		if held {
+			previous, err := q.FindCommunityConversation(ctx, db.FindCommunityConversationParams{Account: identity.Account, Kind: "private", Target: message.Username})
+			if errors.Is(err, sql.ErrNoRows) {
+				closed = 1
+			} else if err != nil {
+				return err
+			} else {
+				closed = previous.Closed
+			}
 		}
 		conversation, err := q.EnsureCommunityConversation(ctx, db.EnsureCommunityConversationParams{
 			Account: identity.Account, Kind: "private", Target: message.Username,
@@ -76,18 +97,18 @@ func (s *Service) receiveCommunityPrivate(ctx context.Context, identity Communit
 		if _, err = q.InsertCommunityMessage(ctx, db.InsertCommunityMessageParams{
 			Account: identity.Account, ConversationID: conversation.ID, Sender: message.Username,
 			Direction: "incoming", Body: communityDisplayText(message.Text), CreatedAt: now,
-			ServerTime: &serverTime, State: "received",
+			ServerTime: &serverTime, State: state,
 		}); err != nil {
 			return err
 		}
-		if _, err = q.SetCommunityConversationClosed(ctx, db.SetCommunityConversationClosedParams{Account: identity.Account, ID: conversation.ID}); err != nil {
+		if _, err = q.SetCommunityConversationClosed(ctx, db.SetCommunityConversationClosedParams{Account: identity.Account, ID: conversation.ID, Closed: closed}); err != nil {
 			return err
 		}
 		_, err = q.BumpCommunityRevision(ctx, identity.Account)
 		inserted = err == nil
 		return err
 	})
-	if err == nil && inserted {
+	if err == nil && inserted && !held {
 		s.watchConversationLocked(message.Username, true)
 		s.communityRoomNoticeLocked(message)
 	}

@@ -805,6 +805,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.readCommunityChat()
 	case communitySummaryMsg:
 		return m, m.applyCommunitySummary(x)
+	case privacyRulesPageMsg:
+		return m, m.applyPrivacyRulesPage(x)
+	case shareAccessMsg:
+		return m, m.applyShareAccess(x)
+	case privacyRulesActionMsg:
+		return m, m.applyPrivacyRulesAction(x)
 	case communityUserMsg:
 		m.applyCommunityUser(x)
 	case statsMsg:
@@ -871,6 +877,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				scan = &copy
 			}
 			m.status = snapshot{status: x.snapshot.Status, presence: x.snapshot.Presence, user: x.snapshot.Config.Soulseek.Username, publicIP: x.snapshot.PublicIP, publicPort: x.snapshot.PublicPort, err: x.snapshot.Error, shareScan: scan, shareIndexRevision: x.snapshot.ShareIndexRevision}
+			m.cfg.Shares = append([]config.Share(nil), x.snapshot.Shares...)
 			m.status.waitForUploadsOnQuit = x.snapshot.Config.Uploads.WaitForActiveUploadsOnQuit
 			notification := x.snapshot.DownloadNotification
 			bell := notification.SessionID != "" && notification.SessionID == m.downloadNotification.SessionID && notification.Sequence > m.downloadNotification.Sequence
@@ -1235,6 +1242,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.cursor = m.transferCursors[m.transferTab]
 		}
 	case tea.PasteMsg:
+		if m.shareAccess != nil {
+			return m, nil
+		}
+		if m.privacyRules != nil {
+			m.pastePrivacyRules(x.Content)
+			return m, nil
+		}
 		if m.workspace == workspaceCommunity && m.community.peer.form && !m.help && m.userActions == nil {
 			m.pastePeerPath(x.Content)
 			return m, nil

@@ -76,6 +76,8 @@ type communityState struct {
 	buddyNotification                                  DownloadNotification
 	discovery                                          communityDiscoveryState
 	profiles                                           communityProfileState
+	rules                                              []CommunityRule
+	ignoreAddresses                                    map[string]communityIgnoreAddress
 }
 
 // loadCommunityLocked loads preferences, never durable authoritative presence.
@@ -99,6 +101,10 @@ func (s *Service) loadCommunityLocked(ctx context.Context) error {
 		next.revision = uint64(settings.Revision)
 		next.invitationsWanted = settings.AcceptInvitations != 0
 		if err := loadCommunityDiscovery(ctx, q, settings, &next); err != nil {
+			return err
+		}
+		next.rules, err = loadCommunityRules(ctx, q, account)
+		if err != nil {
 			return err
 		}
 		if err := loadCommunityRooms(ctx, q, account, &next); err != nil {
@@ -158,6 +164,8 @@ func (s *Service) loadCommunityLocked(ctx context.Context) error {
 	s.uploadEpoch++
 	next.identity.Session = s.uploadEpoch
 	s.retireProfilesLocked()
+	clear(s.browses)
+	clear(s.browseProgress)
 	s.community = next
 	s.desiredUserWatchesLocked(time.Now())
 	return nil
@@ -170,9 +178,12 @@ func (s *Service) communityCurrentLocked(identity CommunityIdentity) bool {
 
 func (s *Service) retireCommunityLocked() {
 	s.community.online = false
+	clear(s.community.ignoreAddresses)
 	s.retireCommunityRoomsLocked()
 	s.retireDiscoveryLocked()
 	s.retireProfilesLocked()
+	clear(s.browses)
+	clear(s.browseProgress)
 	for username, user := range s.community.users {
 		user.StatusFresh, user.StatsFresh, user.AddressFresh = false, false, false
 		user.PrivilegeFresh = false
@@ -229,6 +240,10 @@ func (s *Service) communityUpdate(ctx context.Context, identity CommunityIdentit
 		if m.Exists {
 			user.StatsUpdatedAt = now
 		}
+		if !m.Exists || m.Status == soulseek.UserStatusOffline {
+			user.AddressFresh = false
+			delete(s.community.ignoreAddresses, username)
+		}
 	case soulseek.UserPresence:
 		buddyOnline = user.StatusFresh && user.Status == soulseek.UserStatusOffline && m.Status != soulseek.UserStatusOffline
 		if user.StatusFresh && user.Status != soulseek.UserStatusOffline && m.Status == soulseek.UserStatusOffline {
@@ -244,6 +259,7 @@ func (s *Service) communityUpdate(ctx context.Context, identity CommunityIdentit
 		user.PrivilegeFresh, user.PrivilegeUpdatedAt = true, now
 		if m.Status == soulseek.UserStatusOffline {
 			user.AddressFresh = false
+			delete(s.community.ignoreAddresses, username)
 		}
 	case soulseek.UserStatistics:
 		user.Stats, user.StatsFresh, user.StatsUpdatedAt = m.Stats, true, now

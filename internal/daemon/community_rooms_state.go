@@ -275,6 +275,10 @@ func (s *Service) hydrateRoomUserLocked(member soulseek.RoomUser) {
 }
 
 func (s *Service) receiveCommunityRoomMessageLocked(ctx context.Context, m soulseek.RoomMessage) error {
+	ignored, held := s.communityIgnoreLocked(m.Username)
+	if ignored && m.Username != s.cfg.Soulseek.Username {
+		return nil
+	}
 	if m.PublicFeed {
 		if !s.community.feedWanted || !s.community.feedWritten {
 			return nil
@@ -298,6 +302,9 @@ func (s *Service) receiveCommunityRoomMessageLocked(ctx context.Context, m souls
 		return nil
 	}
 	direction, state := "incoming", "received"
+	if held {
+		state = "held"
+	}
 	if m.Username == s.cfg.Soulseek.Username {
 		direction, state = "outgoing", "sent"
 	}

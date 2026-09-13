@@ -36,6 +36,12 @@ func (m *model) key(k tea.KeyPressMsg) tea.Cmd {
 	if m.searchScope != nil {
 		return m.searchScopeKey(k)
 	}
+	if m.privacyRules != nil && !m.confirm {
+		return m.privacyRulesKey(k)
+	}
+	if m.shareAccess != nil && !m.confirm {
+		return m.shareAccessKey(k)
+	}
 	if m.userActions != nil {
 		return m.userActionsKey(k)
 	}
@@ -192,6 +198,9 @@ func (m *model) key(k tea.KeyPressMsg) tea.Cmd {
 	case "space":
 		m.toggle()
 	case "enter":
+		if m.workspace == workspaceShares {
+			return m.openShareAccess()
+		}
 		if m.workspace == workspaceWishlist {
 			if m.cursor >= 0 && m.cursor < len(m.wishlist) {
 				m.wishlistCursor = m.cursor
@@ -275,6 +284,8 @@ func (m *model) key(k tea.KeyPressMsg) tea.Cmd {
 				m.cfg.Uploads.WaitForActiveUploadsOnQuit = !m.cfg.Uploads.WaitForActiveUploadsOnQuit
 			case settingChangePassword:
 				m.openPasswordForm()
+			case settingPrivacyRules:
+				return m.openPrivacyRules("", "")
 			case settingClearSearchHistory:
 				m.clearHistory(false)
 			case settingClearFilterHistory:

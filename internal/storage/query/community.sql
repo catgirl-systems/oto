@@ -196,3 +196,16 @@ SELECT * FROM community_messages WHERE account = ? AND conversation_id = ? AND s
 AND id > sqlc.arg(after_id) AND id <= sqlc.arg(through_id)
 AND instr(body, CAST(sqlc.arg(search_text) AS TEXT)) > 0
 ORDER BY id LIMIT min(max(CAST(sqlc.arg(page_size) AS INTEGER), 1), 200);
+
+-- name: NextHeldCommunitySender :one
+SELECT sender FROM community_messages WHERE account = ? AND state = 'held' AND sender > sqlc.arg(after_sender)
+GROUP BY sender ORDER BY sender LIMIT 1;
+
+-- name: DeleteHeldCommunityMessages :execrows
+DELETE FROM community_messages WHERE account = ? AND sender = ? AND state = 'held' AND id <= sqlc.arg(through_id);
+
+-- name: ResolveHeldCommunityReceipts :execrows
+UPDATE community_receipts SET disposition = ? WHERE account = ? AND sender = ? AND disposition = 'held';
+
+-- name: UpdateCommunityRule :one
+UPDATE community_rules SET action = ?, kind = ?, value = ?, message = ? WHERE account = ? AND id = ? RETURNING *;

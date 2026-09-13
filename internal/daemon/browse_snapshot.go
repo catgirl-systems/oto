@@ -322,6 +322,9 @@ func (s *Service) BrowsePage(ctx context.Context, req BrowsePageRequest) (Browse
 		return BrowsePage{}, err
 	}
 	out, err := loaded.snapshot.page(ctx, req)
+	if _, currentErr := s.loadedBrowse(req.Username, req.Revision); currentErr != nil {
+		return BrowsePage{}, currentErr
+	}
 	out.Revision, out.Cached, out.SavedAt = loaded.result.Revision, loaded.result.Cached, loaded.result.SavedAt
 	return out, err
 }
@@ -344,8 +347,8 @@ func (s *Service) OpenBrowse(ctx context.Context, username, folder, query string
 	cached := false
 	var result BrowseResult
 	if client != nil {
-		_, generation, progress := s.beginBrowseProgress(username)
-		groups, remoteErr = browse(ctx, client, strings.TrimSpace(username), progress)
+		_, generation, progress := s.beginBrowseProgress(username, request)
+		groups, remoteErr = browse(ctx, client, username, progress)
 		s.finishBrowseProgress(key, generation, remoteErr == nil)
 	}
 	if client == nil || remoteErr != nil {
@@ -374,12 +377,16 @@ func (s *Service) OpenBrowse(ctx context.Context, username, folder, query string
 		return BrowsePage{}, err
 	}
 	s.mu.Lock()
+	if err := ctx.Err(); err != nil {
+		s.mu.Unlock()
+		return BrowsePage{}, err
+	}
 	if s.browses[key].request != request {
 		s.mu.Unlock()
 		return BrowsePage{}, ErrBrowseRevision
 	}
 	result.Revision, result.Cached = request, cached
-	s.browses[key] = loadedBrowse{username: strings.TrimSpace(username), result: result, snapshot: x, request: request}
+	s.browses[key] = loadedBrowse{username: username, result: result, snapshot: x, request: request}
 	s.mu.Unlock()
 	page.Revision, page.Cached, page.SavedAt = result.Revision, result.Cached, result.SavedAt
 	return page, nil
@@ -502,6 +509,6 @@ func (s *Service) QueueBrowse(ctx context.Context, req BrowseDownloadRequest) (B
 	if err := ctx.Err(); err != nil {
 		return BrowseDownloadResult{}, err
 	}
-	out, err := s.QueueDownloads([]DownloadRequest{{Username: loaded.username, DownloadDir: req.DownloadDir, Files: items}})
+	out, err := s.queueDownloads(ctx, []DownloadRequest{{Username: loaded.username, DownloadDir: req.DownloadDir, Files: items}}, &loaded)
 	return BrowseDownloadResult{Queued: len(out)}, err
 }

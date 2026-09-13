@@ -311,6 +311,9 @@ func (s *Service) CommunityFeed(ctx context.Context, req CommunityFeedRequest) (
 	budget := 0
 	for i := len(s.community.feed) - 1; i >= 0; i-- {
 		row := s.community.feed[i]
+		if ignored, held := s.communityIgnoreLocked(row.Sender); (ignored || held) && row.Sender != s.cfg.Soulseek.Username {
+			continue
+		}
 		if req.Cursor != 0 && row.ID >= req.Cursor {
 			continue
 		}

@@ -20,6 +20,10 @@ func (m model) View() tea.View {
 		content = m.downloadAsView()
 	} else if m.searchScope != nil {
 		content = m.searchScopeView()
+	} else if m.privacyRules != nil && !m.confirm {
+		content = m.privacyRulesView()
+	} else if m.shareAccess != nil && !m.confirm {
+		content = m.shareAccessView()
 	} else if m.userActions != nil {
 		content = m.userActionsView()
 	} else if m.passwordForm {
@@ -805,7 +809,7 @@ func (m model) footerHints() []string {
 		}
 		return append(hints, "P prune")
 	case workspaceShares:
-		hints := []string{"/ add", "r rescan"}
+		hints := []string{"/ add", "Enter access", "r rescan"}
 		if scan := m.status.shareScan; scan != nil && scan.State == "scanning" {
 			hints = append(hints, "c cancel scan")
 		}

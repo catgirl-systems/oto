@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net/netip"
 	"os"
 	"path"
 	"path/filepath"
@@ -205,6 +206,7 @@ type Service struct {
 	lifecycleMu            sync.Mutex
 	uploadMu               sync.Mutex
 	uploadEpoch            uint64
+	uploadRecoveryReady    chan struct{}
 	uploadAccounts         map[uint64]string
 	uploadOwners           map[string]uploadOwner
 	uploadCancelEligible   map[string]uploadOwner
@@ -296,6 +298,7 @@ func New(cfg config.Config, path string) (*Service, error) {
 	}
 	cfg.Logging.Level = level
 	cfg.Bandwidth.Profiles = slices.Clone(cfg.Bandwidth.Profiles)
+	cfg.Shares = slices.Clone(cfg.Shares)
 	rules, err := config.NormalizeShareExclusions(cfg.ShareExclusions)
 	if err != nil {
 		return nil, err
@@ -701,7 +704,12 @@ func (s *Service) connectOnce(ctx context.Context) error {
 	description := s.community.discovery.description
 	s.mu.Unlock()
 	uploadsReady := make(chan struct{})
-	defer close(uploadsReady)
+	connected := false
+	defer func() {
+		if !connected {
+			close(uploadsReady)
+		}
+	}()
 	networkLogger := s.logger()
 	if networkLogger != nil {
 		networkLogger = networkLogger.With("session_id", epoch)
@@ -711,6 +719,9 @@ func (s *Service) connectOnce(ctx context.Context) error {
 		Address: cfg.Soulseek.Server, Username: cfg.Soulseek.Username, Password: cfg.Soulseek.Password,
 		ListenAddr: cfg.Soulseek.ListenAddr, NetworkInterface: cfg.Soulseek.NetworkInterface,
 		Share: idx, Uploads: newUploadManager(cfg), IncomingSearch: &searchPolicy,
+		SharePolicy: func(username string, address netip.Addr) soulseek.SharePermission {
+			return s.communitySharePermission(epoch, identity.Account, username, address)
+		},
 		UploadsReady:                uploadsReady,
 		DownloadLimitBytesPerSecond: downloadLimit(cfg),
 		BrowseLimits:                browseLimits(cfg),
@@ -785,6 +796,7 @@ func (s *Service) connectOnce(ctx context.Context) error {
 	}
 	s.community.discovery.written = map[string]string{}
 	s.client, s.mapping = client, mapping
+	s.uploadRecoveryReady = uploadsReady
 	s.community.identity, s.community.online = identity, true
 	s.beginCommunityRoomsLocked()
 	s.community.revision++
@@ -793,7 +805,7 @@ func (s *Service) connectOnce(ctx context.Context) error {
 	s.mu.Unlock()
 	s.event(slog.LevelInfo, "session_connected", nil, slog.String("public_ip", client.PublicIP()), slog.Uint64("advertised_port", uint64(client.PublicPort())))
 	client.SetShareIndex(idx)
-	s.recoverUploads(client, epoch)
+	connected = true
 	return nil
 }
 
@@ -841,6 +853,7 @@ func (s *Service) reconnectLoop(ctx context.Context) {
 
 		s.mu.RLock()
 		client, mapping, current := s.client, s.mapping, s.ctx == ctx && !s.shuttingDown
+		ready, epoch := s.uploadRecoveryReady, s.uploadEpoch
 		s.mu.RUnlock()
 		if !current || ctx.Err() != nil {
 			return
@@ -853,6 +866,14 @@ func (s *Service) reconnectLoop(ctx context.Context) {
 			eventCtx, stopEvents := context.WithCancel(ctx)
 			eventsDone := make(chan struct{})
 			go func() { s.consumeClientEvents(eventCtx, client); close(eventsDone) }()
+			recoveryDone := make(chan struct{})
+			go func() {
+				defer close(recoveryDone)
+				if ready != nil {
+					defer close(ready)
+				}
+				s.recoverUploads(client, epoch)
+			}()
 			err = client.Run(ctx)
 			s.mu.Lock()
 			if s.client == client {
@@ -873,6 +894,7 @@ func (s *Service) reconnectLoop(ctx context.Context) {
 			s.mu.Unlock()
 			_ = client.Close()
 			s.uploadMu.Unlock()
+			<-recoveryDone
 			s.wakeWishlist()
 		}
 		if err == nil {
@@ -1236,7 +1258,23 @@ func (s *Service) QueueFolder(ctx context.Context, req FolderDownloadRequest) ([
 }
 
 func (s *Service) QueueDownloads(reqs []DownloadRequest) ([]Download, error) {
+	return s.queueDownloads(context.Background(), reqs, nil)
+}
+
+// A browse selection is checked under the same lock as durable admission.
+func (s *Service) queueDownloads(ctx context.Context, reqs []DownloadRequest, source *loadedBrowse) ([]Download, error) {
 	s.mu.Lock()
+	if err := ctx.Err(); err != nil {
+		s.mu.Unlock()
+		return nil, err
+	}
+	if source != nil {
+		current, ok := s.browses[source.username]
+		if !ok || current.result.Revision != source.result.Revision || current.snapshot != source.snapshot {
+			s.mu.Unlock()
+			return nil, ErrBrowseRevision
+		}
+	}
 	if s.closed {
 		s.mu.Unlock()
 		return nil, ErrClosed
@@ -1310,9 +1348,9 @@ func (s *Service) QueueDownloads(reqs []DownloadRequest) ([]Download, error) {
 	for _, d := range out {
 		dirty[d.ID] = true
 	}
-	err = s.commitLockedFor(context.Background(), dirty, func(q *db.Queries) error {
+	err = s.commitLockedFor(ctx, dirty, func(q *db.Queries) error {
 		for _, d := range out {
-			if err := q.UpsertDownload(context.Background(), downloadParams(d)); err != nil {
+			if err := q.UpsertDownload(ctx, downloadParams(d)); err != nil {
 				return err
 			}
 		}
@@ -1609,6 +1647,7 @@ func (s *Service) UpdateConfig(c config.Config) (updateErr error) {
 	}
 	c.Logging.Level = level
 	c.Bandwidth.Profiles = slices.Clone(c.Bandwidth.Profiles)
+	c.Shares = slices.Clone(c.Shares)
 	rules, err := config.NormalizeShareExclusions(c.ShareExclusions)
 	if err != nil {
 		return err
@@ -1628,6 +1667,17 @@ func (s *Service) UpdateConfig(c config.Config) (updateErr error) {
 	if s.closed || s.shuttingDown {
 		s.mu.Unlock()
 		return ErrClosed
+	}
+	// A stale settings form must not silently reopen a restricted root.
+	currentShares := make(map[string]config.Share, len(s.cfg.Shares))
+	for _, root := range s.cfg.Shares {
+		currentShares[root.Name] = root
+	}
+	for _, root := range c.Shares {
+		if old, ok := currentShares[root.Name]; ok && old.Path == root.Path && (old.Access != root.Access || old.Reveal != root.Reveal) {
+			s.mu.Unlock()
+			return errors.New("community: share permissions changed; reload settings; use /v1/shares/access to change access")
+		}
 	}
 	reconnect := !hotConfigUpdate(s.cfg, c)
 	if !reconnect && slices.Equal(s.cfg.ShareExclusions, c.ShareExclusions) && s.cfg.AudioMetadata == c.AudioMetadata {
@@ -1687,7 +1737,7 @@ func (s *Service) UpdateConfig(c config.Config) (updateErr error) {
 		s.mu.Lock()
 		if accountKey(s.cfg) != accountKey(c) {
 			// Invalidate at publication, even offline and without a summary poll.
-			s.retireProfilesLocked()
+			s.retireCommunityLocked()
 			// The next load restores durable preferences with a new generation.
 			s.community = communityState{identity: CommunityIdentity{Daemon: s.community.identity.Daemon}}
 		}
