@@ -208,6 +208,8 @@ func TestCommunityNicotineProfiles(t *testing.T) {
 		t.Fatalf("Nicotine parsed oto profile: %+v", response)
 	}
 	verifyNicotineSharePermissions(t, h, ctx, dir)
+	verifyNicotineSharedSend(t, h, ctx, dir)
+	verifyNicotineReceiving(t, h, ctx, dir)
 	if err := os.WriteFile(filepath.Join(dir, "stop"), nil, 0600); err != nil {
 		t.Fatal(err)
 	}

@@ -12,6 +12,7 @@ import (
 	"net"
 	"os/exec"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -118,5 +119,44 @@ func TestCommunityPrivilegeGiftTerminalConfirmation(t *testing.T) {
 	}
 	if gifts.Load() != 2 {
 		t.Fatal("headless gift duplicated", gifts.Load())
+	}
+	alias := command("alias", "credits", "privileges").Alias
+	if alias == nil || alias.Revision == "" {
+		t.Fatal("alias was not created")
+	}
+	aliases := command("aliases").Aliases
+	if aliases == nil || len(aliases.Aliases) != 1 || aliases.Aliases[0].Name != "credits" {
+		t.Fatal("alias listing", aliases)
+	}
+	page, err := h.client.CommunityAliases(context.Background(), daemon.CommunityAliasesRequest{CommunityIdentity: aliases.CommunityIdentity})
+	if err != nil || len(page.Aliases) != 1 {
+		t.Fatal("alias resource", page, err)
+	}
+	if _, err := h.client.SetCommunityAlias(context.Background(), daemon.CommunityAliasRequest{CommunityIdentity: aliases.CommunityIdentity, Name: "credits", Expansion: "help", Revision: "stale"}); err == nil {
+		t.Fatal("stale alias edit accepted")
+	}
+	console := exec.Command(binaryPath, "console")
+	console.Env = h.env
+	console.Stdin = strings.NewReader("help\ncredits\ngift Alice 1\nquit\n")
+	data, err := console.CombinedOutput()
+	if err != nil {
+		t.Fatal(err, string(data))
+	}
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	for _, kind := range []string{"help", "balance", "preview"} {
+		var result daemon.CommandResult
+		if err := decoder.Decode(&result); err != nil {
+			t.Fatal(kind, err, string(data))
+		}
+		if kind == "help" && len(result.Help) < 2 || kind == "balance" && (result.Privileges == nil || !result.Privileges.Fresh) || kind == "preview" && (result.Gift == nil || result.Gift.State != "preview") {
+			t.Fatal(kind, result)
+		}
+	}
+	if gifts.Load() != 2 {
+		t.Fatal("console implicitly confirmed a gift")
+	}
+	command("--confirm", "--request-id", "remove-credits", "--account", aliases.Account, "--daemon", aliases.Daemon, "--session", strconv.FormatUint(aliases.Session, 10), "unalias", "credits", alias.Revision)
+	if page := command("aliases").Aliases; page == nil || len(page.Aliases) != 0 {
+		t.Fatal("alias removal failed", page)
 	}
 }

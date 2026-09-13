@@ -83,7 +83,12 @@ func (m model) chatHistoryLines(width int) []chatLine {
 		if message.ID == c.position.selected {
 			marker = ">"
 		}
-		text := fmt.Sprintf("%s[%s] #%d %s%s\n%s", marker, stamp.Local().Format("01-02 15:04:05"), message.ID, message.Sender, state, strings.ReplaceAll(message.Text, "\t", "    "))
+		body := strings.ReplaceAll(message.Text, "\t", "    ")
+		if strings.HasPrefix(body, "/me ") && message.Direction != "system" && message.Sender != "server" {
+			state += " [action]"
+			body = "* " + message.Sender + " " + strings.TrimPrefix(body, "/me ")
+		}
+		text := fmt.Sprintf("%s[%s] #%d %s%s\n%s", marker, stamp.Local().Format("01-02 15:04:05"), message.ID, message.Sender, state, body)
 		if message.Error != "" {
 			text += "\n! " + browseErrorText(message.Error)
 		}

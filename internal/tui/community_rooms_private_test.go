@@ -31,7 +31,8 @@ func TestCommunityPrivateRoomsFormsDraftsAndLayouts(t *testing.T) {
 	}
 	updated, cmd := m.Update(tea.PasteMsg{Content: "\r\nline"})
 	m = updated.(model)
-	if cmd != nil || p.wallInput != "q/?猫😀\nline" {
+	drainActivity(t, &m, cmd)
+	if p.wallInput != "q/?猫😀\nline" {
 		t.Fatal("paste sent or failed to preserve text", p.wallInput)
 	}
 	before := p.wallInput

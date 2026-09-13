@@ -8,7 +8,7 @@ import (
 
 // Only actions backed by implemented APIs are offered. Later capabilities add
 // their actions here, rather than giving each workspace its own menu.
-var userActionNames = []string{"Inspect user", "Browse shared files", "Search user's files", "Message user", "Buddy / note / trust / priority", "Privacy / ignore / ban", "Gift supporter privileges"}
+var userActionNames = []string{"Inspect user", "Browse shared files", "Search user's files", "Message user", "Buddy / note / trust / priority", "Privacy / ignore / ban", "Gift supporter privileges", "Send shared files / folder"}
 
 type userActions struct {
 	username string
@@ -121,6 +121,15 @@ func (m *model) userActionsKey(k tea.KeyPressMsg) tea.Cmd {
 		case 6:
 			m.userActions = nil
 			return m.openPrivileges(d.username)
+		case 7:
+			if !m.community.supports("shared-send") {
+				d.err = "Shared-file sending unavailable; refresh Community / restart daemon."
+				return nil
+			}
+			m.userActions = nil
+			m.switchWorkspace(workspaceShares)
+			m.sharedSendTarget = d
+			m.setNotice("Select a shared file or folder, then press s to review the recipient and preview")
 		}
 	}
 	return nil

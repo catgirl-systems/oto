@@ -95,7 +95,10 @@ type activity struct {
 }
 
 type searchTab struct {
-	usernames                          []string
+	usernames, rooms                   []string
+	scope, warning                     string
+	targetCount                        int
+	identity                           daemon.CommunityIdentity
 	query, id, filter, filterUndo, err string
 	results                            []result
 	total, found, next, cursor         int
@@ -196,6 +199,10 @@ const (
 	settingBrowseMaxCompressedMiB
 	settingBrowseMaxDecompressedMiB
 	settingPrivacyRules
+	settingTextTools
+	settingChatCommands
+	settingAway
+	settingReceiving
 )
 
 type settingField struct {
@@ -207,6 +214,7 @@ type settingField struct {
 type model struct {
 	stats                                  statsViewState
 	searchScope                            *searchScope
+	commandOutput                          *commandOutput
 	downloadSelected                       map[string]bool
 	forcePending                           []string
 	ctx                                    context.Context
@@ -241,7 +249,14 @@ type model struct {
 	workspace                              workspace
 	community                              communityModel
 	userActions                            *userActions
+	sharedSendTarget                       *userActions
 	privacyRules                           *privacyRulesEditor
+	textTools                              *textToolsEditor
+	awayEditor                             *awayEditor
+	receivingEditor                        *receivingEditor
+	activityBusy                           bool
+	activityRequest                        uint64
+	activityQueued                         daemon.CommunityIdentity
 	privacyRulesRequest                    uint64
 	privileges                             *privilegeEditor
 	shareAccess                            *shareAccessEditor

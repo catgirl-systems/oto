@@ -24,7 +24,8 @@ func TestCommunityDiscoverEditingDraftsAndNavigation(t *testing.T) {
 	m.key(chatPress("e"))
 	updated, cmd := m.Update(tea.PasteMsg{Content: "q/?猫\rline"})
 	m = updated.(model)
-	if cmd != nil || m.community.discover.profileDraft != "q/?猫\nline" || m.chatDraftCount() != 2 {
+	drainActivity(t, &m, cmd)
+	if m.community.discover.profileDraft != "q/?猫\nline" || m.chatDraftCount() != 2 {
 		t.Fatal("profile overwrote interest draft")
 	}
 	for _, size := range [][2]int{{120, 40}, {80, 24}, {40, 16}, {20, 6}} {

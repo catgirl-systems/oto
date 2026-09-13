@@ -284,8 +284,18 @@ func (m model) browseShare(nodeID, path string, generation, request uint64) tea.
 	}
 }
 func (m model) search(query, filter string, request, operation uint64, users ...string) tea.Cmd {
+	return m.searchScoped(query, filter, request, operation, "", nil, users)
+}
+func (m model) searchScoped(query, filter string, request, operation uint64, scope string, rooms, users []string) tea.Cmd {
+	identity := m.community.summary.CommunityIdentity
 	return func() tea.Msg {
-		page, err := m.client.Search(m.ctx, query, filter, users...)
+		var page daemon.SearchPage
+		var err error
+		if scope == "" {
+			page, err = m.client.Search(m.ctx, query, filter, users...)
+		} else {
+			page, err = m.client.SearchScoped(m.ctx, daemon.ScopedSearchRequest{CommunityIdentity: identity, Query: query, Filter: filter, Scope: scope, Usernames: users, Rooms: rooms})
+		}
 		return searchMsg{page: page, request: request, operation: operation, filter: filter, err: err}
 	}
 }
@@ -381,6 +391,9 @@ func (m *model) closeSearchTab() {
 }
 
 func (m *model) openSearch(query string, users ...string) tea.Cmd {
+	return m.openScopedSearch(query, "", users, nil)
+}
+func (m *model) openScopedSearch(query, scope string, users, rooms []string) tea.Cmd {
 	query = strings.TrimSpace(query)
 	if query == "" {
 		return nil
@@ -398,11 +411,19 @@ func (m *model) openSearch(query string, users ...string) tea.Cmd {
 	}
 	m.searchRequest++
 	m.searchOperation++
-	tab := searchTab{usernames: append([]string(nil), users...), query: query, filter: filter, selected: map[int]bool{}, loading: true, searching: true, request: m.searchRequest, operation: m.searchOperation}
+	requestScope := scope
+	tabScope := scope
+	if tabScope == "" {
+		tabScope = "global"
+		if len(users) > 0 {
+			tabScope = "users"
+		}
+	}
+	tab := searchTab{usernames: append([]string(nil), users...), rooms: append([]string(nil), rooms...), scope: tabScope, identity: m.community.summary.CommunityIdentity, query: query, filter: filter, selected: map[int]bool{}, loading: true, searching: true, request: m.searchRequest, operation: m.searchOperation}
 	m.searchTabs = append(m.searchTabs, tab)
 	m.workspace = workspaceSearch
 	m.loadSearchTab(len(m.searchTabs) - 1)
-	return m.withActivity(m.search(tab.query, tab.filter, tab.request, tab.operation, tab.usernames...))
+	return m.withActivity(m.searchScoped(tab.query, tab.filter, tab.request, tab.operation, requestScope, tab.rooms, tab.usernames))
 }
 
 func (m *model) openSearchPage(query, filter string, page daemon.SearchPage) {
@@ -428,6 +449,19 @@ func applySearchMsg(tab *searchTab, message searchMsg) {
 	if message.err != nil {
 		return
 	}
+	if message.page.CommunityIdentity != (daemon.CommunityIdentity{}) {
+		if tab.identity != (daemon.CommunityIdentity{}) && message.page.CommunityIdentity != tab.identity {
+			tab.err = daemon.ErrCommunitySession.Error()
+			return
+		}
+		tab.identity = message.page.CommunityIdentity
+	}
+	if message.page.Scope != "" {
+		tab.scope = message.page.Scope
+	}
+	tab.rooms = append([]string(nil), message.page.Rooms...)
+	tab.warning = message.page.Warning
+	tab.targetCount = message.page.TargetCount
 	tab.usernames = append([]string(nil), message.page.Usernames...)
 	results := toResults(message.page.Results)
 	if message.append {
@@ -543,6 +577,7 @@ func (m *model) loadBrowseTab(index int) {
 
 func (m *model) switchWorkspace(next workspace) {
 	m.community.chats.navigation++
+	m.sharedSendTarget = nil
 	if m.workspace == workspaceSearch {
 		m.saveSearchTab()
 	} else if m.workspace == workspaceWishlist {
@@ -758,12 +793,16 @@ func (m model) Init() tea.Cmd {
 	}
 	return tea.Batch(m.loadStatus(), m.loadTransfers(), m.loadShares(), m.loadSavedBrowses(), m.loadWishlist(), m.communitySummaryCmd(0), tick())
 }
-func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (m model) updateMessage(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch x := msg.(type) {
+	case chatCompletionMsg:
+		return m, m.applyChatCompletion(x)
 	case chatDataMsg:
 		return m, m.applyChatData(x)
 	case chatOperationMsg:
 		return m, m.applyChatOperation(x)
+	case chatCommandMsg:
+		return m, m.applyChatCommand(x)
 	case chatReadMsg:
 		return m, m.applyChatRead(x)
 	case roomPageMsg:
@@ -808,6 +847,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case privilegeMsg:
 		m.applyPrivilegeMsg(x)
 		return m, nil
+	case sharedSendPreviewMsg:
+		cmd := m.applySharedSendPreview(x)
+		return m, cmd
+	case broadcastOutputMsg:
+		cmd := m.applyBroadcastOutput(x)
+		return m, cmd
+	case receivingSettingsMsg:
+		return m, m.applyReceivingSettings(x)
+	case awaySettingsMsg:
+		return m, m.applyAwaySettings(x)
+	case textToolsMsg:
+		return m, m.applyTextTools(x)
 	case privacyRulesPageMsg:
 		return m, m.applyPrivacyRulesPage(x)
 	case shareAccessMsg:
@@ -960,6 +1011,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				tab := &m.searchTabs[i]
 				if tab.request != x.request || tab.operation != x.operation {
 					continue
+				}
+				if x.err == nil && x.page.CommunityIdentity != (daemon.CommunityIdentity{}) && x.page.CommunityIdentity != m.community.summary.CommunityIdentity {
+					x.err = daemon.ErrCommunitySession
+					x.page = daemon.SearchPage{}
 				}
 				if !x.append && !x.filterChange && x.err == nil && tab.filter != x.filter {
 					cmd := m.refilterPendingSearch(tab, x.page)
@@ -1245,11 +1300,36 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.cursor = m.transferCursors[m.transferTab]
 		}
 	case tea.PasteMsg:
+		if m.commandOutput != nil {
+			if m.commandOutput.sharedPrompt != nil {
+				m.pasteSharedSendRecipient(x.Content)
+			}
+			return m, nil
+		}
+		if d := m.searchScope; d != nil {
+			if d.editing && !m.help && !m.confirm && len(x.Content) <= 4096 {
+				value, cursor := insertText(d.value, x.Content, d.cursor)
+				d.setInput(value, cursor)
+			}
+			return m, nil
+		}
 		if m.shareAccess != nil {
 			return m, nil
 		}
 		if m.privileges != nil {
 			m.pastePrivileges(x.Content)
+			return m, nil
+		}
+		if m.receivingEditor != nil {
+			m.pasteReceivingSettings(x.Content)
+			return m, nil
+		}
+		if m.awayEditor != nil {
+			m.pasteAwaySettings(x.Content)
+			return m, nil
+		}
+		if m.textTools != nil {
+			m.pasteTextTools(x.Content)
 			return m, nil
 		}
 		if m.privacyRules != nil {

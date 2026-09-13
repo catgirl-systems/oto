@@ -117,7 +117,8 @@ func TestCommunityPrivateComposerWorkflow(t *testing.T) {
 	m.key(chatPress("q/?猫👩‍💻"))
 	updated, cmd := m.Update(tea.PasteMsg{Content: "\nsecond line"})
 	m = updated.(model)
-	if cmd != nil || m.help || m.workspace != workspaceCommunity {
+	drainActivity(t, &m, cmd)
+	if m.help || m.workspace != workspaceCommunity {
 		t.Fatal("paste or text became action")
 	}
 	original := m.community.chats.drafts[m.chatKey()]
@@ -143,7 +144,7 @@ func TestCommunityPrivateComposerWorkflow(t *testing.T) {
 	}
 	// Independent draft and exact-case identity, with username completion.
 	m.key(chatPress("猫A"))
-	m.key(tea.KeyPressMsg(tea.Key{Code: tea.KeyTab}))
+	drainChat(t, &m, m.key(tea.KeyPressMsg(tea.Key{Code: tea.KeyTab})))
 	if m.community.chats.drafts[m.chatKey()].text != "猫Alice" {
 		t.Fatal("completion")
 	}

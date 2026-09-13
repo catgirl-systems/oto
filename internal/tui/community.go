@@ -258,6 +258,10 @@ func (m *model) communityKey(k tea.KeyPressMsg) tea.Cmd {
 			return cmd
 		}
 	}
+	if k.String() == "u" && (c.view == 1 || c.view == 2) {
+		m.openSearchScope()
+		return nil
+	}
 	switch k.String() {
 	case "ctrl+pgup", "ctrl+pgdown":
 		delta := 1

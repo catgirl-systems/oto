@@ -15,6 +15,12 @@ import (
 func (m *model) key(k tea.KeyPressMsg) tea.Cmd {
 	s := k.String()
 	m.community.chats.navigation++
+	if !(m.workspace == workspaceCommunity && m.community.chats.composing && (s == "tab" || s == "shift+tab")) {
+		m.community.chats.cancelCompletion()
+	}
+	if m.commandOutput != nil {
+		return m.commandOutputKey(k)
+	}
 	if m.community.chats.dialog != nil {
 		return m.chatDialogKey(k)
 	}
@@ -38,6 +44,15 @@ func (m *model) key(k tea.KeyPressMsg) tea.Cmd {
 	}
 	if m.privileges != nil && !m.confirm {
 		return m.privilegesKey(k)
+	}
+	if m.receivingEditor != nil && !m.confirm {
+		return m.receivingSettingsKey(k)
+	}
+	if m.awayEditor != nil && !m.confirm {
+		return m.awaySettingsKey(k)
+	}
+	if m.textTools != nil && !m.confirm {
+		return m.textToolsKey(k)
 	}
 	if m.privacyRules != nil && !m.confirm {
 		return m.privacyRulesKey(k)
@@ -293,6 +308,15 @@ func (m *model) key(k tea.KeyPressMsg) tea.Cmd {
 				m.cfg.Uploads.ExemptBuddiesFromQueueLimits = !m.cfg.Uploads.ExemptBuddiesFromQueueLimits
 			case settingChangePassword:
 				m.openPasswordForm()
+			case settingReceiving:
+				return m.openReceivingSettings()
+			case settingAway:
+				return m.openAwaySettings()
+			case settingChatCommands:
+				m.showChatCommandHelp()
+				return nil
+			case settingTextTools:
+				return m.openTextTools()
 			case settingPrivacyRules:
 				return m.openPrivacyRules("", "")
 			case settingAccountPrivileges:
@@ -425,6 +449,9 @@ func (m *model) key(k tea.KeyPressMsg) tea.Cmd {
 			return m.prepareTransferSearch(true)
 		}
 	case "s":
+		if m.workspace == workspaceShares {
+			return m.openSharedSendPrompt()
+		}
 		if m.workspace == workspaceTransfers {
 			return m.prepareTransferSearch(false)
 		}
@@ -456,7 +483,7 @@ func (m *model) key(k tea.KeyPressMsg) tea.Cmd {
 		}
 	case "w":
 		if m.workspace == workspaceSearch && strings.TrimSpace(m.query) != "" {
-			if len(m.searchUsers()) > 0 {
+			if len(m.searchUsers()) > 0 || m.searchTabIndex >= 0 && m.searchTabIndex < len(m.searchTabs) && m.searchTabs[m.searchTabIndex].scope != "" && m.searchTabs[m.searchTabIndex].scope != "global" {
 				m.setNotice("Wishlist searches are global; targeted searches cannot be saved")
 				return nil
 			}
