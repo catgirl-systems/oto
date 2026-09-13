@@ -63,7 +63,7 @@ exact test names and evidence as their sequential commits land.
 | S01 | Private messages | PM send/receive; two clients / 5 | Slice 5: `TestCommunityPrivate*`, `TestSoulfindPrivateChatOnlineOffline`, `TestCommunityTerminalPrivateChatLifecycle` |
 | S02 | Queued and offline private messages | PM outbox/replay/ambiguous writes / 5 | Slice 5: `TestCommunityPrivateOutbox*`, `TestCommunityPrivateUnknownRequiresExplicitRetry`, real-server online/offline test and terminal lifecycle |
 | S03 | Persistent private-message history | PM restart/read/clear/export / 5 | Slice 5: daemon/IPC history tests, `TestCommunityPrivateExport*`, terminal restart/clear/replay |
-| S04 | Broadcast a private message to buddies or downloading users | Audience preview/pacing/partial outcomes / 15 | Pending |
+| S04 | Broadcast a private message to buddies or downloading users | Audience preview/pacing/partial outcomes / 15 | `TestBroadcast*` daemon tests and `TestCommunityBroadcastCommandsAndPacedOutcomes`: exact paged audiences, default-Cancel, pacing, partial/unknown outcomes, stop, and no rebroadcast |
 | S05 | Join public chat rooms | Confirmed membership/roster/echo / 6 | `TestCommunityRoomLifecycleHistoryAndWatches`, `TestSoulfindPublicRoomLifecycle`, `TestCommunityTerminalPublicRooms` |
 | S06 | Browse the room directory | Pagination/filter/population / 6 | `TestCommunityRoomPagesAndBoundedFeed`, `TestCommunityRoomsOfflinePagesHistoryAndDraftIsolation`, terminal room workflow |
 | S07 | Public feed of room messages | Explicit read-only bounded feed / 6 | Scripted daemon/TUI tests, real Soulfind lifecycle and terminal room workflow |
@@ -92,35 +92,35 @@ exact test names and evidence as their sequential commits land.
 | S30 | Ban users by IP address | Exact/CIDR serving matrix / 10 | Policy matrix, transport address/recovery tests and real Nicotine+ IP ban/removal |
 | S31 | Ban users by country | Known vs unknown; stricter precedence / 10 | Policy matrix: country bans override trust, unknown country remains unknown; shared transport enforcement |
 | S32 | Custom ban and country-block messages | Rejection text across serving paths / 10 | Rule validation, transport admission/recovery tests, queued denial and batch-revocation regressions |
-| S33 | CTCP/client-information requests | Default off/rate/replay/loop suppression / 14 | Pending |
-| S34 | Keyword and mention detection | Boundaries/pre-censor detection / 14 | Pending |
-| S35 | Chat tab completion | Tab/Shift+Tab/pane/input contract / 14 | Pending |
+| S33 | CTCP/client-information requests | Default off/rate/replay/loop suppression / 14 | `TestCTCPReplyConsentReplayAndRate`, `TestCTCPRateBudget`, `TestCTCPExplicitQueryIsDurableAndSanitized`, text-tools editor and composer terminal workflow |
+| S34 | Keyword and mention detection | Boundaries/pre-censor detection / 14 | `TestCommunityTextRules` checks Unicode boundaries and pre-censor detection; private/room persistence and composer terminal tests |
+| S35 | Chat tab completion | Tab/Shift+Tab/pane/input contract / 14 | `TestCommunityCompletionSourcesAndBounds`, `TestCompletionQuotingCyclingAndFencing`, and `TestCommunityComposerCommands` |
 | S36 | Chat spelling checks | Explicitly excluded; no dependency | Excluded |
-| S37 | Outgoing text substitutions | Ordered literal replacement/size validation / 14 | Pending |
-| S38 | Incoming text censorship patterns | Wildcards/sanitized notifications / 14 | Pending |
-| S39 | `/me` actions and extensible chat commands | Shared registry/aliases/slash/paste / 14 | Pending |
-| N01 | Automatic away status after inactivity | Real activity/manual vs automatic / 15 | Pending |
-| N02 | Automatic private-message reply while away | Once per sender/away period; exclusions / 15 | Pending |
+| S37 | Outgoing text substitutions | Ordered literal replacement/size validation / 14 | `TestCommunityTextRules`, `TestCommunityTextPersistenceAndSubmissionIdentity`, text-tools editor and composer terminal workflow |
+| S38 | Incoming text censorship patterns | Wildcards/sanitized notifications / 14 | `TestCommunityTextRules` wildcard/whitespace checks, persistence/submission tests, and real text-tools editor workflow |
+| S39 | `/me` actions and extensible chat commands | Shared registry/aliases/slash/paste / 14 | `TestSocialCommandsReuseDurableSending`, alias bounds/persistence tests, and `TestCommunityComposerCommands` |
+| N01 | Automatic away status after inactivity | Real activity/manual vs automatic / 15 | `TestAutoAwayActivityAndManualPrecedence`, shutdown worker test, and two-frontend `TestCommunityAutoAwayUsesRealInputNotPolling` |
+| N02 | Automatic private-message reply while away | Once per sender/away period; exclusions / 15 | `TestAwayReplyOncePerPeriodAndDurableTranscript`, settings restart/isolation tests, and repeated terminal away-period/replay workflow |
 | N03 | Check remaining Soulseek supporter privileges | Balance/staleness/rejection / 12 | Independent code-92 fixtures, coalesced/cancelled/late-response tests, Account settings and real terminal/headless command flow |
 | N04 | Gift Soulseek privileges to another user | Preview/cancel/confirm/uncertain/no retry / 12 | Pre-write journal/restart/partial-write tests, bounded TUI default-Cancel preview, CLI identity-bound confirmation and duplicate reconciliation |
-| N05 | Search files in joined rooms | Captured targets/no global fallback / 13 | Pending |
-| N06 | Search files shared by all buddies | More than 32/bounded fan-out / 13 | Pending |
-| N07 | Allow selected users to send unsolicited files | Consent/admission/bans/recovery / 17 | Pending |
-| N08 | Separate folder for files manually sent by other users | Containment/collision/filter/hooks / 17 | Pending |
-| N09 | Manually send a file to another user | Shared snapshot/preview/idempotency / 16 | Pending |
-| N10 | Manually send a folder to another user | Reference recipient/accept/reject / 16 | Pending |
+| N05 | Search files in joined rooms | Captured targets/no global fallback / 13 | Independent code-120 fixture; selected/joined-room validation, captured targets, picker and real terminal context workflow |
+| N06 | Search files shared by all buddies | More than 32/bounded fan-out / 13 | 100-target collector tests and 35-buddy daemon/IPC/terminal workflow; single bounded sender and no global fallback |
+| N07 | Allow selected users to send unsolicited files | Consent/admission/bans/recovery / 17 | `TestReceiving*` and `TestDownloadAuthorization*`; real Nicotine+ off/users/buddies/trusted, trust revocation, partial daemon restart/resume, and terminal settings consent |
+| N08 | Separate folder for files manually sent by other users | Containment/collision/filter/hooks / 17 | Receiving recovery/namespace/finalization tests; real Nicotine+ exact bytes, empty files, collisions, duplicate rejection, filters, and hooks-off/explicit-hook unit checks |
+| N09 | Manually send a file to another user | Shared snapshot/preview/idempotency / 16 | `SharedSend`, `SelectUploadFiles`, and `UploadSnapshot` tests; Shares recipient/review/default-Cancel UI; terminal partial outcomes with exact accepted bytes |
+| N10 | Manually send a folder to another user | Reference recipient/accept/reject / 16 | `TestCommunityNicotineProfiles` runs unmodified pinned Nicotine+: default-off rejection, explicit buddy consent, and exact two-file folder bytes; five repeated runs passed |
 | N11 | Prioritize buddies in the upload queue | One preferred class/all scheduling modes / 11 | `TestUploadPreferredClassAndProjectedPositions`, live daemon flag changes and terminal preference persistence |
 | N12 | Prioritize Soulseek privileged users | Privilege changes/one active per user / 11 | Independent roster/status/connection fixtures, callback-before-routing, exact/session-scoped privilege tests and all-scheduler preferred class |
 | N13 | Exempt buddies from upload queue limits | Opt-in/accounting/overflow/recovery / 11 | `TestUploadUserPolicyChangesAndLimitExemption`, live buddy removal, failed settings saves and terminal restart |
-| N14 | Message all users currently downloading | Active-upload audience preview / 15 | Pending |
+| N14 | Message all users currently downloading | Active-upload audience preview / 15 | `TestBroadcastUploadAudienceIsActiveExactAndDeduplicated`, paged preview/consent tests, and shared broadcast terminal workflow |
 | N15 | Buddy-only shares | Cumulative serving matrix / 10 | Policy matrix, Shares access editor, real Nicotine+ buddy grant/removal |
 | N16 | Trusted-buddy-only shares | Cumulative serving matrix / 10 | Policy matrix and real Nicotine+ trusted grant/removal |
 | N17 | Reveal restricted share tiers selectively | Locked disclosure vs permission / 10 | `TestSharePolicy*`, Shares editor and real Nicotine+ locked lists; folder responses omit inaccessible entries |
 | N18 | Use buddy trust as a share permission | Self exclusion/revocation/cache/recovery / 10 | Policy matrix, live browse identity/archive fencing, response/upload cancellation and recovery tests |
 | N19 | Persistent private-chat logs | SQLite searchable history/text+JSON export / 5 | Slice 5: `TestCommunityPrivateIPCWorkflows`, `TestCommunityPrivatePagingReadAndTwoFrontends`, `TestCommunityPrivateExport*` |
-| N20 | Persistent chat-room logs | Retention/export/history gaps / 6 | Slice 6 room history/export/restart tests; configurable retention remains a later settings gate |
-| N21 | Interactive command console in headless mode | Real binary/daemon console / 14 | Pending |
-| N22 | Extensible chat and headless commands | Registry/alias args/cycles/no execution / 14 | Pending |
+| N20 | Persistent chat-room logs | Export/history gaps / 6 | Slice 6 room history/export/restart tests and real terminal room workflows; SQLite remains the sole authoritative transcript |
+| N21 | Interactive command console in headless mode | Real binary/daemon console / 14 | `TestConsoleInputErrorsAndEOF` and real-binary console/daemon flow in `internal/e2e/account_privileges_test.go` |
+| N22 | Extensible chat and headless commands | Registry/alias args/cycles/no execution / 14 | Shared registry tests, `TestCommunityAliasesPersistenceAndExpansion`, `TestAliasArgumentsStayDataAndBounded`, and composer/headless terminal workflows |
 
 ## Cross-cutting gates
 
@@ -128,17 +128,17 @@ exact test names and evidence as their sequential commits land.
 |---|---|---|
 | G01 | Schema fresh/upgrade/rollback/WAL backup/concurrent legacy history/downgrade | `internal/storage`: `TestCommunityMigration*`, `TestCommunityFreshBootstrapRollback`, `TestCommunityStorage*` |
 | G02 | Reliable callback/backpressure/unlocked dispatch/watches/stale epochs/reconnect | `internal/soulseek`: `TestCommunityDispatch*`, `TestCommunityAddress*`, `TestCommunityInterruptedFrameRetiresTransport`, `TestCommunityCancelledRequestDoesNotWrite`; `internal/daemon`: `TestCommunityWatch*`, `TestCommunityPresenceFreshnessAndEpoch` |
-| G03 | Two TUIs: drafts/read markers/no focus theft/scroll anchors/detach | Shell/user details and private chat: `TestCommunityRealIPCRefreshAndFrontendIsolation`, `TestCommunityStaleResponsesAndPartialState`, `TestCommunityTerminalShellAndUserActions`, `TestCommunityTerminalPrivateChatLifecycle`; additional room workflows remain pending |
-| G04 | 120×40, 80×24, 40×16, tiny; resize while editing; Unicode/CJK/emoji; NO_COLOR | Shell and private chat: `TestCommunityResponsiveLayout`, `TestCommunityPrivateInputAndResponsiveRendering`, `TestCommunityPrivateTinyConfirmationControlsStayVisible`, both terminal shell/chat workflows; final social workflows remain pending steps 6–18 |
+| G03 | Two TUIs: drafts/read markers/no focus theft/scroll anchors/detach | Real IPC frontend isolation and stale-response tests; real shell/private-chat/public-room/private-room terminal lifecycle workflows; full terminal repeats passed |
+| G04 | 120×40, 80×24, 40×16, tiny; resize while editing; Unicode/CJK/emoji; NO_COLOR | Responsive shell/chat tests, text-tools/broadcast/receiving/shared-send layout and consent tests, real terminal resizing/editing workflows under NO_COLOR |
 | G05 | Search/browse/folder/admission/active/recovery permission matrix | Slice 10 policy/transport matrices, publication/revocation/recovery tests, real Nicotine+ restricted-share transitions |
-| G06 | Large histories/directories/bursts during transfers/discovery bounds/performance | Pending step 18 |
-| G07 | `go test -race ./...`; `go vet ./...` | Baseline race suite passes; final run pending |
-| G08 | `sqlc generate` with no generated diff | Pending final run |
-| G09 | Existing `TestSoulfind` integration command extended with social tests | `TestSoulfindPrivateChatOnlineOffline` passes against pinned real Soulfind; full slskd/Nicotine+ peer and later social workflows remain pending |
-| G10 | Mandatory terminal CI; 20 social race repetitions; 10 terminal repetitions | Pending final workflows |
-| G11 | Bounded decoder fuzz/cancellation/shutdown | Pending steps 3–18 |
-| G12 | CGO=0 linux amd64/arm64 builds; unchanged container behavior | Pending final run |
-| G13 | Row audit and README matrix/count-only update | Pending step 19 |
+| G06 | Large histories/directories/bursts during transfers/discovery bounds/performance | Room directory/history paging and discovery-watch bounds tests; `TestSharedFolderSendTerminalPartialOutcomes` delivers/ACKs 256 reference PMs during a 7 MiB stream and verifies 200+56 history pages; existing share-search/browse benchmarks ran three times |
+| G07 | `go test -race ./...`; `go vet ./...` | Full current source passes: `/tmp/oto-final-context-{race,vet}.log` |
+| G08 | `sqlc generate` with no generated diff | Pinned sqlc v1.31.1 regeneration preserves generated hashes; no generated-code diff |
+| G09 | Existing `TestSoulfind` integration command extended with social tests | Full pinned Soulfind/slskd command passes, including PMs, rooms, watches, search and transfers; pinned Nicotine+ profile/share/send/receive terminal workflow passes ten expanded runs |
+| G10 | Mandatory terminal CI; 20 social race repetitions; 10 terminal repetitions | Mandatory `.github/workflows/ci.yml` Community job; twenty targeted social race repetitions, ten whole terminal suites, and ten repetitions of each subsequently expanded reference/burst/context workflow pass |
+| G11 | Bounded decoder fuzz/cancellation/shutdown | All six Community decoder fuzz targets pass; full and repeated focused suites include transport, dispatch, discovery, away-worker, broadcast and receiving cancellation/shutdown tests |
+| G12 | CGO=0 linux amd64/arm64 builds; unchanged container behavior | Current-source static builds pass; scratch-container host bind-mount watcher test passes with networking disabled (`/tmp/oto-final-container-watch.log`) |
+| G13 | Row audit and README matrix/count-only update | All 61 ledger rows accounted for: 60 implemented, spelling excluded; all eight matrix counts checked against actual cells; README diff restricted to feature cells and section counts |
 
 ## Completed slices
 
@@ -453,7 +453,114 @@ exact test names and evidence as their sequential commits land.
 
 ## Remaining commit sequence
 
-13 scoped search → 14 text/commands → 15 away/broadcasts → 16 manual sends
+Slice 13 implementation is verified; its commit remains pending behind slice 12 signing.
+
+- Additive scope API preserves legacy usernames, rejects contradictions/empty scoped
+  targets, captures exact buddy/room sets, and fences stale session publication.
+- A single cancellable five-second sender feeds the existing collector concurrently;
+  all targets share a token. Metadata previews are bounded independently of the full
+  captured set. No-result scoped searches report unconfirmed server support honestly.
+- Picker supports global/users/buddies/rooms, contextual room/buddy entry points,
+  bounded text/paste, resize fallback, retained scope and stale-editor fencing.
+  Scoped searches cannot silently become global wishlist searches.
+- Verified full race/vet, complete terminal suite, repeated scoped/discovery terminal
+  workflows and 93 independent fixtures. Full terminal testing caught and repaired
+  the initial contextual shortcut consuming Discover's existing `u` action.
+- One upload-control EOF during an earlier full race run did not recur in 20 targeted
+  repetitions or subsequent full runs; retain it for the final flake audit.
+
+14 text/commands → 15 away/broadcasts → 16 manual sends
 → 17 consented receiving → 18 full verification → 19 verified README matrix.
 Each slice includes applicable tests before the next commit. Nothing is complete
 merely because a fixture, test harness, planned test name, or compatible API exists.
+
+## Slice 14 implementation evidence (not whole-plan approval)
+
+- Shared typed registry serves the composer, `oto command`, and `oto console`;
+  bounded parsing/alias expansion never evaluates shell text. Unknown commands
+  retain editable drafts; ambiguous requests retain reconciliation IDs.
+- Completion uses exact account/session identity, bounded daemon candidates from
+  commands, aliases, watch leases, buddies and joined rooms, with cancellable
+  requests, cursor/edit fencing, safe quoting and Tab/Shift-Tab cycling.
+- Unicode mentions precede incoming wildcard censorship. Outgoing substitutions
+  are ordered/literal, bounded after transformation, and captured once per durable
+  submission. Reconciliation after policy changes does not duplicate sends.
+- Account-scoped text settings persist atomically in configuration; stale edits
+  are rejected and failed saves do not publish. Settings → Community exposes
+  text-tool CRUD, substitution ordering, CTCP consent, and command/alias help.
+- CTCP VERSION requests have durable explicit submission IDs. Automatic replies
+  default off, only follow committed fresh receipts, skip offline/replayed/server/
+  response messages, and recheck session and ignore policy before writing. One
+  in-flight reply, ten-second global and sixty-second sender limits; no automatic
+  offline queue or retry. Wire behavior follows pinned Nicotine+ privatechat.py.
+- Full race/vet passes; focused text/editor/CTCP/completion race checks passed
+  twenty repetitions, and the real terminal command/completion/text-settings/
+  CTCP/editor workflow passed ten repetitions. Evidence is local scripted/pipe
+  protocol testing, not a claim of CTCP interoperability with a live reference peer.
+- Current logs: `/tmp/oto-step14-editor-{race,repeat,terminal-repeat}.log`.
+  Steps 15–19 and the comprehensive final requirement audit remain outstanding.
+
+
+## Slices 15–17 and current acceptance gates
+
+- Away settings, activity-driven status, durable once-per-period replies, paced
+  broadcast previews/results, shared-file/folder sending, and opt-in receiving
+  now have daemon, IPC, and terminal workflows. The row ledger above names the
+  runnable checks rather than treating transport primitives as feature approval.
+- The receiving review found and corrected finalization after revocation,
+  cancellation racing finalization, and admission limits disappearing during
+  recovery. Received partials retain their admitting account; bans and unresolved
+  address-dependent rules are checked before finalization. Bulk config saves
+  cannot overwrite account-scoped receiving, text, or away settings.
+- Expanded `TestCommunityNicotineProfiles` uses the unchanged pinned reference
+  peer to verify default-off/users/buddies/trusted receiving, trust revocation,
+  exact Unicode/empty-file bytes, collision preservation, duplicate rejection,
+  download filtering, and partial transfer recovery after daemon restart. All
+  ten expanded repetitions passed (`/tmp/oto-receiving-reference-ten.log`).
+- Full current race/vet and terminal suites passed:
+  `/tmp/oto-audit-current-{race,vet,terminal}.log`. Targeted social race tests
+  across daemon, IPC, TUI, protocol, storage, and CLI passed twenty repetitions:
+  `/tmp/oto-final-social-race-twenty.log`.
+- The complete terminal suite previously passed ten repetitions in
+  `/tmp/oto-final-terminal-repeat.log`; the added receiving scenarios then passed
+  their own ten repetitions and another complete terminal-suite run.
+- Pinned Soulfind/slskd integration passed on a disposable internal Docker
+  network, with no public Soulseek access: `/tmp/oto-final-soulfind.log` and
+  `/tmp/oto-integration.fwDkja/{soulfind,slskd}.log`. Only those test containers
+  and their network were removed afterward.
+- Independent checker verified all 93 fixtures; sqlc regeneration preserved
+  generated-file hashes; all six bounded social decoder fuzz targets and Linux
+  amd64/arm64 CGO-disabled builds passed. Latest evidence files use
+  `/tmp/oto-final-fuzz-*.log` and `/tmp/oto-sqlc-{before,after}.sha256`.
+- The planned `POST /v1/uploads/send` endpoint now serves the same validated
+  preview operation as the existing shares endpoint; the typed client uses it.
+
+## Final audit
+
+- Every included feature row above has a daemon-backed user workflow and named
+  runnable verification. Spelling and plugin execution remain excluded.
+- The contextual User actions menu now offers shared file/folder selection,
+  retains the recipient only within Shares, and rejects stale sessions before
+  preview. Unicode recipient and navigation guards passed twenty race repetitions;
+  the contextual terminal workflow passed ten repetitions.
+- The final scale scenario receives 256 independently referenced PM frames while
+  a 7 MiB upload is active, waits for all durable ACKs, verifies exact file bytes,
+  and pages the resulting history without omissions. Ten terminal and twenty
+  race-enabled repetitions passed: `/tmp/oto-social-burst-terminal-ten.log` and
+  `/tmp/oto-social-burst-race-twenty.log`.
+- Existing search/browse benchmarks passed three runs in
+  `/tmp/oto-final-social-performance.log`; current static builds and the isolated
+  container watcher check passed. The final full-source race/vet/terminal logs are
+  `/tmp/oto-final-context-{race,vet,terminal}.log`.
+  A final complete terminal run also passed after the scale-test additions:
+  `/tmp/oto-final-acceptance-terminal.log`; tagged vet, fixture checking, and
+  clean sqlc regeneration passed again. Git history confirms no `docs/` commit
+  since the starting revision.
+- README changes are limited to 60 verified feature cells and seven section
+  counts. A direct cell count matches all eight PLAN targets, including the
+  unchanged 14/14 browsing section. No release pins, badges, or prose changed.
+- Implementation and test work was completed in the planned dependency order;
+  the overlapping final slices were recorded as separately verified protocol,
+  daemon/IPC/CLI, and TUI/reference-test commits. No push, merge, tag, release,
+  production account use, or public Soulseek testing was performed. `docs/` and
+  the local reference repositories were left unchanged.
