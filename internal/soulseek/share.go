@@ -355,6 +355,12 @@ func (s *ShareIndex) Subtree(virtual string) ([]ShareEntry, error) {
 
 // Search performs Unicode-aware case-insensitive token matching. A token prefixed by - excludes matches.
 func (s *ShareIndex) Search(query string, limit int) []ShareFile {
+	return s.search(query, limit, nil)
+}
+
+// search applies include before the result limit, so policy-filtered entries do
+// not consume a peer's result budget.
+func (s *ShareIndex) search(query string, limit int, include func(ShareFile) bool) []ShareFile {
 	fold := cases.Fold()
 	var need, bad []string
 	for _, t := range strings.Fields(fold.String(query)) {
@@ -384,6 +390,9 @@ func (s *ShareIndex) Search(query string, limit int) []ShareFile {
 				ok = false
 				break
 			}
+		}
+		if ok && include != nil && !include(s.files[i]) {
+			continue
 		}
 		if ok {
 			out = append(out, s.files[i])

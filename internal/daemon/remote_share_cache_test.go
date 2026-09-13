@@ -24,12 +24,12 @@ func remoteShareService(t *testing.T) *Service {
 
 func TestBrowseProgressIgnoresStaleOperations(t *testing.T) {
 	service := remoteShareService(t)
-	firstKey, firstGeneration, firstUpdate := service.beginBrowseProgress("Peer")
-	if progress := service.BrowseProgress("peer"); progress == nil || progress.Username != "Peer" {
+	firstKey, firstGeneration, firstUpdate := service.beginBrowseProgress("peer", 0)
+	if progress := service.BrowseProgress("peer"); progress == nil || progress.Username != "peer" {
 		t.Fatalf("initial progress: %+v", progress)
 	}
 	firstUpdate(25, 100)
-	secondKey, secondGeneration, secondUpdate := service.beginBrowseProgress("peer")
+	secondKey, secondGeneration, secondUpdate := service.beginBrowseProgress("peer", 0)
 	firstUpdate(100, 100)
 	service.finishBrowseProgress(firstKey, firstGeneration, false)
 	if progress := service.BrowseProgress("peer"); progress == nil || progress.Received != 0 {
@@ -81,8 +81,8 @@ func TestRemoteShareCacheRoundTripPreservesOrderAndDuplicates(t *testing.T) {
 	if err != nil || live.Cached || !reflect.DeepEqual(live.Entries, entries) {
 		t.Fatalf("live browse: %+v %v", live, err)
 	}
-	saved, err := service.SaveBrowse("alice", live.Revision)
-	if err != nil || saved.Username != "alice" || saved.SavedAt.IsZero() {
+	saved, err := service.SaveBrowse("Alice", live.Revision)
+	if err != nil || saved.Username != "Alice" || saved.SavedAt.IsZero() {
 		t.Fatalf("save browse: %+v %v", saved, err)
 	}
 	browses, err := service.SavedBrowses()
@@ -107,7 +107,10 @@ func TestRemoteShareCacheRoundTripPreservesOrderAndDuplicates(t *testing.T) {
 func TestRemoteShareCacheFallbackAndStaleRevision(t *testing.T) {
 	service := remoteShareService(t)
 	oldEntries := []soulseek.ShareEntry{{Name: `Old\song.mp3`, Size: 1}}
-	old := service.rememberBrowse("peer", oldEntries, false, time.Time{})
+	old, err := service.rememberBrowse(context.Background(), "peer", oldEntries, false, time.Time{}, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if _, err := service.SaveBrowse("peer", old.Revision); err != nil {
 		t.Fatal(err)
 	}

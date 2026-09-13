@@ -78,7 +78,7 @@ exact test names and evidence as their sequential commits land.
 | S16 | Buddy online-status notifications | Hydration suppression/transitions / 8 | `TestCommunityBuddiesNotificationsHydrationAndRestart`, `TestCommunityBuddiesNotificationAccountRoundtrip`, UI baseline/focus tests and terminal transitions |
 | S17 | Buddy last-seen timestamps | Remote offline vs local disconnect / 8 | Daemon hydration/restart test and terminal observed-offline/restart assertions; timestamps persist at millisecond precision |
 | S18 | Prioritized buddies | Flags and actual queue effect / 8,11 | Persistent editable flag verified in slice 8; actual queue effect pending step 11 |
-| S19 | Trusted buddies | Flags and actual share effect / 8,10 | Persistent editable flag verified in slice 8; actual share effect pending step 10 |
+| S19 | Trusted buddies | Flags and actual share effect / 8,10 | Buddy editor tests, `TestCommunitySharePolicyMatrix`, real Nicotine+ trust grant/revocation |
 | S20 | Personal likes and dislikes | Normalize/persist/republish / 9 | `TestCommunityInterestsPersistenceVersionsAndAccountIsolation`, `TestCommunityInterestsWireSyncPagingAndRemoval`, terminal discovery workflow |
 | S21 | Interest-based recommendations | Global/item/partial responses / 9 | `TestCommunityDiscoveryCorrelationLateRepliesAndPaging`, reference wire fixtures and terminal discovery workflow (scripted server) |
 | S22 | Similar-user discovery | Queries/cancellation/200-watch bound / 9 | `TestCommunityDiscoveryCacheBoundsAndWatchOwnership`, `TestCommunityDiscoveryPendingLimitAndShutdown`, terminal discovery workflow |
@@ -86,12 +86,12 @@ exact test names and evidence as their sequential commits land.
 | S24 | Publish a self-description | Persisted self-profile/peer response / 9 | Interest persistence and multi-frontend IPC tests, `TestCommunityProfileServingAndCancellation`, real Nicotine+ profile exchange |
 | S25 | View user country, interests, shares, speed, slots, and queue statistics | Freshness/correlation/partial response / 9 | Profile partial/fencing and rendered-resource tests, terminal discovery workflow and real Nicotine+ profile exchange |
 | S26 | Resolve and display a user's IP address | Exact identity/epoch/country / 3,9 | Existing address/watch tests, profile cancellation/account fencing and terminal inspector workflows |
-| S27 | Ignore users by username | Durable discard/ACK/no notifications / 10 | Pending |
-| S28 | Ignore users by IP address | CIDR/unresolved withholding / 10 | Pending |
-| S29 | Ban users by username | Serving matrix/revocation / 10 | Pending |
-| S30 | Ban users by IP address | Exact/CIDR serving matrix / 10 | Pending |
-| S31 | Ban users by country | Known vs unknown; stricter precedence / 10 | Pending |
-| S32 | Custom ban and country-block messages | Rejection text across serving paths / 10 | Pending |
+| S27 | Ignore users by username | Durable discard/ACK/no notifications / 10 | `TestCommunityIgnore*`, privacy editor IPC/TUI tests and terminal CRUD |
+| S28 | Ignore users by IP address | CIDR/unresolved withholding / 10 | Ignore exact/CIDR tests, `TestCommunityIgnoreHeldWorkerSurvivesRestart` release/discard and address-expiry regression |
+| S29 | Ban users by username | Serving matrix/revocation / 10 | `TestCommunitySharePolicyMatrix`, `TestSharePolicy*`, real Nicotine+ ban/removal |
+| S30 | Ban users by IP address | Exact/CIDR serving matrix / 10 | Policy matrix, transport address/recovery tests and real Nicotine+ IP ban/removal |
+| S31 | Ban users by country | Known vs unknown; stricter precedence / 10 | Policy matrix: country bans override trust, unknown country remains unknown; shared transport enforcement |
+| S32 | Custom ban and country-block messages | Rejection text across serving paths / 10 | Rule validation, transport admission/recovery tests, queued denial and batch-revocation regressions |
 | S33 | CTCP/client-information requests | Default off/rate/replay/loop suppression / 14 | Pending |
 | S34 | Keyword and mention detection | Boundaries/pre-censor detection / 14 | Pending |
 | S35 | Chat tab completion | Tab/Shift+Tab/pane/input contract / 14 | Pending |
@@ -113,10 +113,10 @@ exact test names and evidence as their sequential commits land.
 | N12 | Prioritize Soulseek privileged users | Privilege changes/one active per user / 11 | Pending |
 | N13 | Exempt buddies from upload queue limits | Opt-in/accounting/overflow/recovery / 11 | Pending |
 | N14 | Message all users currently downloading | Active-upload audience preview / 15 | Pending |
-| N15 | Buddy-only shares | Cumulative serving matrix / 10 | Pending |
-| N16 | Trusted-buddy-only shares | Cumulative serving matrix / 10 | Pending |
-| N17 | Reveal restricted share tiers selectively | Locked disclosure vs permission / 10 | Pending |
-| N18 | Use buddy trust as a share permission | Self exclusion/revocation/cache/recovery / 10 | Pending |
+| N15 | Buddy-only shares | Cumulative serving matrix / 10 | Policy matrix, Shares access editor, real Nicotine+ buddy grant/removal |
+| N16 | Trusted-buddy-only shares | Cumulative serving matrix / 10 | Policy matrix and real Nicotine+ trusted grant/removal |
+| N17 | Reveal restricted share tiers selectively | Locked disclosure vs permission / 10 | `TestSharePolicy*`, Shares editor and real Nicotine+ locked lists; folder responses omit inaccessible entries |
+| N18 | Use buddy trust as a share permission | Self exclusion/revocation/cache/recovery / 10 | Policy matrix, live browse identity/archive fencing, response/upload cancellation and recovery tests |
 | N19 | Persistent private-chat logs | SQLite searchable history/text+JSON export / 5 | Slice 5: `TestCommunityPrivateIPCWorkflows`, `TestCommunityPrivatePagingReadAndTwoFrontends`, `TestCommunityPrivateExport*` |
 | N20 | Persistent chat-room logs | Retention/export/history gaps / 6 | Slice 6 room history/export/restart tests; configurable retention remains a later settings gate |
 | N21 | Interactive command console in headless mode | Real binary/daemon console / 14 | Pending |
@@ -130,7 +130,7 @@ exact test names and evidence as their sequential commits land.
 | G02 | Reliable callback/backpressure/unlocked dispatch/watches/stale epochs/reconnect | `internal/soulseek`: `TestCommunityDispatch*`, `TestCommunityAddress*`, `TestCommunityInterruptedFrameRetiresTransport`, `TestCommunityCancelledRequestDoesNotWrite`; `internal/daemon`: `TestCommunityWatch*`, `TestCommunityPresenceFreshnessAndEpoch` |
 | G03 | Two TUIs: drafts/read markers/no focus theft/scroll anchors/detach | Shell/user details and private chat: `TestCommunityRealIPCRefreshAndFrontendIsolation`, `TestCommunityStaleResponsesAndPartialState`, `TestCommunityTerminalShellAndUserActions`, `TestCommunityTerminalPrivateChatLifecycle`; additional room workflows remain pending |
 | G04 | 120×40, 80×24, 40×16, tiny; resize while editing; Unicode/CJK/emoji; NO_COLOR | Shell and private chat: `TestCommunityResponsiveLayout`, `TestCommunityPrivateInputAndResponsiveRendering`, `TestCommunityPrivateTinyConfirmationControlsStayVisible`, both terminal shell/chat workflows; final social workflows remain pending steps 6–18 |
-| G05 | Search/browse/folder/admission/active/recovery permission matrix | Pending step 10 |
+| G05 | Search/browse/folder/admission/active/recovery permission matrix | Slice 10 policy/transport matrices, publication/revocation/recovery tests, real Nicotine+ restricted-share transitions |
 | G06 | Large histories/directories/bursts during transfers/discovery bounds/performance | Pending step 18 |
 | G07 | `go test -race ./...`; `go vet ./...` | Baseline race suite passes; final run pending |
 | G08 | `sqlc generate` with no generated diff | Pending final run |
@@ -373,9 +373,43 @@ exact test names and evidence as their sequential commits land.
 - A bounded read-only review timed out without approval; no whole-plan review or
   final acceptance is claimed. Permission and transfer-policy work remains pending.
 
+### 10. Privacy rules and share permissions
+
+- Durable, account/revision-fenced ignore and ban rules support exact usernames,
+  IP/CIDR and country bans, validated rejection messages and atomic rule edits.
+  Ignore is messaging-only; bans override buddy/trust access. Pending IP checks
+  withhold private/room/feed/wall content without blocking the server reader.
+  The held-PM worker is verified across actual daemon/database restart, including
+  ACK after durable holding and both later release and deliberate discard.
+- Share access is cumulative public/buddy/trusted, with independent opt-in locked
+  disclosure. Shares access edits persist before publication and retain the index;
+  stale settings cannot silently reopen restricted roots. Anonymous/public counts
+  omit restricted tiers. Country-unknown is not treated as an arbitrary ban.
+- One policy covers search, full browse, folder replies and upload admission/start/
+  stream/recovery. Folder replies omit inaccessible entries because their wire
+  format cannot represent locks. Policy publication cancels stale responses and
+  fences denied upload batches before scheduler promotion. Setup-stage denials
+  retain custom messages; pending recovery address checks remain recoverable.
+  Existing exclusion-only behavior still permits already-running allowed streams.
+- Live browse keys preserve exact usernames; account publication/disconnect
+  retire snapshots, progress and pending requests. Publication checks cancellation
+  under lock; browse download admission rechecks the source under the transaction
+  lock. Legacy case-folded saved snapshots remain explicitly marked archives.
+- Privacy CRUD and share-access forms expose validation, bounded paste, stable
+  paging, retained drafts, stale-response fencing and Cancel-default previews.
+  `TestCommunityNicotineProfiles` now drives these actual terminal workflows and
+  checks real unmodified Nicotine+ public/buddy/trusted lists, locked disclosure,
+  trust revocation, username/IP bans and immediate policy changes. Its server is
+  scripted and local; this is peer interoperability, not public-server evidence.
+- Verified: `go test -race ./...`, `go vet ./...`, all Community terminal workflows,
+  20 targeted race repetitions across daemon/Soulseek/IPC/TUI, and ten repetitions
+  of the Nicotine+ terminal workflow. All 84 independent fixtures pass; sqlc 1.31.1
+  regeneration is unchanged. Bounded independent re-review accepted four repaired
+  lifecycle-fencing issues; this is not a whole-plan approval.
+
 ## Remaining commit sequence
 
-10 permissions → 11 upload policies → 12 privileges
+11 upload policies → 12 privileges
 → 13 scoped search → 14 text/commands → 15 away/broadcasts → 16 manual sends
 → 17 consented receiving → 18 full verification → 19 verified README matrix.
 Each slice includes applicable tests before the next commit. Nothing is complete

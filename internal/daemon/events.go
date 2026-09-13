@@ -12,6 +12,10 @@ func (s *Service) consumeClientEvents(ctx context.Context, client *soulseek.Clie
 	s.mu.RLock()
 	identity, wake := s.community.identity, s.community.wake
 	s.mu.RUnlock()
+	heldCtx, cancelHeld := context.WithCancel(ctx)
+	heldDone := make(chan struct{})
+	go func() { defer close(heldDone); s.resolveCommunityHeld(heldCtx, client, identity) }()
+	defer func() { cancelHeld(); <-heldDone }()
 	sent := map[string]uint64{}
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()

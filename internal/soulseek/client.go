@@ -10,6 +10,7 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"net/netip"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -30,6 +31,8 @@ type ClientConfig struct {
 	Uploads                                                   *UploadManager
 	UploadUpdate                                              func(TransferEvent)
 	UploadStreamStart                                         func(TransferEvent)
+	// SharePolicy is consulted for each peer-facing share operation.
+	SharePolicy func(username string, address netip.Addr) SharePermission
 	// UploadAccepted runs after admission is reserved and before execution.
 	// Returning an error rolls the reservation back.
 	UploadAccepted func(TransferEvent) error
@@ -97,6 +100,7 @@ type peerAddressLookup struct {
 	done    chan struct{}
 	address PeerAddress
 	err     error
+	started time.Time
 }
 
 // Client owns one server connection; reconnecting creates a fresh lifecycle.
@@ -110,6 +114,8 @@ type Client struct {
 	uploadSeq             uint64
 	uploadRoot            context.Context
 	uploadCancel          context.CancelFunc
+	shareResponseRoot     context.Context
+	shareResponseCancel   context.CancelFunc
 	uploadWG              sync.WaitGroup
 	closing               bool
 	lifecycleMu           sync.Mutex // Serialize reconnect with complete upload shutdown.
@@ -132,6 +138,7 @@ type Client struct {
 	pending               map[uint32]chan SearchResponse
 	passwordChange        chan string
 	addresses             map[string]*peerAddressLookup
+	peerIPs               map[string]cachedShareAddress
 	pierce                map[uint32]chan net.Conn
 	requested             map[string]*pendingDownload
 	downloads             map[uint32]*pendingDownload
@@ -162,8 +169,9 @@ func NewClient(cfg ClientConfig) *Client {
 	}
 	control := bindToDevice(cfg.NetworkInterface)
 	uploadRoot, uploadCancel := context.WithCancel(context.Background())
-	client := &Client{cfg: cfg, writeMu: make(chan struct{}, 1), dialer: net.Dialer{Control: control}, listenConfig: net.ListenConfig{Control: control}, events: make(chan Event, 32), pending: make(map[uint32]chan SearchResponse), addresses: make(map[string]*peerAddressLookup), pierce: make(map[uint32]chan net.Conn), requested: make(map[string]*pendingDownload), downloads: make(map[uint32]*pendingDownload), uploads: make(map[string]*uploadAttempt), uploadRoot: uploadRoot, uploadCancel: uploadCancel, distributed: NewDistributedNode(), incomingSearch: policy, browseSlot: make(chan struct{}, 1), searchSlots: make(chan struct{}, 2)}
+	client := &Client{cfg: cfg, writeMu: make(chan struct{}, 1), dialer: net.Dialer{Control: control}, listenConfig: net.ListenConfig{Control: control}, events: make(chan Event, 32), pending: make(map[uint32]chan SearchResponse), addresses: make(map[string]*peerAddressLookup), peerIPs: make(map[string]cachedShareAddress), pierce: make(map[uint32]chan net.Conn), requested: make(map[string]*pendingDownload), downloads: make(map[uint32]*pendingDownload), uploads: make(map[string]*uploadAttempt), uploadRoot: uploadRoot, uploadCancel: uploadCancel, distributed: NewDistributedNode(), incomingSearch: policy, browseSlot: make(chan struct{}, 1), searchSlots: make(chan struct{}, 2)}
 	client.ConfigureDownloadLimit(cfg.DownloadLimitBytesPerSecond)
+	client.shareResponseRoot, client.shareResponseCancel = context.WithCancel(uploadRoot)
 	return client
 }
 
@@ -227,7 +235,8 @@ func (c *Client) SetShareIndex(index *ShareIndex) {
 	c.mu.Lock()
 	c.cfg.Share = index
 	c.mu.Unlock()
-	_ = c.send(sharedCounts(index))
+	c.RevalidateSharePolicy()
+	_ = c.send(c.shareCounts(index))
 }
 
 func (c *Client) ConfigureDownloadLimit(bytesPerSecond int64) {
@@ -292,8 +301,10 @@ func (c *Client) Connect(ctx context.Context) error {
 	c.conn = conn
 	if c.closing {
 		c.uploadRoot, c.uploadCancel = context.WithCancel(context.Background())
+		c.shareResponseRoot, c.shareResponseCancel = context.WithCancel(c.uploadRoot)
 		c.closing = false
 		c.addresses = make(map[string]*peerAddressLookup)
+		c.peerIPs = make(map[string]cachedShareAddress)
 	}
 	c.ctx, c.cancel = context.WithCancel(context.Background())
 	c.done = make(chan struct{})
@@ -468,7 +479,7 @@ func (c *Client) Login(ctx context.Context) (loginErr error) {
 		}
 		_ = c.SetStatus(UserStatusOnline)
 		index := c.shareIndex()
-		_ = c.send(sharedCounts(index))
+		_ = c.send(c.shareCounts(index))
 		_ = c.send(AcceptChildren{Value: true})
 		_ = c.send(HaveNoParent{Value: true})
 		return nil
@@ -641,6 +652,15 @@ func (c *Client) route(cmd uint32, m any) {
 		return
 	case PeerAddress:
 		c.mu.Lock()
+		if ip, err := netip.ParseAddr(message.IP); err == nil {
+			if len(c.peerIPs) >= 4096 {
+				for username := range c.peerIPs {
+					delete(c.peerIPs, username)
+					break
+				}
+			}
+			c.peerIPs[message.Username] = cachedShareAddress{ip.Unmap(), time.Now().Add(time.Minute)}
+		}
 		lookup := c.addresses[message.Username]
 		if lookup != nil {
 			delete(c.addresses, message.Username)
@@ -971,6 +991,18 @@ func (c *Client) connectUserType(ctx context.Context, username, kind string) (ne
 func (c *Client) lookupPeerAddress(ctx context.Context, username string) (PeerAddress, error) {
 	c.mu.Lock()
 	done, root := c.done, c.uploadRoot
+	for _, pending := range c.addresses {
+		if !pending.started.IsZero() && time.Since(pending.started) > time.Minute {
+			// Address replies have no token. Retire this connection rather than
+			// reusing correlations that a late response could satisfy incorrectly.
+			conn := c.conn
+			c.mu.Unlock()
+			if conn != nil {
+				_ = conn.Close()
+			}
+			return PeerAddress{}, ErrNotConnected
+		}
+	}
 	lookup := c.addresses[username]
 	owner := lookup == nil
 	if owner && len(c.addresses) >= 256 {
@@ -978,7 +1010,7 @@ func (c *Client) lookupPeerAddress(ctx context.Context, username string) (PeerAd
 		return PeerAddress{}, errors.New("soulseek: too many pending address lookups")
 	}
 	if owner {
-		lookup = &peerAddressLookup{done: make(chan struct{})}
+		lookup = &peerAddressLookup{done: make(chan struct{}), started: time.Now()}
 		c.addresses[username] = lookup
 	}
 	c.mu.Unlock()
@@ -1337,6 +1369,10 @@ func (c *Client) serveFile(peer net.Conn) {
 }
 
 func (c *Client) incomingSearchResults(query string) []SearchResult {
+	return c.incomingSearchResultsFor(query, "", netip.Addr{})
+}
+
+func (c *Client) incomingSearchResultsFor(query, username string, address netip.Addr) []SearchResult {
 	c.mu.Lock()
 	index, policy := c.cfg.Share, c.incomingSearch
 	excluded := append([]string(nil), c.excludedSearchPhrases...)
@@ -1344,11 +1380,25 @@ func (c *Client) incomingSearchResults(query string) []SearchResult {
 	if index == nil || !policy.Respond || utf8.RuneCountInString(query) < policy.MinimumLength {
 		return nil
 	}
-	return searchToResults(index.Search(query, policy.MaximumResults), excluded)
+	permission := c.sharePermission(username, address)
+	if permission.Banned {
+		return nil
+	}
+	files := index.search(query, policy.MaximumResults, func(file ShareFile) bool {
+		return c.shareVisibility(permission, file.Root) != ShareHidden
+	})
+	results := searchToResults(files, excluded)
+	for i := range results {
+		results[i].Public = c.shareVisibility(permission, shareRoot(results[i].Path)) == ShareAllowed
+	}
+	return results
 }
 
 // respondSearch admits work before spawning: excess searches are best-effort and dropped.
 func (c *Client) respondSearch(search IncomingSearch) {
+	if ValidateUsername(search.Username) != nil {
+		return
+	}
 	select {
 	case c.searchSlots <- struct{}{}:
 	default:
@@ -1356,11 +1406,20 @@ func (c *Client) respondSearch(search IncomingSearch) {
 	}
 	go func() {
 		defer func() { <-c.searchSlots }()
-		results := c.incomingSearchResults(search.Query)
-		if len(results) == 0 {
+		c.mu.Lock()
+		policy, index := c.incomingSearch, c.cfg.Share
+		c.mu.Unlock()
+		if !policy.Respond || utf8.RuneCountInString(search.Query) < policy.MinimumLength {
+			return
+		}
+		// Avoid peer connections for searches that cannot match any share tier.
+		if index == nil || len(index.Search(search.Query, 1)) == 0 {
 			return
 		}
 		ctx, cancel := context.WithTimeout(c.baseContext(), 10*time.Second)
+		policyCtx := c.shareResponseContext()
+		stopPolicy := context.AfterFunc(policyCtx, cancel)
+		defer stopPolicy()
 		defer cancel()
 		peer, err := c.connectUser(ctx, search.Username)
 		if err != nil {
@@ -1369,7 +1428,11 @@ func (c *Client) respondSearch(search IncomingSearch) {
 		defer peer.Close()
 		stop := context.AfterFunc(ctx, func() { _ = peer.Close() })
 		defer stop()
-		_ = writeMessage(peer, SearchResponse{Username: c.cfg.Username, Token: search.Token, Results: results, SlotFree: true})
+		results := c.incomingSearchResultsFor(search.Query, search.Username, peerIP(peer.RemoteAddr()))
+		if len(results) == 0 {
+			return
+		}
+		_ = writeShareMessage(policyCtx, peer, SearchResponse{Username: c.cfg.Username, Token: search.Token, Results: results, SlotFree: true})
 	}()
 }
 
@@ -1544,6 +1607,9 @@ func countryCodeForAddress(addr net.Addr) string {
 }
 
 func (c *Client) serveMessagePeer(peer net.Conn, peerInfo PeerInitMessage) {
+	if ValidateUsername(peerInfo.Username) != nil {
+		return
+	}
 	c.mu.Lock()
 	root := c.uploadRoot
 	c.mu.Unlock()
@@ -1564,7 +1630,10 @@ func (c *Client) serveMessagePeer(peer net.Conn, peerInfo PeerInitMessage) {
 			}
 		case PeerGetSharedList:
 			if len(payload) == 0 {
-				_ = writeMessage(peer, SharedListResponse{Entries: c.shareEntries()})
+				ctx := c.shareResponseContext()
+				if writeShareMessage(ctx, peer, SharedListResponse{Entries: c.shareEntriesFor(peerInfo.Username, peerIP(peer.RemoteAddr()))}) != nil {
+					return
+				}
 			}
 		case PeerFolderContents:
 			d := NewDecoder(payload)
@@ -1576,8 +1645,13 @@ func (c *Client) serveMessagePeer(peer net.Conn, peerInfo PeerInitMessage) {
 			if err != nil || d.Done() != nil {
 				continue
 			}
+			ctx := c.shareResponseContext()
 			entries, _ := c.shareIndex().Subtree(path)
-			_ = writeMessage(peer, FolderResponse{Token: token, Path: path, Entries: entries})
+			permission := c.sharePermission(peerInfo.Username, peerIP(peer.RemoteAddr()))
+			entries = c.filterShareEntries(entries, permission)
+			if writeShareMessage(ctx, peer, FolderResponse{Token: token, Path: path, Entries: entries}) != nil {
+				return
+			}
 		case PeerSearch:
 			response, err := DecodeSearchResponse(payload)
 			if err == nil {
@@ -1607,7 +1681,7 @@ func (c *Client) serveMessagePeer(peer net.Conn, peerInfo PeerInitMessage) {
 				continue
 			}
 			if request.Direction == 0 {
-				_, _, err := c.registerUpload(peerInfo.Username, request.Filename, true)
+				_, _, err := c.registerUploadWithAddress(peerInfo.Username, request.Filename, true, peerIP(peer.RemoteAddr()), false, "")
 				if err != nil {
 					_ = writeMessage(peer, TransferResponse{Token: request.Token, Accepted: false, Reason: uploadDenial(err)})
 					continue
@@ -1638,7 +1712,7 @@ func (c *Client) serveMessagePeer(peer net.Conn, peerInfo PeerInitMessage) {
 			if err != nil {
 				continue
 			}
-			a, _, err := c.registerUpload(peerInfo.Username, filename, true)
+			a, _, err := c.registerUploadWithAddress(peerInfo.Username, filename, true, peerIP(peer.RemoteAddr()), false, "")
 			if err != nil {
 				_ = writeMessage(peer, QueueDenied{Filename: filename, Reason: uploadDenial(err)})
 				continue
@@ -1649,13 +1723,30 @@ func (c *Client) serveMessagePeer(peer net.Conn, peerInfo PeerInitMessage) {
 }
 
 func (c *Client) shareEntries() []ShareEntry {
+	return c.shareEntriesFor("", netip.Addr{})
+}
+
+func (c *Client) shareEntriesFor(username string, address netip.Addr) []ShareEntry {
+	permission := c.sharePermission(username, address)
+	if permission.Banned {
+		return nil
+	}
 	files := c.shareIndex().Files()
 	out := make([]ShareEntry, 0, len(files))
 	for _, file := range files {
-		out = append(out, file.entry(file.Root+"\\"+strings.ReplaceAll(file.Path, "/", "\\")))
+		visibility := c.shareVisibility(permission, file.Root)
+		if visibility == ShareHidden {
+			continue
+		}
+		entry := file.entry(file.Root + "\\" + strings.ReplaceAll(file.Path, "/", "\\"))
+		if visibility == ShareLocked {
+			entry.Private = true
+		}
+		out = append(out, entry)
 	}
 	return out
 }
+
 func searchToResults(files []ShareFile, excludedPhrases []string) []SearchResult {
 	out := make([]SearchResult, 0, len(files))
 	fold := cases.Fold()

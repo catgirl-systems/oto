@@ -12,6 +12,7 @@ import (
 )
 
 func (s *Server) registerCommunity(mux *http.ServeMux) {
+	mux.HandleFunc("PUT /v1/shares/access", s.shareAccess)
 	mux.HandleFunc("GET /v1/community", s.communitySummary)
 	mux.HandleFunc("GET /v1/community/users", s.communityUsers)
 	mux.HandleFunc("PUT /v1/community/watches", s.communityWatches)
@@ -23,6 +24,9 @@ func (s *Server) registerCommunity(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/community/interests", s.communityInterests)
 	mux.HandleFunc("PUT /v1/community/interests", s.communityInterestSet)
 	mux.HandleFunc("DELETE /v1/community/interests", s.communityInterestSet)
+	mux.HandleFunc("GET /v1/community/rules", s.communityRules)
+	mux.HandleFunc("PUT /v1/community/rules", s.communityRuleSet)
+	mux.HandleFunc("DELETE /v1/community/rules", s.communityRuleSet)
 	mux.HandleFunc("GET /v1/community/profile/self", s.communitySelfProfile)
 	mux.HandleFunc("PUT /v1/community/profile/self", s.communitySelfProfileSet)
 	mux.HandleFunc("GET /v1/community/discovery", s.communityDiscovery)

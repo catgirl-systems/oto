@@ -555,7 +555,7 @@ func (m model) renderShares(width, height int) string {
 		limit--
 	}
 	if len(m.shares) == 0 && limit > 0 {
-		return strings.Join(append(lines, "\n"+muted("No public folders. Press / to add one as name:path.")), "\n")
+		return strings.Join(append(lines, "\n"+muted("No shared folders. Press / to add one as name:path.")), "\n")
 	}
 	start, end := visibleRange(len(m.shareTree.visible), m.cursor, limit)
 	frames := []rune("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏")
@@ -564,7 +564,17 @@ func (m model) renderShares(width, height int) string {
 		node := m.shareTree.nodes[nodeIndex]
 		status := ""
 		if node.kind == treeShareRoot {
-			status = trunc(node.detail, max(4, width/2))
+			access := "public"
+			if node.source >= 0 && node.source < len(m.shares) {
+				root := m.shares[node.source]
+				if root.access != "" {
+					access = root.access
+				}
+				if root.reveal && access != "public" {
+					access += ", locked reveal"
+				}
+			}
+			status = trunc("["+access+"] "+node.detail, max(4, width/2))
 		} else if node.kind == treeFile {
 			status = formatBytes(node.size)
 		}
@@ -579,7 +589,7 @@ func (m model) renderShares(width, height int) string {
 	return strings.Join(lines, "\n")
 }
 
-var settingsSectionNames = [settingsSectionCount]string{"Account", "Connection", "Bandwidth", "Downloads", "Uploads", "Search", "Shares", "Browse", "Statistics", "Logging"}
+var settingsSectionNames = [settingsSectionCount]string{"Account", "Connection", "Bandwidth", "Downloads", "Uploads", "Search", "Shares", "Browse", "Statistics", "Logging", "Community"}
 
 func (m model) renderSettings(width, height int) string {
 	if m.stats.prune {
@@ -697,6 +707,8 @@ func (m model) settingFields() []settingField {
 			{settingUsername, "Username", m.cfg.Soulseek.Username, settingText},
 			{settingChangePassword, "Change Soulseek password", "Press Enter", settingAction},
 		}
+	case settingsCommunity:
+		return []settingField{{settingPrivacyRules, "Privacy / ignore / ban rules", "Press Enter", settingAction}}
 	case settingsConnection:
 		publicIP := m.status.publicIP
 		if publicIP == "" {

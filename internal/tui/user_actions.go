@@ -8,7 +8,7 @@ import (
 
 // Only actions backed by implemented APIs are offered. Later capabilities add
 // their actions here, rather than giving each workspace its own menu.
-var userActionNames = []string{"Inspect user", "Browse shared files", "Search user's files", "Message user", "Buddy / note / trust / priority"}
+var userActionNames = []string{"Inspect user", "Browse shared files", "Search user's files", "Message user", "Buddy / note / trust / priority", "Privacy / ignore / ban"}
 
 type userActions struct {
 	username string
@@ -115,6 +115,9 @@ func (m *model) userActionsKey(k tea.KeyPressMsg) tea.Cmd {
 			m.switchWorkspace(workspaceCommunity)
 			m.community.view, m.community.pane = 2, 1
 			return tea.Batch(m.openBuddyEditor(d.username, false), m.loadCommunityBuddies(true))
+		case 5:
+			m.userActions = nil
+			return m.openPrivacyRules("ignore", d.username)
 		}
 	}
 	return nil

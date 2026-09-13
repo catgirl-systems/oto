@@ -63,7 +63,11 @@ func TestClientReconnectRenewsLifecycle(t *testing.T) {
 		}
 		left, right := net.Pipe()
 		peerDone := make(chan struct{})
-		go func() { defer close(peerDone); defer left.Close(); c.serveMessagePeer(left, PeerInitMessage{}) }()
+		go func() {
+			defer close(peerDone)
+			defer left.Close()
+			c.serveMessagePeer(left, PeerInitMessage{Username: "Alice", Type: "P"})
+		}()
 		_, profileErr := requestPeerProfile(ctx, right)
 		_ = right.Close()
 		<-peerDone

@@ -426,6 +426,18 @@ func (m *model) chatConversationAction(kind string, conversation, through int64)
 }
 func (m model) chatDraftCount() int {
 	count := len(m.community.rooms.private.wallDrafts) + len(m.community.buddies.drafts) + len(m.community.discover.drafts)
+	if m.privacyRules != nil && m.privacyRules.form != nil && m.privacyRules.form.dirty {
+		count++
+	}
+	if e := m.shareAccess; e != nil {
+		old := e.req.Expected.Access
+		if old == "" {
+			old = "public"
+		}
+		if old != e.req.Access || e.req.Expected.Reveal != e.req.Reveal {
+			count++
+		}
+	}
 	for _, d := range m.community.chats.drafts {
 		if d.text != "" {
 			count++

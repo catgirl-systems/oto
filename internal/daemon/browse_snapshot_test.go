@@ -96,36 +96,36 @@ func TestBrowseSnapshotSaveQueueAndRevision(t *testing.T) {
 	if err != nil || root.Cached || root.TotalEntries != 5 {
 		t.Fatalf("open: %+v %v", root, err)
 	}
-	page, err := s.BrowsePage(ctx, BrowsePageRequest{Username: "peer", Revision: root.Revision, Folder: `Music\More`})
+	page, err := s.BrowsePage(ctx, BrowsePageRequest{Username: "Peer", Revision: root.Revision, Folder: `Music\More`})
 	if err != nil || calls != 1 {
 		t.Fatalf("page refetched peer: %d %v", calls, err)
 	}
 	music, more, file := root.Entries[0].ID, page.Ancestors[1].ID, page.Entries[0].ID
-	queued, err := s.QueueBrowse(ctx, BrowseDownloadRequest{Username: "peer", Revision: root.Revision, Selection: map[int]bool{music: true, more: false, file: true}})
+	queued, err := s.QueueBrowse(ctx, BrowseDownloadRequest{Username: "Peer", Revision: root.Revision, Selection: map[int]bool{music: true, more: false, file: true}})
 	if err != nil || queued.Queued != 2 || calls != 1 {
 		t.Fatalf("recursive rules: %+v %v", queued, err)
 	}
-	queued, err = s.QueueBrowse(ctx, BrowseDownloadRequest{Username: "peer", Revision: root.Revision, Folder: "Music", Recursive: true})
+	queued, err = s.QueueBrowse(ctx, BrowseDownloadRequest{Username: "Peer", Revision: root.Revision, Folder: "Music", Recursive: true})
 	if err != nil || queued.Queued != 1 {
 		t.Fatalf("queue unloaded descendants/dedup: %+v %v", queued, err)
 	}
-	if _, err := s.SaveBrowse("peer", root.Revision); err != nil {
+	if _, err := s.SaveBrowse("Peer", root.Revision); err != nil {
 		t.Fatal(err)
 	}
 	s.mu.Lock()
 	s.client = nil
 	s.mu.Unlock()
-	cached, err := s.OpenBrowse(ctx, "PEER", `Music\More`, "")
+	cached, err := s.OpenBrowse(ctx, "Peer", `Music\More`, "")
 	if err != nil || !cached.Cached || cached.SavedAt.IsZero() || len(cached.Entries) != 2 || !cached.Entries[0].Private || cached.Entries[0].BitDepth != 24 {
 		t.Fatalf("saved snapshot: %+v %v", cached, err)
 	}
-	if _, err := s.BrowsePage(ctx, BrowsePageRequest{Username: "peer", Revision: root.Revision}); !errors.Is(err, ErrBrowseRevision) {
+	if _, err := s.BrowsePage(ctx, BrowsePageRequest{Username: "Peer", Revision: root.Revision}); !errors.Is(err, ErrBrowseRevision) {
 		t.Fatal(err)
 	}
-	if _, err := s.QueueBrowse(ctx, BrowseDownloadRequest{Username: "peer", Revision: root.Revision, Selection: map[int]bool{music: true}}); !errors.Is(err, ErrBrowseRevision) {
+	if _, err := s.QueueBrowse(ctx, BrowseDownloadRequest{Username: "Peer", Revision: root.Revision, Selection: map[int]bool{music: true}}); !errors.Is(err, ErrBrowseRevision) {
 		t.Fatal(err)
 	}
-	if _, err := s.SaveBrowse("peer", root.Revision); !errors.Is(err, ErrBrowseRevision) {
+	if _, err := s.SaveBrowse("Peer", root.Revision); !errors.Is(err, ErrBrowseRevision) {
 		t.Fatal(err)
 	}
 }

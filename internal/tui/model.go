@@ -74,6 +74,7 @@ const (
 	settingsBrowse
 	settingsStatistics
 	settingsLogging
+	settingsCommunity
 	settingsSectionCount
 )
 
@@ -128,7 +129,10 @@ type transfer struct {
 	waitingForPeerSeconds, retryInSeconds     *uint64
 	queue                                     uint32
 }
-type share struct{ name, path string }
+type share struct {
+	name, path, access string
+	reveal             bool
+}
 type download struct {
 	filename string
 	size     uint64
@@ -191,6 +195,7 @@ const (
 	settingBrowseMaxEntries
 	settingBrowseMaxCompressedMiB
 	settingBrowseMaxDecompressedMiB
+	settingPrivacyRules
 )
 
 type settingField struct {
@@ -236,6 +241,10 @@ type model struct {
 	workspace                              workspace
 	community                              communityModel
 	userActions                            *userActions
+	privacyRules                           *privacyRulesEditor
+	privacyRulesRequest                    uint64
+	shareAccess                            *shareAccessEditor
+	shareAccessRequest                     uint64
 	settingsSection                        settingsSection
 	transferTab                            transferTab
 	cursor, statusMenuChoice               int
@@ -359,7 +368,7 @@ func toTransfers(x []daemon.Transfer) []transfer {
 func toShares(x []config.Share) []share {
 	r := make([]share, len(x))
 	for i, v := range x {
-		r[i] = share{v.Name, v.Path}
+		r[i] = share{name: v.Name, path: v.Path, access: v.Access, reveal: v.Reveal}
 	}
 	return r
 }

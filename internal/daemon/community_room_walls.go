@@ -135,6 +135,9 @@ func (s *Service) CommunityRoomWall(ctx context.Context, req CommunityRoomMember
 	out.OwnText, out.Fresh, out.State = r.ownWall, r.joined && s.community.online && r.wallFresh, r.wallState
 	var names []string
 	for name, text := range r.wall {
+		if ignored, held := s.communityIgnoreLocked(name); (ignored || held) && name != s.cfg.Soulseek.Username {
+			continue
+		}
 		if name > req.Cursor && strings.Contains(strings.ToLower(name+" "+text), strings.ToLower(req.Query)) {
 			names = append(names, name)
 		}

@@ -32,6 +32,7 @@ func privateChatModel(t *testing.T) (model, *storage.DB) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	service.SetConfigPath(filepath.Join(t.TempDir(), "config.toml"))
 	socket := filepath.Join(t.TempDir(), "ipc.sock")
 	server := ipc.NewServer(service, socket)
 	ctx, cancel := context.WithCancel(context.Background())

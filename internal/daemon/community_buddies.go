@@ -89,7 +89,13 @@ func (s *Service) SetCommunityBuddy(ctx context.Context, req CommunityBuddyReque
 		return out, errors.New("community: confirm removing this exact buddy; history is retained")
 	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	var changedClient *soulseek.Client
+	defer func() {
+		s.mu.Unlock()
+		if changedClient != nil {
+			changedClient.RevalidateSharePolicy()
+		}
+	}()
 	if err := s.checkCommunityIdentityLocked(ctx, req.CommunityIdentity); err != nil {
 		return out, err
 	}
@@ -144,6 +150,7 @@ func (s *Service) SetCommunityBuddy(ctx context.Context, req CommunityBuddyReque
 		}
 		s.community.buddies[req.Username] = communityBuddyFromRow(row, uint64(revision))
 	}
+	changedClient = s.client
 	names := make([]string, 0, len(s.community.buddies))
 	for name := range s.community.buddies {
 		names = append(names, name)

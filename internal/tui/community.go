@@ -649,17 +649,29 @@ func (m model) userActionsView() string {
 		return strings.Join([]string{trunc("User actions", m.width), trunc(fmt.Sprintf("%q", d.username), m.width), trunc("> "+userActionNames[d.row], m.width), trunc("Esc back", m.width)}, "\n")
 	}
 	width := max(1, min(64, m.width-4))
-	lines := []string{strong("User actions"), trunc(fmt.Sprintf("%q", d.username), max(1, width-4)), ""}
-	for i, label := range userActionNames {
+	lines := []string{strong("User actions"), trunc(fmt.Sprintf("%q", d.username), max(1, width-4))}
+	reserved := 1
+	if d.err != "" {
+		reserved++
+	}
+	start, end := visibleRange(len(userActionNames), d.row, max(1, m.height-4-len(lines)-reserved))
+	for i := start; i < end; i++ {
+		label := userActionNames[i]
 		if i == 0 && !m.community.supports("users") {
 			label += " (unavailable)"
 		}
 		if i == 4 && !m.community.supports("buddies") {
 			label += " (unavailable)"
 		}
-		lines = append(lines, selectedRow(label, d.row == i))
+		if i == 5 && !m.community.supports("privacy-rules") {
+			label += " (unavailable)"
+		}
+		lines = append(lines, selectedRow(trunc(label, max(1, width-6)), d.row == i))
 	}
-	lines = append(lines, "", browseErrorText(d.err), "↑↓ choose · Enter act · Esc back")
+	if d.err != "" {
+		lines = append(lines, trunc(browseErrorText(d.err), max(1, width-4)))
+	}
+	lines = append(lines, "↑↓ choose · Enter act · Esc back")
 	body := strings.Join(communityPane(lines, max(1, width-4), max(1, m.height-4), 0), "\n")
 	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, panelStyle().Width(width).Padding(0, 1).Render(body))
 }
