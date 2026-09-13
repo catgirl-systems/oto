@@ -34,6 +34,9 @@ func (m *model) contextualUser() string {
 			}
 			return m.community.buddies.selected
 		}
+		if m.community.view == 3 && m.community.pane == 1 {
+			return m.discoverTarget()
+		}
 		return m.community.target
 	}
 	if m.workspace == workspaceBrowse {

@@ -199,6 +199,8 @@ func DecodeServerMessage(command uint32, payload []byte) (any, error) {
 		return DecodeRoomWallSnapshot(payload)
 	case ServerRoomWallAdded, ServerRoomWallRemoved:
 		return DecodeRoomWallUpdate(payload, command == ServerRoomWallRemoved)
+	case ServerRecommendations, ServerGlobalRecommendations, ServerItemRecommendations, ServerSimilarUsers, ServerItemSimilarUsers, ServerUserInterests:
+		return DecodeDiscoveryResponse(command, payload)
 	default:
 		return DecodeMessage(command, payload)
 	}

@@ -79,13 +79,13 @@ exact test names and evidence as their sequential commits land.
 | S17 | Buddy last-seen timestamps | Remote offline vs local disconnect / 8 | Daemon hydration/restart test and terminal observed-offline/restart assertions; timestamps persist at millisecond precision |
 | S18 | Prioritized buddies | Flags and actual queue effect / 8,11 | Persistent editable flag verified in slice 8; actual queue effect pending step 11 |
 | S19 | Trusted buddies | Flags and actual share effect / 8,10 | Persistent editable flag verified in slice 8; actual share effect pending step 10 |
-| S20 | Personal likes and dislikes | Normalize/persist/republish / 9 | Pending |
-| S21 | Interest-based recommendations | Global/item/partial responses / 9 | Pending |
-| S22 | Similar-user discovery | Queries/cancellation/200-watch bound / 9 | Pending |
-| S23 | View user profiles | Partial timeout/bounded picture/save / 9 | Pending |
-| S24 | Publish a self-description | Persisted self-profile/peer response / 9 | Pending |
-| S25 | View user country, interests, shares, speed, slots, and queue statistics | Freshness/correlation/partial response / 9 | Pending |
-| S26 | Resolve and display a user's IP address | Exact identity/epoch/country / 3,9 | Pending |
+| S20 | Personal likes and dislikes | Normalize/persist/republish / 9 | `TestCommunityInterestsPersistenceVersionsAndAccountIsolation`, `TestCommunityInterestsWireSyncPagingAndRemoval`, terminal discovery workflow |
+| S21 | Interest-based recommendations | Global/item/partial responses / 9 | `TestCommunityDiscoveryCorrelationLateRepliesAndPaging`, reference wire fixtures and terminal discovery workflow (scripted server) |
+| S22 | Similar-user discovery | Queries/cancellation/200-watch bound / 9 | `TestCommunityDiscoveryCacheBoundsAndWatchOwnership`, `TestCommunityDiscoveryPendingLimitAndShutdown`, terminal discovery workflow |
+| S23 | View user profiles | Partial timeout/bounded picture/save / 9 | `TestCommunityProfilesCoalescingPicturesAndPartialFailure`, `TestCommunityPeerPictureExplicitSaveAndNoOverwrite`, `TestCommunityNicotineProfiles` |
+| S24 | Publish a self-description | Persisted self-profile/peer response / 9 | Interest persistence and multi-frontend IPC tests, `TestCommunityProfileServingAndCancellation`, real Nicotine+ profile exchange |
+| S25 | View user country, interests, shares, speed, slots, and queue statistics | Freshness/correlation/partial response / 9 | Profile partial/fencing and rendered-resource tests, terminal discovery workflow and real Nicotine+ profile exchange |
+| S26 | Resolve and display a user's IP address | Exact identity/epoch/country / 3,9 | Existing address/watch tests, profile cancellation/account fencing and terminal inspector workflows |
 | S27 | Ignore users by username | Durable discard/ACK/no notifications / 10 | Pending |
 | S28 | Ignore users by IP address | CIDR/unresolved withholding / 10 | Pending |
 | S29 | Ban users by username | Serving matrix/revocation / 10 | Pending |
@@ -356,9 +356,26 @@ exact test names and evidence as their sequential commits land.
   no issues in buddy request/session/revision fencing and draft handling; this
   was not a whole-plan review. Priority/trust serving effects remain steps 10/11.
 
+### 9. Profiles, interests and discovery
+
+- Account-scoped descriptions and normalized likes/dislikes persist and synchronize
+  on reconnect. Discovery queries are correlated, paged and bounded; frontend
+  leases cap discovery watches at 200. Profile requests coalesce and retain useful
+  partial results, with bounded explicitly saveable pictures and session fencing.
+- `TestCommunityTerminalDiscoveryAndProfiles` drives the real daemon and TUI
+  against a scripted local server. `TestCommunityNicotineProfiles` exchanges
+  profiles with the pinned headless Nicotine+ peer through a scripted local server;
+  this is real peer interoperability, not real-server discovery verification.
+- Verified: full `go test -race ./...`, `go vet ./...`, all terminal workflows once,
+  profile/discovery/interest targeted race tests 20 times and the two new terminal/
+  peer workflows ten times. All 84 independent fixtures pass against pinned
+  Nicotine+. Checksum-verified sqlc 1.31.1 regeneration leaves generated code clean.
+- A bounded read-only review timed out without approval; no whole-plan review or
+  final acceptance is claimed. Permission and transfer-policy work remains pending.
+
 ## Remaining commit sequence
 
-9 profiles/discovery → 10 permissions → 11 upload policies → 12 privileges
+10 permissions → 11 upload policies → 12 privileges
 → 13 scoped search → 14 text/commands → 15 away/broadcasts → 16 manual sends
 → 17 consented receiving → 18 full verification → 19 verified README matrix.
 Each slice includes applicable tests before the next commit. Nothing is complete

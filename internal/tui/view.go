@@ -47,6 +47,11 @@ func (m model) View() tea.View {
 	}
 	if m.community.buddies.dialog != nil {
 		content = m.buddyDialogView()
+	} else if m.community.discover.dialog != nil {
+		content = m.discoverDialogView()
+	}
+	if m.community.peer.dialog {
+		content = communityConfirmationView("Save picture for "+m.community.peer.image.Username+" to "+m.community.peer.path+"? Existing files are never overwritten.", m.community.peer.confirm, m.community.peer.dialogScroll, m.width, m.height)
 	}
 	v := tea.NewView(content)
 	v.AltScreen = true
@@ -198,6 +203,9 @@ func (m model) mainView() string {
 }
 
 func (m model) compactView() string {
+	if m.workspace == workspaceCommunity && m.community.peer.form {
+		return strings.Join(m.peerPictureForm(m.width, m.height), "\n")
+	}
 	if m.workspace == workspaceCommunity && m.community.inspectEditing {
 		return strings.Join([]string{m.workspaceTabs(m.width), renderInputWindow(m.community.input, m.community.inputCursor, m.width), trunc(m.community.inputErr, m.width), trunc("Esc back · Enter inspect", m.width)}, "\n")
 	}
@@ -212,6 +220,9 @@ func (m model) compactView() string {
 	}
 	if m.workspace == workspaceCommunity && m.community.view == 2 && (m.community.buddies.editor != nil || m.community.buddies.form != "") {
 		return strings.Join(m.buddyEditorView(m.width, m.height), "\n")
+	}
+	if m.workspace == workspaceCommunity && m.community.view == 3 && m.community.discover.form != "" {
+		return strings.Join(m.discoverFormView(m.width, m.height), "\n")
 	}
 	if m.workspace == workspaceCommunity && m.community.chats.composing {
 		d := m.community.chats.drafts[m.chatKey()]
@@ -385,6 +396,12 @@ func (m model) helpView() string {
 			{"f / s / p / n (Buddies)", "filter username/note / sort all buddies / previous/next page"},
 			{"Tab / Space (buddy editor)", "choose field / toggle notification, priority, or trust"},
 			{"Ctrl+R / Esc (buddy editor)", "confirm reloading saved metadata / retain local draft"},
+			{"↑↓ / Enter (Discover)", "choose interests / recommendations / users / self-profile"},
+			{"s / i / u (Discover item)", "search files / item recommendations / related users"},
+			{"a / e / D (Interests)", "add / edit like or dislike / confirmed removal"},
+			{"e / Ctrl+J / Ctrl+R (self-profile)", "edit description / insert newline / confirm reload"},
+			{"r / p / n (User Inspector)", "refresh peer profile / first / next interests page"},
+			{"P (User Inspector)", "save cached picture to chosen path (confirm, no overwrite)"},
 			{"f", "edit Search filters / find in loaded Browse list"},
 			{"c", "clear / restore search filters"},
 			{"w (search)", "save the active query and filter to Wishlist"},

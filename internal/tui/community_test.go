@@ -284,8 +284,7 @@ func TestCommunityRealIPCRefreshAndFrontendIsolation(t *testing.T) {
 		if again := m.loadCommunityUser(); again != nil {
 			t.Fatal("unbounded concurrent refresh")
 		}
-		updated, _ = m.Update(cmd())
-		m = updated.(model)
+		drainChat(t, &m, cmd)
 		if m.community.userErr != "" || m.community.user.Username != username || m.community.user.StatusFresh {
 			t.Fatalf("IPC resource: %+v", m.community)
 		}

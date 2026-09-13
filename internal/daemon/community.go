@@ -26,22 +26,24 @@ type CommunityIdentity struct {
 }
 
 type CommunityUser struct {
-	Username         string              `json:"username"`
-	Exists           bool                `json:"exists"`
-	Status           soulseek.UserStatus `json:"status"`
-	Privileged       bool                `json:"privileged"`
-	Country          string              `json:"country"`
-	IP               string              `json:"ip"`
-	Port             uint32              `json:"port"`
-	Stats            soulseek.UserStats  `json:"stats"`
-	StatusFresh      bool                `json:"status_fresh"`
-	StatsFresh       bool                `json:"stats_fresh"`
-	AddressFresh     bool                `json:"address_fresh"`
-	StatusUpdatedAt  time.Time           `json:"status_updated_at"`
-	StatsUpdatedAt   time.Time           `json:"stats_updated_at"`
-	AddressUpdatedAt time.Time           `json:"address_updated_at"`
-	LastSeen         time.Time           `json:"last_seen"`
-	watchVersion     uint64              // A recreated cache needs hydration even before an unwatch was sent.
+	Username           string              `json:"username"`
+	Exists             bool                `json:"exists"`
+	Status             soulseek.UserStatus `json:"status"`
+	Privileged         bool                `json:"privileged"`
+	PrivilegeFresh     bool                `json:"privilege_fresh"`
+	PrivilegeUpdatedAt time.Time           `json:"privilege_updated_at"`
+	Country            string              `json:"country"`
+	IP                 string              `json:"ip"`
+	Port               uint32              `json:"port"`
+	Stats              soulseek.UserStats  `json:"stats"`
+	StatusFresh        bool                `json:"status_fresh"`
+	StatsFresh         bool                `json:"stats_fresh"`
+	AddressFresh       bool                `json:"address_fresh"`
+	StatusUpdatedAt    time.Time           `json:"status_updated_at"`
+	StatsUpdatedAt     time.Time           `json:"stats_updated_at"`
+	AddressUpdatedAt   time.Time           `json:"address_updated_at"`
+	LastSeen           time.Time           `json:"last_seen"`
+	watchVersion       uint64              // A recreated cache needs hydration even before an unwatch was sent.
 }
 
 type userWatchLease struct {
@@ -72,6 +74,8 @@ type communityState struct {
 	wallBytes                                          int
 	buddies                                            map[string]CommunityBuddy
 	buddyNotification                                  DownloadNotification
+	discovery                                          communityDiscoveryState
+	profiles                                           communityProfileState
 }
 
 // loadCommunityLocked loads preferences, never durable authoritative presence.
@@ -84,7 +88,7 @@ func (s *Service) loadCommunityLocked(ctx context.Context) error {
 	if err := s.stateDB.WriteTx(ctx, func(tx *sql.Tx) error { return db.New(tx).EnsureCommunityAccount(ctx, account) }); err != nil {
 		return err
 	}
-	next := communityState{identity: CommunityIdentity{Account: account, Daemon: s.community.identity.Daemon}, users: map[string]CommunityUser{}, watches: map[string]userWatchLease{}, wake: make(chan struct{}, 1)}
+	next := communityState{identity: CommunityIdentity{Account: account, Daemon: s.community.identity.Daemon}, users: map[string]CommunityUser{}, watches: map[string]userWatchLease{}, wake: make(chan struct{}, 1), profiles: newCommunityProfileState()}
 	next.buddies = make(map[string]CommunityBuddy)
 	err := s.stateDB.ReadSnapshot(ctx, func(tx *storage.ReadTx) error {
 		q := tx.Queries()
@@ -94,6 +98,9 @@ func (s *Service) loadCommunityLocked(ctx context.Context) error {
 		}
 		next.revision = uint64(settings.Revision)
 		next.invitationsWanted = settings.AcceptInvitations != 0
+		if err := loadCommunityDiscovery(ctx, q, settings, &next); err != nil {
+			return err
+		}
 		if err := loadCommunityRooms(ctx, q, account, &next); err != nil {
 			return err
 		}
@@ -150,6 +157,7 @@ func (s *Service) loadCommunityLocked(ctx context.Context) error {
 	// Account changes must fence offline requests too, including A -> B -> A.
 	s.uploadEpoch++
 	next.identity.Session = s.uploadEpoch
+	s.retireProfilesLocked()
 	s.community = next
 	s.desiredUserWatchesLocked(time.Now())
 	return nil
@@ -163,8 +171,11 @@ func (s *Service) communityCurrentLocked(identity CommunityIdentity) bool {
 func (s *Service) retireCommunityLocked() {
 	s.community.online = false
 	s.retireCommunityRoomsLocked()
+	s.retireDiscoveryLocked()
+	s.retireProfilesLocked()
 	for username, user := range s.community.users {
 		user.StatusFresh, user.StatsFresh, user.AddressFresh = false, false, false
+		user.PrivilegeFresh = false
 		s.community.users[username] = user
 	}
 	s.community.revision++
@@ -188,6 +199,10 @@ func (s *Service) communityUpdate(ctx context.Context, identity CommunityIdentit
 		return s.updateCommunityRoomLocked(ctx, message)
 	case soulseek.RoomRoleList, soulseek.RoomRoleUpdate, soulseek.RoomInvitations, soulseek.RoomWallSnapshot, soulseek.RoomWallUpdate:
 		return s.updateCommunityRoomRolesLocked(ctx, message)
+	}
+	if response, ok := message.(soulseek.DiscoveryResponse); ok {
+		s.applyDiscoveryLocked(response)
+		return nil
 	}
 	var username string
 	switch m := message.(type) {
@@ -226,6 +241,7 @@ func (s *Service) communityUpdate(ctx context.Context, identity CommunityIdentit
 		}
 		user.Exists, user.Status, user.Privileged = true, m.Status, m.Privileged
 		user.StatusFresh, user.StatusUpdatedAt = true, now
+		user.PrivilegeFresh, user.PrivilegeUpdatedAt = true, now
 		if m.Status == soulseek.UserStatusOffline {
 			user.AddressFresh = false
 		}

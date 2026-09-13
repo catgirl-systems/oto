@@ -112,6 +112,10 @@ type Client struct {
 	uploadCancel          context.CancelFunc
 	uploadWG              sync.WaitGroup
 	closing               bool
+	lifecycleMu           sync.Mutex // Serialize reconnect with complete upload shutdown.
+	running               bool
+	connectCancel         context.CancelFunc
+	closePending          int
 	browseSlot            chan struct{}
 	searchSlots           chan struct{}
 	conn                  net.Conn
@@ -136,6 +140,7 @@ type Client struct {
 	incomingSearch        IncomingSearchPolicy
 	excludedSearchPhrases []string
 	token                 uint32
+	selfDescription       string
 }
 
 func NewClient(cfg ClientConfig) *Client {
@@ -255,11 +260,25 @@ func (c *Client) UploadPolicy() UploadPolicy {
 
 func (c *Client) Connect(ctx context.Context) error {
 	c.mu.Lock()
-	if c.conn != nil {
+	if c.closePending != 0 {
+		c.mu.Unlock()
+		return errors.New("soulseek: client is closing")
+	}
+	if c.conn != nil || c.running || c.connectCancel != nil {
 		c.mu.Unlock()
 		return errors.New("soulseek: already connected")
 	}
+	ctx, cancel := context.WithCancel(ctx)
+	c.connectCancel = cancel
 	c.mu.Unlock()
+	defer func() {
+		cancel()
+		c.mu.Lock()
+		c.connectCancel = nil
+		c.mu.Unlock()
+	}()
+	c.lifecycleMu.Lock()
+	defer c.lifecycleMu.Unlock()
 	started := time.Now()
 	c.log(ctx, slog.LevelDebug, "server_dial_started", nil)
 	conn, e := c.dialer.DialContext(ctx, "tcp", c.cfg.Address)
@@ -271,6 +290,11 @@ func (c *Client) Connect(ctx context.Context) error {
 	diagnostics.Event(c.peerLogger(ctx, conn), slog.LevelInfo, "server_connected", nil, slog.Int64("elapsed_ms", time.Since(started).Milliseconds()))
 	c.mu.Lock()
 	c.conn = conn
+	if c.closing {
+		c.uploadRoot, c.uploadCancel = context.WithCancel(context.Background())
+		c.closing = false
+		c.addresses = make(map[string]*peerAddressLookup)
+	}
 	c.ctx, c.cancel = context.WithCancel(context.Background())
 	c.done = make(chan struct{})
 	c.pending = make(map[uint32]chan SearchResponse)
@@ -521,22 +545,26 @@ var ioErrNoProgress = errors.New("soulseek: no progress writing")
 // Run routes server frames until cancellation or connection close.
 func (c *Client) Run(ctx context.Context) error {
 	c.mu.Lock()
-	conn := c.conn
+	conn, root := c.conn, c.uploadRoot
+	if conn == nil || c.running {
+		c.mu.Unlock()
+		return ErrNotConnected
+	}
+	c.running = true
 	if c.done == nil {
 		c.done = make(chan struct{})
 	}
+	done := c.done
 	c.mu.Unlock()
-	if conn == nil {
-		return ErrNotConnected
-	}
 	ctx, cancel := context.WithCancel(ctx)
-	stopClose := context.AfterFunc(c.uploadRoot, cancel)
+	stopClose := context.AfterFunc(root, cancel)
 	stopRead := context.AfterFunc(ctx, func() { _ = conn.SetReadDeadline(time.Now()) })
 	defer func() { stopClose(); stopRead(); cancel() }()
-	defer close(c.done)
 	defer func() {
 		c.mu.Lock()
+		c.running = false
 		c.excludedSearchPhrases = nil
+		close(done)
 		c.mu.Unlock()
 	}()
 	for {
@@ -942,7 +970,7 @@ func (c *Client) connectUserType(ctx context.Context, username, kind string) (ne
 
 func (c *Client) lookupPeerAddress(ctx context.Context, username string) (PeerAddress, error) {
 	c.mu.Lock()
-	done := c.done
+	done, root := c.done, c.uploadRoot
 	lookup := c.addresses[username]
 	owner := lookup == nil
 	if owner && len(c.addresses) >= 256 {
@@ -969,7 +997,7 @@ func (c *Client) lookupPeerAddress(ctx context.Context, username string) (PeerAd
 	select {
 	case <-ctx.Done():
 		return PeerAddress{}, ctx.Err()
-	case <-c.uploadRoot.Done():
+	case <-root.Done():
 		return PeerAddress{}, ErrNotConnected
 	case <-done:
 		return PeerAddress{}, ErrNotConnected
@@ -1516,7 +1544,10 @@ func countryCodeForAddress(addr net.Addr) string {
 }
 
 func (c *Client) serveMessagePeer(peer net.Conn, peerInfo PeerInitMessage) {
-	stop := context.AfterFunc(c.uploadRoot, func() { _ = peer.Close() })
+	c.mu.Lock()
+	root := c.uploadRoot
+	c.mu.Unlock()
+	stop := context.AfterFunc(root, func() { _ = peer.Close() })
 	defer stop()
 	for {
 		command, payload, err := ReadFrame(peer)
@@ -1524,6 +1555,13 @@ func (c *Client) serveMessagePeer(peer net.Conn, peerInfo PeerInitMessage) {
 			return
 		}
 		switch command {
+		case PeerUserInfoRequest:
+			if len(payload) != 0 {
+				return
+			}
+			if err := writeMessage(peer, c.SelfProfile()); err != nil {
+				return
+			}
 		case PeerGetSharedList:
 			if len(payload) == 0 {
 				_ = writeMessage(peer, SharedListResponse{Entries: c.shareEntries()})
@@ -1639,6 +1677,21 @@ func searchToResults(files []ShareFile, excludedPhrases []string) []SearchResult
 
 // Close stops listener and connection, then waits for every upload attempt.
 func (c *Client) Close() error {
+	// Cancel a blocked dial before waiting for its lifecycle transition.
+	c.mu.Lock()
+	c.closePending++
+	defer func() {
+		c.mu.Lock()
+		c.closePending--
+		c.mu.Unlock()
+	}()
+	dialCancel := c.connectCancel
+	c.mu.Unlock()
+	if dialCancel != nil {
+		dialCancel()
+	}
+	c.lifecycleMu.Lock()
+	defer c.lifecycleMu.Unlock()
 	c.mu.Lock()
 	ln, conn, cancel, uploadCancel := c.listener, c.conn, c.cancel, c.uploadCancel
 	c.listener = nil
