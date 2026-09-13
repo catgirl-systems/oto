@@ -24,7 +24,8 @@ func TestCommunityBuddiesEditorWorkflow(t *testing.T) {
 	m.key(chatPress(" "))
 	updated, cmd := m.Update(tea.PasteMsg{Content: "\r\nline\t👋"})
 	m = updated.(model)
-	if cmd != nil || m.help || m.workspace != workspaceCommunity {
+	drainActivity(t, &m, cmd)
+	if m.help || m.workspace != workspaceCommunity {
 		t.Fatal("editor input became global action")
 	}
 	want := "q/?猫 \nline\t👋😀"

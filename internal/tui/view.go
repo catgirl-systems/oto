@@ -16,12 +16,20 @@ func (m model) View() tea.View {
 	content := m.mainView()
 	if m.setup {
 		content = m.setupView()
+	} else if m.commandOutput != nil {
+		content = m.commandOutputView()
 	} else if m.downloadAs != nil {
 		content = m.downloadAsView()
 	} else if m.searchScope != nil {
 		content = m.searchScopeView()
 	} else if m.privileges != nil && !m.confirm {
 		content = m.privilegesView()
+	} else if m.receivingEditor != nil && !m.confirm {
+		content = m.receivingSettingsView()
+	} else if m.awayEditor != nil && !m.confirm {
+		content = m.awaySettingsView()
+	} else if m.textTools != nil && !m.confirm {
+		content = m.textToolsView()
 	} else if m.privacyRules != nil && !m.confirm {
 		content = m.privacyRulesView()
 	} else if m.shareAccess != nil && !m.confirm {
@@ -386,6 +394,7 @@ func (m model) helpView() string {
 			{"R / X / C (private chat)", "confirm retry / cancel selected / clear history"},
 			{"ctrl+w / h (Chats list)", "close (keep history/draft) / show closed history"},
 			{"N / J (Rooms)", "join/create form / join selected room"},
+			{"u (Rooms / Buddies)", "search selected room / all buddies; preview query and scope"},
 			{"Enter / ctrl+w (room)", "open / close history; neither changes membership"},
 			{"L / R / F (room)", "leave now / remember autojoin / forget autojoin"},
 			{"f / m / p n (Rooms list)", "filter / all-remembered-joined-history-invitations / pages"},
@@ -426,6 +435,7 @@ func (m model) helpView() string {
 		}},
 		{"General", [][2]string{
 			{"share scan", "Shares: r rescan, c cancel before publication; last index stays available"},
+			{"s (Shares)", "send highlighted shared file/folder: recipient, paged preview, explicit confirmation"},
 			{"elapsed / ETA", "daemon stream time; folder/user elapsed is cumulative"},
 			{"Settings → Shares", "edit/add rules, d remove, restore defaults; s saves"},
 			{"Settings → Bandwidth", "named upload + download limits; s saves both"},
@@ -641,7 +651,11 @@ func (m model) searchTabsLine(width int) string {
 	labels := make([]string, len(m.searchTabs))
 	for i, tab := range m.searchTabs {
 		label := tab.query
-		if len(tab.usernames) > 0 {
+		if tab.scope == "rooms" && len(tab.rooms) > 0 {
+			label = "#" + strings.Join(tab.rooms, ", ") + ": " + label
+		} else if tab.scope == "buddies" {
+			label = "buddies: " + label
+		} else if len(tab.usernames) > 0 {
 			label = "@" + strings.Join(tab.usernames, ", ") + ": " + label
 		}
 		if tab.loading {
@@ -811,7 +825,7 @@ func (m model) footerHints() []string {
 		}
 		return append(hints, "P prune")
 	case workspaceShares:
-		hints := []string{"/ add", "Enter access", "r rescan"}
+		hints := []string{"/ add", "s send", "Enter access", "r rescan"}
 		if scan := m.status.shareScan; scan != nil && scan.State == "scanning" {
 			hints = append(hints, "c cancel scan")
 		}

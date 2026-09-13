@@ -62,11 +62,22 @@ def received_shares(message):
 if __name__ == "__main__":
     # Nicotine's share scanner uses multiprocessing.spawn, which imports this file.
     core.init_components({"signal_handler", "network_thread", "users", "shares", "uploads", "downloads",
-                          "userinfo", "userbrowse", "network_filter", "buddies", "statistics", "pluginhandler"}, isolated_mode=True)
+                          "userinfo", "userbrowse", "network_filter", "buddies", "statistics", "pluginhandler",
+                          "chatrooms", "privatechat", "notifications"}, isolated_mode=True)
     config.sections["server"].update(server=(host, int(port)), login="reference", passw="local-test-only",
                                      upnp=False, auto_connect_startup=False)
     config.sections["userinfo"].update(descr=repr("Nicotine reference 世界"), pic=str(state / "picture.png"))
     config.sections["transfers"].update(shared=[], buddyshared=[], trustedshared=[], remotedownloads=False)
+    outgoing = state / "outgoing" / "Album"
+    outgoing.mkdir(parents=True)
+    offered_names = ("blocked.txt", "one.txt", "世界.txt", "empty", "revoked.txt",
+                     "buddy.txt", "trusted.txt", "untrusted.txt", "filtered.blocked", "resume.bin")
+    for name in offered_names:
+        (outgoing / name).write_bytes(b"" if name == "empty" else ("reference offer " + name).encode())
+    (outgoing / "resume.bin").write_bytes(b"resume-test\n" * 65536)
+    config.sections["transfers"]["shared"] = [("Reference", str(outgoing.parent))]
+    config.sections["transfers"].update(uploaddir=str(state / "received"),
+                                       incompletedir=str(state / "incomplete"))
     core.cli_interface_address = "127.0.0.1"
     core.cli_listen_port = int(listen_port)
     events.connect("server-login", logged_in)
@@ -77,6 +88,9 @@ if __name__ == "__main__":
     requested = False
     requested_shares = 0
     stopping = False
+    receiving_enabled = False
+    requested_send = 0
+    sending_files = []
     deadline = time.monotonic() + 45
     while events.process_thread_events():
         if (state / "request").exists() and not requested:
@@ -90,6 +104,27 @@ if __name__ == "__main__":
             if sequence != requested_shares:
                 requested_shares = sequence
                 core.userbrowse.browse_user("terminal", new_request=True)
+        if (state / "enable-receiving").exists() and not receiving_enabled:
+            core.buddies.add_buddy("terminal")
+            config.sections["transfers"].update(remotedownloads=True, uploadallowed=2)
+            receiving_enabled = True
+            publish("receiving-ready.json", True)
+        send_request = state / "send-request.json"
+        if send_request.exists() and not core.shares.rescanning:
+            request = json.loads(send_request.read_text())
+            if request["sequence"] != requested_send:
+                if not isinstance(request["sequence"], int) or not 1 <= request["sequence"] <= 10:
+                    raise RuntimeError("invalid local send sequence")
+                if not request["files"] or any(name not in offered_names for name in request["files"]):
+                    raise RuntimeError("invalid local send selection")
+                requested_send = request["sequence"]
+                sending_files = ["Reference\\Album\\" + name for name in request["files"]]
+                for virtual_path in sending_files:
+                    core.uploads.enqueue_upload("terminal", virtual_path)
+            publish(f"send-{requested_send}.json", {
+                name: getattr(core.uploads.transfers.get("terminal" + name), "status", "missing")
+                for name in sending_files
+            })
         if (state / "stop").exists() and not stopping:
             stopping = True
             core.quit()

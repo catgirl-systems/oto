@@ -40,6 +40,19 @@ func (m model) renderSearch(width, height int) string {
 		lines = append(lines, tabs)
 	}
 	lines = append(lines, trunc(prompt, width), trunc(filterLine, width))
+	if m.searchTabIndex >= 0 && m.searchTabIndex < len(m.searchTabs) {
+		tab := &m.searchTabs[m.searchTabIndex]
+		if tab.scope != "" && tab.scope != "global" {
+			context := map[string]string{"users": "specific users", "buddies": "all buddies", "rooms": "joined rooms"}[tab.scope]
+			lines = append(lines, trunc(muted("Scope: "+context), width))
+			if tab.targetCount > 0 {
+				lines = append(lines, trunc(muted(fmt.Sprintf("%d captured targets", tab.targetCount)), width))
+			}
+			if tab.warning != "" {
+				lines = append(lines, trunc(muted("Warning: "+tab.warning), width))
+			}
+		}
+	}
 	if m.editing && m.filterEditing {
 		lines = append(lines, trunc(muted(filterCompletionHint(inputBeforeCursor(m.input, m.inputCursor))), width))
 	}
@@ -724,7 +737,7 @@ func (m model) settingFields() []settingField {
 			{settingAccountPrivileges, "Supporter privileges / gifting", "Press Enter", settingAction},
 		}
 	case settingsCommunity:
-		return []settingField{{settingPrivacyRules, "Privacy / ignore / ban rules", "Press Enter", settingAction}}
+		return []settingField{{settingPrivacyRules, "Privacy / ignore / ban rules", "Press Enter", settingAction}, {settingTextTools, "Chat text tools / CTCP", "Press Enter", settingAction}, {settingChatCommands, "Commands / aliases help", "Press Enter", settingAction}, {settingAway, "Automatic away / replies", "Press Enter", settingAction}}
 	case settingsConnection:
 		publicIP := m.status.publicIP
 		if publicIP == "" {
@@ -755,14 +768,14 @@ func (m model) settingFields() []settingField {
 			{settingUPnPPortMapping, "UPnP port forwarding", strconv.FormatBool(m.cfg.Soulseek.UPnPPortMapping), settingBool},
 		}
 	case settingsDownloads:
-		return append([]settingField{
+		return append(append([]settingField{
 			{settingDownloadPath, "Download path", m.cfg.DownloadDir, settingText},
 			{settingAfterFileCommand, "After file command", m.cfg.Downloads.AfterFileCommand, settingText},
 			{settingAfterFolderCommand, "After folder command", m.cfg.Downloads.AfterFolderCommand, settingText},
 			{settingFileNotifications, "File notifications", strconv.FormatBool(m.cfg.Downloads.FileNotifications), settingBool},
 			{settingFolderNotifications, "Folder notifications", strconv.FormatBool(m.cfg.Downloads.FolderNotifications), settingBool},
 			{settingAutoClearDownloads, "Auto-clear new completed downloads", strconv.FormatBool(m.cfg.Downloads.AutoClearCompleted), settingBool},
-		}, m.downloadFilterFields()...)
+		}, m.downloadFilterFields()...), settingField{settingReceiving, "Consented received files", "Press Enter", settingAction})
 	case settingsBandwidth:
 		profile := m.cfg.Bandwidth.ActiveProfileLimits()
 		return []settingField{

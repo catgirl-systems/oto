@@ -45,6 +45,7 @@ func (m *model) setChatDraft(text string, cursor int) {
 		c.drafts = make(map[chatKey]chatDraft)
 	}
 	c.drafts[m.chatKey()] = chatDraft{text: text, cursor: cursor}
+	c.cancelCompletion()
 	c.err = ""
 }
 func (m *model) pasteCommunityChat(text string) {
@@ -105,19 +106,9 @@ func (m *model) chatComposerKey(k tea.KeyPressMsg) tea.Cmd {
 		return nil
 	}
 	if k.String() == "tab" || k.String() == "shift+tab" {
-		runes := []rune(d.text)
-		cursor := max(0, min(d.cursor, len(runes)))
-		start := cursor
-		for start > 0 && !unicode.IsSpace(runes[start-1]) {
-			start--
-		}
-		prefix, target := string(runes[start:cursor]), c.conversation.Target
-		if prefix != "" && strings.HasPrefix(strings.ToLower(target), strings.ToLower(prefix)) {
-			text := string(runes[:start]) + target + string(runes[cursor:])
-			m.setChatDraft(text, start+utf8.RuneCountInString(target))
-		}
-		return nil
+		return m.completeChat(k.String() == "shift+tab")
 	}
+	c.cancelCompletion()
 	text, cursor, _ := editText(d.text, d.cursor, k)
 	m.setChatDraft(text, cursor)
 	return nil
@@ -427,6 +418,15 @@ func (m *model) chatConversationAction(kind string, conversation, through int64)
 func (m model) chatDraftCount() int {
 	count := len(m.community.rooms.private.wallDrafts) + len(m.community.buddies.drafts) + len(m.community.discover.drafts)
 	if e := m.privileges; e != nil && (e.mode == "edit" || e.mode == "preview" || e.busy) {
+		count++
+	}
+	if m.receivingEditor != nil && (m.receivingEditor.dirty || m.receivingEditor.busy) {
+		count++
+	}
+	if m.awayEditor != nil && m.awayEditor.dirty {
+		count++
+	}
+	if m.textTools != nil && (m.textTools.dirty || m.textTools.form != nil) {
 		count++
 	}
 	if m.privacyRules != nil && m.privacyRules.form != nil && m.privacyRules.form.dirty {

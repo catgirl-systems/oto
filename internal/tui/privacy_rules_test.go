@@ -22,7 +22,8 @@ func TestPrivacyRulesEditorCRUDAndDrafts(t *testing.T) {
 	}
 	updated, cmd := m.Update(tea.PasteMsg{Content: "q/?猫"})
 	m = updated.(model)
-	if cmd != nil || m.privacyRules.form.rule.Message != "q/?猫" || m.chatDraftCount() != 1 {
+	drainActivity(t, &m, cmd)
+	if m.privacyRules.form.rule.Message != "q/?猫" || m.chatDraftCount() != 1 {
 		t.Fatal("paste sent or lost draft")
 	}
 	press(tea.KeyEnter)

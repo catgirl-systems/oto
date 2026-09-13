@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"errors"
+	"strings"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -37,34 +38,36 @@ type chatPosition struct {
 	back                                 []int64
 }
 type communityChatsModel struct {
-	conversations                   []daemon.CommunityConversation
-	listCursor, listNext            int64
-	listBack                        []int64
-	listRow                         int
-	listQuery                       string
-	includeClosed                   bool
-	listReady                       bool
-	listRevision                    uint64
-	listErr                         string
-	conversation                    daemon.CommunityConversation
-	messages                        []daemon.CommunityMessage
-	historyNext, newerCount         int64
-	historyReady                    bool
-	historyRevision                 uint64
-	historyErr                      string
-	unreadThrough                   int64
-	position                        chatPosition
-	positions                       map[chatKey]chatPosition
-	drafts                          map[chatKey]chatDraft
-	composing, blurred              bool
-	form, input, inputErr           string
-	inputCursor                     int
-	dialog                          *chatDialog
-	request, operation, readID      uint64
-	navigation, operationNavigation uint64
-	loading, busy, reading          bool
-	cancel, operationCancel         context.CancelFunc
-	err                             string
+	conversations                             []daemon.CommunityConversation
+	listCursor, listNext                      int64
+	listBack                                  []int64
+	listRow                                   int
+	listQuery                                 string
+	includeClosed                             bool
+	listReady                                 bool
+	listRevision                              uint64
+	listErr                                   string
+	conversation                              daemon.CommunityConversation
+	messages                                  []daemon.CommunityMessage
+	historyNext, newerCount                   int64
+	historyReady                              bool
+	historyRevision                           uint64
+	historyErr                                string
+	unreadThrough                             int64
+	position                                  chatPosition
+	positions                                 map[chatKey]chatPosition
+	drafts                                    map[chatKey]chatDraft
+	composing, blurred                        bool
+	form, input, inputErr                     string
+	inputCursor                               int
+	dialog                                    *chatDialog
+	request, operation, readID                uint64
+	navigation, operationNavigation           uint64
+	loading, busy, reading                    bool
+	cancel, operationCancel, completionCancel context.CancelFunc
+	completionRequest                         uint64
+	completion                                chatCompletion
+	err                                       string
 }
 
 type chatDataMsg struct {
@@ -101,6 +104,14 @@ func (c *communityChatsModel) cancelLoad() {
 	c.request++
 	c.loading = false
 }
+func (c *communityChatsModel) cancelCompletion() {
+	if c.completionCancel != nil {
+		c.completionCancel()
+		c.completionCancel = nil
+	}
+	c.completionRequest++
+	c.completion = chatCompletion{}
+}
 func (c *communityChatsModel) cancelOperation() {
 	if c.operationCancel != nil {
 		c.operationCancel()
@@ -110,7 +121,9 @@ func (c *communityChatsModel) cancelOperation() {
 	c.busy = false
 }
 func (m *model) resetCommunityChats(accountChanged bool) {
+	m.commandOutput = nil
 	c := &m.community.chats
+	c.cancelCompletion()
 	c.cancelLoad()
 	c.cancelOperation()
 	c.readID++
@@ -307,9 +320,9 @@ func (m *model) applyChatOperation(x chatOperationMsg) tea.Cmd {
 			return nil
 		}
 		c.conversation, c.unreadThrough = x.conversation, x.conversation.ReadThrough
-	case "send":
-		if x.key.kind == "room" && x.result.State != "sent" {
-			c.err = "Room send " + x.result.State + "; draft kept. Explicit retry may duplicate an earlier write."
+	case "send", "command-send":
+		if x.kind == "send" && x.key.kind == "room" && x.result.State != "sent" || x.kind == "command-send" && x.result.State != "sent" && x.result.State != "queued" {
+			c.err = "Send " + x.result.State + "; draft kept. Explicit retry may duplicate an earlier write."
 			c.dialog = &chatDialog{kind: "room-retry", label: c.err, identity: x.identity}
 			return nil
 		}
@@ -347,14 +360,17 @@ func (m *model) sendCommunityChat() tea.Cmd {
 	if c.busy || m.client == nil || c.conversation.ID == 0 {
 		return nil
 	}
-	if c.conversation.Kind == "room" && !m.community.rooms.selectedRoomJoined() {
-		c.err = "Room send requires confirmed membership"
-		return nil
-	}
 	key := m.chatKey()
 	d := c.drafts[key]
 	if err := validateChatDraft(d.text, false); err != nil {
 		c.err = err.Error()
+		return nil
+	}
+	if strings.HasPrefix(d.text, "/") && !strings.HasPrefix(d.text, "//") {
+		return m.sendChatCommand(key, d)
+	}
+	if c.conversation.Kind == "room" && !m.community.rooms.selectedRoomJoined() {
+		c.err = "Room send requires confirmed membership"
 		return nil
 	}
 	if d.requestID == "" {
@@ -363,15 +379,19 @@ func (m *model) sendCommunityChat() tea.Cmd {
 	}
 	ctx, cancel, op := m.beginChatOperation()
 	identity, client := m.community.summary.CommunityIdentity, m.client
+	text := d.text
+	if strings.HasPrefix(text, "//") {
+		text = strings.TrimPrefix(text, "/")
+	}
 	if c.conversation.Kind == "room" {
-		req := daemon.CommunityRoomSendRequest{CommunityIdentity: identity, Room: key.target, Text: d.text, RequestID: d.requestID}
+		req := daemon.CommunityRoomSendRequest{CommunityIdentity: identity, Room: key.target, Text: text, RequestID: d.requestID}
 		return func() tea.Msg {
 			defer cancel()
 			result, err := client.SendCommunityRoom(ctx, req)
 			return chatOperationMsg{operation: op, identity: identity, kind: "send", key: key, requestID: req.RequestID, result: result, err: err}
 		}
 	}
-	req := daemon.CommunitySendRequest{CommunityIdentity: identity, Username: key.target, Text: d.text, RequestID: d.requestID}
+	req := daemon.CommunitySendRequest{CommunityIdentity: identity, Username: key.target, Text: text, RequestID: d.requestID}
 	return func() tea.Msg {
 		defer cancel()
 		result, err := client.SendCommunityPrivate(ctx, req)
