@@ -184,20 +184,23 @@ type Statistics struct {
 	ASCIICharts        bool `json:"ascii_charts"`
 }
 type Config struct {
-	Logging         Logging    `json:"logging"`
-	Statistics      Statistics `json:"statistics"`
-	Browse          Browse     `json:"browse"`
-	AudioMetadata   bool       `json:"audio_metadata"`
-	Soulseek        Soulseek   `json:"soulseek"`
-	Search          Search     `json:"search"`
-	Bandwidth       Bandwidth  `json:"bandwidth"`
-	Uploads         Uploads    `json:"uploads"`
-	Downloads       Downloads  `json:"downloads"`
-	DownloadDir     string     `json:"download_dir" validate:"required"`
-	Shares          []Share    `json:"shares" validate:"unique=Name,dive"`
-	ShareExclusions []string   `json:"share_exclusions"`
-	DownloadSlots   int        `json:"download_slots" validate:"min=1"`
-	UploadSlots     int        `json:"upload_slots" validate:"min=1"`
+	CommunityText   map[string]CommunityTextTools `json:"community_text,omitempty"`
+	CommunityAway   map[string]CommunityAway      `json:"community_away,omitempty" validate:"dive"`
+	Receiving       map[string]Receiving          `json:"receiving,omitempty"`
+	Logging         Logging                       `json:"logging"`
+	Statistics      Statistics                    `json:"statistics"`
+	Browse          Browse                        `json:"browse"`
+	AudioMetadata   bool                          `json:"audio_metadata"`
+	Soulseek        Soulseek                      `json:"soulseek"`
+	Search          Search                        `json:"search"`
+	Bandwidth       Bandwidth                     `json:"bandwidth"`
+	Uploads         Uploads                       `json:"uploads"`
+	Downloads       Downloads                     `json:"downloads"`
+	DownloadDir     string                        `json:"download_dir" validate:"required"`
+	Shares          []Share                       `json:"shares" validate:"unique=Name,dive"`
+	ShareExclusions []string                      `json:"share_exclusions"`
+	DownloadSlots   int                           `json:"download_slots" validate:"min=1"`
+	UploadSlots     int                           `json:"upload_slots" validate:"min=1"`
 }
 
 type SafeConfig struct {
@@ -244,6 +247,14 @@ func (c Config) Redacted() SafeConfig {
 }
 
 func (c Config) Validate() error {
+	for _, policy := range c.Receiving {
+		if err := policy.Validate(); err != nil {
+			return err
+		}
+		if policy.Directory != "" && filepath.Clean(policy.Directory) == filepath.Clean(c.DownloadDir) {
+			return errors.New("received-files directory must be separate from the ordinary download directory")
+		}
+	}
 	if _, err := NormalizeLogLevel(c.Logging.Level); err != nil {
 		return err
 	}

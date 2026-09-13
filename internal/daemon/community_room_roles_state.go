@@ -206,7 +206,7 @@ func (s *Service) updateCommunityRoomRolesLocked(ctx context.Context, message so
 		}
 		next := make(map[string]string, len(m.Entries))
 		for _, entry := range m.Entries {
-			next[entry.Username] = communityDisplayText(entry.Text)
+			next[entry.Username], _ = s.community.text.incoming(entry.Text, "")
 		}
 		bytes := 0
 		for username, text := range next {
@@ -240,7 +240,7 @@ func (s *Service) updateCommunityRoomRolesLocked(ctx context.Context, message so
 					return fmt.Errorf("community: wall entry limit")
 				}
 			}
-			text := communityDisplayText(m.Text)
+			text, _ := s.community.text.incoming(m.Text, "")
 			bytes += len(m.Username) + len(text)
 			if bytes > communityRoomWallBytes || s.community.wallBytes-r.wallBytes+bytes > communityRoomWallsBytes {
 				return fmt.Errorf("community: wall byte limit")

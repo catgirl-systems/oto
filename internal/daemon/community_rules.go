@@ -166,6 +166,7 @@ func (s *Service) SetCommunityRule(ctx context.Context, req CommunityRuleRequest
 		s.mu.Unlock()
 		if changedClient != nil {
 			changedClient.RevalidateSharePolicy()
+			s.revalidateReceivedDownloads()
 		}
 	}()
 	if err := s.checkCommunityIdentityLocked(ctx, req.CommunityIdentity); err != nil {

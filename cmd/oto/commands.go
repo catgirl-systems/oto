@@ -33,8 +33,8 @@ func socialCommand(args []string) error {
 	}
 	req := daemon.CommandRequest{Name: name, Args: rest, RequestID: *requestID, Revision: *revision, Confirm: *confirm}
 	if *confirm {
-		if name != "gift" || *requestID == "" || *revision == 0 || *account == "" || *process == "" || *session == "" {
-			return errors.New("confirmation requires --request-id, --revision, --account, --daemon and --session from the preview, before gift USER DAYS")
+		if *requestID == "" || name == "gift" && *revision == 0 || *account == "" || *process == "" || *session == "" {
+			return errors.New("confirmation requires --request-id, --account, --daemon and --session from the preview; gifts also require --revision; flags precede the command")
 		}
 		generation, err := strconv.ParseUint(*session, 10, 64)
 		if err != nil {

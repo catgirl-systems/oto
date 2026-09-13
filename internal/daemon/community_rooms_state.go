@@ -279,6 +279,11 @@ func (s *Service) receiveCommunityRoomMessageLocked(ctx context.Context, m souls
 	if ignored && m.Username != s.cfg.Soulseek.Username {
 		return nil
 	}
+	body, mentioned := s.community.text.incoming(m.Text, s.cfg.Soulseek.Username)
+	mention := int64(0)
+	if mentioned && m.Username != s.cfg.Soulseek.Username {
+		mention = 1
+	}
 	if m.PublicFeed {
 		if !s.community.feedWanted || !s.community.feedWritten {
 			return nil
@@ -286,7 +291,7 @@ func (s *Service) receiveCommunityRoomMessageLocked(ctx context.Context, m souls
 		// The feed is explicitly requested, read-only, and never a durable log by
 		// default. Bound retained text as well as the number of entries.
 		s.community.feedID++
-		entry := CommunityFeedMessage{ID: s.community.feedID, Room: m.Room, Sender: m.Username, Text: communityDisplayText(m.Text), CreatedAt: time.Now().UTC()}
+		entry := CommunityFeedMessage{ID: s.community.feedID, Room: m.Room, Sender: m.Username, Text: body, CreatedAt: time.Now().UTC()}
 		s.community.feed = append(s.community.feed, entry)
 		s.community.feedBytes += len(entry.Text) + len(entry.Sender) + len(entry.Room)
 		for len(s.community.feed) > 200 || s.community.feedBytes > 1<<20 {
@@ -310,7 +315,7 @@ func (s *Service) receiveCommunityRoomMessageLocked(ctx context.Context, m souls
 	}
 	return s.stateDB.WriteTx(ctx, func(tx *sql.Tx) error {
 		q := db.New(tx)
-		if _, err := q.InsertCommunityMessage(ctx, db.InsertCommunityMessageParams{Account: s.community.identity.Account, ConversationID: r.conversationID, Sender: m.Username, Direction: direction, State: state, Body: communityDisplayText(m.Text), CreatedAt: time.Now().UnixMilli()}); err != nil {
+		if _, err := q.InsertCommunityMessage(ctx, db.InsertCommunityMessageParams{Account: s.community.identity.Account, ConversationID: r.conversationID, Sender: m.Username, Direction: direction, State: state, Body: body, Mention: mention, CreatedAt: time.Now().UnixMilli()}); err != nil {
 			return err
 		}
 		_, err := q.BumpCommunityRevision(ctx, s.community.identity.Account)

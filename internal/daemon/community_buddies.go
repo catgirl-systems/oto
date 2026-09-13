@@ -94,6 +94,7 @@ func (s *Service) SetCommunityBuddy(ctx context.Context, req CommunityBuddyReque
 		s.mu.Unlock()
 		if changedClient != nil {
 			changedClient.RevalidateSharePolicy()
+			s.revalidateReceivedDownloads()
 		}
 	}()
 	if err := s.checkCommunityIdentityLocked(ctx, req.CommunityIdentity); err != nil {

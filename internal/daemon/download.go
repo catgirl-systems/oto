@@ -58,8 +58,14 @@ func (s *Service) startDownload(id string) {
 				s.mu.Lock()
 				delete(s.downloadCancels, id)
 				delete(s.downloadDone, id)
+				offer := s.receivedOffers[id]
+				delete(s.receivedOffers, id)
+				delete(s.receivedAddresses, id)
 				close(done)
 				s.mu.Unlock()
+				if offer != nil {
+					offer.Reject()
+				}
 			}()
 			s.runDownload(ctx, download, slots)
 		}()
@@ -128,6 +134,18 @@ func (s *Service) runDownload(ctx context.Context, download Download, slots chan
 	if ctx.Err() != nil {
 		return
 	}
+	s.mu.RLock()
+	offer := s.receivedOffers[id]
+	s.mu.RUnlock()
+	if receivedDownload(download) {
+		s.mu.RLock()
+		allowed := s.receivingConsentLocked(download.StatsAccount, download.Username)
+		s.mu.RUnlock()
+		if !allowed {
+			s.finishDownload(id, "failed", download.Offset, ErrReceivingDenied)
+			return
+		}
+	}
 	downloadRoot := download.DownloadDir
 	if downloadRoot == "" {
 		s.mu.RLock()
@@ -169,13 +187,18 @@ func (s *Service) runDownload(ctx context.Context, download Download, slots chan
 	}
 
 	// A previous attempt may have downloaded everything but failed to move it.
-	if offset < download.Size {
+	if offset < download.Size || offer != nil {
 		client, err := s.waitClient(ctx)
 		if err == nil {
 			s.mu.Lock()
 			identity := s.cfg
 			identity.Soulseek.Server, identity.Soulseek.Username = client.AccountIdentity()
 			account := accountKey(identity)
+			if receivedDownload(download) && account != download.StatsAccount {
+				s.mu.Unlock()
+				s.finishDownload(id, "failed", offset, ErrReceivingDenied)
+				return
+			}
 			var accountErr error
 			for i := range s.journal.Downloads {
 				if s.journal.Downloads[i].ID == id {
@@ -195,9 +218,18 @@ func (s *Service) runDownload(ctx context.Context, download Download, slots chan
 			}
 			ctx = s.transferContext(ctx, id, download.Username)
 			s.event(slog.LevelInfo, "download_attempt_started", nil, slog.String("transfer_id", id), slog.String("peer_username", download.Username), slog.Uint64("offset", offset))
-			err = client.DownloadWithStart(ctx, download.Username, strings.ReplaceAll(download.Filename, "/", "\\"), download.Size, offset, file, func(progress soulseek.Progress) {
-				s.updateTransferProgress(id, progress)
-			}, func() { s.startTransfer(id, offset) })
+			progress := func(progress soulseek.Progress) { s.updateTransferProgress(id, progress) }
+			start := func() { s.startTransfer(id, offset) }
+			if receivedDownload(download) {
+				authorize := s.receivingAuthorization(ctx, client, download)
+				if offer != nil {
+					err = client.ReceiveOfferedFileWithAuthorization(ctx, offer, offset, file, progress, start, authorize)
+				} else {
+					err = client.DownloadWithAuthorization(ctx, download.Username, download.Filename, download.Size, offset, file, progress, start, authorize)
+				}
+			} else {
+				err = client.DownloadWithStart(ctx, download.Username, strings.ReplaceAll(download.Filename, "/", "\\"), download.Size, offset, file, progress, start)
+			}
 			s.mu.Lock()
 			s.stopTransferLocked(id)
 			s.mu.Unlock()
@@ -222,7 +254,7 @@ func (s *Service) runDownload(ctx context.Context, download Download, slots chan
 		return
 	}
 	if ctx.Err() == nil {
-		s.completeDownload(id, downloadRoot, partPath)
+		s.completeDownloadContext(ctx, id, downloadRoot, partPath)
 	}
 }
 

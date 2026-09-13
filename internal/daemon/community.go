@@ -60,6 +60,12 @@ type communityState struct {
 	users                                              map[string]CommunityUser
 	privileged                                         map[string]time.Time
 	watches                                            map[string]userWatchLease
+	text                                               *communityTextPolicy
+	ctcp                                               *communityCTCPState
+	away                                               communityAwayState
+	broadcast                                          *communityBroadcastRun
+	sharedPreview                                      *SharedSendRequest
+	sharedSend                                         *sharedSendRun
 	wake                                               chan struct{}
 	rooms                                              map[string]*communityRoomState
 	directory                                          map[string]communityRoomListing
@@ -94,6 +100,15 @@ func (s *Service) loadCommunityLocked(ctx context.Context) error {
 	}
 	next := communityState{identity: CommunityIdentity{Account: account, Daemon: s.community.identity.Daemon}, users: map[string]CommunityUser{}, watches: map[string]userWatchLease{}, wake: make(chan struct{}, 1), profiles: newCommunityProfileState()}
 	next.buddies = make(map[string]CommunityBuddy)
+	next.away = communityAwayState{lastActivity: time.Now(), wake: make(chan struct{}, 1)}
+	if err := validateAwayReply(s.cfg.CommunityAway[account].AutoReply); err != nil {
+		return err
+	}
+	policy, policyErr := compileCommunityTextTools(s.cfg.CommunityText[account])
+	if policyErr != nil {
+		return policyErr
+	}
+	next.text = policy
 	err := s.stateDB.ReadSnapshot(ctx, func(tx *storage.ReadTx) error {
 		q := tx.Queries()
 		settings, err := q.GetCommunityAccount(ctx, account)

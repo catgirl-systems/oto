@@ -248,22 +248,18 @@ func (s *Server) searches(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, page)
 }
 func (s *Server) search(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Usernames []string `json:"usernames"`
-		Query     string   `json:"query"`
-		Filter    string   `json:"filter"`
-	}
+	var req daemon.ScopedSearchRequest
 	if err := decode(w, r, &req); err != nil {
 		writeErr(w, 400, err)
 		return
 	}
-	out, err := s.service.Search(r.Context(), req.Query, req.Filter, req.Usernames...)
+	out, err := s.service.SearchScoped(r.Context(), req)
 	if err != nil {
-		status := http.StatusServiceUnavailable
-		if errors.Is(err, daemon.ErrInvalidFilter) {
-			status = http.StatusBadRequest
+		if errors.Is(err, daemon.ErrNotStarted) || errors.Is(err, soulseek.ErrNotConnected) || errors.Is(err, context.DeadlineExceeded) {
+			writeErr(w, http.StatusServiceUnavailable, err)
+		} else {
+			communityError(w, err)
 		}
-		writeErr(w, status, err)
 		return
 	}
 	writeJSON(w, 200, out)
@@ -525,9 +521,9 @@ func (c *Client) doWith(ctx context.Context, method, path string, body any, out 
 		var x map[string]string
 		_ = json.NewDecoder(resp.Body).Decode(&x)
 		if x["error"] != "" {
-			return errors.New(x["error"])
+			return &HTTPError{StatusCode: resp.StatusCode, Message: x["error"]}
 		}
-		return fmt.Errorf("ipc: HTTP %s", resp.Status)
+		return &HTTPError{StatusCode: resp.StatusCode, Message: fmt.Sprintf("ipc: HTTP %s", resp.Status)}
 	}
 	if out == nil {
 		return nil
@@ -558,6 +554,11 @@ func (c *Client) ChangePassword(ctx context.Context, password string) (daemon.Pa
 func (c *Client) Search(ctx context.Context, q, filter string, users ...string) (daemon.SearchPage, error) {
 	var page daemon.SearchPage
 	err := c.Do(ctx, "POST", "/v1/search", map[string]any{"query": q, "filter": filter, "usernames": users}, &page)
+	return page, err
+}
+func (c *Client) SearchScoped(ctx context.Context, req daemon.ScopedSearchRequest) (daemon.SearchPage, error) {
+	var page daemon.SearchPage
+	err := c.Do(ctx, http.MethodPost, "/v1/search", req, &page)
 	return page, err
 }
 func (c *Client) SearchPage(ctx context.Context, id string, cursor int, filter string) (daemon.SearchPage, error) {

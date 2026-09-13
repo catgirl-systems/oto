@@ -44,6 +44,9 @@ type CommunityMessage struct {
 func communityMessage(row db.CommunityMessage) CommunityMessage {
 	out := CommunityMessage{ID: row.ID, ConversationID: row.ConversationID, Sender: row.Sender, Direction: row.Direction,
 		Text: row.Body, CreatedAt: time.UnixMilli(row.CreatedAt).UTC(), State: row.State, Mention: row.Mention != 0, Error: row.Error}
+	if row.Body == communityCTCPVersionRequest {
+		out.Text = "[CTCP] VERSION request"
+	}
 	if row.ServerTime != nil {
 		ts := time.Unix(*row.ServerTime, 0).UTC()
 		out.ServerTime = &ts
