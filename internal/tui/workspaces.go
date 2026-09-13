@@ -598,6 +598,9 @@ func (m model) renderSettings(width, height int) string {
 	if m.shareExclusions.open {
 		return m.renderShareExclusions(width, height)
 	}
+	if width < 4 || height < 2 {
+		return trunc("Settings", width)
+	}
 	sections := settingsSectionNames[:]
 	lines := []string{sectionHeader("SETTINGS", "Press s to save changes", width)}
 	sidebarWidth := max(14, min(20, width/4))
@@ -619,14 +622,20 @@ func (m model) renderSettings(width, height int) string {
 	if colorsEnabled() {
 		sideStyle = sideStyle.BorderForeground(lipgloss.Color("#45475A"))
 	}
+	side := sideStyle.Render(sidebar.String())
+	formWidth, rowsPerField := width, 2
+	if width >= 70 {
+		formWidth, rowsPerField = width-lipgloss.Width(side)-2, 1
+	}
 
 	fields := m.settingFields()
 	labelWidth := 0
 	for _, field := range fields {
 		labelWidth = max(labelWidth, utf8.RuneCountInString(field.label))
 	}
-	formLines := []string{strong(sections[m.settingsSection])}
-	fieldStart, fieldEnd := visibleRange(len(fields), m.cursor, max(1, contentHeight-1))
+	labelWidth = min(labelWidth, max(1, formWidth-18))
+	formLines := []string{strong(trunc(sections[m.settingsSection]+"  ← → section", formWidth))}
+	fieldStart, fieldEnd := visibleRange(len(fields), m.cursor, max(0, contentHeight-1)/rowsPerField)
 	for i := fieldStart; i < fieldEnd; i++ {
 		field := fields[i]
 		value := field.value
@@ -662,17 +671,23 @@ func (m model) renderSettings(width, height int) string {
 				value = muted("Not set")
 			}
 		}
-		row := fmt.Sprintf("%-*s %s", labelWidth, field.label, value)
-		formLines = append(formLines, selectedRow(trunc(row, max(4, width-sidebarWidth-4)), i == m.cursor))
+		if rowsPerField == 2 {
+			formLines = append(formLines, selectedRow(trunc(field.label, formWidth-2), i == m.cursor), "  "+trunc(value, formWidth-2))
+		} else {
+			row := searchTextColumn(field.label, labelWidth) + " " + value
+			formLines = append(formLines, selectedRow(trunc(row, formWidth-2), i == m.cursor))
+		}
 	}
 	if m.settingsSection == settingsBrowse && len(formLines)+3 <= contentHeight {
-		formLines = append(formLines, muted(trunc("Payload limits only; decoded entries and UI use extra RAM.", max(4, width-sidebarWidth-4))))
+		formLines = append(formLines, muted(trunc("Payload limits only; decoded entries and UI use extra RAM.", formWidth)))
 	}
 	if fieldStart == 0 && fieldEnd == len(fields) && len(formLines)+2 <= contentHeight {
-		formLines = append(formLines, "", muted("enter edit/toggle/choose/run  •  s save  •  ← → section"))
+		formLines = append(formLines, "", muted(trunc("enter edit/toggle/choose/run  •  s save  •  ← → section", formWidth)))
 	}
-	formWidth := max(12, width-sidebarWidth-2)
-	content := lipgloss.JoinHorizontal(lipgloss.Top, sideStyle.Render(sidebar.String()), lipgloss.NewStyle().Width(formWidth).PaddingLeft(2).Render(strings.Join(formLines, "\n")))
+	content := strings.Join(formLines, "\n")
+	if rowsPerField == 1 {
+		content = lipgloss.JoinHorizontal(lipgloss.Top, side, "  ", lipgloss.NewStyle().Width(formWidth).Render(content))
+	}
 	return strings.Join(append(lines, content), "\n")
 }
 
@@ -760,6 +775,9 @@ func (m model) settingFields() []settingField {
 		return []settingField{
 			{settingUploadLimitScope, "Limit applies to", m.choiceValue(settingUploadLimitScope, uploadScopeLabel(m.cfg.Uploads.LimitScope)), settingChoice},
 			{settingUploadScheduling, "Scheduling", m.choiceValue(settingUploadScheduling, uploadSchedulingLabel(m.cfg.Uploads.Scheduling)), settingChoice},
+			{settingPrioritizeBuddies, "Prioritize all buddies", strconv.FormatBool(m.cfg.Uploads.PrioritizeBuddies), settingBool},
+			{settingPrioritizePrivileged, "Prioritize supporter users", strconv.FormatBool(m.cfg.Uploads.PrioritizePrivileged), settingBool},
+			{settingExemptBuddiesFromQueueLimits, "Exempt buddies from queue limits", strconv.FormatBool(m.cfg.Uploads.ExemptBuddiesFromQueueLimits), settingBool},
 			{settingAutoClearUploads, "Auto-clear new completed uploads", strconv.FormatBool(m.cfg.Uploads.AutoClearCompleted), settingBool},
 			{settingAutoClearCancelledUploads, "Auto-clear new cancelled uploads", strconv.FormatBool(m.cfg.Uploads.AutoClearCancelled), settingBool},
 			{settingWaitForActiveUploadsOnQuit, "Wait for active uploads on quit", strconv.FormatBool(m.cfg.Uploads.WaitForActiveUploadsOnQuit), settingBool},

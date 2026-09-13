@@ -209,15 +209,18 @@ type UploadManager struct {
 	served                map[string]uint64
 	totalPace             paceState
 	paceChanged           chan struct{}
-	chooseRandom          func(int) int
+	random                *rand.PCG
+	users                 map[string]UploadUserPolicy
 	drainDone             chan struct{}
+	recovering            bool
+	positionSlot          chan struct{}
 }
 
 func NewUploadManager(maxSlots int) *UploadManager {
 	if maxSlots < 1 {
 		maxSlots = 1
 	}
-	return &UploadManager{max: maxSlots, byUser: make(map[string]int), outstandingFiles: make(map[string]uint64), outstandingBytes: make(map[string]uint64), policy: UploadPolicy{Scheduling: UploadScheduleFIFO}, served: make(map[string]uint64), paceChanged: make(chan struct{}), chooseRandom: rand.IntN}
+	return &UploadManager{max: maxSlots, byUser: make(map[string]int), outstandingFiles: make(map[string]uint64), outstandingBytes: make(map[string]uint64), policy: UploadPolicy{Scheduling: UploadScheduleFIFO}, served: make(map[string]uint64), paceChanged: make(chan struct{}), positionSlot: make(chan struct{}, 1), random: rand.NewPCG(rand.Uint64(), rand.Uint64())}
 }
 
 func (m *UploadManager) Configure(policy UploadPolicy) {
@@ -277,8 +280,12 @@ var (
 // Enqueue is the historical test/internal API. Production admission uses TryEnqueue.
 // EnqueueRestored reserves an already accepted upload without applying the current caps.
 func (m *UploadManager) EnqueueRestored(user string, r TransferRequest) *UploadJob {
-	j, _ := m.enqueue(user, r, false)
+	j, _ := m.TryEnqueueRestored(user, r)
 	return j
+}
+
+func (m *UploadManager) TryEnqueueRestored(user string, r TransferRequest) (*UploadJob, error) {
+	return m.enqueue(user, r, false)
 }
 func (m *UploadManager) Enqueue(user string, r TransferRequest) *UploadJob {
 	j, _ := m.enqueue(user, r, false)
@@ -296,7 +303,13 @@ func (m *UploadManager) enqueue(user string, r TransferRequest, enforce bool) (*
 	if m.drainDone != nil {
 		return nil, ErrUploadsDraining
 	}
-	if enforce {
+	if m.outstandingFiles[user] == ^uint64(0) {
+		return nil, ErrTooManyUploadFiles
+	}
+	if r.Size > ^uint64(0)-m.outstandingBytes[user] {
+		return nil, ErrTooManyUploadBytes
+	}
+	if enforce && !m.users[user].ExemptLimits {
 		if max := m.policy.MaxQueuedFilesPerUser; max != 0 && m.outstandingFiles[user]+1 > max {
 			return nil, ErrTooManyUploadFiles
 		}
@@ -313,7 +326,16 @@ func (m *UploadManager) enqueue(user string, r TransferRequest, enforce bool) (*
 }
 
 func (m *UploadManager) nextIndex() int {
-	eligible := func(job *UploadJob) bool { return !job.cancelled && m.byUser[job.User] == 0 }
+	preferred := false
+	for _, job := range m.q {
+		if !job.cancelled && m.byUser[job.User] == 0 && m.users[job.User].Preferred {
+			preferred = true
+			break
+		}
+	}
+	eligible := func(job *UploadJob) bool {
+		return !job.cancelled && m.byUser[job.User] == 0 && (!preferred || m.users[job.User].Preferred)
+	}
 	switch m.policy.Scheduling {
 	case UploadScheduleSmallestFirst:
 		best := -1
@@ -337,7 +359,7 @@ func (m *UploadManager) nextIndex() int {
 		}
 		target := users[0]
 		if m.policy.Scheduling == UploadScheduleRandom {
-			target = users[m.chooseRandom(len(users))]
+			target = users[rand.New(m.random).IntN(len(users))]
 		} else {
 			for _, user := range users[1:] {
 				if m.served[user] < m.served[target] {
@@ -361,7 +383,7 @@ func (m *UploadManager) nextIndex() int {
 }
 
 func (m *UploadManager) promote() {
-	for m.drainDone == nil && len(m.q) > 0 && m.active < m.max {
+	for !m.recovering && m.drainDone == nil && len(m.q) > 0 && m.active < m.max {
 		i := m.nextIndex()
 		if i < 0 {
 			return

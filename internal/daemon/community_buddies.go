@@ -151,6 +151,9 @@ func (s *Service) SetCommunityBuddy(ctx context.Context, req CommunityBuddyReque
 		s.community.buddies[req.Username] = communityBuddyFromRow(row, uint64(revision))
 	}
 	changedClient = s.client
+	if !exists || req.Remove || old.Priority != req.Priority {
+		s.applyUploadUserPoliciesLocked()
+	}
 	names := make([]string, 0, len(s.community.buddies))
 	for name := range s.community.buddies {
 		names = append(names, name)

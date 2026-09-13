@@ -282,6 +282,12 @@ func (m *model) key(k tea.KeyPressMsg) tea.Cmd {
 				m.cfg.Uploads.AutoClearCancelled = !m.cfg.Uploads.AutoClearCancelled
 			case settingWaitForActiveUploadsOnQuit:
 				m.cfg.Uploads.WaitForActiveUploadsOnQuit = !m.cfg.Uploads.WaitForActiveUploadsOnQuit
+			case settingPrioritizeBuddies:
+				m.cfg.Uploads.PrioritizeBuddies = !m.cfg.Uploads.PrioritizeBuddies
+			case settingPrioritizePrivileged:
+				m.cfg.Uploads.PrioritizePrivileged = !m.cfg.Uploads.PrioritizePrivileged
+			case settingExemptBuddiesFromQueueLimits:
+				m.cfg.Uploads.ExemptBuddiesFromQueueLimits = !m.cfg.Uploads.ExemptBuddiesFromQueueLimits
 			case settingChangePassword:
 				m.openPasswordForm()
 			case settingPrivacyRules:

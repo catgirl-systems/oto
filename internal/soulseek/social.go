@@ -168,6 +168,8 @@ func DecodeUserStatistics(payload []byte) (m UserStatistics, err error) {
 // DecodeServerMessage keeps server-only messages out of the peer command space.
 func DecodeServerMessage(command uint32, payload []byte) (any, error) {
 	switch command {
+	case ServerPrivilegedUsers:
+		return DecodePrivilegedUsers(payload)
 	case ServerWatchUser:
 		return DecodeWatchUser(payload)
 	case ServerUserStatus:

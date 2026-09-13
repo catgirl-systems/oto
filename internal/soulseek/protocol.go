@@ -358,7 +358,7 @@ func DecodeConnectPeerInstruction(b []byte) (ConnectPeerInstruction, error) {
 	d := NewDecoder(b)
 	var message ConnectPeerInstruction
 	var err error
-	if message.Username, err = d.String(); err != nil {
+	if message.Username, err = decodeUsername(d); err != nil {
 		return message, err
 	}
 	if message.Kind, err = d.String(); err != nil {

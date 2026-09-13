@@ -172,6 +172,7 @@ func NewClient(cfg ClientConfig) *Client {
 	client := &Client{cfg: cfg, writeMu: make(chan struct{}, 1), dialer: net.Dialer{Control: control}, listenConfig: net.ListenConfig{Control: control}, events: make(chan Event, 32), pending: make(map[uint32]chan SearchResponse), addresses: make(map[string]*peerAddressLookup), peerIPs: make(map[string]cachedShareAddress), pierce: make(map[uint32]chan net.Conn), requested: make(map[string]*pendingDownload), downloads: make(map[uint32]*pendingDownload), uploads: make(map[string]*uploadAttempt), uploadRoot: uploadRoot, uploadCancel: uploadCancel, distributed: NewDistributedNode(), incomingSearch: policy, browseSlot: make(chan struct{}, 1), searchSlots: make(chan struct{}, 2)}
 	client.ConfigureDownloadLimit(cfg.DownloadLimitBytesPerSecond)
 	client.shareResponseRoot, client.shareResponseCancel = context.WithCancel(uploadRoot)
+	client.beginUploadRecovery()
 	return client
 }
 
@@ -302,6 +303,7 @@ func (c *Client) Connect(ctx context.Context) error {
 	if c.closing {
 		c.uploadRoot, c.uploadCancel = context.WithCancel(context.Background())
 		c.shareResponseRoot, c.shareResponseCancel = context.WithCancel(c.uploadRoot)
+		c.beginUploadRecovery()
 		c.closing = false
 		c.addresses = make(map[string]*peerAddressLookup)
 		c.peerIPs = make(map[string]cachedShareAddress)
@@ -598,7 +600,10 @@ func (c *Client) Run(ctx context.Context) error {
 			}
 			continue
 		}
-		c.route(cmd, m)
+		_, connectsPeer := m.(ConnectPeerInstruction)
+		if !connectsPeer {
+			c.route(cmd, m)
+		}
 		if message, ok := m.(SocialMessage); ok && c.cfg.SocialUpdate != nil {
 			if err := c.cfg.SocialUpdate(ctx, message); err != nil {
 				return fmt.Errorf("soulseek: social update: %w", err)
@@ -612,6 +617,10 @@ func (c *Client) Run(ctx context.Context) error {
 					return fmt.Errorf("soulseek: private message acknowledgement: %w", err)
 				}
 			}
+		}
+		// Publish the server's privilege flag before this peer can queue an upload.
+		if connectsPeer {
+			c.route(cmd, m)
 		}
 	}
 }
@@ -1707,6 +1716,14 @@ func (c *Client) serveMessagePeer(peer net.Conn, peerInfo PeerInitMessage) {
 			if err := c.acceptDownload(peer, pending, request); err != nil {
 				pending.finish(err)
 			}
+		case PeerPlaceInQueueRequest:
+			filename, err := parseStringPayload(payload)
+			if err != nil {
+				return
+			}
+			if c.writeUploadPosition(peer, peerInfo.Username, filename) != nil {
+				return
+			}
 		case PeerQueueUpload:
 			filename, err := parseStringPayload(payload)
 			if err != nil {
@@ -1717,7 +1734,9 @@ func (c *Client) serveMessagePeer(peer net.Conn, peerInfo PeerInitMessage) {
 				_ = writeMessage(peer, QueueDenied{Filename: filename, Reason: uploadDenial(err)})
 				continue
 			}
-			_ = writeMessage(peer, QueuePlace{Filename: a.target.Filename, Place: 1})
+			if c.writeUploadPosition(peer, peerInfo.Username, a.target.Filename) != nil {
+				return
+			}
 		}
 	}
 }
