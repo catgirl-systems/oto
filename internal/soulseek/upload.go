@@ -87,6 +87,9 @@ func fileFingerprint(path string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	return fileInfoFingerprint(info)
+}
+func fileInfoFingerprint(info os.FileInfo) (string, error) {
 	stat, ok := info.Sys().(*syscall.Stat_t)
 	if !ok {
 		return "", errors.New("soulseek: file fingerprint unavailable")

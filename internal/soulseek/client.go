@@ -37,6 +37,9 @@ type ClientConfig struct {
 	// Returning an error rolls the reservation back.
 	UploadAccepted func(TransferEvent) error
 	UploadRejected func(TransferEvent)
+	// DownloadOffered runs without client locks. Nil rejects unsolicited files.
+	// It must bound and persist admission before asynchronously receiving the offer.
+	DownloadOffered func(*DownloadOffer) error
 	// SocialUpdate is authoritative; Events is only a lossy diagnostic stream.
 	// A successful PrivateMessage callback must have committed content or a
 	// deliberate-discard receipt: Run sends its acknowledgement only afterward.
@@ -83,6 +86,7 @@ type pendingDownload struct {
 	writer             io.WriterAt
 	progress           ProgressFunc
 	start              func()
+	authorize          func(netip.Addr) error
 	done               chan error
 	ctx                context.Context
 	observation        *transferObservation
@@ -785,6 +789,10 @@ func (c *Client) collectSearch(ctx context.Context, rawQuery string, wishlist bo
 	if err != nil {
 		return nil, err
 	}
+	return c.collectSearchTargets(ctx, rawQuery, wishlist, targets, nil)
+}
+
+func (c *Client) collectSearchTargets(ctx context.Context, rawQuery string, wishlist bool, targets, rooms []string) ([]SearchResult, error) {
 	allowed := make(map[string]bool, len(targets))
 	for _, user := range targets {
 		allowed[user] = true
@@ -800,26 +808,64 @@ func (c *Client) collectSearch(ctx context.Context, rawQuery string, wishlist bo
 	c.pending[token] = responses
 	c.mu.Unlock()
 	defer func() { c.mu.Lock(); delete(c.pending, token); c.mu.Unlock() }()
-	var request Message = SearchRequest{Token: token, Query: query.wire}
-	if wishlist {
-		request = WishlistSearchRequest{Token: token, Query: query.wire}
-	}
-	if len(targets) == 0 {
-		if err := c.sendContext(ctx, request); err != nil {
-			return nil, err
+	// One cancellable sender feeds the existing collector while responses arrive.
+	// Keep the five-second response window after the final request, with a separate
+	// five-second bound on fan-out. Never spawn one worker per buddy or room.
+	sendCtx, cancelSend := context.WithTimeout(ctx, 5*time.Second)
+	sent := make(chan error, 1)
+	workerDone := make(chan struct{})
+	go func() {
+		defer close(workerDone)
+		send := func(request Message) error {
+			_, err := c.sendTracked(sendCtx, request, func() error {
+				c.mu.Lock()
+				defer c.mu.Unlock()
+				if c.done != done {
+					return ErrNotConnected
+				}
+				return nil
+			})
+			return err
 		}
-	} else {
-		for _, user := range targets {
-			if err := c.sendContext(ctx, UserSearchRequest{Username: user, Token: token, Query: query.wire}); err != nil {
-				return nil, err
+		var err error
+		switch {
+		case len(rooms) > 0:
+			for _, room := range rooms {
+				if err = send(RoomSearchRequest{Room: room, Token: token, Query: query.wire}); err != nil {
+					break
+				}
 			}
+		case len(targets) > 0:
+			for _, user := range targets {
+				if err = send(UserSearchRequest{Username: user, Token: token, Query: query.wire}); err != nil {
+					break
+				}
+			}
+		case wishlist:
+			err = send(WishlistSearchRequest{Token: token, Query: query.wire})
+		default:
+			err = send(SearchRequest{Token: token, Query: query.wire})
 		}
-	}
-	timer := time.NewTimer(5 * time.Second)
-	defer timer.Stop()
+		sent <- err
+	}()
+	defer func() { cancelSend(); <-workerDone }()
+	var timer *time.Timer
+	var timeout <-chan time.Time
+	defer func() {
+		if timer != nil {
+			timer.Stop()
+		}
+	}()
 	var results []SearchResult
 	for {
 		select {
+		case err := <-sent:
+			sent = nil
+			if err != nil {
+				return nil, err
+			}
+			timer = time.NewTimer(5 * time.Second)
+			timeout = timer.C
 		case <-ctx.Done():
 			return nil, ctx.Err()
 		case <-done:
@@ -836,7 +882,7 @@ func (c *Client) collectSearch(ctx context.Context, rawQuery string, wishlist bo
 					results = append(results, result)
 				}
 			}
-		case <-timer.C:
+		case <-timeout:
 			return results, nil
 		}
 	}
@@ -1138,6 +1184,10 @@ func (c *Client) Download(ctx context.Context, username, filename string, size, 
 
 // DownloadWithStart is Download with a callback at the exact start of the data stream.
 func (c *Client) DownloadWithStart(ctx context.Context, username, filename string, size, offset uint64, dst io.WriterAt, progress ProgressFunc, start func()) error {
+	return c.downloadWithStart(ctx, username, filename, size, offset, dst, progress, start, nil, nil)
+}
+
+func (c *Client) downloadWithStart(ctx context.Context, username, filename string, size, offset uint64, dst io.WriterAt, progress ProgressFunc, start func(), offer *DownloadOffer, authorize func(netip.Addr) error) error {
 	if dst == nil || offset > size {
 		return ErrMalformed
 	}
@@ -1150,8 +1200,13 @@ func (c *Client) DownloadWithStart(ctx context.Context, username, filename strin
 		ctx = diagnostics.WithLogger(ctx, observation.logger)
 	}
 	pending := &pendingDownload{username: username, filename: filename, size: size, offset: offset, writer: observedWriterAt{WriterAt: dst, observation: observation}, progress: observedProgress(observation, progress), start: start, done: make(chan error, 1), ctx: ctx, observation: observation}
+	pending.authorize = authorize
 	key := downloadKey(username, filename)
 	c.mu.Lock()
+	if c.closing || c.closePending > 0 {
+		c.mu.Unlock()
+		return net.ErrClosed
+	}
 	if _, exists := c.requested[key]; exists {
 		c.mu.Unlock()
 		return errors.New("soulseek: download already queued")
@@ -1174,6 +1229,17 @@ func (c *Client) DownloadWithStart(ctx context.Context, username, filename strin
 		pending.fileMu.Lock()
 		pending.fileMu.Unlock()
 	}()
+	if offer != nil {
+		if err := c.acceptDownload(offer.peer, pending, offer.request); err != nil {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case err := <-pending.done:
+			return err
+		}
+	}
 
 	setupCtx, stopSetup := context.WithTimeout(ctx, downloadSetupTimeout)
 	peer, err := c.connectUser(setupCtx, username)
@@ -1185,6 +1251,11 @@ func (c *Client) DownloadWithStart(ctx context.Context, username, filename strin
 	ctx = diagnostics.WithLogger(ctx, c.peerLogger(ctx, peer))
 	stopPeer := context.AfterFunc(ctx, func() { _ = peer.Close() })
 	defer stopPeer()
+	if authorize != nil {
+		if err := authorize(peerIP(peer.RemoteAddr())); err != nil {
+			return err
+		}
+	}
 	if err := writeMessage(peer, QueueRequest{Filename: filename}); err != nil {
 		return err
 	}
@@ -1275,6 +1346,12 @@ func (c *Client) DownloadWithStart(ctx context.Context, username, filename strin
 }
 
 func (c *Client) acceptDownload(peer net.Conn, pending *pendingDownload, request TransferRequest) error {
+	if pending.authorize != nil {
+		if err := pending.authorize(peerIP(peer.RemoteAddr())); err != nil {
+			_ = writeMessage(peer, TransferResponse{Token: request.Token, Reason: "Cancelled"})
+			return err
+		}
+	}
 	c.mu.Lock()
 	if err := pending.ctx.Err(); err != nil {
 		c.mu.Unlock()
@@ -1339,6 +1416,12 @@ func (c *Client) serveFile(peer net.Conn) {
 	if pending == nil {
 		c.log(context.Background(), slog.LevelInfo, "file_token_unmatched", nil, slog.String("stage", "file_handshake"), slog.String("error_class", "unknown_token"))
 		return
+	}
+	if pending.authorize != nil {
+		if err := pending.authorize(peerIP(peer.RemoteAddr())); err != nil {
+			pending.finish(err)
+			return
+		}
 	}
 	fileLogger := c.linkFileLogger(pending.ctx, peer)
 	fileCtx := diagnostics.WithLogger(pending.ctx, fileLogger)
@@ -1710,7 +1793,7 @@ func (c *Client) serveMessagePeer(peer net.Conn, peerInfo PeerInitMessage) {
 			pending := c.requested[downloadKey(peerInfo.Username, clean)]
 			c.mu.Unlock()
 			if pending == nil {
-				_ = writeMessage(peer, TransferResponse{Token: request.Token, Accepted: false, Reason: "Cancelled"})
+				c.offerDownload(peer, peerInfo.Username, clean, request)
 				continue
 			}
 			if err := c.acceptDownload(peer, pending, request); err != nil {

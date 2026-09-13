@@ -371,6 +371,7 @@
     {"name":"privilege-balance","class":"CheckPrivileges","direction":"server","code":92,"payload_hex":"bcf40300","expected":{"seconds":259260}},
     {"name":"privilege-balance-empty","class":"CheckPrivileges","direction":"server","code":92,"payload_hex":"00000000","expected":{"seconds":0}},
     {"name":"give-privileges-request","class":"GivePrivileges","direction":"client","code":123,"payload_hex":"05000000416c69636501000000","arguments":{"user":"Alice","days":1}},
+    {"name":"room-search-request","class":"RoomSearch","direction":"client","code":120,"payload_hex":"060000006c6f756e67652900000004000000736f6e67","arguments":{"room":"lounge","token":41,"text":"song"}},
     {"name":"profile-picture","class":"UserInfoResponse","direction":"peer","code":16,"payload_hex":"0c00000068656c6c6f20e4b896e7958c014600000089504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000d49444154789c63f8cfc0f01f00050001ff89993d1d0000000049454e44ae42608203000000070000000100000000","arguments":{"descr":"hello 世界","pic":{"hex":"89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000d49444154789c63f8cfc0f01f00050001ff89993d1d0000000049454e44ae426082"},"totalupl":3,"queuesize":7,"slotsavail":true,"uploadallowed":0},"expected":{"descr":"hello 世界","pic":{"hex":"89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000d49444154789c63f8cfc0f01f00050001ff89993d1d0000000049454e44ae426082"},"totalupl":3,"queuesize":7,"slotsavail":true,"uploadallowed":0}}
   ]
 }
