@@ -424,6 +424,21 @@ func (c communityModel) inspectorLines() []string {
 // Width-aware tabs keep the active label visible without relying on color.
 func visibleTabs(names []string, active, width int) string {
 	active = max(0, min(active, len(names)-1))
+	bestSep := " "
+	for _, sep := range []string{"   ", "  "} {
+		var parts []string
+		for i, name := range names {
+			label := muted(name)
+			if i == active {
+				label = accent("[" + name + "]")
+			}
+			parts = append(parts, label)
+		}
+		if ansi.StringWidth(strings.Join(parts, sep)) <= width {
+			bestSep = sep
+			break
+		}
+	}
 	render := func(lo, hi int) string {
 		var parts []string
 		if lo > 0 {
@@ -439,7 +454,7 @@ func visibleTabs(names []string, active, width int) string {
 		if hi+1 < len(names) {
 			parts = append(parts, "›")
 		}
-		return strings.Join(parts, " ")
+		return strings.Join(parts, bestSep)
 	}
 	lo, hi := active, active
 	for {
@@ -490,15 +505,18 @@ func (m model) workspaceTabs(width int) string {
 func (m model) renderCommunity(width, height int) string {
 	c := m.community
 	lines := []string{visibleTabs(communityViews, c.view, width)}
-	state := "Online"
+	dot := styled("●", lipgloss.NewStyle().Foreground(lipgloss.Color("#A6E3A1")))
+	state := dot + " " + strong("Online")
 	if !c.summary.Connected {
-		state = "Offline · live data is stale"
+		dot = styled("○", lipgloss.NewStyle().Foreground(lipgloss.Color("#F9E2AF")))
+		state = dot + " " + muted("Offline")
 	}
 	if !c.ready {
-		state = "Loading Community…"
+		dot = styled("◌", lipgloss.NewStyle().Foreground(lipgloss.Color("#89B4FA")))
+		state = dot + " " + muted("Loading Community…")
 	}
 	if c.err != "" {
-		state = "! Community unavailable: " + browseErrorText(c.err) + " · r retry / restart daemon"
+		state = danger("! Community unavailable: " + browseErrorText(c.err) + " · r retry / restart daemon")
 	}
 	lines = append(lines, ansi.Truncate(state, width, "…"))
 	remaining := max(0, height-len(lines))
@@ -506,7 +524,7 @@ func (m model) renderCommunity(width, height int) string {
 		return strings.Join(append(lines, m.peerPictureForm(width, remaining)...), "\n")
 	}
 	if c.inspectEditing {
-		body := []string{"Inspect user · Esc back", renderInputWindow(c.input, c.inputCursor, width), c.inputErr, "Enter inspect · paste never submits"}
+		body := []string{accent("Inspect user") + muted(" · Esc back"), renderInputWindow(c.input, c.inputCursor, width), danger(c.inputErr), muted("Enter inspect · paste never submits")}
 		return strings.Join(append(lines, communityPane(body, width, remaining, 0)...), "\n")
 	}
 	if c.chats.form != "" && (c.view == 0 || c.view == 1) {
@@ -524,8 +542,8 @@ func (m model) renderCommunity(width, height int) string {
 	if c.view == 3 && c.discover.form != "" {
 		return strings.Join(append(lines, m.discoverFormView(width, remaining)...), "\n")
 	}
-	list := []string{"No " + strings.ToLower(communityViews[c.view]) + " loaded.", "", "/ inspect a user", "U user actions"}
-	content := []string{communityViews[c.view], "", "This daemon does not advertise", "this service yet.", "", "User details remain available", "with / or U from file lists."}
+	list := []string{muted("No " + strings.ToLower(communityViews[c.view]) + " loaded."), "", muted("/ inspect a user"), muted("U user actions")}
+	content := []string{strong(communityViews[c.view]), "", muted("This daemon does not advertise"), muted("this service yet."), "", muted("User details remain available"), muted("with / or U from file lists.")}
 	panes := [][]string{list, content, c.inspectorLines()}
 	if m.width < 80 || m.width < 110 && c.pane == 2 {
 		breadcrumb := communityViews[c.view] + " / " + communityPanes[c.pane] + " · Esc back"
@@ -601,8 +619,16 @@ func (m model) renderCommunity(width, height int) string {
 				panes[2] = c.inspectorLines()
 			}
 		}
-		body := append([]string{accent(label)}, communityPane(panes[i], size, max(0, remaining-1), scroll)...)
+		styledHeader := accent(label)
+		if i != c.pane {
+			styledHeader = muted(label)
+		}
+		body := append([]string{styledHeader}, communityPane(panes[i], size, max(0, remaining-1), scroll)...)
 		columns[i] = communityPane(body, size, remaining, 0)
+	}
+	sep := styled(" │ ", lipgloss.NewStyle().Foreground(lipgloss.Color("#45475A")))
+	if !colorsEnabled() {
+		sep = " │ "
 	}
 	for row := 0; row < remaining; row++ {
 		var cells []string
@@ -613,7 +639,7 @@ func (m model) renderCommunity(width, height int) string {
 			}
 			cells = append(cells, cell+strings.Repeat(" ", max(0, sizes[i]-ansi.StringWidth(cell))))
 		}
-		lines = append(lines, strings.Join(cells, " │ "))
+		lines = append(lines, strings.Join(cells, sep))
 	}
 	return strings.Join(lines[:min(len(lines), height)], "\n")
 }
