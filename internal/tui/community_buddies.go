@@ -645,18 +645,18 @@ func (m model) buddyListPane(width, height int) []string {
 	if order == "" {
 		order = "username"
 	}
-	lines := []string{fmt.Sprintf("Buddies (%d) · %s", b.total, order), "a add · e edit · D remove", "s sort · f filter · U actions"}
+	lines := []string{strong(fmt.Sprintf("Buddies (%d)", b.total)) + muted(" · "+order), muted("a add · e edit · D remove"), muted("s sort · f filter · U actions")}
 	if b.query != "" {
 		lines = append(lines, "Find: "+b.query)
 	}
 	if b.err != "" {
-		lines = append(lines, "! "+browseErrorText(b.err))
+		lines = append(lines, danger("! "+browseErrorText(b.err)))
 	}
 	if b.loading && !b.listReady {
-		lines = append(lines, "Loading buddies…")
+		lines = append(lines, muted("Loading buddies…"))
 	}
 	if len(b.buddies) == 0 {
-		lines = append(lines, "No matching buddies.")
+		lines = append(lines, muted("No matching buddies."))
 	}
 	lines = communityPane(lines, width, max(0, height-2), 0)
 	rows := max(0, height-len(lines)-1)
@@ -667,17 +667,22 @@ func (m model) buddyListPane(width, height int) []string {
 			mark = ">"
 		}
 		buddy := b.buddies[i]
-		lines = append(lines, ansi.Truncate(mark+buddy.Username+" · "+buddyStatus(buddy, m.community.summary.Connected && m.community.err == "" && b.err == ""), max(0, width), "…"))
+		rowContent := buddy.Username + " · " + buddyStatus(buddy, m.community.summary.Connected && m.community.err == "" && b.err == "")
+		rowStr := mark + rowContent
+		if i == b.row && colorsEnabled() {
+			rowStr = selectedRow(rowContent, true)
+		}
+		lines = append(lines, ansi.Truncate(rowStr, max(0, width), "…"))
 	}
 	if height > 0 {
-		lines = append(lines, ansi.Truncate("p/n pages · Enter detail", max(0, width), "…"))
+		lines = append(lines, ansi.Truncate(muted("p/n pages · Enter detail"), max(0, width), "…"))
 	}
 	return lines
 }
 func (m model) buddyDetailPane(width, height int) []string {
 	b := m.community.buddies
 	if b.active == nil {
-		return communityPane([]string{"Select a buddy and Enter.", b.selected, "a add · e edit · U actions", b.err}, width, height, 0)
+		return communityPane([]string{strong("Select a buddy and Enter."), b.selected, muted("a add · e edit · U actions"), b.err}, width, height, 0)
 	}
 	buddy := b.active
 	live := m.community.summary.Connected && m.community.err == "" && b.err == ""
@@ -692,10 +697,10 @@ func (m model) buddyDetailPane(width, height int) []string {
 	if country != "unknown" && (!live || !buddy.StatusFresh) {
 		country += " (stale)"
 	}
-	lines := []string{"Buddy: " + buddy.Username, "Status: " + buddyStatus(*buddy, live), "Country: " + country, "Last seen (observed offline): " + seen, fmt.Sprintf("Notify online: %t", buddy.NotifyOnline), fmt.Sprintf("Priority preference: %t", buddy.Priority), fmt.Sprintf("Trusted preference: %t", buddy.Trusted), "Priority: preferred upload class; running files continue.", "Trust: trusted roots (not self); bans still apply.", "Note:", strings.ReplaceAll(buddy.Note, "\t", "    "), b.err}
+	lines := []string{strong("Buddy: ") + buddy.Username, "Status: " + buddyStatus(*buddy, live), "Country: " + country, "Last seen (observed offline): " + seen, fmt.Sprintf("Notify online: %t", buddy.NotifyOnline), fmt.Sprintf("Priority preference: %t", buddy.Priority), fmt.Sprintf("Trusted preference: %t", buddy.Trusted), muted("Priority: preferred upload class; running files continue."), muted("Trust: trusted roots (not self); bans still apply."), strong("Note:"), strings.ReplaceAll(buddy.Note, "\t", "    "), b.err}
 	lines = communityPane(lines, width, max(0, height-1), b.scroll)
 	if height > 0 {
-		lines = append(lines, ansi.Truncate("↑↓ scroll · e edit · D remove · U actions", max(0, width), "…"))
+		lines = append(lines, ansi.Truncate(muted("↑↓ scroll · e edit · D remove · U actions"), max(0, width), "…"))
 	}
 	return lines
 }
