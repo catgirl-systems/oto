@@ -842,7 +842,7 @@ func (m *model) discoverDialogKey(k tea.KeyPressMsg) tea.Cmd {
 
 func (m model) discoverSidebar(width, height int) []string {
 	d := m.community.discover
-	lines := []string{"Discover modes", "↑↓ choose · Enter open"}
+	lines := []string{strong("Discover modes"), muted("↑↓ choose · Enter open")}
 	scroll := 0
 	for i, mode := range discoverModes {
 		lines = append(lines, selectedRow(mode.label, i == d.mode))
@@ -855,19 +855,19 @@ func (m model) discoverSidebar(width, height int) []string {
 func (m model) discoverRowsPane(width, height int) []string {
 	d := m.community.discover
 	if d.kind() == "profile" {
-		return communityPane([]string{"My profile · e edit · r refresh", "↑↓/PgUp/PgDown scroll", d.err, "Description:", strings.ReplaceAll(d.profile.Description, "\t", "⇥")}, width, height, d.profileScroll)
+		return communityPane([]string{strong("My profile") + muted(" · e edit · r refresh"), muted("↑↓/PgUp/PgDown scroll"), danger(d.err), strong("Description:"), strings.ReplaceAll(d.profile.Description, "\t", "⇥")}, width, height, d.profileScroll)
 	}
-	lines := []string{discoverModes[d.mode].label}
+	lines := []string{strong(discoverModes[d.mode].label)}
 	if d.kind() == "interests" {
-		lines = append(lines, "a add · e edit · D remove · f filter", "p/n pages")
+		lines = append(lines, muted("a add · e edit · D remove · f filter"), muted("p/n pages"))
 		if d.query != "" {
 			lines = append(lines, "Find: "+d.query)
 		}
 		if d.err != "" {
-			lines = append(lines, "! "+browseErrorText(d.err))
+			lines = append(lines, danger("! "+browseErrorText(d.err)))
 		}
 		if len(d.interests) == 0 {
-			lines = append(lines, "No interests saved.")
+			lines = append(lines, muted("No interests saved."))
 		}
 		lines = communityPane(lines, width, max(1, height-2), 0)
 		rows := max(0, height-len(lines)-1)
@@ -877,10 +877,10 @@ func (m model) discoverRowsPane(width, height int) []string {
 			state := x.Opinion + " · " + x.State
 			lines = append(lines, selectedRow(ansi.Truncate(x.Item+" ("+state+")", width-2, "…"), i == d.row))
 		}
-		lines = append(lines, "s search · i recs · u users")
+		lines = append(lines, muted("s search · i recs · u users"))
 		return lines[:min(len(lines), max(0, height))]
 	}
-	lines = append(lines, "Enter user/item · U actions · f filter", "t target · r refresh · p/n pages")
+	lines = append(lines, muted("Enter user/item · U actions · f filter"), muted("t target · r refresh · p/n pages"))
 	if d.target != "" {
 		lines = append(lines, "Target: "+d.target)
 	}
@@ -893,7 +893,7 @@ func (m model) discoverRowsPane(width, height int) []string {
 	}
 	visible := m.discoverVisibleRows()
 	if len(visible) == 0 {
-		lines = append(lines, "No results yet; r refreshes.")
+		lines = append(lines, muted("No results yet; r refreshes."))
 	}
 	lines = communityPane(lines, width, max(1, height-2), 0)
 	rows := max(0, height-len(lines)-1)
@@ -911,7 +911,7 @@ func (m model) discoverRowsPane(width, height int) []string {
 		}
 		lines = append(lines, selectedRow(ansi.Truncate(label, width-2, "…"), i == d.row))
 	}
-	lines = append(lines, "p/n pages · Enter inspect/expand · b browse · m message")
+	lines = append(lines, muted("p/n pages · Enter inspect/expand · b browse · m message"))
 	return lines[:min(len(lines), max(0, height))]
 }
 func (m model) discoverFormView(width, height int) []string {
