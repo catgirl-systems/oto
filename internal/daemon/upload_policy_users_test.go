@@ -154,4 +154,11 @@ func TestCommunityUploadPrivilegeBudgetAndExactIdentity(t *testing.T) {
 	if len(s.community.privileged) != soulseek.MaxPrivilegedUsers {
 		t.Fatal("partial oversized roster published")
 	}
+	// XXX: undecodable roster entries are dropped; nicotine+ renders whatever it receives.
+	if err := s.communityUpdate(ctx, identity, soulseek.PrivilegedUsers{Users: []string{"\xffbad", ""}}); err != nil {
+		t.Fatal(err)
+	}
+	if len(s.community.privileged) != soulseek.MaxPrivilegedUsers {
+		t.Fatal("undecodable roster entries changed the cache", len(s.community.privileged))
+	}
 }

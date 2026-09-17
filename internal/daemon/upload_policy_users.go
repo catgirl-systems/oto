@@ -35,19 +35,26 @@ func (s *Service) updateUploadPrivilegesLocked(message soulseek.SocialMessage) (
 			updates[username] = true
 		}
 	case soulseek.ConnectPeerInstruction:
-		updates[m.Username] = m.Privileged
+		// XXX: skip undecodable connect names; nicotine+ renders whatever it receives.
+		if soulseek.ValidateUsername(m.Username) == nil {
+			updates[m.Username] = m.Privileged
+		}
 	case soulseek.UserPresence:
+		// XXX: presence names are filtered by communityUpdate; nicotine+ renders whatever it receives.
 		updates[m.Username] = m.Privileged
 		handled = false
 	default:
 		return false, nil
 	}
 	added := 0
-	for username, privileged := range updates {
+	for username := range updates {
+		// XXX: drop undecodable roster entries instead of failing the whole
+		// PrivilegedUsers batch; nicotine+ keeps every name it can decode.
 		if err := soulseek.ValidateUsername(username); err != nil {
-			return handled, err
+			delete(updates, username)
+			continue
 		}
-		if _, known := s.community.privileged[username]; privileged && !known {
+		if _, known := s.community.privileged[username]; updates[username] && !known {
 			added++
 		}
 	}
