@@ -148,7 +148,7 @@ func (s *Service) updateCommunityRoomLocked(ctx context.Context, message soulsee
 				if err := q.PutCommunityRoom(ctx, db.PutCommunityRoomParams{Account: s.community.identity.Account, Room: m.Room, Autojoin: boolInt(r.autojoin), PrivateRoom: boolInt(m.Private), OwnWall: r.ownWall}); err != nil {
 					return err
 				}
-				text := "Joined room. Earlier room messages cannot be recovered."
+				text := "Joined room."
 				info, err := q.CommunityHistoryInfo(ctx, db.CommunityHistoryInfoParams{Account: c.Account, ConversationID: c.ID})
 				if err != nil {
 					return err
@@ -196,10 +196,18 @@ func (s *Service) updateCommunityRoomLocked(ctx context.Context, message soulsee
 		}
 		r.members = make(map[string]soulseek.RoomUser, len(m.Users))
 		for _, user := range m.Users {
+			// XXX: skip undecodable roster names; nicotine+ renders whatever it receives.
+			if soulseek.ValidateUsername(user.Username) != nil {
+				continue
+			}
 			r.members[user.Username] = user
 		}
 		s.watchRoomLocked(m.Room, r)
 		for _, user := range m.Users {
+			// XXX: skip undecodable roster names; nicotine+ renders whatever it receives.
+			if soulseek.ValidateUsername(user.Username) != nil {
+				continue
+			}
 			s.hydrateRoomUserLocked(user)
 		}
 	case soulseek.RoomLeft:
@@ -220,6 +228,10 @@ func (s *Service) updateCommunityRoomLocked(ctx context.Context, message soulsee
 		}
 	case soulseek.RoomUserJoined:
 		if r := s.community.rooms[m.Room]; r != nil && r.joined {
+			// XXX: skip undecodable roster names; nicotine+ renders whatever it receives.
+			if soulseek.ValidateUsername(m.User.Username) != nil {
+				break
+			}
 			if len(r.members) >= soulseek.MaxRoomUsers {
 				if _, ok := r.members[m.User.Username]; !ok {
 					return fmt.Errorf("community: room roster exceeds local limit")
@@ -234,7 +246,10 @@ func (s *Service) updateCommunityRoomLocked(ctx context.Context, message soulsee
 		}
 	case soulseek.RoomUserLeft:
 		if r := s.community.rooms[m.Room]; r != nil && r.joined {
-			delete(r.members, m.Username)
+			// XXX: an undecodable name was never cached; nicotine+ renders whatever it receives.
+			if soulseek.ValidateUsername(m.Username) == nil {
+				delete(r.members, m.Username)
+			}
 			s.watchRoomLocked(m.Room, r)
 		}
 	case soulseek.RoomMessage:
@@ -275,6 +290,10 @@ func (s *Service) hydrateRoomUserLocked(member soulseek.RoomUser) {
 }
 
 func (s *Service) receiveCommunityRoomMessageLocked(ctx context.Context, m soulseek.RoomMessage) error {
+	// XXX: skip undecodable senders; nicotine+ renders whatever it receives.
+	if soulseek.ValidateUsername(m.Username) != nil {
+		return nil
+	}
 	ignored, held := s.communityIgnoreLocked(m.Username)
 	if ignored && m.Username != s.cfg.Soulseek.Username {
 		return nil
