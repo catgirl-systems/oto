@@ -57,11 +57,17 @@ func encodeUsername(e *Encoder, username string) error {
 }
 
 func decodeUsername(d *Decoder) (string, error) {
-	username, err := d.String()
+	raw, err := d.Bytes()
 	if err != nil {
 		return "", err
 	}
-	return username, ValidateUsername(username)
+	if len(raw) > MaxUsernameBytes {
+		return "", ErrTooLarge
+	}
+	// XXX: preserve raw wire bytes like DecodeDiscoveryResponse does for
+	// interests and PrivateMessage does for chat text; nicotine+ decodes with a
+	// utf-8/latin-1 fallback and never drops the session over one odd name.
+	return string(raw), nil
 }
 
 type UserStats struct {

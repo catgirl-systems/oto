@@ -105,6 +105,26 @@ func TestCommunityUserProtocol(t *testing.T) {
 			t.Fatalf("identity rewritten: %q %v", got, err)
 		}
 	}
+	// XXX: decoders preserve undecodable wire names; nicotine+ renders whatever
+	// it receives and never drops the session over one odd name.
+	for _, raw := range []string{"", "\nAlice", string([]byte{0xff})} {
+		var e Encoder
+		if err := e.String(raw); err != nil {
+			t.Fatal(err)
+		}
+		if got, err := decodeUsername(NewDecoder(e.Payload())); err != nil || got != raw {
+			t.Fatalf("wire name dropped: %q %v", got, err)
+		}
+	}
+	for _, raw := range []string{string(bytes.Repeat([]byte{'x'}, MaxUsernameBytes+1))} {
+		var e Encoder
+		if err := e.String(raw); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := decodeUsername(NewDecoder(e.Payload())); !errors.Is(err, ErrTooLarge) {
+			t.Fatalf("oversize name accepted: %v", err)
+		}
+	}
 	// Peer code 5 is a share list, never a server watch response.
 	encoded, err := EncodeMessage(SharedListResponse{})
 	if err != nil {
