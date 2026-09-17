@@ -693,7 +693,7 @@ func (m model) statusView() string {
 	}
 	label := styled("●", lipgloss.NewStyle().Foreground(color)) + " " + status
 	if m.status.user != "" {
-		label += muted("  @" + m.status.user)
+		label += muted(" @" + m.status.user)
 	}
 	return label
 }
@@ -975,6 +975,9 @@ func spread(left, right string, width int) string {
 	lw, rw := lipgloss.Width(left), lipgloss.Width(right)
 	if lw+rw+1 <= width {
 		return left + strings.Repeat(" ", width-lw-rw) + right
+	}
+	if rw >= width {
+		return trunc(right, width)
 	}
 	if rw+1 < width {
 		return trunc(left, width-rw-1) + " " + right
