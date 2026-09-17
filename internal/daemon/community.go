@@ -265,6 +265,10 @@ func (s *Service) communityUpdate(ctx context.Context, identity CommunityIdentit
 	case soulseek.PeerAddress:
 		username = m.Username
 	}
+	// XXX: skip undecodable presence names; nicotine+ renders whatever it receives.
+	if username != "" && soulseek.ValidateUsername(username) != nil {
+		return nil
+	}
 	user, wanted := s.community.users[username]
 	if !wanted {
 		_, err := s.updateUploadPrivilegesLocked(message)
