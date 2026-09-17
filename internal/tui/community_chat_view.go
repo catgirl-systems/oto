@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"github.com/charmbracelet/x/ansi"
 )
@@ -62,7 +63,11 @@ func (m model) chatHistoryLines(width int) []chatLine {
 	for i := len(c.messages) - 1; i >= 0; i-- {
 		message := c.messages[i]
 		if !unread && message.Direction == "incoming" && message.ID > c.unreadThrough {
-			lines = append(lines, chatLine{id: message.ID, offset: -1, text: "── Unread ──"})
+			divider := styled("── Unread ──", lipgloss.NewStyle().Foreground(lipgloss.Color("#F38BA8")).Bold(true))
+			if !colorsEnabled() {
+				divider = "── Unread ──"
+			}
+			lines = append(lines, chatLine{id: message.ID, offset: -1, text: divider})
 			unread = true
 		}
 		stamp := message.CreatedAt
@@ -204,7 +209,7 @@ func (m model) chatPane(pane, width, height int) []string {
 }
 func (m model) chatListPane(width, height int) []string {
 	c := m.community.chats
-	lines := []string{"N new chat · f filter"}
+	lines := []string{muted("N new chat · f filter")}
 	label := "Open chats · h all history"
 	if c.includeClosed {
 		label = "All history · h open chats"
@@ -212,16 +217,16 @@ func (m model) chatListPane(width, height int) []string {
 	if c.listQuery != "" {
 		label = "Find: " + c.listQuery
 	}
-	lines = append(lines, ansi.Truncate(label, width, "…"))
+	lines = append(lines, ansi.Truncate(strong(label), width, "…"))
 	if c.listErr != "" {
-		lines = append(lines, "! "+browseErrorText(c.listErr), "r retry (retained list is stale)")
+		lines = append(lines, danger("! "+browseErrorText(c.listErr)), muted("r retry (retained list is stale)"))
 	}
 	if !c.listReady && c.loading {
-		lines = append(lines, "Loading chats…")
+		lines = append(lines, muted("Loading chats…"))
 	}
 	rows := max(0, height-len(lines)-1)
 	if len(c.conversations) == 0 {
-		lines = append(lines, "No matching chats.")
+		lines = append(lines, muted("No matching chats."))
 	}
 	start := max(0, c.listRow-rows+1)
 	for i := start; i < min(len(c.conversations), start+rows); i++ {
@@ -244,18 +249,25 @@ func (m model) chatListPane(width, height int) []string {
 			flags += " draft"
 		}
 		name := ansi.Truncate(conversation.Target, max(1, width-len(flags)-1), "…")
-		lines = append(lines, ansi.Truncate(marker+name+flags, width, "…"))
+		rowStr := marker + name + flags
+		if i == c.listRow {
+			rowStr = selectedRow(name+flags, true)
+			if !colorsEnabled() {
+				rowStr = marker + name + flags
+			}
+		}
+		lines = append(lines, ansi.Truncate(rowStr, width, "…"))
 	}
 	for len(lines) < height-1 {
 		lines = append(lines, "")
 	}
-	lines = append(lines, "p/n pages · Enter open")
+	lines = append(lines, muted("p/n pages · Enter open"))
 	return lines[:min(len(lines), max(0, height))]
 }
 func (m model) chatContentPane(width, height int) []string {
 	c := m.community.chats
 	if c.conversation.Target == "" || !m.communityTranscriptSelected() {
-		return communityPane([]string{"Select a chat or N new chat.", "", "Messages are stored by the daemon.", "Offline sends stay queued; Unknown sends need an explicit retry."}, width, height, 0)
+		return communityPane([]string{strong("Select a chat or N new chat."), "", muted("Messages are stored by the daemon."), muted("Offline sends stay queued; Unknown sends need an explicit retry.")}, width, height, 0)
 	}
 	label := c.conversation.Target
 	if c.conversation.Mentions > 0 {
@@ -277,7 +289,7 @@ func (m model) chatContentPane(width, height int) []string {
 	if c.historyErr != "" {
 		state = "! Stale: " + browseErrorText(c.historyErr) + " · r retry"
 	}
-	lines := []string{ansi.Truncate(label, width, "…"), ansi.Truncate(state, width, "…")}
+	lines := []string{ansi.Truncate(strong(label), width, "…"), ansi.Truncate(muted(state), width, "…")}
 	rows := m.chatTranscriptHeight(height)
 	history := m.chatHistoryLines(width)
 	start := m.chatHistoryStart(history, rows)
@@ -285,13 +297,13 @@ func (m model) chatContentPane(width, height int) []string {
 		lines = append(lines, line.text)
 	}
 	if len(history) == 0 && rows > 0 {
-		lines = append(lines, "No messages in this page.")
+		lines = append(lines, muted("No messages in this page."))
 	}
 	for len(lines) < rows+2 {
 		lines = append(lines, "")
 	}
 	if c.err != "" {
-		lines = append(lines, ansi.Truncate("! "+browseErrorText(c.err), width, "…"))
+		lines = append(lines, ansi.Truncate(danger("! "+browseErrorText(c.err)), width, "…"))
 	}
 	if c.composing {
 		d := c.drafts[m.chatKey()]
@@ -305,9 +317,9 @@ func (m model) chatContentPane(width, height int) []string {
 		if d.requestID != "" && !c.busy {
 			label = "Enter reconciles pending submission"
 		}
-		lines = append(lines, ansi.Truncate(label, width, "…"), renderInputWindow(strings.ReplaceAll(strings.ReplaceAll(d.text, "\n", "↵"), "\t", "⇥"), d.cursor, width), ansi.Truncate("Enter send · Tab complete · Esc navigate", width, "…"))
+		lines = append(lines, ansi.Truncate(accent(label), width, "…"), renderInputWindow(strings.ReplaceAll(strings.ReplaceAll(d.text, "\n", "↵"), "\t", "⇥"), d.cursor, width), ansi.Truncate(muted("Enter send · Tab complete · Esc navigate"), width, "…"))
 	} else {
-		lines = append(lines, ansi.Truncate(fmt.Sprintf("i compose · #%d selected · y copy", c.position.selected), width, "…"))
+		lines = append(lines, ansi.Truncate(muted(fmt.Sprintf("i compose · #%d selected · y copy", c.position.selected)), width, "…"))
 	}
 	return lines[:min(len(lines), max(0, height))]
 }
@@ -325,21 +337,22 @@ func (m model) chatDialogView() string {
 	if height >= 8 {
 		height -= 2
 	}
-	// Pin choices instead of letting a long label/preview push them offscreen.
-	rows := max(0, height-2)
+	cardWidth := max(1, min(64, width))
+	bodyWidth := max(1, cardWidth-4)
+	rows := max(0, height-4)
 	if c.err != "" && rows > 0 {
 		rows--
 	}
-	body := []string{d.label}
+	body := []string{strong(d.label)}
 	if d.kind == "paste" {
 		body = append(body, strings.ReplaceAll(c.drafts[m.chatKey()].text, "\n", " "))
 	}
-	lines := communityPane(body, width, rows, d.scroll)
+	lines := communityPane(body, bodyWidth, rows, d.scroll)
 	for len(lines) < rows {
 		lines = append(lines, "")
 	}
-	if c.err != "" && height > 2 {
-		lines = append(lines, ansi.Truncate("! "+browseErrorText(c.err), width, "…"))
+	if c.err != "" {
+		lines = append(lines, ansi.Truncate(danger("! "+browseErrorText(c.err)), bodyWidth, "…"))
 	}
 	choices := "[Cancel] Confirm"
 	if d.confirm {
@@ -348,9 +361,8 @@ func (m model) chatDialogView() string {
 	if c.busy {
 		choices = "Saving…"
 	}
-	lines = append(lines, ansi.Truncate(choices, width, "…"))
-	if height > 1 {
-		lines = append(lines, ansi.Truncate("←→ choose · Enter/Esc · ↑↓ preview", width, "…"))
-	}
-	return strings.Join(lines[:min(len(lines), height)], "\n")
+	lines = append(lines, ansi.Truncate(accent(choices), bodyWidth, "…"))
+	lines = append(lines, ansi.Truncate(muted("←→ choose · Enter/Esc · ↑↓ preview"), bodyWidth, "…"))
+	card := panelStyle().Width(cardWidth).Padding(0, 1).Render(strings.Join(lines, "\n"))
+	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, card)
 }
