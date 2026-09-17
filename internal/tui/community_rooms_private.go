@@ -10,6 +10,7 @@ import (
 	"unicode/utf8"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/catgirl-systems/oto/internal/daemon"
 	"github.com/catgirl-systems/oto/internal/soulseek"
 	"github.com/charmbracelet/x/ansi"
@@ -566,14 +567,24 @@ func (m model) privateRoomDialogView() string {
 
 func communityConfirmationView(label string, confirm bool, scroll, width, height int) string {
 	width, height = max(1, width), max(1, height)
-	lines := communityPane([]string{label}, width, max(0, height-2), scroll)
-	for len(lines) < height-2 {
+	if width >= 40 {
+		width -= 4
+	}
+	if height >= 8 {
+		height -= 2
+	}
+	cardWidth := max(1, min(64, width))
+	bodyWidth := max(1, cardWidth-4)
+	rows := max(0, height-4)
+	lines := communityPane([]string{strong(label)}, bodyWidth, rows, scroll)
+	for len(lines) < rows {
 		lines = append(lines, "")
 	}
 	choices := "[Cancel] Confirm"
 	if confirm {
 		choices = "Cancel [Confirm]"
 	}
-	lines = append(lines, ansi.Truncate(choices, width, "…"), ansi.Truncate("↑↓ preview · ←→ choose · Enter/Esc", width, "…"))
-	return strings.Join(lines[:min(len(lines), height)], "\n")
+	lines = append(lines, ansi.Truncate(accent(choices), bodyWidth, "…"), ansi.Truncate(muted("↑↓ preview · ←→ choose · Enter/Esc"), bodyWidth, "…"))
+	card := panelStyle().Width(cardWidth).Padding(0, 1).Render(strings.Join(lines, "\n"))
+	return lipgloss.Place(max(1, width), max(1, height), lipgloss.Center, lipgloss.Center, card)
 }
