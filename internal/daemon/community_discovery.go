@@ -297,7 +297,8 @@ func (s *Service) applyDiscoveryLocked(response soulseek.DiscoveryResponse) {
 	}
 	seen := map[string]bool{}
 	for _, u := range response.Users {
-		if seen[u.Username] {
+		// XXX: skip undecodable similar names; nicotine+ renders whatever it receives.
+		if seen[u.Username] || soulseek.ValidateUsername(u.Username) != nil {
 			continue
 		}
 		seen[u.Username] = true

@@ -45,6 +45,10 @@ func communityOutgoingText(text string) (string, error) {
 }
 
 func (s *Service) receiveCommunityPrivate(ctx context.Context, identity CommunityIdentity, message soulseek.PrivateMessage) error {
+	// XXX: skip undecodable senders; nicotine+ renders whatever it receives.
+	if soulseek.ValidateUsername(message.Username) != nil {
+		return nil
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if err := ctx.Err(); err != nil {
