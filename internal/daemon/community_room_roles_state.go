@@ -99,7 +99,14 @@ func (s *Service) updateCommunityRoomRolesLocked(ctx context.Context, message so
 			if !s.roomCacheFitsLocked(len(r.operators), len(m.Users)) {
 				return fmt.Errorf("community: room cache entry limit")
 			}
-			r.operators = slices.Clone(m.Users)
+			// XXX: skip undecodable roster names; nicotine+ renders whatever it receives.
+			operators := make([]string, 0, len(m.Users))
+			for _, username := range m.Users {
+				if soulseek.ValidateUsername(username) == nil {
+					operators = append(operators, username)
+				}
+			}
+			r.operators = operators
 			r.operatorsFresh = true
 			if r.roleFresh && r.role != "owner" && r.role != "none" {
 				r.role = "member"
@@ -113,11 +120,19 @@ func (s *Service) updateCommunityRoomRolesLocked(ctx context.Context, message so
 			}
 			r.privateMembers = make(map[string]bool, len(m.Users))
 			for _, username := range m.Users {
+				// XXX: skip undecodable roster names; nicotine+ renders whatever it receives.
+				if soulseek.ValidateUsername(username) != nil {
+					continue
+				}
 				r.privateMembers[username] = true
 			}
 			r.privateMembersFresh = true
 		}
 	case soulseek.RoomRoleUpdate:
+		// XXX: skip undecodable role targets; nicotine+ renders whatever it receives.
+		if m.Username != "" && soulseek.ValidateUsername(m.Username) != nil {
+			return nil
+		}
 		r := s.community.rooms[m.Room]
 		if m.Action == soulseek.RoomMembershipGranted {
 			if r == nil {
@@ -206,6 +221,10 @@ func (s *Service) updateCommunityRoomRolesLocked(ctx context.Context, message so
 		}
 		next := make(map[string]string, len(m.Entries))
 		for _, entry := range m.Entries {
+			// XXX: skip undecodable wall authors; nicotine+ renders whatever it receives.
+			if soulseek.ValidateUsername(entry.Username) != nil {
+				continue
+			}
 			next[entry.Username], _ = s.community.text.incoming(entry.Text, "")
 		}
 		bytes := 0
@@ -221,6 +240,10 @@ func (s *Service) updateCommunityRoomRolesLocked(ctx context.Context, message so
 			r.wallState = "confirmed"
 		}
 	case soulseek.RoomWallUpdate:
+		// XXX: skip undecodable wall authors; nicotine+ renders whatever it receives.
+		if soulseek.ValidateUsername(m.Username) != nil {
+			return nil
+		}
 		r := s.community.rooms[m.Room]
 		if r == nil || !r.joined {
 			return nil
