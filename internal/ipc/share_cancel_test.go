@@ -14,9 +14,7 @@ func TestScanCancellationInvalidAndStaleIDs(t *testing.T) {
 	cfg := config.Default()
 	cfg.Soulseek.Username, cfg.Soulseek.Password = "test", "password"
 	s, err := daemon.New(cfg, filepath.Join(t.TempDir(), "journal"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	defer s.Close()
 	handler := NewServer(s, "").handler()
 	for _, tc := range []struct {
@@ -28,8 +26,6 @@ func TestScanCancellationInvalidAndStaleIDs(t *testing.T) {
 	} {
 		response := httptest.NewRecorder()
 		handler.ServeHTTP(response, httptest.NewRequest("POST", "/v1/shares/rescan/cancel", strings.NewReader(tc.body)))
-		if response.Code != tc.status {
-			t.Fatalf("%s: %d %s", tc.body, response.Code, response.Body.String())
-		}
+		failIfFmt(t, response.Code != tc.status, "%s: %d %s", tc.body, response.Code, response.Body.String())
 	}
 }

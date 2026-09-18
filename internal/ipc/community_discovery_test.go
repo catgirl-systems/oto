@@ -16,27 +16,19 @@ func TestCommunityDiscoveryIPCValidationAndOffline(t *testing.T) {
 	client, _ := communityIPC(t, cfg, filepath.Join(t.TempDir(), "state.sqlite3"))
 	ctx := context.Background()
 	summary, err := client.CommunitySummary(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	req := daemon.CommunityDiscoveryRequest{CommunityIdentity: summary.CommunityIdentity, Kind: "global", Frontend: "one"}
 	page, err := client.CommunityDiscovery(ctx, req)
-	if err != nil || page.State != "offline" || len(page.Rows) != 0 || page.CommunityIdentity != req.CommunityIdentity {
-		t.Fatal(page, err)
-	}
+	failIf(t, err != nil || page.State != "offline" || len(page.Rows) != 0 || page.CommunityIdentity != req.CommunityIdentity, page, err)
 	if _, err := client.StartCommunityDiscovery(ctx, req); err == nil {
 		t.Fatal("offline query pretended to send")
 	}
 	base := "/v1/community/discovery?" + communityRoomValues(req.CommunityIdentity).Encode()
 	for _, suffix := range []string{"&kind=invalid&frontend=one", "&kind=global", "&kind=item&target=&frontend=one", "&kind=global&target=not-allowed&frontend=one", "&kind=similar&limit=-1&frontend=one", "&kind=similar&limit=no&frontend=one"} {
 		resp, err := client.http.Do(mustRequest(http.MethodGet, "http://oto.local"+base+suffix, nil))
-		if err != nil {
-			t.Fatal(err)
-		}
+		must(t, err)
 		_ = resp.Body.Close()
-		if resp.StatusCode != http.StatusBadRequest {
-			t.Fatal(suffix, resp.StatusCode)
-		}
+		failIf(t, resp.StatusCode != http.StatusBadRequest, suffix, resp.StatusCode)
 	}
 	req.Session++
 	if _, err := client.CommunityDiscovery(ctx, req); err == nil {

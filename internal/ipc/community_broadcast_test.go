@@ -17,9 +17,7 @@ func TestBroadcastPreviewIPCAndRestart(t *testing.T) {
 	c, s := communityIPC(t, cfg, path)
 	ctx := context.Background()
 	summary, err := c.CommunitySummary(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	id := summary.CommunityIdentity
 	if _, err := s.SetCommunityBuddy(ctx, daemon.CommunityBuddyRequest{CommunityIdentity: id, Username: "Alice"}); err != nil {
 		t.Fatal(err)
@@ -30,24 +28,16 @@ func TestBroadcastPreviewIPCAndRestart(t *testing.T) {
 	}
 	req.Offline = []string{"Alice"}
 	out, err := c.PreviewCommunityBroadcast(ctx, req)
-	if err != nil || out.Total != 1 || out.State != "preview" {
-		t.Fatal(out, err)
-	}
+	failIf(t, err != nil || out.Total != 1 || out.State != "preview", out, err)
 	if _, err := c.CommunityBroadcast(ctx, id, req.RequestID, -1); err == nil {
 		t.Fatal("invalid cursor")
 	}
-	if err := s.Close(); err != nil {
-		t.Fatal(err)
-	}
+	must(t, s.Close())
 	next, _ := communityIPC(t, cfg, path)
 	summary, err = next.CommunitySummary(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	recovered, err := next.CommunityBroadcast(ctx, summary.CommunityIdentity, req.RequestID, 0)
-	if err != nil || recovered.State != "stale-preview" || recovered.Token != out.Token || recovered.Recipients[0].Username != "Alice" {
-		t.Fatal(recovered, err)
-	}
+	failIf(t, err != nil || recovered.State != "stale-preview" || recovered.Token != out.Token || recovered.Recipients[0].Username != "Alice", recovered, err)
 	if _, err := next.CommunityBroadcast(ctx, id, req.RequestID, 0); err == nil {
 		t.Fatal("old daemon identity accepted")
 	}

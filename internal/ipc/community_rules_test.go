@@ -17,14 +17,10 @@ func TestCommunityRulesIPC(t *testing.T) {
 	second := NewClient(first.path)
 	ctx := context.Background()
 	summary, err := first.CommunitySummary(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	id := summary.CommunityIdentity
 	page, err := first.CommunityRules(ctx, daemon.CommunityRulesRequest{CommunityIdentity: id})
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	req := daemon.CommunityRuleRequest{CommunityIdentity: id, Revision: page.Revision, Rule: daemon.CommunityRule{Action: "ban", Kind: "username", Value: "Case", Message: "Unavailable"}}
 	if _, err := first.SetCommunityRule(ctx, req); err == nil {
 		t.Fatal("missing confirmation accepted")
@@ -37,9 +33,7 @@ func TestCommunityRulesIPC(t *testing.T) {
 		t.Fatal("stale revision accepted")
 	}
 	page, err = second.CommunityRules(ctx, daemon.CommunityRulesRequest{CommunityIdentity: id, Limit: 1})
-	if err != nil || len(page.Rules) != 1 || page.Rules[0].Value != "Case" {
-		t.Fatal(page, err)
-	}
+	failIf(t, err != nil || len(page.Rules) != 1 || page.Rules[0].Value != "Case", page, err)
 	req.Rule, req.Revision, req.Remove = page.Rules[0], page.Revision, true
 	if err := first.Do(ctx, http.MethodPut, "/v1/community/rules", req, nil); err == nil {
 		t.Fatal("PUT removed a rule")
@@ -48,9 +42,7 @@ func TestCommunityRulesIPC(t *testing.T) {
 		t.Fatal(err)
 	}
 	page, err = first.CommunityRules(ctx, daemon.CommunityRulesRequest{CommunityIdentity: id})
-	if err != nil || len(page.Rules) != 0 {
-		t.Fatal(page, err)
-	}
+	failIf(t, err != nil || len(page.Rules) != 0, page, err)
 	for _, cursor := range []string{"-1", "x", "9223372036854775808"} {
 		if _, err := first.CommunityRules(ctx, daemon.CommunityRulesRequest{CommunityIdentity: id, Cursor: cursor}); err == nil {
 			t.Fatal("invalid cursor", cursor)

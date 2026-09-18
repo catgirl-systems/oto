@@ -16,9 +16,7 @@ import (
 func TestRescanRequestTimeoutIsolation(t *testing.T) {
 	socket := filepath.Join(t.TempDir(), "socket")
 	listener, err := net.Listen("unix", socket)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	entered, release := make(chan struct{}, 1), make(chan struct{})
 	server := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/shares/rescan" {
@@ -56,12 +54,8 @@ func TestRescanRequestTimeoutIsolation(t *testing.T) {
 	case <-time.After(40 * time.Millisecond):
 	}
 	close(release)
-	if err := <-done; err != nil {
-		t.Fatal(err)
-	}
-	if client.http.Timeout != 10*time.Millisecond {
-		t.Fatal("shared client timeout was mutated")
-	}
+	must(t, <-done)
+	failIf(t, client.http.Timeout != 10*time.Millisecond, "shared client timeout was mutated")
 	cancel()
 	if _, err := client.Rescan(ctx); !errors.Is(err, context.Canceled) {
 		t.Fatalf("rescan context ignored: %v", err)
@@ -83,12 +77,9 @@ func TestSettingsRequestTimeoutIsolation(t *testing.T) {
 		return (&net.Dialer{}).DialContext(ctx, "tcp", server.Listener.Addr().String())
 	}}
 	client.http.Timeout = 10 * time.Millisecond
-	if _, err := client.UpdateConfig(context.Background(), config.Default()); err != nil {
-		t.Fatal(err)
-	}
-	if client.http.Timeout != 10*time.Millisecond {
-		t.Fatal("shared timeout changed")
-	}
+	_, err := client.UpdateConfig(context.Background(), config.Default())
+	must(t, err)
+	failIf(t, client.http.Timeout != 10*time.Millisecond, "shared timeout changed")
 	if _, err := client.Status(context.Background()); err == nil {
 		t.Fatal("interactive timeout lost")
 	}

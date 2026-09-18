@@ -27,18 +27,12 @@ func TestStatusMethodsBodyAndSocketMode(t *testing.T) {
 	c.Soulseek.Username, c.Soulseek.Password = "u", "p"
 	c.DownloadDir = t.TempDir()
 	shareRoot := t.TempDir()
-	if err := os.Mkdir(filepath.Join(shareRoot, "Album"), 0700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(shareRoot, "Album", "song.flac"), []byte("audio"), 0600); err != nil {
-		t.Fatal(err)
-	}
+	must(t, os.Mkdir(filepath.Join(shareRoot, "Album"), 0700))
+	must(t, os.WriteFile(filepath.Join(shareRoot, "Album", "song.flac"), []byte("audio"), 0600))
 	c.Shares = []config.Share{{Name: "Music", Path: shareRoot}}
 	journalPath := filepath.Join(t.TempDir(), "state.sqlite3")
 	svc, err := daemon.New(c, journalPath)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	defer svc.Close()
 	if _, err := svc.QueueDownloads([]daemon.DownloadRequest{{Username: "peer", Files: []daemon.DownloadItem{{Filename: "Album/song", Size: 4}}}}); err != nil {
 		t.Fatal(err)
@@ -76,49 +70,27 @@ func TestStatusMethodsBodyAndSocketMode(t *testing.T) {
 		t.Fatalf("offline port check error: %v", err)
 	}
 	portResp, err := cl.http.Do(mustRequest(http.MethodPost, "http://oto.local/v1/network/port-check", nil))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if portResp.StatusCode != http.StatusServiceUnavailable {
-		t.Fatalf("offline port check status %d", portResp.StatusCode)
-	}
+	must(t, err)
+	failIfFmt(t, portResp.StatusCode != http.StatusServiceUnavailable, "offline port check status %d", portResp.StatusCode)
 	portResp.Body.Close()
 	methodResp, err := cl.http.Do(mustRequest(http.MethodGet, "http://oto.local/v1/network/port-check", nil))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if methodResp.StatusCode != http.StatusMethodNotAllowed {
-		t.Fatalf("port check method status %d", methodResp.StatusCode)
-	}
+	must(t, err)
+	failIfFmt(t, methodResp.StatusCode != http.StatusMethodNotAllowed, "port check method status %d", methodResp.StatusCode)
 	methodResp.Body.Close()
 	passwordResp, err := cl.http.Do(mustRequest("PUT", "http://oto.local/v1/account/password", strings.NewReader(`{"password":"   "}`)))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if passwordResp.StatusCode != http.StatusBadRequest {
-		t.Fatalf("empty password status %d", passwordResp.StatusCode)
-	}
+	must(t, err)
+	failIfFmt(t, passwordResp.StatusCode != http.StatusBadRequest, "empty password status %d", passwordResp.StatusCode)
 	passwordResp.Body.Close()
 	result, err := cl.ChangePassword(context.Background(), "new-secret")
-	if err == nil || result.Changed || strings.Contains(err.Error(), "new-secret") {
-		t.Fatalf("disconnected password route leaked or accepted the password: %+v %v", result, err)
-	}
+	failIfFmt(t, err == nil || result.Changed || strings.Contains(err.Error(), "new-secret"), "disconnected password route leaked or accepted the password: %+v %v", result, err)
 	malformedResp, requestErr := cl.http.Do(mustRequest("PUT", "http://oto.local/v1/presence", strings.NewReader(`{`)))
-	if requestErr != nil {
-		t.Fatal(requestErr)
-	}
-	if malformedResp.StatusCode != http.StatusBadRequest {
-		t.Fatalf("malformed presence status %d", malformedResp.StatusCode)
-	}
+	failIf(t, requestErr != nil, requestErr)
+	failIfFmt(t, malformedResp.StatusCode != http.StatusBadRequest, "malformed presence status %d", malformedResp.StatusCode)
 	malformedResp.Body.Close()
 	wish, err := cl.PutWishlist(context.Background(), "rare album", "type:audio")
-	if err != nil || wish.ID == "" || wish.Filter != "type:audio" {
-		t.Fatalf("put wishlist: %+v %v", wish, err)
-	}
+	failIfFmt(t, err != nil || wish.ID == "" || wish.Filter != "type:audio", "put wishlist: %+v %v", wish, err)
 	wishes, err := cl.Wishlist(context.Background())
-	if err != nil || len(wishes) != 1 || wishes[0].ID != wish.ID {
-		t.Fatalf("list wishlist: %+v %v", wishes, err)
-	}
+	failIfFmt(t, err != nil || len(wishes) != 1 || wishes[0].ID != wish.ID, "list wishlist: %+v %v", wishes, err)
 	if _, err := cl.PutWishlist(context.Background(), "bad", "unknown:value"); err == nil {
 		t.Fatal("invalid wishlist filter accepted")
 	}
@@ -141,20 +113,14 @@ func TestStatusMethodsBodyAndSocketMode(t *testing.T) {
 		t.Fatalf("rescan shares route: %v", err)
 	}
 	shareEntries, err := cl.BrowseShares(context.Background(), "Music")
-	if err != nil || len(shareEntries) != 1 || shareEntries[0].Name != "Album" || !shareEntries[0].Directory {
-		t.Fatalf("browse share root: %+v %v", shareEntries, err)
-	}
+	failIfFmt(t, err != nil || len(shareEntries) != 1 || shareEntries[0].Name != "Album" || !shareEntries[0].Directory, "browse share root: %+v %v", shareEntries, err)
 	shareEntries, err = cl.BrowseShares(context.Background(), "Music/Album")
-	if err != nil || len(shareEntries) != 1 || shareEntries[0].Name != "song.flac" {
-		t.Fatalf("browse nested share: %+v %v", shareEntries, err)
-	}
+	failIfFmt(t, err != nil || len(shareEntries) != 1 || shareEntries[0].Name != "song.flac", "browse nested share: %+v %v", shareEntries, err)
 	if _, err := cl.BrowseShares(context.Background(), "Music/../outside"); err == nil {
 		t.Fatal("share traversal route accepted")
 	}
 	state, err := storage.Open(journalPath)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	ctx = context.Background()
 	snapshotID, err := state.Queries().CreateShareSnapshot(ctx, storageDB.CreateShareSnapshotParams{Source: "remote", NormalizedUsername: "peer", CreatedAt: time.Now().UnixMilli()})
 	if err == nil {
@@ -169,21 +135,13 @@ func TestStatusMethodsBodyAndSocketMode(t *testing.T) {
 	if closeErr := state.Close(); err == nil {
 		err = closeErr
 	}
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	savedBrowses, err := cl.SavedBrowses(context.Background())
-	if err != nil || len(savedBrowses) != 1 || savedBrowses[0].Username != "peer" {
-		t.Fatalf("saved browse list: %+v %v", savedBrowses, err)
-	}
+	failIfFmt(t, err != nil || len(savedBrowses) != 1 || savedBrowses[0].Username != "peer", "saved browse list: %+v %v", savedBrowses, err)
 	browse, err := cl.Browse(context.Background(), "peer")
-	if err != nil || !browse.Cached || browse.Revision == 0 || len(browse.Entries) != 1 || browse.Entries[0].Name != `Music` || browse.TotalEntries != 2 {
-		t.Fatalf("cached browse route: %+v %v", browse, err)
-	}
+	failIfFmt(t, err != nil || !browse.Cached || browse.Revision == 0 || len(browse.Entries) != 1 || browse.Entries[0].Name != `Music` || browse.TotalEntries != 2, "cached browse route: %+v %v", browse, err)
 	page, err := cl.BrowsePage(context.Background(), daemon.BrowsePageRequest{Username: "peer", Revision: browse.Revision, Folder: "Music"})
-	if err != nil || len(page.Entries) != 1 || page.Entries[0].Name != `Music\cached.flac` {
-		t.Fatalf("browse page route: %+v %v", page, err)
-	}
+	failIfFmt(t, err != nil || len(page.Entries) != 1 || page.Entries[0].Name != `Music\cached.flac`, "browse page route: %+v %v", page, err)
 	if _, err := cl.BrowsePage(context.Background(), daemon.BrowsePageRequest{Username: "peer", Revision: browse.Revision + 1}); err == nil {
 		t.Fatal("page accepted stale revision")
 	}
@@ -196,9 +154,7 @@ func TestStatusMethodsBodyAndSocketMode(t *testing.T) {
 	}
 	rename.Revision = browse.Revision
 	queuedAs, err := cl.QueueBrowse(ctx, rename)
-	if err != nil || queuedAs.Queued != 1 {
-		t.Fatalf("download-as route: %+v %v", queuedAs, err)
-	}
+	failIfFmt(t, err != nil || queuedAs.Queued != 1, "download-as route: %+v %v", queuedAs, err)
 	if got := svc.Downloads()[1]; got.Filename != `Music\cached.flac` || got.Destination != rename.Destination {
 		t.Fatalf("download-as changed remote filename: %+v", got)
 	}
@@ -231,61 +187,33 @@ func TestStatusMethodsBodyAndSocketMode(t *testing.T) {
 		t.Fatal("save browse route accepted stale revision")
 	}
 	resp, err := cl.http.Do(mustRequest("POST", "http://oto.local/v1/search", strings.NewReader(`{"query":"song","filter":"wat:true"}`)))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if resp.StatusCode != http.StatusBadRequest {
-		t.Fatalf("invalid initial filter status %d", resp.StatusCode)
-	}
+	must(t, err)
+	failIfFmt(t, resp.StatusCode != http.StatusBadRequest, "invalid initial filter status %d", resp.StatusCode)
 	resp.Body.Close()
 	resp, err = cl.http.Do(mustRequest("GET", "http://oto.local/v1/searches?id=missing&filter=size:nope", nil))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if resp.StatusCode != http.StatusBadRequest {
-		t.Fatalf("invalid page filter status %d", resp.StatusCode)
-	}
+	must(t, err)
+	failIfFmt(t, resp.StatusCode != http.StatusBadRequest, "invalid page filter status %d", resp.StatusCode)
 	resp.Body.Close()
 	resp, err = cl.http.Do(mustRequest("GET", "http://oto.local/v1/searches?id=missing", nil))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if resp.StatusCode != http.StatusNotFound {
-		t.Fatalf("missing search status %d", resp.StatusCode)
-	}
+	must(t, err)
+	failIfFmt(t, resp.StatusCode != http.StatusNotFound, "missing search status %d", resp.StatusCode)
 	resp.Body.Close()
 	resp, err = cl.http.Do(mustRequest("POST", "http://oto.local/v1/state", nil))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if resp.StatusCode != 405 {
-		t.Fatalf("method status %d", resp.StatusCode)
-	}
+	must(t, err)
+	failIfFmt(t, resp.StatusCode != 405, "method status %d", resp.StatusCode)
 	resp.Body.Close()
 	resp, err = cl.http.Do(mustRequest("GET", "http://oto.local/v1/folder-downloads", nil))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if resp.StatusCode != http.StatusMethodNotAllowed {
-		t.Fatalf("folder download method status %d", resp.StatusCode)
-	}
+	must(t, err)
+	failIfFmt(t, resp.StatusCode != http.StatusMethodNotAllowed, "folder download method status %d", resp.StatusCode)
 	resp.Body.Close()
 	resp, err = cl.http.Do(mustRequest("POST", "http://oto.local/v1/folder-downloads", strings.NewReader(`{}`)))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if resp.StatusCode != http.StatusBadRequest {
-		t.Fatalf("invalid folder download status %d", resp.StatusCode)
-	}
+	must(t, err)
+	failIfFmt(t, resp.StatusCode != http.StatusBadRequest, "invalid folder download status %d", resp.StatusCode)
 	resp.Body.Close()
 	big := strings.Repeat("x", int(MaxBodySize)+1)
 	resp, err = cl.http.Do(mustRequest("POST", "http://oto.local/v1/downloads", strings.NewReader(big)))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if resp.StatusCode != 400 {
-		t.Fatalf("body status %d", resp.StatusCode)
-	}
+	must(t, err)
+	failIfFmt(t, resp.StatusCode != 400, "body status %d", resp.StatusCode)
 	resp.Body.Close()
 	cancel()
 	select {
@@ -301,9 +229,7 @@ func mustRequest(method, path string, body io.Reader) *http.Request {
 func TestStaleSocketIsRemovedAfterFailedDial(t *testing.T) {
 	d := t.TempDir()
 	p := filepath.Join(d, "slsk.sock")
-	if err := os.WriteFile(p, []byte("stale"), 0600); err != nil {
-		t.Fatal(err)
-	}
+	must(t, os.WriteFile(p, []byte("stale"), 0600))
 	c := config.Default()
 	c.Soulseek.Username, c.Soulseek.Password = "u", "p"
 	c.DownloadDir = t.TempDir()
@@ -311,9 +237,7 @@ func TestStaleSocketIsRemovedAfterFailedDial(t *testing.T) {
 	defer svc.Close()
 	srv := NewServer(svc, p)
 	ln, err := srv.Listen()
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	ln.Close()
 	os.Remove(p)
 }
@@ -324,15 +248,11 @@ func (fn roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error)
 
 func TestPortCheckClientAndStatusMapping(t *testing.T) {
 	client := &Client{http: &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
-		if r.Method != http.MethodPost || r.URL.Path != "/v1/network/port-check" {
-			t.Fatalf("request = %s %s", r.Method, r.URL.Path)
-		}
+		failIfFmt(t, r.Method != http.MethodPost || r.URL.Path != "/v1/network/port-check", "request = %s %s", r.Method, r.URL.Path)
 		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{"port":61000,"open":true}`)), Header: make(http.Header)}, nil
 	})}}
 	result, err := client.CheckListeningPort(context.Background())
-	if err != nil || result.Port != 61000 || !result.Open {
-		t.Fatalf("result=%+v err=%v", result, err)
-	}
+	failIfFmt(t, err != nil || result.Port != 61000 || !result.Open, "result=%+v err=%v", result, err)
 	if got := portCheckStatus(daemon.ErrNotStarted); got != http.StatusServiceUnavailable {
 		t.Fatalf("offline status = %d", got)
 	}
@@ -355,9 +275,8 @@ func TestSearchClientSendsFilters(t *testing.T) {
 		}
 		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(`{"id":"s","results":[],"total":0,"found_total":0}`)), Header: make(http.Header)}, nil
 	})}}
-	if _, err := client.Search(context.Background(), "song", "type:flac"); err != nil {
-		t.Fatal(err)
-	}
+	_, err := client.Search(context.Background(), "song", "type:flac")
+	must(t, err)
 	if _, err := client.SearchPage(context.Background(), "s", 100, `in:"live session"`); err != nil {
 		t.Fatal(err)
 	}
@@ -366,9 +285,7 @@ func TestSearchClientSendsFilters(t *testing.T) {
 func TestBrowseProgressClient(t *testing.T) {
 	calls := 0
 	client := &Client{http: &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
-		if request.URL.Path != "/v1/browse/progress" || request.URL.Query().Get("user") != "peer name" {
-			t.Fatalf("progress request: %s", request.URL.String())
-		}
+		failIfFmt(t, request.URL.Path != "/v1/browse/progress" || request.URL.Query().Get("user") != "peer name", "progress request: %s", request.URL.String())
 		calls++
 		body := `{"username":"peer name","received":25,"total":100}`
 		if calls == 2 {
@@ -377,30 +294,22 @@ func TestBrowseProgressClient(t *testing.T) {
 		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header)}, nil
 	})}}
 	progress, err := client.BrowseProgress(context.Background(), "peer name")
-	if err != nil || progress == nil || progress.Received != 25 || progress.Total != 100 {
-		t.Fatalf("active progress: %+v %v", progress, err)
-	}
+	failIfFmt(t, err != nil || progress == nil || progress.Received != 25 || progress.Total != 100, "active progress: %+v %v", progress, err)
 	progress, err = client.BrowseProgress(context.Background(), "peer name")
-	if err != nil || progress != nil {
-		t.Fatalf("missing progress: %+v %v", progress, err)
-	}
+	failIfFmt(t, err != nil || progress != nil, "missing progress: %+v %v", progress, err)
 }
 
 func TestFolderDownloadClient(t *testing.T) {
 	client := &Client{http: &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
 		var req daemon.FolderDownloadRequest
-		if request.Method != "POST" || request.URL.Path != "/v1/folder-downloads" {
-			t.Fatalf("folder request: %s %s", request.Method, request.URL.Path)
-		}
+		failIfFmt(t, request.Method != "POST" || request.URL.Path != "/v1/folder-downloads", "folder request: %s %s", request.Method, request.URL.Path)
 		if err := json.NewDecoder(request.Body).Decode(&req); err != nil || req.Username != "peer" || req.Folder != `Music\Album` || !req.Recursive || len(req.Subfolders) != 1 || len(req.Files) != 1 {
 			t.Fatalf("folder request body: %+v %v", req, err)
 		}
 		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(`{"queued":2}`)), Header: make(http.Header)}, nil
 	})}}
 	queued, err := client.QueueFolder(context.Background(), daemon.FolderDownloadRequest{Username: "peer", Folder: `Music\Album`, Subfolders: []string{`Music\Album\Disc`}, Files: []daemon.DownloadItem{{Filename: `Music\Album\song.flac`, Size: 5}}, Recursive: true})
-	if err != nil || queued != 2 {
-		t.Fatalf("folder response: %d %v", queued, err)
-	}
+	failIfFmt(t, err != nil || queued != 2, "folder response: %d %v", queued, err)
 }
 
 func TestBrowseClientAcceptsLargeShareLists(t *testing.T) {
@@ -410,9 +319,7 @@ func TestBrowseClientAcceptsLargeShareLists(t *testing.T) {
 		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(payload)), Header: make(http.Header)}, nil
 	})}}
 	result, err := client.Browse(context.Background(), "peer")
-	if err != nil || len(result.Entries) != 1 || result.Entries[0].Name != name {
-		t.Fatalf("large browse response: entries=%d err=%v", len(result.Entries), err)
-	}
+	failIfFmt(t, err != nil || len(result.Entries) != 1 || result.Entries[0].Name != name, "large browse response: entries=%d err=%v", len(result.Entries), err)
 }
 
 func TestNetworkInterfacesSortedUniqueAndErrors(t *testing.T) {
@@ -426,9 +333,7 @@ func TestNetworkInterfacesSortedUniqueAndErrors(t *testing.T) {
 		return recorder.Result(), nil
 	})}}
 	names, err := client.NetworkInterfaces(context.Background())
-	if err != nil || strings.Join(names, ",") != "eth0,wg0" {
-		t.Fatalf("interfaces = %v, %v", names, err)
-	}
+	failIfFmt(t, err != nil || strings.Join(names, ",") != "eth0,wg0", "interfaces = %v, %v", names, err)
 
 	srv.listInterfaces = func() ([]net.Interface, error) { return nil, errors.New("lookup failed") }
 	if _, err := client.NetworkInterfaces(context.Background()); err == nil || !strings.Contains(err.Error(), "lookup failed") {
@@ -441,35 +346,25 @@ func TestDownloadPauseResumeAndHookConfigRoutes(t *testing.T) {
 	cfg := config.Default()
 	cfg.Soulseek.Username, cfg.Soulseek.Password = "u", "p"
 	svc, err := daemon.New(cfg, filepath.Join(t.TempDir(), "state.sqlite3"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	defer svc.Close()
 	configPath := filepath.Join(t.TempDir(), "config.json")
 	svc.SetConfigPath(configPath)
 	downloads, err := svc.QueueDownloads([]daemon.DownloadRequest{{Username: "peer", Files: []daemon.DownloadItem{{Filename: "Album/song", Size: 4}}}})
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	handler := NewServer(svc, "").handler()
 	for _, step := range []struct{ action, state string }{{"pause", "paused"}, {"resume", "queued"}, {"cancel", "cancelled"}} {
 		w := httptest.NewRecorder()
 		r := httptest.NewRequest(http.MethodPost, "/v1/transfers/"+downloads[0].ID, strings.NewReader(`{"action":"`+step.action+`"}`))
 		handler.ServeHTTP(w, r)
-		if w.Code != http.StatusOK || svc.Transfers()[0].State != step.state {
-			t.Fatalf("%s: HTTP %d %s; transfers %+v", step.action, w.Code, w.Body, svc.Transfers())
-		}
+		failIfFmt(t, w.Code != http.StatusOK || svc.Transfers()[0].State != step.state, "%s: HTTP %d %s; transfers %+v", step.action, w.Code, w.Body, svc.Transfers())
 	}
 	cfg.Downloads.AfterFileCommand = `process-file "$1"`
 	cfg.Downloads.AfterFolderCommand = `process-folder "$1"`
 	body, _ := json.Marshal(cfg)
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, httptest.NewRequest(http.MethodPut, "/v1/config", strings.NewReader(string(body))))
-	if w.Code != http.StatusOK || !reflect.DeepEqual(svc.Config().Downloads, cfg.Downloads) {
-		t.Fatalf("hook config: HTTP %d %s", w.Code, w.Body)
-	}
+	failIfFmt(t, w.Code != http.StatusOK || !reflect.DeepEqual(svc.Config().Downloads, cfg.Downloads), "hook config: HTTP %d %s", w.Code, w.Body)
 	loaded, err := config.Load(configPath)
-	if err != nil || !reflect.DeepEqual(loaded.Downloads, cfg.Downloads) {
-		t.Fatalf("hook config not saved: %+v %v", loaded.Downloads, err)
-	}
+	failIfFmt(t, err != nil || !reflect.DeepEqual(loaded.Downloads, cfg.Downloads), "hook config not saved: %+v %v", loaded.Downloads, err)
 }

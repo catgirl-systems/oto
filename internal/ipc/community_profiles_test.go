@@ -18,14 +18,10 @@ func TestCommunityProfilesIPCValidation(t *testing.T) {
 	client, _ := communityIPC(t, cfg, filepath.Join(t.TempDir(), "state.sqlite3"))
 	ctx := context.Background()
 	summary, err := client.CommunitySummary(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	req := daemon.CommunityProfileRequest{CommunityIdentity: summary.CommunityIdentity, Username: "Alice", Frontend: "one"}
 	p, err := client.CommunityProfile(ctx, req)
-	if err != nil || p.State != "offline" || p.Username != "Alice" || p.Description != "" {
-		t.Fatal(p, err)
-	}
+	failIf(t, err != nil || p.State != "offline" || p.Username != "Alice" || p.Description != "", p, err)
 	if _, err := client.StartCommunityProfile(ctx, req); err == nil {
 		t.Fatal("offline fetch succeeded")
 	}
@@ -35,13 +31,9 @@ func TestCommunityProfilesIPCValidation(t *testing.T) {
 	base := "/v1/community/profile?" + communityRoomValues(req.CommunityIdentity).Encode()
 	for _, suffix := range []string{"&username=Alice", "&frontend=one", "&username=%1B&frontend=one"} {
 		resp, err := client.http.Do(mustRequest(http.MethodGet, "http://oto.local"+base+suffix, nil))
-		if err != nil {
-			t.Fatal(err)
-		}
+		must(t, err)
 		_ = resp.Body.Close()
-		if resp.StatusCode != http.StatusBadRequest {
-			t.Fatal(suffix, resp.StatusCode)
-		}
+		failIf(t, resp.StatusCode != http.StatusBadRequest, suffix, resp.StatusCode)
 	}
 	req.Session++
 	if _, err := client.CommunityProfile(ctx, req); err == nil {
@@ -54,14 +46,11 @@ func TestCommunityEscapedMetadataPageBudgets(t *testing.T) {
 	client, _ := communityIPC(t, cfg, filepath.Join(t.TempDir(), "state.sqlite3"))
 	ctx := context.Background()
 	summary, err := client.CommunitySummary(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	id := summary.CommunityIdentity
 	for i := 0; i < 200; i++ {
-		if _, err := client.SetCommunityBuddy(ctx, daemon.CommunityBuddyRequest{CommunityIdentity: id, Username: fmt.Sprintf("u%03d", i), Note: strings.Repeat("<", 4096)}); err != nil {
-			t.Fatal(err)
-		}
+		_, err := client.SetCommunityBuddy(ctx, daemon.CommunityBuddyRequest{CommunityIdentity: id, Username: fmt.Sprintf("u%03d", i), Note: strings.Repeat("<", 4096)})
+		must(t, err)
 		if _, err := client.SetCommunityInterest(ctx, daemon.CommunityInterestRequest{CommunityIdentity: id, Item: strings.Repeat("<", 1020) + fmt.Sprintf("%04d", i), Opinion: "like"}); err != nil {
 			t.Fatal(err)
 		}
@@ -69,39 +58,27 @@ func TestCommunityEscapedMetadataPageBudgets(t *testing.T) {
 	total, pages := 0, 0
 	for cursor := ""; ; {
 		page, err := client.CommunityBuddies(ctx, daemon.CommunityBuddiesRequest{CommunityIdentity: id, Cursor: cursor, Limit: 200, Sort: "note"})
-		if err != nil {
-			t.Fatal(err)
-		}
+		must(t, err)
 		total += len(page.Buddies)
 		pages++
 		cursor = page.NextCursor
 		if cursor == "" {
 			break
 		}
-		if pages > 200 {
-			t.Fatal("buddy pagination loop")
-		}
+		failIf(t, pages > 200, "buddy pagination loop")
 	}
-	if total != 200 || pages < 2 {
-		t.Fatal("buddy byte paging", total, pages)
-	}
+	failIf(t, total != 200 || pages < 2, "buddy byte paging", total, pages)
 	total, pages = 0, 0
 	for cursor := ""; ; {
 		page, err := client.CommunityInterests(ctx, daemon.CommunityInterestsRequest{CommunityIdentity: id, Cursor: cursor, Limit: 200})
-		if err != nil {
-			t.Fatal(err)
-		}
+		must(t, err)
 		total += len(page.Interests)
 		pages++
 		cursor = page.NextCursor
 		if cursor == "" {
 			break
 		}
-		if pages > 200 {
-			t.Fatal("interest pagination loop")
-		}
+		failIf(t, pages > 200, "interest pagination loop")
 	}
-	if total != 200 || pages < 2 {
-		t.Fatal("interest byte paging", total, pages)
-	}
+	failIf(t, total != 200 || pages < 2, "interest byte paging", total, pages)
 }
