@@ -3,8 +3,6 @@ package ipc
 import (
 	"context"
 	"net/http"
-	"net/url"
-	"strconv"
 
 	"github.com/catgirl-systems/oto/internal/daemon"
 )
@@ -34,7 +32,7 @@ func (s *Server) communityText(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, out)
 }
 func (c *Client) CommunityTextSettings(ctx context.Context, id daemon.CommunityIdentity) (daemon.CommunityTextSettings, error) {
-	q := url.Values{"account": {id.Account}, "daemon": {id.Daemon}, "session": {strconv.FormatUint(id.Session, 10)}}
+	q := communityRoomValues(id)
 	var out daemon.CommunityTextSettings
 	err := c.Do(ctx, http.MethodGet, "/v1/community/text-tools?"+q.Encode(), nil, &out)
 	return out, err
