@@ -12,25 +12,17 @@ import (
 func TestShareExclusionsDefaultsAndNormalization(t *testing.T) {
 	want := []string{".*", ".*/", "@eaDir/", "#recycle/", "#snapshot/", "desktop.ini", "Thumbs.db", "System Volume Information/", "$RECYCLE.BIN/", "lost+found/", "*.part", "*.partial", "*.crdownload", "*.tmp", "*.temp", "*.bak", "*~"}
 	got := DefaultShareExclusions()
-	if strings.Join(got, "\x00") != strings.Join(want, "\x00") {
-		t.Fatalf("defaults = %#v", got)
-	}
+	failIfFmt(t, strings.Join(got, "\x00") != strings.Join(want, "\x00"), "defaults = %#v", got)
 	got[0] = "changed"
-	if DefaultShareExclusions()[0] != want[0] {
-		t.Fatal("defaults are not independent")
-	}
+	failIf(t, DefaultShareExclusions()[0] != want[0], "defaults are not independent")
 	if normalized, err := NormalizeShareExclusions(nil); err != nil || strings.Join(normalized, "\x00") != strings.Join(want, "\x00") {
 		t.Fatalf("nil: %#v, %v", normalized, err)
 	}
 	empty := []string{}
 	normalized, err := NormalizeShareExclusions(empty)
-	if err != nil || normalized == nil || len(normalized) != 0 {
-		t.Fatalf("empty: %#v, %v", normalized, err)
-	}
+	failIfFmt(t, err != nil || normalized == nil || len(normalized) != 0, "empty: %#v, %v", normalized, err)
 	normalized, err = NormalizeShareExclusions([]string{`dir\file/`})
-	if err != nil || normalized[0] != "dir/file/" {
-		t.Fatalf("slashes: %#v, %v", normalized, err)
-	}
+	failIfFmt(t, err != nil || normalized[0] != "dir/file/", "slashes: %#v, %v", normalized, err)
 }
 
 func TestNormalizeShareExclusionsRejectsInvalidAndLimits(t *testing.T) {
@@ -61,28 +53,18 @@ func TestShareExclusionConfigRoundTrip(t *testing.T) {
 		}
 		data, _ = json.Marshal(fields)
 		path := filepath.Join(t.TempDir(), "config.json")
-		if err := os.WriteFile(path, data, 0600); err != nil {
-			t.Fatal(err)
-		}
+		must(t, os.WriteFile(path, data, 0600))
 		loaded, err := Load(path)
-		if err != nil {
-			t.Fatal(err)
-		}
+		must(t, err)
 		want := DefaultShareExclusions()
 		if raw == "[]" {
 			want = []string{}
 		} else if raw != "null" && raw != "missing" {
 			want = []string{"dir/file/*"}
 		}
-		if loaded.ShareExclusions == nil || !slices.Equal(loaded.ShareExclusions, want) {
-			t.Fatalf("%s: %+v", raw, loaded.ShareExclusions)
-		}
-		if err := loaded.Save(path); err != nil {
-			t.Fatal(err)
-		}
+		failIfFmt(t, loaded.ShareExclusions == nil || !slices.Equal(loaded.ShareExclusions, want), "%s: %+v", raw, loaded.ShareExclusions)
+		must(t, loaded.Save(path))
 		again, err := Load(path)
-		if err != nil || !slices.Equal(again.ShareExclusions, want) || again.Redacted().ShareExclusions == nil {
-			t.Fatalf("round trip: %v", err)
-		}
+		failIfFmt(t, err != nil || !slices.Equal(again.ShareExclusions, want) || again.Redacted().ShareExclusions == nil, "round trip: %v", err)
 	}
 }
