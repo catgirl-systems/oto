@@ -10,20 +10,12 @@ func TestWaitForActiveUploadsOptIn(t *testing.T) {
 	for _, input := range []string{`{}`, `{"uploads":{"wait_for_active_uploads_on_quit":false}}`, `{"uploads":{"wait_for_active_uploads_on_quit":true}}`} {
 		cfg := Default()
 		cfg.Soulseek.Username, cfg.Soulseek.Password = "test", "test"
-		if err := json.Unmarshal([]byte(input), &cfg); err != nil {
-			t.Fatal(err)
-		}
+		must(t, json.Unmarshal([]byte(input), &cfg))
 		want := input == `{"uploads":{"wait_for_active_uploads_on_quit":true}}`
-		if cfg.Uploads.WaitForActiveUploadsOnQuit != want || cfg.Redacted().Uploads.WaitForActiveUploadsOnQuit != want {
-			t.Fatal("default/redaction", input)
-		}
+		failIf(t, cfg.Uploads.WaitForActiveUploadsOnQuit != want || cfg.Redacted().Uploads.WaitForActiveUploadsOnQuit != want, "default/redaction", input)
 		path := filepath.Join(t.TempDir(), "config.json")
-		if err := cfg.Save(path); err != nil {
-			t.Fatal(err)
-		}
+		must(t, cfg.Save(path))
 		got, err := Load(path)
-		if err != nil || got.Uploads.WaitForActiveUploadsOnQuit != want {
-			t.Fatalf("roundtrip: %+v %v", got.Uploads, err)
-		}
+		failIfFmt(t, err != nil || got.Uploads.WaitForActiveUploadsOnQuit != want, "roundtrip: %+v %v", got.Uploads, err)
 	}
 }

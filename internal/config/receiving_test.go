@@ -13,16 +13,12 @@ func TestReceivingValidationAndConsent(t *testing.T) {
 	}
 	for _, mode := range []string{"", "off", "users", "buddies", "trusted"} {
 		policy := Receiving{Mode: mode, Users: []string{"Alice"}}
-		if err := policy.Validate(); err != nil {
-			t.Fatal(err)
-		}
+		must(t, policy.Validate())
 		for _, user := range []string{"Alice", "alice"} {
 			for _, buddy := range []bool{false, true} {
 				for _, trusted := range []bool{false, true} {
 					want := (mode == "users" && user == "Alice") || (mode == "buddies" && buddy) || (mode == "trusted" && buddy && trusted)
-					if policy.Allows(user, buddy, trusted) != want {
-						t.Fatal(mode, user, buddy, trusted)
-					}
+					failIf(t, policy.Allows(user, buddy, trusted) != want, mode, user, buddy, trusted)
 				}
 			}
 		}
