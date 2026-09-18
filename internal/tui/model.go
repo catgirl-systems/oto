@@ -191,6 +191,7 @@ const (
 	settingFileNotifications
 	settingFolderNotifications
 	settingAutoClearDownloads
+	settingAutoClearFilteredDownloads
 	settingAutoClearUploads
 	settingAutoClearCancelledUploads
 	settingWaitForActiveUploadsOnQuit

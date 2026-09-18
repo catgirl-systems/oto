@@ -26,10 +26,13 @@ func (s *Service) clearUploadLocked(id string, expected uploadOwner) error {
 
 // A completion worker must not use TransferAction: that action joins workers.
 func (s *Service) clearCompletedDownload(id string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	return s.clearDownloadState(id, "completed")
+}
+
+// clearDownloadStateLocked matches on both id and state. m.mu must be held.
+func (s *Service) clearDownloadStateLocked(id, state string) error {
 	for i, download := range s.journal.Downloads {
-		if download.ID != id || download.State != "completed" {
+		if download.ID != id || download.State != state {
 			continue
 		}
 		if err := s.deleteDownloadLocked(id); err != nil {
@@ -41,4 +44,10 @@ func (s *Service) clearCompletedDownload(id string) error {
 		break
 	}
 	return nil
+}
+
+func (s *Service) clearDownloadState(id, state string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.clearDownloadStateLocked(id, state)
 }

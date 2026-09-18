@@ -1289,6 +1289,7 @@ func (s *Service) queueDownloadsWithOffer(ctx context.Context, reqs []DownloadRe
 		s.mu.Unlock()
 		return nil, err
 	}
+	autoClearFiltered := s.cfg.Downloads.AutoClearFiltered
 	now := time.Now().UTC()
 	out := []Download{}
 	sequence := s.seq
@@ -1389,6 +1390,16 @@ func (s *Service) queueDownloadsWithOffer(ctx context.Context, reqs []DownloadRe
 	s.mu.Unlock()
 	for _, d := range out {
 		s.startDownload(d.ID)
+	}
+	if autoClearFiltered {
+		for _, d := range out {
+			if d.State != "filtered" {
+				continue
+			}
+			if err := s.clearDownloadState(d.ID, "filtered"); err != nil {
+				s.event(slog.LevelWarn, "download_filtered_clear_failed", err)
+			}
+		}
 	}
 	return out, nil
 }
@@ -1516,6 +1527,18 @@ func (s *Service) TransferAction(id, action string) error {
 			event := s.statsTemplateLocked(id)
 			event.Kind = stats.KindFiltered
 			s.statsEventLocked(event)
+		}
+		if d.State == "filtered" && s.cfg.Downloads.AutoClearFiltered {
+			if err := s.deleteDownloadLocked(id); err != nil {
+				s.restoreLocked(previous)
+				s.mu.Unlock()
+				return err
+			}
+			s.journal.Downloads = append(s.journal.Downloads[:i], s.journal.Downloads[i+1:]...)
+			delete(s.transfers, id)
+			s.forgetTransferLocked(id)
+			s.mu.Unlock()
+			return nil
 		}
 		err := s.persistDownloadLocked(*d)
 		if err != nil {

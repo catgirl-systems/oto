@@ -52,6 +52,7 @@
     "filters_enabled": false,
     "filter_patterns": ["*.DS_Store", "*.exe", "*.msi", "desktop.ini", "Thumbs.db"],
     "auto_clear_completed": false,
+    "auto_clear_filtered": false,
     "after_file_command": "",
     "after_folder_command": "",
     "file_notifications": false,

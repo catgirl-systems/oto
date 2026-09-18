@@ -12,9 +12,9 @@ func TestFeatureDefaultsAndRoundTrip(t *testing.T) {
 	must(t, os.WriteFile(path, []byte(`{"soulseek":{"username":"u","password":"p"}}`), 0600))
 	cfg, err := Load(path)
 	must(t, err)
-	failIfFmt(t, cfg.Search.DefaultFilter != "" || cfg.Downloads.FileNotifications || !cfg.Downloads.FolderNotifications, "legacy defaults: %+v %+v", cfg.Search, cfg.Downloads)
+	failIfFmt(t, cfg.Search.DefaultFilter != "" || cfg.Downloads.FileNotifications || !cfg.Downloads.FolderNotifications || cfg.Downloads.AutoClearFiltered, "legacy defaults: %+v %+v", cfg.Search, cfg.Downloads)
 	cfg.Search.DefaultFilter = `type:audio,!mp3 size:>20MiB`
-	cfg.Downloads.FileNotifications, cfg.Downloads.FolderNotifications = true, false
+	cfg.Downloads.FileNotifications, cfg.Downloads.FolderNotifications, cfg.Downloads.AutoClearFiltered = true, false, true
 	must(t, cfg.Save(path))
 	loaded, err := Load(path)
 	must(t, err)

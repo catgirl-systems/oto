@@ -143,6 +143,7 @@ type Downloads struct {
 	FiltersEnabled      bool     `json:"filters_enabled"`
 	FilterPatterns      []string `json:"filter_patterns"`
 	AutoClearCompleted  bool     `json:"auto_clear_completed"`
+	AutoClearFiltered   bool     `json:"auto_clear_filtered"`
 	AfterFileCommand    string   `json:"after_file_command"`
 	AfterFolderCommand  string   `json:"after_folder_command"`
 	FileNotifications   bool     `json:"file_notifications"`

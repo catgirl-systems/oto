@@ -775,6 +775,7 @@ func (m model) settingFields() []settingField {
 			{settingFileNotifications, "File notifications", strconv.FormatBool(m.cfg.Downloads.FileNotifications), settingBool},
 			{settingFolderNotifications, "Folder notifications", strconv.FormatBool(m.cfg.Downloads.FolderNotifications), settingBool},
 			{settingAutoClearDownloads, "Auto-clear new completed downloads", strconv.FormatBool(m.cfg.Downloads.AutoClearCompleted), settingBool},
+			{settingAutoClearFilteredDownloads, "Auto-clear new filtered downloads", strconv.FormatBool(m.cfg.Downloads.AutoClearFiltered), settingBool},
 		}, m.downloadFilterFields()...), settingField{settingReceiving, "Consented received files", "Press Enter", settingAction})
 	case settingsBandwidth:
 		profile := m.cfg.Bandwidth.ActiveProfileLimits()

@@ -209,7 +209,7 @@ oto focuses on file sharing and a detachable terminal UI. [Nicotine+](https://ni
 | Show progress while retrieving large share lists | :white_check_mark: | :white_check_mark: |
 | View detailed file properties and media metadata | :white_check_mark: | :white_check_mark: |
 
-### Downloads (30/31 - 97%)
+### Downloads (31/31 - 100%)
 
 | Feature | oto | Nicotine+ |
 | --- | --- | --- |
@@ -237,7 +237,7 @@ oto focuses on file sharing and a detachable terminal UI. [Nicotine+](https://ni
 | Run a command after a folder finishes | :white_check_mark: | :white_check_mark: |
 | Notify when a file or folder finishes | :white_check_mark: | :white_check_mark: |
 | Automatically clear finished downloads | :white_check_mark: | :white_check_mark: |
-| Automatically clear filtered downloads | :x: | :white_check_mark: |
+| Automatically clear filtered downloads | :white_check_mark: | :white_check_mark: |
 | Allow selected users to send unsolicited files | :white_check_mark: | :white_check_mark: |
 | Request and track remote queue position | :white_check_mark: | :white_check_mark: |
 | Show transfer speed and progress | :white_check_mark: | :white_check_mark: |

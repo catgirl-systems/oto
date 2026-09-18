@@ -319,6 +319,8 @@ func (m *model) key(k tea.KeyPressMsg) tea.Cmd {
 				m.cfg.Downloads.FolderNotifications = !m.cfg.Downloads.FolderNotifications
 			case settingAutoClearDownloads:
 				m.cfg.Downloads.AutoClearCompleted = !m.cfg.Downloads.AutoClearCompleted
+			case settingAutoClearFilteredDownloads:
+				m.cfg.Downloads.AutoClearFiltered = !m.cfg.Downloads.AutoClearFiltered
 			case settingAutoClearUploads:
 				m.cfg.Uploads.AutoClearCompleted = !m.cfg.Uploads.AutoClearCompleted
 			case settingAutoClearCancelledUploads:
