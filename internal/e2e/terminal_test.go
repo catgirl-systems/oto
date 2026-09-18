@@ -216,15 +216,8 @@ func (h *terminal) artifacts() {
 }
 
 func TestCommunityTerminalStartupNavigation(t *testing.T) {
-	var login testutil.WireFixture
-	for _, f := range testutil.SocialFixtures(t) {
-		if f.Name == "login-ok" {
-			login = f
-		}
-	}
-	if login.Name == "" {
-		t.Fatal("required login fixture missing")
-	}
+	login := testutil.SocialFixture(t, "login-ok")
+	failIf(t, login.Name == "", "required login fixture missing")
 	payload := login.Payload(t)
 	server := testutil.ListenScript(t, func(ctx context.Context, conn net.Conn) error {
 		if _, err := testutil.WaitForPacket(conn, 1); err != nil {

@@ -12,13 +12,9 @@ import (
 func TestRoomSearchIndependentFixture(t *testing.T) {
 	fixture := communityFixture(t, "room-search-request")
 	frame, err := EncodeMessage(RoomSearchRequest{Room: "lounge", Token: 41, Query: "song"})
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	code, payload, err := ReadFrame(bytes.NewReader(frame))
-	if err != nil || code != fixture.Code || !bytes.Equal(payload, fixture.Payload(t)) {
-		t.Fatal(code, payload, err)
-	}
+	failIf(t, err != nil || code != fixture.Code || !bytes.Equal(payload, fixture.Payload(t)), code, payload, err)
 }
 func TestScopedSearchCompleteFanoutAndNoFallback(t *testing.T) {
 	for _, rooms := range []bool{false, true} {

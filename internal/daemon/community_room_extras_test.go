@@ -41,12 +41,8 @@ func changeTestRoomRole(t *testing.T, s *Service, peer net.Conn, id CommunityIde
 	}()
 	f := roomFixture(t, fixture)
 	code, payload, err := soulseek.ReadFrame(peer)
-	if err != nil || code != f.Code || !bytes.Equal(payload, f.Payload(t)) {
-		t.Fatal(code, payload, err)
-	}
-	if err := <-done; err != nil {
-		t.Fatal(err)
-	}
+	failIf(t, err != nil || code != f.Code || !bytes.Equal(payload, f.Payload(t)), code, payload, err)
+	must(t, <-done)
 	return req
 }
 func TestCommunityPrivateRoomRolesAndRevocation(t *testing.T) {

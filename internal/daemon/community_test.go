@@ -255,15 +255,7 @@ func TestCommunityWatchesRestoreStorage(t *testing.T) {
 }
 
 func TestCommunityWatchesReconnect(t *testing.T) {
-	fixtures := map[string]testutil.WireFixture{}
-	for _, f := range testutil.SocialFixtures(t) {
-		fixtures[f.Name] = f
-	}
-	for _, name := range []string{"login-ok", "watch-online"} {
-		if fixtures[name].Name == "" {
-			t.Fatalf("missing %s", name)
-		}
-	}
+	fixtures := testutil.SocialFixtureMap(t, "login-ok", "watch-online")
 	login, watch := fixtures["login-ok"].Payload(t), fixtures["watch-online"].Payload(t)
 	connections := make(chan net.Conn, 4)
 	watches := make(chan string, 16)

@@ -196,25 +196,15 @@ func TestCommunityPrivateCommitBeforeAckRestart(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		run := make(chan error, 1)
 		go func() { run <- client.Run(ctx) }()
-		var fixture testutil.WireFixture
-		for _, f := range testutil.SocialFixtures(t) {
-			if f.Name == "pm-offline" {
-				fixture = f
-				break
-			}
-		}
-		if err := soulseek.WriteFrame(right, fixture.Code, fixture.Payload(t)); err != nil {
-			t.Fatal(err)
-		}
+		fixture := testutil.SocialFixture(t, "pm-offline")
+		must(t, soulseek.WriteFrame(right, fixture.Code, fixture.Payload(t)))
 		if attempt == 0 {
 			if err := <-run; !errors.Is(err, interrupted) {
 				t.Fatal(err)
 			}
 		} else {
 			code, payload, err := soulseek.ReadFrame(right)
-			if err != nil || code != soulseek.ServerPrivateAck || len(payload) != 4 || payload[0] != 42 {
-				t.Fatalf("replay ACK: %d %x %v", code, payload, err)
-			}
+			failIfFmt(t, err != nil || code != soulseek.ServerPrivateAck || len(payload) != 4 || payload[0] != 42, "replay ACK: %d %x %v", code, payload, err)
 			cancel()
 			<-run
 		}

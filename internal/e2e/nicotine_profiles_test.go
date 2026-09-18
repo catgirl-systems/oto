@@ -24,15 +24,7 @@ import (
 )
 
 func TestCommunityNicotineProfiles(t *testing.T) {
-	fixtures := map[string]testutil.WireFixture{}
-	for _, f := range testutil.SocialFixtures(t) {
-		fixtures[f.Name] = f
-	}
-	for _, name := range []string{"login-ok", "peer-address", "watch-online", "profile-picture"} {
-		if _, ok := fixtures[name]; !ok {
-			t.Fatalf("missing mandatory fixture %s", name)
-		}
-	}
+	fixtures := testutil.SocialFixtureMap(t, "login-ok", "peer-address", "watch-online", "profile-picture")
 	var mu sync.Mutex
 	ports := map[string]uint32{}
 	server := testutil.ListenScript(t, func(ctx context.Context, c net.Conn) error {

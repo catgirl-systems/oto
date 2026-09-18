@@ -36,9 +36,7 @@ func TestCommunityPrivateProtocol(t *testing.T) {
 		got, err := EncodeMessage(message)
 		fixture := communityFixture(t, name)
 		code, payload, decodeErr := ReadFrame(bytes.NewReader(got))
-		if err != nil || decodeErr != nil || code != fixture.Code || !bytes.Equal(payload, fixture.Payload(t)) {
-			t.Fatalf("%s differs from independent reference: %x, %v, %v", name, got, err, decodeErr)
-		}
+		failIfFmt(t, err != nil || decodeErr != nil || code != fixture.Code || !bytes.Equal(payload, fixture.Payload(t)), "%s differs from independent reference: %x, %v, %v", name, got, err, decodeErr)
 	}
 	for _, text := range []string{"", " \n\t", "\xff", strings.Repeat("é", MaxChatBytes/2+1)} {
 		if _, err := EncodeMessage(PrivateMessageRequest{Username: "Alice", Text: text}); err == nil {
@@ -100,9 +98,7 @@ func TestCommunityPrivateAcknowledgementBarrier(t *testing.T) {
 			go func() { run <- client.Run(ctx) }()
 			fixture := communityFixture(t, "pm-offline")
 			_ = right.SetWriteDeadline(time.Now().Add(time.Second))
-			if err := WriteFrame(right, fixture.Code, fixture.Payload(t)); err != nil {
-				t.Fatal(err)
-			}
+			must(t, WriteFrame(right, fixture.Code, fixture.Payload(t)))
 			if mode != "no-handler" {
 				select {
 				case <-entered:
@@ -118,22 +114,16 @@ func TestCommunityPrivateAcknowledgementBarrier(t *testing.T) {
 			close(commit)
 			if mode == "commit" {
 				code, payload, err := ReadFrame(right)
-				if err != nil || code != ServerPrivateAck || !bytes.Equal(payload, communityFixture(t, "pm-ack").Payload(t)) {
-					t.Fatalf("missing ACK after commit: %d %x %v", code, payload, err)
-				}
+				failIfFmt(t, err != nil || code != ServerPrivateAck || !bytes.Equal(payload, communityFixture(t, "pm-ack").Payload(t)), "missing ACK after commit: %d %x %v", code, payload, err)
 			}
 			if mode != "store-fails" {
 				cancel()
 			}
 			select {
 			case err := <-run:
-				if mode == "store-fails" && !errors.Is(err, storeErr) {
-					t.Fatal(err)
-				}
+				failIf(t, mode == "store-fails" && !errors.Is(err, storeErr), err)
 			case <-ctx.Done():
-				if ctx.Err() == context.DeadlineExceeded {
-					t.Fatal("PM callback/ACK did not stop")
-				}
+				failIf(t, ctx.Err() == context.DeadlineExceeded, "PM callback/ACK did not stop")
 				select {
 				case <-run:
 				case <-time.After(time.Second):

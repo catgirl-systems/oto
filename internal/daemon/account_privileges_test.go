@@ -41,13 +41,7 @@ func privilegeTestService(t *testing.T) (*Service, net.Conn, string) {
 }
 func privilegeFixture(t *testing.T, name string) testutil.WireFixture {
 	t.Helper()
-	for _, f := range testutil.SocialFixtures(t) {
-		if f.Name == name {
-			return f
-		}
-	}
-	t.Fatal("missing fixture", name)
-	return testutil.WireFixture{}
+	return testutil.SocialFixture(t, name)
 }
 func loadTestPrivileges(t *testing.T, s *Service, peer net.Conn) AccountPrivileges {
 	t.Helper()
@@ -60,17 +54,11 @@ func loadTestPrivileges(t *testing.T, s *Service, peer net.Conn) AccountPrivileg
 		done <- out
 	}()
 	code, _, err := soulseek.ReadFrame(peer)
-	if err != nil || code != 92 {
-		t.Fatal(code, err)
-	}
+	failIf(t, err != nil || code != 92, code, err)
 	f := privilegeFixture(t, "privilege-balance")
-	if err := soulseek.WriteFrame(peer, f.Code, f.Payload(t)); err != nil {
-		t.Fatal(err)
-	}
+	must(t, soulseek.WriteFrame(peer, f.Code, f.Payload(t)))
 	out := <-done
-	if !out.Fresh || !out.Known || out.Seconds < 259259 || out.Seconds > 259260 {
-		t.Fatal(out)
-	}
+	failIf(t, !out.Fresh || !out.Known || out.Seconds < 259259 || out.Seconds > 259260, out)
 	return out
 }
 func TestAccountPrivilegesGiftPreviewJournalAndRestart(t *testing.T) {
@@ -104,52 +92,34 @@ func TestAccountPrivilegesGiftPreviewJournalAndRestart(t *testing.T) {
 	for deadline := time.Now().Add(time.Second); ; {
 		row, err := s.stateDB.Queries().GetCommunitySubmission(ctx, db.GetCommunitySubmissionParams{Account: req.Account, RequestID: req.RequestID})
 		if err == nil {
-			if !bytes.Contains([]byte(row.Result), []byte(`"state":"unknown"`)) {
-				t.Fatal(row.Result)
-			}
+			failIf(t, !bytes.Contains([]byte(row.Result), []byte(`"state":"unknown"`)), row.Result)
 			break
 		}
-		if time.Now().After(deadline) {
-			t.Fatal("no pre-write receipt", err)
-		}
+		failIf(t, time.Now().After(deadline), "no pre-write receipt", err)
 		time.Sleep(time.Millisecond)
 	}
 	pending, err := s.AccountPrivileges(ctx, AccountPrivilegesRequest{CommunityIdentity: req.CommunityIdentity, Refresh: true})
-	if err != nil || !pending.Pending || pending.Fresh {
-		t.Fatal("query crossed gift writer", pending, err)
-	}
+	failIf(t, err != nil || !pending.Pending || pending.Fresh, "query crossed gift writer", pending, err)
 	code, payload, err := soulseek.ReadFrame(peer)
 	fixture := privilegeFixture(t, "give-privileges-request")
-	if err != nil || code != fixture.Code || !bytes.Equal(payload, fixture.Payload(t)) {
-		t.Fatal(code, payload, err)
-	}
+	failIf(t, err != nil || code != fixture.Code || !bytes.Equal(payload, fixture.Payload(t)), code, payload, err)
 	out := <-done
-	if out.State != "unknown" {
-		t.Fatal(out)
-	}
+	failIf(t, out.State != "unknown", out)
 	duplicate, err := s.GiftAccountPrivileges(ctx, req)
-	if err != nil || !duplicate.Duplicate || duplicate.State != "unknown" {
-		t.Fatal(duplicate, err)
-	}
+	failIf(t, err != nil || !duplicate.Duplicate || duplicate.State != "unknown", duplicate, err)
 	req.Days = 2
 	if _, err := s.GiftAccountPrivileges(ctx, req); err == nil {
 		t.Fatal("request ID reused for different amount")
 	}
 	req.Days = 1
 	cfg := s.cfg
-	if err := s.Close(); err != nil {
-		t.Fatal(err)
-	}
+	must(t, s.Close())
 	next, err := New(cfg, path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	defer next.Close()
 	req.CommunityIdentity = next.community.identity
 	duplicate, err = next.GiftAccountPrivileges(ctx, req)
-	if err != nil || !duplicate.Duplicate || duplicate.State != "unknown" {
-		t.Fatal("restart lost ambiguity journal", duplicate, err)
-	}
+	failIf(t, err != nil || !duplicate.Duplicate || duplicate.State != "unknown", "restart lost ambiguity journal", duplicate, err)
 }
 
 func TestAccountPrivilegeQueryCancellationAndLateReply(t *testing.T) {
@@ -170,17 +140,11 @@ func TestAccountPrivilegeQueryCancellationAndLateReply(t *testing.T) {
 	s.community.privileges.queryCancel()
 	s.mu.Unlock()
 	out := <-done
-	if out.Fresh || out.Error == "" {
-		t.Fatal(out)
-	}
+	failIf(t, out.Fresh || out.Error == "", out)
 	f := privilegeFixture(t, "privilege-balance")
-	if err := soulseek.WriteFrame(peer, f.Code, f.Payload(t)); err != nil {
-		t.Fatal(err)
-	}
+	must(t, soulseek.WriteFrame(peer, f.Code, f.Payload(t)))
 	out, err := s.AccountPrivileges(context.Background(), AccountPrivilegesRequest{CommunityIdentity: identity, Refresh: true})
-	if err != nil || out.Fresh || out.Known || out.Pending {
-		t.Fatal("late response acquired authority", out, err)
-	}
+	failIf(t, err != nil || out.Fresh || out.Known || out.Pending, "late response acquired authority", out, err)
 	s.mu.Lock()
 	s.retireCommunityLocked()
 	s.community.identity.Session++
@@ -216,13 +180,9 @@ func TestAccountPrivilegeCoalescedQuerySurvivesCallerCancellation(t *testing.T) 
 		second <- out
 	}()
 	f := privilegeFixture(t, "privilege-balance-empty")
-	if err := soulseek.WriteFrame(peer, f.Code, f.Payload(t)); err != nil {
-		t.Fatal(err)
-	}
+	must(t, soulseek.WriteFrame(peer, f.Code, f.Payload(t)))
 	out := <-second
-	if !out.Fresh || !out.Known || out.Seconds != 0 {
-		t.Fatal(out)
-	}
+	failIf(t, !out.Fresh || !out.Known || out.Seconds != 0, out)
 	if _, err := s.GiftAccountPrivileges(context.Background(), AccountPrivilegeGiftRequest{CommunityIdentity: id, RequestID: "empty", Username: "Alice", Days: 1}); err == nil {
 		t.Fatal("empty balance allowed gifting")
 	}

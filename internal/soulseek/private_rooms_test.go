@@ -42,9 +42,7 @@ func TestCommunityPrivateRoomProtocol(t *testing.T) {
 			fixture := communityFixture(t, name)
 			encoded, err := EncodeMessage(req)
 			code, payload, decodeErr := ReadFrame(bytes.NewReader(encoded))
-			if err != nil || decodeErr != nil || code != fixture.Code || !bytes.Equal(payload, fixture.Payload(t)) {
-				t.Fatal("independent encoder mismatch", err, decodeErr)
-			}
+			failIf(t, err != nil || decodeErr != nil || code != fixture.Code || !bytes.Equal(payload, fixture.Payload(t)), "independent encoder mismatch", err, decodeErr)
 		})
 	}
 	for name, want := range updates {
@@ -52,9 +50,7 @@ func TestCommunityPrivateRoomProtocol(t *testing.T) {
 			fixture := communityFixture(t, name)
 			payload := fixture.Payload(t)
 			got, err := DecodeServerMessage(fixture.Code, payload)
-			if err != nil || !reflect.DeepEqual(got, want) {
-				t.Fatalf("reference fields: %#v %v", got, err)
-			}
+			failIfFmt(t, err != nil || !reflect.DeepEqual(got, want), "reference fields: %#v %v", got, err)
 			if _, ok := got.(SocialMessage); !ok {
 				t.Fatal("role/wall update not authoritative")
 			}

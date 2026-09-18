@@ -28,28 +28,19 @@ func TestCommunityUploadPoliciesLiveFlagsAndPrivileges(t *testing.T) {
 	assertPosition := func(job *soulseek.UploadJob, want uint32) {
 		t.Helper()
 		p, err := manager.Position(ctx, job)
-		if err != nil || p != want {
-			t.Fatal(job.User, p, want, err)
-		}
+		failIf(t, err != nil || p != want, job.User, p, want, err)
 	}
 	buddy, err := s.SetCommunityBuddy(ctx, CommunityBuddyRequest{CommunityIdentity: identity, Username: "Buddy", Priority: true})
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	assertPosition(buddyJob, 1)
 	assertPosition(normal, 2)
 	assertPosition(supporter, 3)
-	fixtures := map[string]testutil.WireFixture{}
-	for _, f := range testutil.SocialFixtures(t) {
-		fixtures[f.Name] = f
-	}
+	fixtures := testutil.SocialFixtureMap(t)
 	update := func(name string) {
 		t.Helper()
 		f := fixtures[name]
 		decoded, err := soulseek.DecodeServerMessage(f.Code, f.Payload(t))
-		if err != nil {
-			t.Fatal(err)
-		}
+		must(t, err)
 		if err = s.communityUpdate(ctx, identity, decoded.(soulseek.SocialMessage)); err != nil {
 			t.Fatal(err)
 		}

@@ -21,16 +21,11 @@ import (
 )
 
 func TestCommunityTerminalDiscoveryAndProfiles(t *testing.T) {
-	fixtures := map[string]testutil.WireFixture{}
-	for _, f := range testutil.SocialFixtures(t) {
-		fixtures[f.Name] = f
-	}
+	fixtures := testutil.SocialFixtureMap(t)
 	fixture := func(name string) testutil.WireFixture {
 		t.Helper()
 		f, ok := fixtures[name]
-		if !ok {
-			t.Fatalf("missing mandatory fixture %s", name)
-		}
+		failIfFmt(t, !ok, "missing mandatory fixture %s", name)
 		return f
 	}
 	var failProfile atomic.Bool

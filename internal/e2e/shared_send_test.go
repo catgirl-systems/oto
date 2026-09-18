@@ -25,19 +25,10 @@ import (
 
 func TestSharedFolderSendTerminalPartialOutcomes(t *testing.T) {
 	var wireMu sync.Mutex
-	var pmPayload []byte
-	for _, f := range testutil.SocialFixtures(t) {
-		if f.Name == "pm-online" {
-			pmPayload = f.Payload(t)
-		}
-	}
-	if pmPayload == nil {
-		t.Fatal("missing pm-online fixture")
-	}
+	pmPayload := testutil.SocialFixture(t, "pm-online").Payload(t)
+	failIf(t, pmPayload == nil, "missing pm-online fixture")
 	pm, err := soulseek.DecodePrivateMessage(pmPayload)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	payload := strings.Repeat("payload", 1<<20)
 	serverConn := make(chan net.Conn, 1)
 	burstDone := make(chan struct{})

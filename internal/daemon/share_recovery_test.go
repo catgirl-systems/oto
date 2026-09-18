@@ -16,10 +16,7 @@ import (
 )
 
 func TestSharePolicyRecoveryReadsAddressBeforeAdmission(t *testing.T) {
-	fixtures := map[string]testutil.WireFixture{}
-	for _, f := range testutil.SocialFixtures(t) {
-		fixtures[f.Name] = f
-	}
+	fixtures := testutil.SocialFixtureMap(t)
 	addressSeen := make(chan struct{}, 1)
 	server := testutil.ListenScript(t, func(_ context.Context, conn net.Conn) error {
 		for {

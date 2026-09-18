@@ -22,14 +22,8 @@ func TestCommunityAutoAwayUsesRealInputNotPolling(t *testing.T) {
 	var login, pm []byte
 	var replies atomic.Int32
 	var awayPeriods uint32
-	for _, f := range testutil.SocialFixtures(t) {
-		if f.Name == "pm-online" {
-			pm = f.Payload(t)
-		}
-		if f.Name == "login-ok" {
-			login = f.Payload(t)
-		}
-	}
+	pm = testutil.SocialFixture(t, "pm-online").Payload(t)
+	login = testutil.SocialFixture(t, "login-ok").Payload(t)
 	var status atomic.Uint32
 	status.Store(2)
 	server := testutil.ListenScript(t, func(_ context.Context, conn net.Conn) error {
