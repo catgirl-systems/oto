@@ -737,7 +737,28 @@ func (m model) settingFields() []settingField {
 			{settingAccountPrivileges, "Supporter privileges / gifting", "Press Enter", settingAction},
 		}
 	case settingsCommunity:
-		return []settingField{{settingPrivacyRules, "Privacy / ignore / ban rules", "Press Enter", settingAction}, {settingTextTools, "Chat text tools / CTCP", "Press Enter", settingAction}, {settingChatCommands, "Commands / aliases help", "Press Enter", settingAction}, {settingAway, "Automatic away / replies", "Press Enter", settingAction}}
+		s := m.community.summary.Settings
+		ctcp := "off"
+		if s.CTCPVersion {
+			ctcp = "on"
+		}
+		away := "Off"
+		if s.AwaySeconds > 0 {
+			away = fmt.Sprintf("%ds idle", s.AwaySeconds)
+		}
+		if s.AwayReply {
+			away += " · reply set"
+		}
+		aliasWord := "aliases"
+		if s.Aliases == 1 {
+			aliasWord = "alias"
+		}
+		return []settingField{
+			{settingPrivacyRules, "Privacy / ignore / ban rules", countLabel(s.PrivacyRules, "rule") + " · Enter to manage", settingAction},
+			{settingTextTools, "Chat text tools / CTCP", countLabel(s.Keywords+s.Substitutions+s.Censorship, "text rule") + " · CTCP " + ctcp + " · Enter to edit", settingAction},
+			{settingChatCommands, "Commands / aliases help", fmt.Sprintf("%d %s · Enter for help", s.Aliases, aliasWord), settingAction},
+			{settingAway, "Automatic away / replies", away + " · Enter to edit", settingAction},
+		}
 	case settingsConnection:
 		publicIP := m.status.publicIP
 		if publicIP == "" {
