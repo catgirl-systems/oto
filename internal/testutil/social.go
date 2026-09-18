@@ -47,6 +47,46 @@ func SocialFixtures(t testing.TB) []WireFixture {
 	return corpus.Fixtures
 }
 
+// SocialPayloadMap indexes the frozen wire fixtures as raw payloads, failing the
+// test when any of the required fixtures is missing or renamed.
+func SocialPayloadMap(t testing.TB, required ...string) map[string][]byte {
+	t.Helper()
+	payloads := make(map[string][]byte)
+	for name, f := range SocialFixtureMap(t, required...) {
+		payloads[name] = f.Payload(t)
+	}
+	return payloads
+}
+
+// SocialFixture returns the named frozen wire fixture, failing the test when it
+// is missing or renamed.
+func SocialFixture(t testing.TB, name string) WireFixture {
+	t.Helper()
+	for _, f := range SocialFixtures(t) {
+		if f.Name == name {
+			return f
+		}
+	}
+	t.Fatalf("missing social wire fixture %q", name)
+	return WireFixture{}
+}
+
+// SocialFixtureMap indexes the frozen wire fixtures by name and fails the test
+// when any of the required fixtures is missing or renamed.
+func SocialFixtureMap(t testing.TB, required ...string) map[string]WireFixture {
+	t.Helper()
+	fixtures := make(map[string]WireFixture)
+	for _, f := range SocialFixtures(t) {
+		fixtures[f.Name] = f
+	}
+	for _, name := range required {
+		if _, ok := fixtures[name]; !ok {
+			t.Fatalf("missing social wire fixture %q", name)
+		}
+	}
+	return fixtures
+}
+
 func (f WireFixture) Payload(t testing.TB) []byte {
 	t.Helper()
 	b, err := hex.DecodeString(f.Hex)
