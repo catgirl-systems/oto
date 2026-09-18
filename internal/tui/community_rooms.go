@@ -275,9 +275,6 @@ func (m *model) roomActionPrivate(action, name string, remember, private bool) t
 	}
 	return m.sendRoomActionPrivate(action, name, remember, private)
 }
-func (m *model) sendRoomAction(action, name string, remember bool) tea.Cmd {
-	return m.sendRoomActionPrivate(action, name, remember, false)
-}
 func (m *model) sendRoomActionPrivate(action, name string, remember, private bool) tea.Cmd {
 	r := &m.community.rooms
 	if r.busy || m.client == nil {
@@ -495,7 +492,7 @@ func (m *model) roomDialogKey(k tea.KeyPressMsg) tea.Cmd {
 			r.actionErr = daemon.ErrCommunitySession.Error()
 			return nil
 		}
-		return m.sendRoomAction(d.action, d.room, false)
+		return m.sendRoomActionPrivate(d.action, d.room, false, false)
 	}
 	return nil
 }
