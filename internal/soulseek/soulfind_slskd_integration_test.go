@@ -36,27 +36,17 @@ func TestSoulfindSlskdDownload(t *testing.T) {
 		Filename string `json:"filename"`
 		Size     uint64 `json:"size"`
 	}{{Filename: "Music\\" + filename, Size: uint64(len(contents))}})
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(api, "/")+"/api/v0/transfers/downloads/"+target.cfg.Username, bytes.NewReader(payload))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	request.Header.Set("Content-Type", "application/json")
 	response, err := http.DefaultClient.Do(request)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	body, readErr := io.ReadAll(response.Body)
 	response.Body.Close()
 	lastAPI = fmt.Sprintf("%s: %s", response.Status, strings.TrimSpace(string(body)))
-	if readErr != nil {
-		t.Fatal(readErr)
-	}
-	if response.StatusCode != http.StatusCreated {
-		t.Fatalf("slskd download request: %s", lastAPI)
-	}
+	failIf(t, readErr != nil, readErr)
+	failIfFmt(t, response.StatusCode != http.StatusCreated, "slskd download request: %s", lastAPI)
 
 	var lastUpload TransferEvent
 	for lastUpload.State != "completed" {
@@ -69,26 +59,18 @@ func TestSoulfindSlskdDownload(t *testing.T) {
 				continue
 			}
 			lastUpload = transfer
-			if transfer.State == "failed" {
-				t.Fatalf("oto upload failed: %+v (slskd response: %s)", transfer, lastAPI)
-			}
+			failIfFmt(t, transfer.State == "failed", "oto upload failed: %+v (slskd response: %s)", transfer, lastAPI)
 		}
 	}
-	if lastUpload.Done != uint64(len(contents)) || lastUpload.Total != uint64(len(contents)) || lastUpload.Error != "" {
-		t.Fatalf("completed upload: %+v", lastUpload)
-	}
+	failIfFmt(t, lastUpload.Done != uint64(len(contents)) || lastUpload.Total != uint64(len(contents)) || lastUpload.Error != "", "completed upload: %+v", lastUpload)
 
 	var lastFileErr error
 	for {
 		path, err := findSlskdDownload(downloadRoot, filename)
 		if err == nil {
 			got, err := os.ReadFile(path)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if !bytes.Equal(got, contents) {
-				t.Fatalf("slskd downloaded %d bytes, want %d", len(got), len(contents))
-			}
+			must(t, err)
+			failIfFmt(t, !bytes.Equal(got, contents), "slskd downloaded %d bytes, want %d", len(got), len(contents))
 			return
 		}
 		lastFileErr = err

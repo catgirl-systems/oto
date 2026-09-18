@@ -22,17 +22,11 @@ func TestDownloadOfferAdmissionAndNormalResumedReceiver(t *testing.T) {
 	served := make(chan struct{})
 	go func() { c.serveMessagePeer(control, PeerInitMessage{Username: "sender", Type: "P"}); close(served) }()
 	defer func() { remote.Close(); <-served }()
-	if err := writeMessage(remote, TransferRequest{Direction: 1, Token: 123, Filename: `Music\song`, Size: 3}); err != nil {
-		t.Fatal(err)
-	}
+	must(t, writeMessage(remote, TransferRequest{Direction: 1, Token: 123, Filename: `Music\song`, Size: 3}))
 	offer := <-offers
-	if offer.Username() != "sender" || offer.Filename() != "Music/song" || offer.Size() != 3 {
-		t.Fatal("offer metadata")
-	}
+	failIf(t, offer.Username() != "sender" || offer.Filename() != "Music/song" || offer.Size() != 3, "offer metadata")
 	file, err := os.CreateTemp(t.TempDir(), "receive")
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	defer file.Close()
 	if _, err := file.Write([]byte("a")); err != nil {
 		t.Fatal(err)
@@ -47,13 +41,9 @@ func TestDownloadOfferAdmissionAndNormalResumedReceiver(t *testing.T) {
 	done := make(chan error, 1)
 	go func() { done <- c.ReceiveOfferedFile(ctx, offer, 1, file, nil, nil) }()
 	code, body, err := ReadFrame(remote)
-	if err != nil || code != PeerTransferResponse {
-		t.Fatal(code, err)
-	}
+	failIf(t, err != nil || code != PeerTransferResponse, code, err)
 	response, err := DecodeTransferResponse(body)
-	if err != nil || !response.Accepted || response.Token != 123 {
-		t.Fatal(response, err)
-	}
+	failIf(t, err != nil || !response.Accepted || response.Token != 123, response, err)
 	if err := c.ReceiveOfferedFile(ctx, offer, 1, file, nil, nil); !errors.Is(err, ErrMalformed) {
 		t.Fatal("offer reused", err)
 	}
@@ -75,19 +65,13 @@ func TestDownloadOfferAdmissionAndNormalResumedReceiver(t *testing.T) {
 	if _, err := sender.Write([]byte("bc")); err != nil {
 		t.Fatal(err)
 	}
-	if err := <-done; err != nil {
-		t.Fatal(err)
-	}
+	must(t, <-done)
 	<-fileDone
 	data, err := os.ReadFile(file.Name())
-	if err != nil || string(data) != "abc" {
-		t.Fatal(string(data), err)
-	}
+	failIf(t, err != nil || string(data) != "abc", string(data), err)
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if len(c.requested) != 0 || len(c.downloads) != 0 {
-		t.Fatal("pending receive leaked")
-	}
+	failIf(t, len(c.requested) != 0 || len(c.downloads) != 0, "pending receive leaked")
 }
 
 func TestDownloadOfferDefaultsOffAndRejectsAdmissionFailure(t *testing.T) {
@@ -101,13 +85,9 @@ func TestDownloadOfferDefaultsOffAndRejectsAdmissionFailure(t *testing.T) {
 			close(done)
 		}()
 		code, body, err := ReadFrame(remote)
-		if err != nil || code != PeerTransferResponse {
-			t.Fatal(code, err)
-		}
+		failIf(t, err != nil || code != PeerTransferResponse, code, err)
 		response, err := DecodeTransferResponse(body)
-		if err != nil || response.Accepted || response.Reason != "Cancelled" {
-			t.Fatal(response, err)
-		}
+		failIf(t, err != nil || response.Accepted || response.Reason != "Cancelled", response, err)
 		<-done
 		control.Close()
 		remote.Close()

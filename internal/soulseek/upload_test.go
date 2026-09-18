@@ -19,9 +19,7 @@ import (
 func uploadPeer(t *testing.T, mode string, offset uint64) (PeerAddress, <-chan uint32, <-chan []byte) {
 	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	ctx, cancel := context.WithCancel(context.Background())
 	messages := make(chan uint32, 32)
 	data := make(chan []byte, 8)
@@ -115,16 +113,10 @@ func uploadPeer(t *testing.T, mode string, offset uint64) (PeerAddress, <-chan u
 func uploadClient(t *testing.T, address PeerAddress, contents []byte, loggers ...*slog.Logger) (*Client, chan TransferEvent, string) {
 	t.Helper()
 	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "song"), contents, 0600); err != nil {
-		t.Fatal(err)
-	}
+	must(t, os.WriteFile(filepath.Join(root, "song"), contents, 0600))
 	shares := NewShareIndex()
-	if err := shares.AddRoot("Music", root); err != nil {
-		t.Fatal(err)
-	}
-	if err := shares.ScanContext(context.Background()); err != nil {
-		t.Fatal(err)
-	}
+	must(t, shares.AddRoot("Music", root))
+	must(t, shares.ScanContext(context.Background()))
 	events := make(chan TransferEvent, 2048)
 	c := NewClient(ClientConfig{Logger: firstLogger(loggers), Share: shares, Uploads: NewUploadManager(1), UploadUpdate: func(e TransferEvent) { events <- e }})
 	if address.IP != "" {
@@ -156,9 +148,7 @@ func uploadMessage(t *testing.T, messages <-chan uint32, want uint32) {
 	t.Helper()
 	select {
 	case got := <-messages:
-		if got != want {
-			t.Fatalf("message %d, want %d", got, want)
-		}
+		failIfFmt(t, got != want, "message %d, want %d", got, want)
 	case <-time.After(3 * time.Second):
 		t.Fatal("missing peer message")
 	}
@@ -174,9 +164,7 @@ func TestUploadResumeAndRetry(t *testing.T) {
 			if r["msg"] == "transfer_completed" {
 				completed[r["attempt_id"].(float64)] = true
 			}
-			if r["msg"] == "resume_offset_received" && r["resume_offset"] != float64(17) {
-				t.Fatal("wrong diagnostic resume offset")
-			}
+			failIf(t, r["msg"] == "resume_offset_received" && r["resume_offset"] != float64(17), "wrong diagnostic resume offset")
 			if r["msg"] == "connection_open" {
 				op, _ := r["operation_id"].(string)
 				if op != "" {
@@ -188,44 +176,30 @@ func TestUploadResumeAndRetry(t *testing.T) {
 				}
 			}
 		}
-		if len(completed) != 2 || len(connections) != 2 {
-			t.Fatal("retry correlation lost")
-		}
+		failIf(t, len(completed) != 2 || len(connections) != 2, "retry correlation lost")
 		for _, types := range connections {
-			if !types["P"] || !types["F"] {
-				t.Fatal("upload P/F correlation lost")
-			}
+			failIf(t, !types["P"] || !types["F"], "upload P/F correlation lost")
 		}
 	})
 	c, events, path := uploadClient(t, addr, contents, logger)
 	for i := 0; i < 2; i++ {
 		started, err := c.QueueUpload("peer", `Music\song`)
-		if err != nil || !started {
-			t.Fatalf("queue %v %v", started, err)
-		}
+		failIfFmt(t, err != nil || !started, "queue %v %v", started, err)
 		queued := uploadEvent(t, events, "queued")
 		completed := uploadEvent(t, events, "completed")
-		if queued.Attempt != completed.Attempt || completed.Done != uint64(len(contents)) {
-			t.Fatalf("events %+v %+v", queued, completed)
-		}
+		failIfFmt(t, queued.Attempt != completed.Attempt || completed.Done != uint64(len(contents)), "events %+v %+v", queued, completed)
 		// Join cleanup before requeue, including completed attempts.
 		c.StopUploads([]UploadTarget{{Username: "peer", Filename: `Music\song`, Attempt: queued.Attempt}}, false)
 		select {
 		case got := <-received:
-			if !bytes.Equal(got, contents[17:]) {
-				t.Fatalf("resume bytes %d", len(got))
-			}
+			failIfFmt(t, !bytes.Equal(got, contents[17:]), "resume bytes %d", len(got))
 		case <-time.After(time.Second):
 			t.Fatal("no file bytes")
 		}
 	}
 	got, err := os.ReadFile(path)
-	if err != nil || !bytes.Equal(got, contents) {
-		t.Fatal("upload modified shared file")
-	}
-	if err := os.Remove(path); err != nil {
-		t.Fatal(err)
-	}
+	failIf(t, err != nil || !bytes.Equal(got, contents), "upload modified shared file")
+	must(t, os.Remove(path))
 	if _, err := c.QueueUpload("peer", `Music\song`); err == nil {
 		t.Fatal("missing shared file accepted")
 	}
@@ -245,9 +219,7 @@ func TestUploadStopStages(t *testing.T) {
 				c.ConfigureUploads(UploadPolicy{BytesPerSecond: 1024})
 			}
 			_, err := c.QueueUpload("peer", `Music\song`)
-			if err != nil {
-				t.Fatal(err)
-			}
+			must(t, err)
 			queued := uploadEvent(t, events, "queued")
 			if started, err := c.QueueUpload("peer", "Music/song"); err != nil || started {
 				t.Fatalf("duplicate %v %v", started, err)
@@ -264,16 +236,10 @@ func TestUploadStopStages(t *testing.T) {
 			}
 			start := time.Now()
 			c.StopUploads([]UploadTarget{{Username: "peer", Filename: `Music\song`, Attempt: queued.Attempt}}, mode == "queued")
-			if time.Since(start) > time.Second {
-				t.Fatal("stop did not unblock worker")
-			}
+			failIf(t, time.Since(start) > time.Second, "stop did not unblock worker")
 			cancelled := uploadEvent(t, events, "cancelled")
-			if mode == "limited" && cancelled.Done == 0 {
-				t.Fatal("cancel lost bytes written inside a paced chunk")
-			}
-			if cancelled.Error != "" {
-				t.Fatalf("intentional cancellation error %q", cancelled.Error)
-			}
+			failIf(t, mode == "limited" && cancelled.Done == 0, "cancel lost bytes written inside a paced chunk")
+			failIfFmt(t, cancelled.Error != "", "intentional cancellation error %q", cancelled.Error)
 			if mode == "queued" {
 				uploadMessage(t, messages, PeerUploadDenied)
 				c.cfg.Uploads.Done(blocker)
@@ -284,9 +250,7 @@ func TestUploadStopStages(t *testing.T) {
 			c.cfg.Uploads.mu.Lock()
 			active, queuedJobs := c.cfg.Uploads.active, len(c.cfg.Uploads.q)
 			c.cfg.Uploads.mu.Unlock()
-			if remaining != 0 || active != 0 || queuedJobs != 0 {
-				t.Fatalf("leaked upload/slot: %d/%d/%d", remaining, active, queuedJobs)
-			}
+			failIfFmt(t, remaining != 0 || active != 0 || queuedJobs != 0, "leaked upload/slot: %d/%d/%d", remaining, active, queuedJobs)
 		})
 	}
 }
@@ -296,9 +260,8 @@ func TestUploadBatchAndSchedulerCancellation(t *testing.T) {
 	blocker := c.cfg.Uploads.Enqueue("blocker", TransferRequest{})
 	var targets []UploadTarget
 	for _, user := range []string{"a", "b", "c"} {
-		if _, err := c.QueueUpload(user, `Music\song`); err != nil {
-			t.Fatal(err)
-		}
+		_, err := c.QueueUpload(user, `Music\song`)
+		must(t, err)
 		e := uploadEvent(t, events, "queued")
 		targets = append(targets, UploadTarget{Username: user, Filename: e.Filename, Attempt: e.Attempt})
 	}
@@ -308,9 +271,7 @@ func TestUploadBatchAndSchedulerCancellation(t *testing.T) {
 	}
 	c.cfg.Uploads.Done(blocker)
 	c.cfg.Uploads.Done(blocker)
-	if c.cfg.Uploads.active != 0 || len(c.cfg.Uploads.q) != 0 {
-		t.Fatal("batch promoted/leaked cancelled jobs")
-	}
+	failIf(t, c.cfg.Uploads.active != 0 || len(c.cfg.Uploads.q) != 0, "batch promoted/leaked cancelled jobs")
 	for _, policy := range []string{UploadScheduleFIFO, UploadScheduleRoundRobin, UploadScheduleRandom, UploadScheduleSmallestFirst} {
 		m := NewUploadManager(1)
 		m.Configure(UploadPolicy{Scheduling: policy})
@@ -319,15 +280,11 @@ func TestUploadBatchAndSchedulerCancellation(t *testing.T) {
 		next := m.Enqueue("b", TransferRequest{})
 		m.CancelJobs([]*UploadJob{cancelled})
 		m.Done(first)
-		if uploadReady(cancelled) || !uploadReady(next) {
-			t.Fatalf("%s promoted cancelled job", policy)
-		}
+		failIfFmt(t, uploadReady(cancelled) || !uploadReady(next), "%s promoted cancelled job", policy)
 		m.Done(cancelled)
 		m.Done(next)
 		m.Done(next)
-		if m.active != 0 {
-			t.Fatalf("%s leaked slot", policy)
-		}
+		failIfFmt(t, m.active != 0, "%s leaked slot", policy)
 	}
 }
 
@@ -341,9 +298,7 @@ func TestUploadIncomingQueuesAndSeparateDenials(t *testing.T) {
 	_ = right.SetDeadline(time.Now().Add(3 * time.Second))
 	go c.serveMessagePeer(left, PeerInitMessage{Username: "peer", Type: "P"})
 	for _, req := range []Message{QueueRequest{Filename: `Music\song`}, QueueRequest{Filename: "Music/song"}, TransferRequest{Direction: 0, Token: 99, Filename: `Music\song`}} {
-		if err := writeMessage(right, req); err != nil {
-			t.Fatal(err)
-		}
+		must(t, writeMessage(right, req))
 		if _, _, err := ReadFrame(right); err != nil {
 			t.Fatal(err)
 		}
@@ -352,9 +307,7 @@ func TestUploadIncomingQueuesAndSeparateDenials(t *testing.T) {
 	c.mu.Lock()
 	n := len(c.uploads)
 	c.mu.Unlock()
-	if n != 1 {
-		t.Fatalf("duplicate attempts %d", n)
-	}
+	failIfFmt(t, n != 1, "duplicate attempts %d", n)
 	c.StopUploads([]UploadTarget{{Username: "peer", Filename: e.Filename, Attempt: e.Attempt}}, false)
 	uploadEvent(t, events, "cancelled")
 	// The same P connection can deliver failures for a pending download.
@@ -362,25 +315,17 @@ func TestUploadIncomingQueuesAndSeparateDenials(t *testing.T) {
 	c.mu.Lock()
 	c.requested[downloadKey("peer", `Other\song`)] = pending
 	c.mu.Unlock()
-	if err := writeMessage(right, QueueDenied{Filename: "Other/song", Reason: "Cancelled"}); err != nil {
-		t.Fatal(err)
-	}
+	must(t, writeMessage(right, QueueDenied{Filename: "Other/song", Reason: "Cancelled"}))
 	select {
 	case err := <-pending.done:
-		if err.Error() != "Cancelled" {
-			t.Fatal(err)
-		}
+		failIf(t, err.Error() != "Cancelled", err)
 	case <-time.After(time.Second):
 		t.Fatal("separate P denial lost")
 	}
-	if err := writeMessage(right, QueueFailedMessage{Filename: `Other\song`}); err != nil {
-		t.Fatal(err)
-	}
+	must(t, writeMessage(right, QueueFailedMessage{Filename: `Other\song`}))
 	select {
 	case err := <-pending.done:
-		if err != ErrUploadFailed {
-			t.Fatal(err)
-		}
+		failIf(t, err != ErrUploadFailed, err)
 	case <-time.After(time.Second):
 		t.Fatal("separate P failure lost")
 	}
@@ -403,9 +348,8 @@ func TestUploadStopDuringBlockedAddressLookup(t *testing.T) {
 			c.mu.Lock()
 			c.conn = left
 			c.mu.Unlock()
-			if _, err := c.QueueUpload("peer", `Music\song`); err != nil {
-				t.Fatal(err)
-			}
+			_, err := c.QueueUpload("peer", `Music\song`)
+			must(t, err)
 			queued := uploadEvent(t, events, "queued")
 			uploadEvent(t, events, "running")
 			done := make(chan struct{})
@@ -443,9 +387,8 @@ func TestUploadPeerRequeueJoinsRetiringAttempt(t *testing.T) {
 			<-gate
 		}
 	}
-	if _, err := c.QueueUpload("peer", `Music\song`); err != nil {
-		t.Fatal(err)
-	}
+	_, err := c.QueueUpload("peer", `Music\song`)
+	must(t, err)
 	uploadEvent(t, events, "failed")
 	result := make(chan bool, 1)
 	go func() {
@@ -460,9 +403,7 @@ func TestUploadPeerRequeueJoinsRetiringAttempt(t *testing.T) {
 	release.Do(func() { close(gate) })
 	select {
 	case started := <-result:
-		if !started {
-			t.Fatal("no replacement attempt")
-		}
+		failIf(t, !started, "no replacement attempt")
 	case <-time.After(3 * time.Second):
 		t.Fatal("replacement attempt blocked")
 	}

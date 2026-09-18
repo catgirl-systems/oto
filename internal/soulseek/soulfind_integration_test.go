@@ -37,16 +37,10 @@ func TestSoulfindHandshakeCriticalValues(t *testing.T) {
 	}
 
 	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "critical.flac"), []byte("fixture"), 0600); err != nil {
-		t.Fatal(err)
-	}
+	must(t, os.WriteFile(filepath.Join(root, "critical.flac"), []byte("fixture"), 0600))
 	shares := NewShareIndex()
-	if err := shares.AddRoot("Music", root); err != nil {
-		t.Fatal(err)
-	}
-	if err := shares.ScanContext(context.Background()); err != nil {
-		t.Fatal(err)
-	}
+	must(t, shares.AddRoot("Music", root))
+	must(t, shares.ScanContext(context.Background()))
 
 	stamp := time.Now().UnixNano()
 	targetUser, observerUser := fmt.Sprintf("t%d", stamp), fmt.Sprintf("o%d", stamp)
@@ -55,9 +49,7 @@ func TestSoulfindHandshakeCriticalValues(t *testing.T) {
 	connectSoulfind(t, target)
 
 	listener, ok := clientListenerAddr(target).(*net.TCPAddr)
-	if !ok {
-		t.Fatalf("listener address: %v", clientListenerAddr(target))
-	}
+	failIfFmt(t, !ok, "listener address: %v", clientListenerAddr(target))
 
 	observer := NewClient(ClientConfig{Address: addr, Username: observerUser, Password: "pw", ListenAddr: "127.0.0.1:0"})
 	t.Cleanup(func() { _ = observer.Close() })
@@ -65,20 +57,14 @@ func TestSoulfindHandshakeCriticalValues(t *testing.T) {
 
 	deadline := time.Now().Add(5 * time.Second)
 	for {
-		if err := observer.send(PeerAddressRequest{Username: targetUser}); err != nil {
-			t.Fatal(err)
-		}
+		must(t, observer.send(PeerAddressRequest{Username: targetUser}))
 		payload := readSoulfindCommand(t, clientConn(observer), ServerGetPeerAddress)
 		peer, err := DecodePeerAddress(payload)
-		if err != nil {
-			t.Fatal(err)
-		}
+		must(t, err)
 		if peer.Username == targetUser && peer.Port == uint32(listener.Port) {
 			break
 		}
-		if time.Now().After(deadline) {
-			t.Fatalf("peer address: %+v, want user=%s port=%d", peer, targetUser, listener.Port)
-		}
+		failIfFmt(t, time.Now().After(deadline), "peer address: %+v, want user=%s port=%d", peer, targetUser, listener.Port)
 		time.Sleep(50 * time.Millisecond)
 	}
 
@@ -88,9 +74,7 @@ func TestSoulfindHandshakeCriticalValues(t *testing.T) {
 		if watch.username == targetUser && watch.exists && watch.status == 2 && watch.files == 1 && watch.folders == 1 {
 			break
 		}
-		if time.Now().After(deadline) {
-			t.Fatalf("watch user: %+v, want user=%s exists=true status=2 files=1 folders=1", watch, targetUser)
-		}
+		failIfFmt(t, time.Now().After(deadline), "watch user: %+v, want user=%s exists=true status=2 files=1 folders=1", watch, targetUser)
 		time.Sleep(50 * time.Millisecond)
 	}
 }
@@ -109,15 +93,11 @@ func TestSoulfindChangePassword(t *testing.T) {
 	if err := client.ChangePassword(ctx, newPassword); err != nil {
 		t.Fatalf("change password: %v", err)
 	}
-	if err := client.Close(); err != nil {
-		t.Fatal(err)
-	}
+	must(t, client.Close())
 
 	old := NewClient(ClientConfig{Address: addr, Username: username, Password: "pw", ListenAddr: "127.0.0.1:0"})
 	t.Cleanup(func() { _ = old.Close() })
-	if err := old.Connect(ctx); err != nil {
-		t.Fatal(err)
-	}
+	must(t, old.Connect(ctx))
 	if err := old.Login(ctx); err == nil || !strings.Contains(err.Error(), "INVALIDPASS") {
 		t.Fatalf("old password login: %v", err)
 	}
@@ -138,22 +118,12 @@ func TestSoulfindPeerFeatures(t *testing.T) {
 	nestedFilename := fmt.Sprintf("nested-%d.flac", stamp)
 	contents := []byte("Soulfind integration transfer")
 	root := t.TempDir()
-	if err := os.Mkdir(filepath.Join(root, "Disc"), 0700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(root, filename), contents, 0600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(root, "Disc", nestedFilename), []byte("nested"), 0600); err != nil {
-		t.Fatal(err)
-	}
+	must(t, os.Mkdir(filepath.Join(root, "Disc"), 0700))
+	must(t, os.WriteFile(filepath.Join(root, filename), contents, 0600))
+	must(t, os.WriteFile(filepath.Join(root, "Disc", nestedFilename), []byte("nested"), 0600))
 	shares := NewShareIndex()
-	if err := shares.AddRoot("Music", root); err != nil {
-		t.Fatal(err)
-	}
-	if err := shares.ScanContext(context.Background()); err != nil {
-		t.Fatal(err)
-	}
+	must(t, shares.AddRoot("Music", root))
+	must(t, shares.ScanContext(context.Background()))
 
 	targetUser, observerUser := fmt.Sprintf("p%d", stamp), fmt.Sprintf("q%d", stamp)
 	target := NewClient(ClientConfig{Address: addr, Username: targetUser, Password: "pw", ListenAddr: "0.0.0.0:0", Share: shares})
@@ -170,17 +140,13 @@ func TestSoulfindPeerFeatures(t *testing.T) {
 		registered := NewClient(ClientConfig{Address: addr, Username: username, Password: "pw", ListenAddr: "127.0.0.1:0"})
 		t.Cleanup(func() { _ = registered.Close() })
 		connectSoulfind(t, registered)
-		if err := registered.Close(); err != nil {
-			t.Fatal(err)
-		}
+		must(t, registered.Close())
 
 		client := NewClient(ClientConfig{Address: addr, Username: username, Password: "wrong", ListenAddr: "127.0.0.1:0"})
 		t.Cleanup(func() { _ = client.Close() })
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		if err := client.Connect(ctx); err != nil {
-			t.Fatal(err)
-		}
+		must(t, client.Connect(ctx))
 		if err := client.Login(ctx); err == nil || !strings.Contains(err.Error(), "INVALIDPASS") {
 			t.Fatalf("wrong password login: %v", err)
 		}
@@ -190,9 +156,7 @@ func TestSoulfindPeerFeatures(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 		defer cancel()
 		results, err := observer.Search(ctx, filename)
-		if err != nil {
-			t.Fatal(err)
-		}
+		must(t, err)
 		want := "Music\\" + filename
 		for _, result := range results {
 			if result.Path == want && result.Size == uint64(len(contents)) {
@@ -207,45 +171,33 @@ func TestSoulfindPeerFeatures(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		entries, err := observer.BrowseUser(ctx, targetUser, "Music")
-		if err != nil {
-			t.Fatal(err)
-		}
+		must(t, err)
 		got := make(map[string]ShareEntry, len(entries))
 		for _, entry := range entries {
 			got[entry.Name] = entry
 		}
 		rootFile, rootOK := got["Music\\"+filename]
 		nestedFile, nestedOK := got["Music\\Disc\\"+nestedFilename]
-		if len(entries) != 4 || !got["Music"].Directory || !got["Music\\Disc"].Directory || !rootOK || rootFile.Size != uint64(len(contents)) || !nestedOK || nestedFile.Size != 6 {
-			t.Fatalf("recursive browse entries: %+v", entries)
-		}
+		failIfFmt(t, len(entries) != 4 || !got["Music"].Directory || !got["Music\\Disc"].Directory || !rootOK || rootFile.Size != uint64(len(contents)) || !nestedOK || nestedFile.Size != 6, "recursive browse entries: %+v", entries)
 	}
 	t.Run("browse", browse)
 
 	t.Run("transfer", func(t *testing.T) {
 		destination, err := os.CreateTemp(t.TempDir(), "download-")
-		if err != nil {
-			t.Fatal(err)
-		}
+		must(t, err)
 		defer destination.Close()
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
-		if err := observer.Download(ctx, targetUser, "Music\\"+filename, uint64(len(contents)), 0, destination, nil); err != nil {
-			t.Fatal(err)
-		}
+		must(t, observer.Download(ctx, targetUser, "Music\\"+filename, uint64(len(contents)), 0, destination, nil))
 		got := make([]byte, len(contents))
 		if _, err := destination.ReadAt(got, 0); err != nil {
 			t.Fatal(err)
 		}
-		if string(got) != string(contents) {
-			t.Fatalf("downloaded %q, want %q", got, contents)
-		}
+		failIfFmt(t, string(got) != string(contents), "downloaded %q, want %q", got, contents)
 	})
 
 	t.Run("reconnect", func(t *testing.T) {
-		if err := observer.Close(); err != nil {
-			t.Fatal(err)
-		}
+		must(t, observer.Close())
 		select {
 		case <-observerRun:
 		case <-time.After(5 * time.Second):
@@ -267,22 +219,14 @@ func TestSoulfindIndirectPeerConnection(t *testing.T) {
 	target.mu.Lock()
 	listener := target.listener
 	target.mu.Unlock()
-	if listener == nil {
-		t.Fatal("target listener is not running")
-	}
-	if err := listener.Close(); err != nil {
-		t.Fatal(err)
-	}
+	failIf(t, listener == nil, "target listener is not running")
+	must(t, listener.Close())
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	entries, err := observer.BrowseUser(ctx, target.cfg.Username, "Music")
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	want := "Music\\" + filename
-	if len(entries) != 2 || entries[1].Name != want {
-		t.Fatalf("indirect browse: %+v", entries)
-	}
+	failIfFmt(t, len(entries) != 2 || entries[1].Name != want, "indirect browse: %+v", entries)
 }
 
 func TestSoulfindReconnectDuringSearch(t *testing.T) {
@@ -309,14 +253,10 @@ func TestSoulfindReconnectDuringSearch(t *testing.T) {
 		if active {
 			break
 		}
-		if time.Now().After(deadline) {
-			t.Fatal("search did not start")
-		}
+		failIf(t, time.Now().After(deadline), "search did not start")
 		time.Sleep(10 * time.Millisecond)
 	}
-	if err := clientConn(observer).Close(); err != nil {
-		t.Fatal(err)
-	}
+	must(t, clientConn(observer).Close())
 	select {
 	case <-runDone:
 	case <-time.After(5 * time.Second):
@@ -332,9 +272,7 @@ func TestSoulfindReconnectDuringSearch(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	entries, err := observer.BrowseUser(ctx, target.cfg.Username, "Music")
-	if err != nil || len(entries) != 2 || entries[1].Name != "Music\\"+filename {
-		t.Fatalf("browse after reconnect: %+v %v", entries, err)
-	}
+	failIfFmt(t, err != nil || len(entries) != 2 || entries[1].Name != "Music\\"+filename, "browse after reconnect: %+v %v", entries, err)
 }
 
 func TestSoulfindConcurrentSearchTokens(t *testing.T) {
@@ -362,17 +300,13 @@ func TestSoulfindConcurrentSearchTokens(t *testing.T) {
 	}
 	for range 2 {
 		result := <-results
-		if result.err != nil {
-			t.Fatal(result.err)
-		}
+		failIf(t, result.err != nil, result.err)
 		paths := make(map[string]bool)
 		for _, found := range result.results {
 			paths[found.Path] = true
 		}
 		if result.query == common {
-			if !paths["Music\\"+firstName] || !paths["Music\\"+secondName] {
-				t.Fatalf("multi-responder search: %+v", result.results)
-			}
+			failIfFmt(t, !paths["Music\\"+firstName] || !paths["Music\\"+secondName], "multi-responder search: %+v", result.results)
 		} else if !paths["Music\\"+firstName] || paths["Music\\"+secondName] {
 			t.Fatalf("token-isolated search: %+v", result.results)
 		}
@@ -381,9 +315,7 @@ func TestSoulfindConcurrentSearchTokens(t *testing.T) {
 
 func readSoulfindCommand(t *testing.T, conn net.Conn, wanted uint32) []byte {
 	t.Helper()
-	if err := conn.SetReadDeadline(time.Now().Add(5 * time.Second)); err != nil {
-		t.Fatal(err)
-	}
+	must(t, conn.SetReadDeadline(time.Now().Add(5*time.Second)))
 	for {
 		command, payload, err := ReadFrame(conn)
 		if err != nil {
@@ -398,19 +330,13 @@ func readSoulfindCommand(t *testing.T, conn net.Conn, wanted uint32) []byte {
 func requestSoulfindWatch(t *testing.T, client *Client, username string) soulfindWatch {
 	t.Helper()
 	var request Encoder
-	if err := request.String(username); err != nil {
-		t.Fatal(err)
-	}
-	if err := client.send(RawMessage{Command: soulfindWatchUserCommand, Payload: request.Payload()}); err != nil {
-		t.Fatal(err)
-	}
+	must(t, request.String(username))
+	must(t, client.send(RawMessage{Command: soulfindWatchUserCommand, Payload: request.Payload()}))
 
 	d := NewDecoder(readSoulfindCommand(t, clientConn(client), soulfindWatchUserCommand))
 	watch := soulfindWatch{username: mustSoulfindValue(t, d.String), exists: mustSoulfindValue(t, d.Bool)}
 	if !watch.exists {
-		if err := d.Done(); err != nil {
-			t.Fatal(err)
-		}
+		must(t, d.Done())
 		return watch
 	}
 	watch.status = mustSoulfindValue(t, d.U32)
@@ -422,17 +348,13 @@ func requestSoulfindWatch(t *testing.T, client *Client, username string) soulfin
 	if watch.status > 0 {
 		_ = mustSoulfindValue(t, d.String) // obsolete country code
 	}
-	if err := d.Done(); err != nil {
-		t.Fatal(err)
-	}
+	must(t, d.Done())
 	return watch
 }
 
 func mustSoulfindValue[T any](t *testing.T, read func() (T, error)) T {
 	t.Helper()
 	value, err := read()
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	return value
 }

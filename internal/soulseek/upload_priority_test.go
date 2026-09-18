@@ -22,33 +22,23 @@ func TestUploadPreferredClassAndProjectedPositions(t *testing.T) {
 			users := map[string]UploadUserPolicy{"buddy": {Preferred: true}, "supporter": {Preferred: true}}
 			m.SetUserPolicies(users)
 			delete(users, "buddy")
-			if !uploadReady(blocker) || uploadReady(first) || uploadReady(second) {
-				t.Fatal("priority preempted active transfer")
-			}
+			failIf(t, !uploadReady(blocker) || uploadReady(first) || uploadReady(second), "priority preempted active transfer")
 			m.random = rand.NewPCG(1, 2)
 			before, _ := m.random.MarshalBinary()
 			jobs := []*UploadJob{normal, first, second}
 			positions := map[*UploadJob]uint32{}
 			for _, job := range jobs {
 				p, err := m.Position(context.Background(), job)
-				if err != nil {
-					t.Fatal(err)
-				}
+				must(t, err)
 				positions[job] = p
 			}
 			after, _ := m.random.MarshalBinary()
-			if !bytes.Equal(before, after) {
-				t.Fatal("position query consumed scheduler randomness")
-			}
-			if positions[normal] != 3 || positions[first] >= 3 || positions[second] >= 3 || positions[first] == positions[second] {
-				t.Fatal("preferred class positions", positions)
-			}
+			failIf(t, !bytes.Equal(before, after), "position query consumed scheduler randomness")
+			failIf(t, positions[normal] != 3 || positions[first] >= 3 || positions[second] >= 3 || positions[first] == positions[second], "preferred class positions", positions)
 			sort.Slice(jobs, func(i, j int) bool { return positions[jobs[i]] < positions[jobs[j]] })
 			m.Done(blocker)
 			for _, job := range jobs {
-				if !uploadReady(job) {
-					t.Fatal("position diverged from scheduling", job.User, positions)
-				}
+				failIf(t, !uploadReady(job), "position diverged from scheduling", job.User, positions)
 				m.Done(job)
 			}
 		})
@@ -60,23 +50,15 @@ func TestUploadUserPolicyChangesAndLimitExemption(t *testing.T) {
 	m.Configure(UploadPolicy{MaxQueuedFilesPerUser: 1, MaxQueuedBytesPerUser: 1})
 	m.SetUserPolicies(map[string]UploadUserPolicy{"buddy": {Preferred: true, ExemptLimits: true}})
 	one, err := m.TryEnqueue("buddy", TransferRequest{Size: 2})
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	two, err := m.TryEnqueue("buddy", TransferRequest{Size: 2})
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	if _, err := m.TryEnqueue("normal", TransferRequest{Size: 2}); !errors.Is(err, ErrTooManyUploadBytes) {
 		t.Fatal("nonbuddy exempted", err)
 	}
-	if m.outstandingFiles["buddy"] != 2 || m.outstandingBytes["buddy"] != 4 || uploadReady(two) {
-		t.Fatal("exemption bypassed accounting or per-user slot")
-	}
+	failIf(t, m.outstandingFiles["buddy"] != 2 || m.outstandingBytes["buddy"] != 4 || uploadReady(two), "exemption bypassed accounting or per-user slot")
 	m.SetUserPolicies(nil)
-	if !uploadReady(one) {
-		t.Fatal("flag change preempted accepted upload")
-	}
+	failIf(t, !uploadReady(one), "flag change preempted accepted upload")
 	if _, err := m.TryEnqueue("buddy", TransferRequest{}); !errors.Is(err, ErrTooManyUploadFiles) {
 		t.Fatal("removed exemption retained", err)
 	}
@@ -87,9 +69,7 @@ func TestUploadUserPolicyChangesAndLimitExemption(t *testing.T) {
 	for _, job := range []*UploadJob{one, two, restored} {
 		m.Done(job)
 	}
-	if m.outstandingFiles["buddy"] != 0 || m.outstandingBytes["buddy"] != 0 {
-		t.Fatal("exempt accounting retained")
-	}
+	failIf(t, m.outstandingFiles["buddy"] != 0 || m.outstandingBytes["buddy"] != 0, "exempt accounting retained")
 	for _, restore := range []bool{false, true} {
 		m.SetUserPolicies(map[string]UploadUserPolicy{"buddy": {ExemptLimits: true}})
 		enqueue := m.TryEnqueue
@@ -116,9 +96,7 @@ func TestUploadPositionCancellationAndBusyUser(t *testing.T) {
 	other := m.Enqueue("other", TransferRequest{})
 	for job, want := range map[*UploadJob]uint32{active: 0, busy: 1, other: 2} {
 		p, err := m.Position(context.Background(), job)
-		if err != nil || p != want {
-			t.Fatal(p, want, err)
-		}
+		failIf(t, err != nil || p != want, p, want, err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -147,22 +125,16 @@ func TestUploadRecoverySelectsPriorityAfterWholeQueueRestored(t *testing.T) {
 	m.SetUserPolicies(map[string]UploadUserPolicy{"buddy": {Preferred: true}})
 	normal := m.EnqueueRestored("normal", TransferRequest{})
 	buddy := m.EnqueueRestored("buddy", TransferRequest{})
-	if uploadReady(normal) || uploadReady(buddy) {
-		t.Fatal("partial recovery reserved slots")
-	}
+	failIf(t, uploadReady(normal) || uploadReady(buddy), "partial recovery reserved slots")
 	close(ready)
 	select {
 	case <-buddy.Ready:
 	case <-time.After(time.Second):
 		t.Fatal("restored priority not selected")
 	}
-	if uploadReady(normal) {
-		t.Fatal("recovery preempted preferred class")
-	}
+	failIf(t, uploadReady(normal), "recovery preempted preferred class")
 	m.Done(buddy)
-	if !uploadReady(normal) {
-		t.Fatal("normal restoration not resumed")
-	}
+	failIf(t, !uploadReady(normal), "normal restoration not resumed")
 	m.Done(normal)
 }
 
@@ -176,9 +148,7 @@ func TestUploadProjectedPositionsRespectPromotionBatchSlots(t *testing.T) {
 	b1 := m.EnqueueRestored("B", TransferRequest{})
 	for job, want := range map[*UploadJob]uint32{a1: 1, b1: 2, a2: 3} {
 		position, err := m.Position(context.Background(), job)
-		if err != nil || position != want {
-			t.Fatal(job.User, position, want, err)
-		}
+		failIf(t, err != nil || position != want, job.User, position, want, err)
 	}
 	close(ready)
 	select {
@@ -186,9 +156,7 @@ func TestUploadProjectedPositionsRespectPromotionBatchSlots(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("second slot not assigned to B")
 	}
-	if !uploadReady(a1) || uploadReady(a2) {
-		t.Fatal("projection disagreed with initial promotion batch")
-	}
+	failIf(t, !uploadReady(a1) || uploadReady(a2), "projection disagreed with initial promotion batch")
 	m.Done(a1)
 	m.Done(b1)
 	m.Done(a2)

@@ -15,9 +15,7 @@ func TestUploadDrainCutoff(t *testing.T) {
 	b := m.Enqueue("b", TransferRequest{})
 	q := m.Enqueue("c", TransferRequest{})
 	done := m.Drain()
-	if done != m.Drain() {
-		t.Fatal("drain is not idempotent")
-	}
+	failIf(t, done != m.Drain(), "drain is not idempotent")
 	if draining, active := m.DrainStatus(); !draining || active != 2 {
 		t.Fatal(draining, active)
 	}
@@ -76,9 +74,8 @@ func TestUploadDrainRequeueAndCompletion(t *testing.T) {
 				}
 				events <- e
 			}
-			if _, err := c.QueueUpload("peer", `Music\song`); err != nil {
-				t.Fatal(err)
-			}
+			_, err := c.QueueUpload("peer", `Music\song`)
+			must(t, err)
 			select {
 			case <-entered:
 			case <-time.After(3 * time.Second):
@@ -102,9 +99,7 @@ func TestUploadDrainRequeueAndCompletion(t *testing.T) {
 			if _, err := c.RestoreUpload("peer", `Music\song`, ""); !errors.Is(err, ErrUploadsDraining) {
 				t.Fatal(err)
 			}
-			if uploadDenial(ErrUploadsDraining) != "Shutting down" {
-				t.Fatal("misleading denial")
-			}
+			failIf(t, uploadDenial(ErrUploadsDraining) != "Shutting down", "misleading denial")
 			unblock()
 			select {
 			case <-done:
@@ -119,9 +114,7 @@ func TestUploadDrainRequeueAndCompletion(t *testing.T) {
 			if mode == "normal" {
 				select {
 				case got := <-received:
-					if len(got) != 2048 {
-						t.Fatal(len(got))
-					}
+					failIf(t, len(got) != 2048, len(got))
 				case <-time.After(time.Second):
 					t.Fatal("missing bytes")
 				}
@@ -129,15 +122,11 @@ func TestUploadDrainRequeueAndCompletion(t *testing.T) {
 			c.mu.Lock()
 			queued := c.uploads[downloadKey("queued", `Music\song`)]
 			c.mu.Unlock()
-			if queued == nil {
-				t.Fatal("queued attempt lost")
-			}
+			failIf(t, queued == nil, "queued attempt lost")
 			queued.mu.Lock()
 			state = queued.state
 			queued.mu.Unlock()
-			if state != "queued" {
-				t.Fatal("queued work started", state)
-			}
+			failIf(t, state != "queued", "queued work started", state)
 		})
 	}
 }

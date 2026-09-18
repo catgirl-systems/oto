@@ -24,9 +24,7 @@ func TestCommunityProfileReferenceAndBounds(t *testing.T) {
 	legacy := f.Payload(t)[:len(f.Payload(t))-4]
 	for _, extra := range [][]byte{nil, {0, 0, 0}} {
 		old, err := DecodePeerProfile(append(append([]byte{}, legacy...), extra...))
-		if err != nil || old.UploadAllowedKnown {
-			t.Fatal("legacy peer inferred unsolicited permission", err)
-		}
+		failIf(t, err != nil || old.UploadAllowedKnown, "legacy peer inferred unsolicited permission", err)
 	}
 	for _, extra := range [][]byte{{0}, {0, 0}, {0, 1, 0}, {0, 0, 0, 0, 0}} {
 		if _, err := DecodePeerProfile(append(append([]byte{}, legacy...), extra...)); err == nil {
@@ -48,9 +46,7 @@ func TestCommunityProfileReferenceAndBounds(t *testing.T) {
 	payload = append(payload, pic...)
 	payload = append(payload, make([]byte, 13)...)
 	withPic, err := DecodePeerProfile(payload)
-	if err != nil || !bytes.Equal(withPic.Picture, pic) {
-		t.Fatal("bounded picture decode", err)
-	}
+	failIf(t, err != nil || !bytes.Equal(withPic.Picture, pic), "bounded picture decode", err)
 	oversized := append([]byte{}, payload...)
 	binary.LittleEndian.PutUint32(oversized[5:9], MaxProfilePictureBytes+1)
 	oversized = append(oversized, 0)
@@ -62,9 +58,7 @@ func TestCommunityProfileReferenceAndBounds(t *testing.T) {
 func TestCommunityProfileServingAndCancellation(t *testing.T) {
 	client := NewClient(ClientConfig{Username: "local", Uploads: NewUploadManager(3)})
 	defer client.Close()
-	if err := client.SetSelfDescription("hello 世界"); err != nil {
-		t.Fatal(err)
-	}
+	must(t, client.SetSelfDescription("hello 世界"))
 	a, b := net.Pipe()
 	defer a.Close()
 	defer b.Close()
@@ -73,9 +67,7 @@ func TestCommunityProfileServingAndCancellation(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 	profile, err := requestPeerProfile(ctx, a)
-	if err != nil || profile.Description != "hello 世界" || profile.UploadSlots != 3 || !profile.SlotsAvailable || profile.UploadAllowed != 0 {
-		t.Fatal("served profile", err, profile)
-	}
+	failIf(t, err != nil || profile.Description != "hello 世界" || profile.UploadSlots != 3 || !profile.SlotsAvailable || profile.UploadAllowed != 0, "served profile", err, profile)
 	if err := client.SetSelfDescription("\x1b[2J"); err == nil || client.SelfProfile().Description != profile.Description {
 		t.Fatal("invalid description published")
 	}
@@ -101,9 +93,7 @@ func TestCommunityProfileServingAndCancellation(t *testing.T) {
 			cancel()
 			select {
 			case err := <-done:
-				if !errors.Is(err, context.Canceled) {
-					t.Fatal("cancellation", err)
-				}
+				failIf(t, !errors.Is(err, context.Canceled), "cancellation", err)
 			case <-time.After(time.Second):
 				t.Fatal("profile I/O did not cancel")
 			}

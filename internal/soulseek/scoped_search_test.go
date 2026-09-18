@@ -73,12 +73,8 @@ func TestScopedSearchCompleteFanoutAndNoFallback(t *testing.T) {
 					users, roomNames = nil, names
 				}
 				results, err := c.SearchScoped(context.Background(), "song", users, roomNames)
-				if err != nil || len(results) != 100 {
-					t.Fatal("incomplete target set", len(results), err)
-				}
-				if len(c.pending) != 0 {
-					t.Fatal("subscription retained")
-				}
+				failIf(t, err != nil || len(results) != 100, "incomplete target set", len(results), err)
+				failIf(t, len(c.pending) != 0, "subscription retained")
 			})
 		})
 	}

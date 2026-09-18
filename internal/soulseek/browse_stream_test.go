@@ -13,12 +13,9 @@ func groupedPayload(t *testing.T, raw []byte) []byte {
 	t.Helper()
 	var out bytes.Buffer
 	z := zlib.NewWriter(&out)
-	if _, err := z.Write(raw); err != nil {
-		t.Fatal(err)
-	}
-	if err := z.Close(); err != nil {
-		t.Fatal(err)
-	}
+	_, err := z.Write(raw)
+	must(t, err)
+	must(t, z.Close())
 	return out.Bytes()
 }
 
@@ -28,26 +25,20 @@ func groupedRaw(t *testing.T, private bool) []byte {
 	raw.U32(1)
 	_ = raw.String("Music\\Album")
 	raw.U32(1)
-	if err := (SearchResult{Path: "disc/song.mp3", Size: 42, Extension: "mp3", Bitrate: 320}).encode(&raw); err != nil {
-		t.Fatal(err)
-	}
+	must(t, (SearchResult{Path: "disc/song.mp3", Size: 42, Extension: "mp3", Bitrate: 320}).encode(&raw))
 	raw.U32(0) // legacy unknown field
 	if private {
 		raw.U32(1)
 		_ = raw.String("Locked")
 		raw.U32(1)
-		if err := (SearchResult{Path: "secret.flac", Size: 84, Extension: "flac"}).encode(&raw); err != nil {
-			t.Fatal(err)
-		}
+		must(t, (SearchResult{Path: "secret.flac", Size: 84, Extension: "flac"}).encode(&raw))
 	}
 	return raw.Payload()
 }
 
 func TestDecodeSharedListDirectoriesPreservesRelativeNames(t *testing.T) {
 	got, err := decodeSharedListDirectories(groupedPayload(t, groupedRaw(t, true)), BrowseLimits{})
-	if err != nil || len(got) != 2 || got[0].Name != "Music\\Album" || got[0].Private || len(got[0].Files) != 1 || got[0].Files[0].Name != "disc\\song.mp3" || got[0].Files[0].Private || got[0].Files[0].Bitrate != 320 || !got[1].Private || got[1].Files[0].Name != "secret.flac" || !got[1].Files[0].Private {
-		t.Fatalf("grouped list: %+v, %v", got, err)
-	}
+	failIfFmt(t, err != nil || len(got) != 2 || got[0].Name != "Music\\Album" || got[0].Private || len(got[0].Files) != 1 || got[0].Files[0].Name != "disc\\song.mp3" || got[0].Files[0].Private || got[0].Files[0].Bitrate != 320 || !got[1].Private || got[1].Files[0].Name != "secret.flac" || !got[1].Files[0].Private, "grouped list: %+v, %v", got, err)
 }
 
 func TestDecodeSharedListDirectoriesBoundaries(t *testing.T) {
@@ -125,9 +116,7 @@ func TestBrowseSharedDirectoriesPipe(t *testing.T) {
 		}
 	}()
 	got, err := client.browseSharedDirectories(context.Background(), clientConn, nil, client.BrowseLimits())
-	if err != nil || len(got) != 1 || len(got[0].Files) != 1 || got[0].Files[0].Name != "song.mp3" {
-		t.Fatalf("pipe browse: %+v, %v", got, err)
-	}
+	failIfFmt(t, err != nil || len(got) != 1 || len(got[0].Files) != 1 || got[0].Files[0].Name != "song.mp3", "pipe browse: %+v, %v", got, err)
 }
 
 func BenchmarkDecodeSharedListDirectories(b *testing.B) {
