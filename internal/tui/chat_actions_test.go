@@ -15,7 +15,5 @@ func TestChatActionsAreVisuallyDistinctWithoutColor(t *testing.T) {
 		text.WriteString(line.text)
 		text.WriteByte('\n')
 	}
-	if !strings.Contains(text.String(), "[action]") || !strings.Contains(text.String(), "* Alice waves 世界") {
-		t.Fatal(text.String())
-	}
+	failIf(t, !strings.Contains(text.String(), "[action]") || !strings.Contains(text.String(), "* Alice waves 世界"), text.String())
 }

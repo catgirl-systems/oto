@@ -16,9 +16,7 @@ func historySettings() config.Search {
 func openHistoryDB(t *testing.T) *storage.DB {
 	t.Helper()
 	db, err := storage.Open(t.TempDir() + "/state.sqlite3")
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	t.Cleanup(func() { _ = db.Close() })
 	return db
 }
@@ -28,42 +26,24 @@ func TestHistoryPersistenceMergeLimitsAndClear(t *testing.T) {
 	settings := historySettings()
 	settings.SearchHistoryLimit, settings.FilterHistoryLimit = 2, 1
 	var first, stale historyState
-	if err := first.record(db, " one ", false, settings); err != nil {
-		t.Fatal(err)
-	}
-	if err := first.record(db, "two", false, settings); err != nil {
-		t.Fatal(err)
-	}
-	if err := first.record(db, "one", false, settings); err != nil {
-		t.Fatal(err)
-	}
+	must(t, first.record(db, " one ", false, settings))
+	must(t, first.record(db, "two", false, settings))
+	must(t, first.record(db, "one", false, settings))
 	if got, err := loadHistory(db); err != nil || !reflect.DeepEqual(got.Searches, []string{"one", "two"}) {
 		t.Fatalf("history = %#v, err=%v", got, err)
 	}
-	if err := first.record(db, "three", false, settings); err != nil {
-		t.Fatal(err)
-	}
-	if err := stale.record(db, "four", false, settings); err != nil {
-		t.Fatal(err)
-	}
+	must(t, first.record(db, "three", false, settings))
+	must(t, stale.record(db, "four", false, settings))
 	if got, err := loadHistory(db); err != nil || !reflect.DeepEqual(got.Searches, []string{"four", "three"}) {
 		t.Fatalf("latest-file merge/limit: %#v %v", got, err)
 	}
-	if err := stale.record(db, "audio", true, settings); err != nil {
-		t.Fatal(err)
-	}
-	if err := stale.record(db, "video", true, settings); err != nil {
-		t.Fatal(err)
-	}
-	if err := first.clear(db, false, settings); err != nil {
-		t.Fatal(err)
-	}
+	must(t, stale.record(db, "audio", true, settings))
+	must(t, stale.record(db, "video", true, settings))
+	must(t, first.clear(db, false, settings))
 	if got, err := loadHistory(db); err != nil || len(got.Searches) != 0 || !reflect.DeepEqual(got.Filters, []string{"video"}) {
 		t.Fatalf("clear = %#v, err=%v", got, err)
 	}
-	if err := stale.record(db, "after clear", false, settings); err != nil {
-		t.Fatal(err)
-	}
+	must(t, stale.record(db, "after clear", false, settings))
 	got, err := loadHistory(db)
 	if err != nil || !reflect.DeepEqual(got.Searches, []string{"after clear"}) {
 		t.Fatalf("stale entries resurrected: %#v %v", got, err)
@@ -73,14 +53,10 @@ func TestHistoryPersistenceMergeLimitsAndClear(t *testing.T) {
 func TestHistoryConcurrentConnectionsAndUnlimited(t *testing.T) {
 	path := t.TempDir() + "/state.sqlite3"
 	first, err := storage.Open(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	defer first.Close()
 	second, err := storage.Open(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	defer second.Close()
 	settings := historySettings()
 	settings.SearchHistoryLimit = 0
@@ -101,9 +77,7 @@ func TestHistoryConcurrentConnectionsAndUnlimited(t *testing.T) {
 	}
 	wg.Wait()
 	got, err := loadHistory(first)
-	if err != nil || len(got.Searches) != 20 {
-		t.Fatalf("concurrent history: %d %v", len(got.Searches), err)
-	}
+	failIfFmt(t, err != nil || len(got.Searches) != 20, "concurrent history: %d %v", len(got.Searches), err)
 }
 
 func TestHistoryCursorCyclesAndRestoresDraft(t *testing.T) {
@@ -111,19 +85,11 @@ func TestHistoryCursorCyclesAndRestoresDraft(t *testing.T) {
 	var cursor historyCursor
 	cursor.reset("current")
 	value, ok := cursor.move("current", items, true)
-	if !ok || value != "newer" {
-		t.Fatalf("newer: %q %v", value, ok)
-	}
+	failIfFmt(t, !ok || value != "newer", "newer: %q %v", value, ok)
 	value, ok = cursor.move(value, items, true)
-	if !ok || value != "older" {
-		t.Fatalf("older: %q %v", value, ok)
-	}
+	failIfFmt(t, !ok || value != "older", "older: %q %v", value, ok)
 	value, ok = cursor.move(value, items, false)
-	if !ok || value != "newer" {
-		t.Fatalf("back: %q %v", value, ok)
-	}
+	failIfFmt(t, !ok || value != "newer", "back: %q %v", value, ok)
 	value, ok = cursor.move(value, items, false)
-	if !ok || value != "current" {
-		t.Fatalf("draft: %q %v", value, ok)
-	}
+	failIfFmt(t, !ok || value != "current", "draft: %q %v", value, ok)
 }

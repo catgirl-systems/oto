@@ -41,14 +41,10 @@ func TestTransferSearchDraft(t *testing.T) {
 					t.Fatal("prefill started network work")
 				}
 				if tc.want == "" {
-					if m.workspace != workspaceTransfers || m.notice == "" {
-						t.Fatal("missing parent was not rejected")
-					}
+					failIf(t, m.workspace != workspaceTransfers || m.notice == "", "missing parent was not rejected")
 					return
 				}
-				if m.workspace != workspaceSearch || !m.editing || m.input != tc.want || len(m.searchTabs) != 0 {
-					t.Fatalf("draft: %+v", m)
-				}
+				failIfFmt(t, m.workspace != workspaceSearch || !m.editing || m.input != tc.want || len(m.searchTabs) != 0, "draft: %+v", m)
 				if cmd := m.editKey(key("enter")); cmd == nil || len(m.searchTabs) != 1 || m.searchTabs[0].filter != "type:audio" {
 					t.Fatal("Enter did not submit with default filter")
 				}
@@ -56,9 +52,7 @@ func TestTransferSearchDraft(t *testing.T) {
 				m.workspace, m.cursor = workspaceTransfers, tree.cursorForSource(0)
 				m.key(key("s"))
 				m.editKey(tea.KeyPressMsg(tea.Key{Code: tea.KeyEscape}))
-				if len(m.searchTabs) != 1 || m.editing {
-					t.Fatal("Escape changed result tabs")
-				}
+				failIf(t, len(m.searchTabs) != 1 || m.editing, "Escape changed result tabs")
 			})
 		}
 	}
@@ -82,46 +76,32 @@ func TestSavedDefaultFilters(t *testing.T) {
 	m.searchFilter = "free:true"
 	m.cfg.Search.DefaultFilter = "type:video" // unsaved draft
 	m.openSearch("two")
-	if m.searchTabs[0].filter != "free:true" || m.searchTabs[1].filter != "type:audio" {
-		t.Fatal("tab filters leaked or draft applied")
-	}
+	failIf(t, m.searchTabs[0].filter != "free:true" || m.searchTabs[1].filter != "type:audio", "tab filters leaked or draft applied")
 	updated, _ := m.Update(settingsMsg{search: m.cfg.Search, err: errors.New("save failed")})
 	m = updated.(model)
 	m.openSearch("three")
-	if m.searchFilter != "type:audio" {
-		t.Fatal("failed save changed default")
-	}
+	failIf(t, m.searchFilter != "type:audio", "failed save changed default")
 	updated, _ = m.Update(settingsMsg{search: m.cfg.Search})
 	m = updated.(model)
 	m.openSearch("four")
-	if m.searchFilter != "type:video" {
-		t.Fatal("saved default not applied")
-	}
+	failIf(t, m.searchFilter != "type:video", "saved default not applied")
 	m.openSearchPage("wish", "", daemon.SearchPage{ID: "wish"})
-	if m.searchFilter != "" {
-		t.Fatal("empty wishlist filter inherited default")
-	}
+	failIf(t, m.searchFilter != "", "empty wishlist filter inherited default")
 	for _, filter := range []string{"", "country:US"} {
 		fresh := newModel(context.Background(), nil, "", false, cfg)
 		fresh.key(key("f"))
 		fresh.input = filter
 		fresh.editKey(key("enter"))
 		fresh.openSearch("draft")
-		if fresh.searchFilter != filter {
-			t.Fatalf("explicit draft %q lost", filter)
-		}
+		failIfFmt(t, fresh.searchFilter != filter, "explicit draft %q lost", filter)
 		fresh.openSearch("next")
-		if fresh.searchFilter != "type:audio" {
-			t.Fatal("draft persisted beyond one search")
-		}
+		failIf(t, fresh.searchFilter != "type:audio", "draft persisted beyond one search")
 	}
 	// The attached daemon, not a local config file, owns the accepted default.
 	updated, _ = m.Update(statusMsg{snapshot: daemon.Snapshot{Config: cfg.Redacted()}})
 	m = updated.(model)
 	m.openSearch("attached")
-	if m.searchFilter != "type:audio" {
-		t.Fatal("daemon default not used")
-	}
+	failIf(t, m.searchFilter != "type:audio", "daemon default not used")
 	m.workspace, m.settingsSection = workspaceSettings, settingsSearch
 	for i, field := range m.settingFields() {
 		if field.id == settingDefaultFilter {
@@ -131,15 +111,11 @@ func TestSavedDefaultFilters(t *testing.T) {
 	m.beginEdit()
 	m.input = "type:"
 	m.editKey(key("tab"))
-	if !m.filterEditing || m.input == "type:" {
-		t.Fatal("default editor lacks completion")
-	}
+	failIf(t, !m.filterEditing || m.input == "type:", "default editor lacks completion")
 	before := m.cfg.Search.DefaultFilter
 	m.input = "in:["
 	m.editKey(key("enter"))
-	if m.err == "" || m.cfg.Search.DefaultFilter != before {
-		t.Fatal("invalid default accepted")
-	}
+	failIf(t, m.err == "" || m.cfg.Search.DefaultFilter != before, "invalid default accepted")
 }
 
 func TestScanAndCompletionSignals(t *testing.T) {
@@ -150,21 +126,15 @@ func TestScanAndCompletionSignals(t *testing.T) {
 	snap := daemon.Snapshot{Config: cfg.Redacted(), Shares: cfg.Shares, ShareIndexRevision: 1, DownloadNotification: daemon.DownloadNotification{SessionID: "session", Sequence: 5}}
 	updated, cmd := m.Update(statusMsg{snapshot: snap})
 	m = updated.(model)
-	if cmd != nil || m.notice != "" {
-		t.Fatal("initial attach replayed notification")
-	}
+	failIf(t, cmd != nil || m.notice != "", "initial attach replayed notification")
 	root := m.shareTree.nodes[0]
 	m.shareTree.add("child", root.id, "song", `Music\song`, "", "", treeFile, 0)
 	snap.ShareScan = &daemon.ShareScan{State: "scanning", Root: "Music", Files: 12, Directories: 3, ElapsedMS: 3000}
 	updated, _ = m.Update(statusMsg{snapshot: snap})
 	m = updated.(model)
-	if len(m.shareTree.nodes) != 2 || !strings.Contains(m.renderShares(100, 12), "3s") || !strings.Contains(m.footerView(), "Scanning shares") {
-		t.Fatal("scan status/in-progress index incorrect")
-	}
+	failIf(t, len(m.shareTree.nodes) != 2 || !strings.Contains(m.renderShares(100, 12), "3s") || !strings.Contains(m.footerView(), "Scanning shares"), "scan status/in-progress index incorrect")
 	m.searchTabs = []searchTab{{query: "interactive", searching: true, operation: 1}}
-	if !strings.Contains(m.footerView(), "interactive") {
-		t.Fatal("background scan hid interactive activity")
-	}
+	failIf(t, !strings.Contains(m.footerView(), "interactive"), "background scan hid interactive activity")
 	m.searchTabs = nil
 	snap.ShareIndexRevision = 2
 	snap.ShareScan.State = "completed"
@@ -172,26 +142,18 @@ func TestScanAndCompletionSignals(t *testing.T) {
 	snap.DownloadNotification.Message = "Album downloaded"
 	updated, cmd = m.Update(statusMsg{snapshot: snap})
 	m = updated.(model)
-	if cmd == nil || m.notice != "Album downloaded" || len(m.shareTree.nodes) != 1 {
-		t.Fatal("publication/notification not reflected")
-	}
+	failIf(t, cmd == nil || m.notice != "Album downloaded" || len(m.shareTree.nodes) != 1, "publication/notification not reflected")
 	updated, cmd = m.Update(statusMsg{snapshot: snap})
 	m = updated.(model)
-	if cmd != nil {
-		t.Fatal("repeated poll rang again")
-	}
+	failIf(t, cmd != nil, "repeated poll rang again")
 	snap.DownloadNotification.SessionID = "new-session"
 	snap.DownloadNotification.Sequence = 1
 	updated, cmd = m.Update(statusMsg{snapshot: snap})
 	m = updated.(model)
-	if cmd != nil {
-		t.Fatal("daemon restart replayed old completion")
-	}
+	failIf(t, cmd != nil, "daemon restart replayed old completion")
 	for _, width := range []int{20, 40, 100} {
 		m.width = width
-		if strings.Contains(m.View().Content, "\x1b[") {
-			t.Fatal("NO_COLOR styling")
-		}
+		failIf(t, strings.Contains(m.View().Content, "\x1b["), "NO_COLOR styling")
 	}
 	m.workspace, m.settingsSection = workspaceSettings, settingsDownloads
 	for i, f := range m.settingFields() {
@@ -200,7 +162,5 @@ func TestScanAndCompletionSignals(t *testing.T) {
 		}
 	}
 	m.key(key("enter"))
-	if !m.cfg.Downloads.FileNotifications {
-		t.Fatal("file notification toggle failed")
-	}
+	failIf(t, !m.cfg.Downloads.FileNotifications, "file notification toggle failed")
 }

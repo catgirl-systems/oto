@@ -24,17 +24,13 @@ func TestChatCommandRejectionVersusLostResponse(t *testing.T) {
 		}
 		m.applyChatCommand(chatCommandMsg{operation: 1, identity: id, key: key, requestID: "one", err: err})
 		draft := m.community.chats.drafts[key]
-		if m.community.chats.busy || draft.text != "/unknown" || (draft.requestID == "") != rejected {
-			t.Fatal(rejected, draft)
-		}
+		failIf(t, m.community.chats.busy || draft.text != "/unknown" || (draft.requestID == "") != rejected, rejected, draft)
 	}
 }
 func TestCommandOutputBounds(t *testing.T) {
 	for _, size := range [][2]int{{120, 40}, {80, 24}, {40, 16}, {20, 6}, {10, 3}} {
 		m := model{width: size[0], height: size[1], commandOutput: &commandOutput{text: "{\"name\":\"世界\"}"}}
 		view := m.commandOutputView()
-		if lipgloss.Width(view) > m.width || lipgloss.Height(view) > m.height {
-			t.Fatal(size, view)
-		}
+		failIf(t, lipgloss.Width(view) > m.width || lipgloss.Height(view) > m.height, size, view)
 	}
 }

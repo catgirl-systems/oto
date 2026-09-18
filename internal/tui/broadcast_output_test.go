@@ -15,14 +15,11 @@ func TestBroadcastViewerPagesConsentAndStaleResponses(t *testing.T) {
 	ctx := context.Background()
 	id := m.community.summary.CommunityIdentity
 	for _, name := range []string{"Alice", "猫"} {
-		if _, err := m.client.SetCommunityBuddy(ctx, daemon.CommunityBuddyRequest{CommunityIdentity: id, Username: name}); err != nil {
-			t.Fatal(err)
-		}
+		_, err := m.client.SetCommunityBuddy(ctx, daemon.CommunityBuddyRequest{CommunityIdentity: id, Username: name})
+		must(t, err)
 	}
 	out, err := m.client.PreviewCommunityBroadcast(ctx, daemon.CommunityBroadcastRequest{CommunityIdentity: id, RequestID: "viewer", Audience: "buddies", Text: "hello 👋", Offline: []string{"Alice", "猫"}})
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	m.showBroadcastOutput(out)
 	owner := m.commandOutput
 	b := owner.broadcast
@@ -31,38 +28,24 @@ func TestBroadcastViewerPagesConsentAndStaleResponses(t *testing.T) {
 	b.reviewed = 1
 	press := func(code rune) { drainChat(t, &m, m.key(tea.KeyPressMsg(tea.Key{Code: code}))) }
 	press('s')
-	if b.dialog != "" || !strings.Contains(b.err, "Review all") {
-		t.Fatal(b)
-	}
+	failIf(t, b.dialog != "" || !strings.Contains(b.err, "Review all"), b)
 	press(']')
-	if b.cursor != 1 || b.reviewed != 2 || b.page.Recipients[0].Username != "猫" {
-		t.Fatal(b)
-	}
+	failIf(t, b.cursor != 1 || b.reviewed != 2 || b.page.Recipients[0].Username != "猫", b)
 	press('s')
-	if b.dialog != "send" || b.confirm {
-		t.Fatal("unsafe default")
-	}
+	failIf(t, b.dialog != "send" || b.confirm, "unsafe default")
 	press(tea.KeyEnter)
-	if b.page.State != "preview" || b.dialog != "" {
-		t.Fatal("default sent")
-	}
+	failIf(t, b.page.State != "preview" || b.dialog != "", "default sent")
 	press('x')
 	press(tea.KeyRight)
 	press(tea.KeyEnter)
-	if b.page.State != "stopped" {
-		t.Fatal(b)
-	}
+	failIf(t, b.page.State != "stopped", b)
 	m.showBroadcastOutput(out)
 	current := m.commandOutput
 	m.applyBroadcastOutput(broadcastOutputMsg{owner: owner, page: out})
-	if m.commandOutput != current {
-		t.Fatal("stale owner")
-	}
+	failIf(t, m.commandOutput != current, "stale owner")
 	m.community.summary.Session++
 	press('s')
-	if current.broadcast.dialog != "" || !strings.Contains(current.broadcast.err, "Session changed") {
-		t.Fatal("stale confirmation")
-	}
+	failIf(t, current.broadcast.dialog != "" || !strings.Contains(current.broadcast.err, "Session changed"), "stale confirmation")
 	for _, size := range [][2]int{{120, 40}, {80, 24}, {40, 16}, {20, 6}, {10, 3}} {
 		m.width, m.height = size[0], size[1]
 		for _, dialog := range []string{"", "send", "stop"} {
@@ -70,12 +53,8 @@ func TestBroadcastViewerPagesConsentAndStaleResponses(t *testing.T) {
 			current.broadcast.err = ""
 			m.renderBroadcastOutput()
 			v := m.commandOutputView()
-			if lipgloss.Width(v) > m.width || lipgloss.Height(v) > m.height {
-				t.Fatal(size, v)
-			}
-			if dialog != "" && m.width >= 20 && !strings.Contains(v, "[Cancel]") {
-				t.Fatal("confirmation invisible", size, v)
-			}
+			failIf(t, lipgloss.Width(v) > m.width || lipgloss.Height(v) > m.height, size, v)
+			failIf(t, dialog != "" && m.width >= 20 && !strings.Contains(v, "[Cancel]"), "confirmation invisible", size, v)
 		}
 	}
 }

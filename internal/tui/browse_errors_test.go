@@ -24,14 +24,10 @@ func TestBrowseFailureLifecycle(t *testing.T) {
 		t.Helper()
 		view := m.renderBrowse(96, 18)
 		for _, want := range []string{"! Browse failed — ijustlikemusic1020", "connection timed out", "r retry browse", "/ browse another user", "(error)"} {
-			if !strings.Contains(view, want) {
-				t.Fatalf("missing %q:\n%s", want, view)
-			}
+			failIfFmt(t, !strings.Contains(view, want), "missing %q:\n%s", want, view)
 		}
 		for _, unwanted := range []string{"Enter a Soulseek username", "No shared files", "No matching shared files", "unrelated error"} {
-			if strings.Contains(view, unwanted) {
-				t.Fatalf("unexpected %q:\n%s", unwanted, view)
-			}
+			failIfFmt(t, strings.Contains(view, unwanted), "unexpected %q:\n%s", unwanted, view)
 		}
 	}
 	assertFailure()
@@ -46,12 +42,8 @@ func TestBrowseFailureLifecycle(t *testing.T) {
 	m.switchWorkspace(workspaceBrowse)
 	assertFailure()
 	m.openBrowse("other", "", false)
-	if strings.Contains(m.renderBrowse(96, 18), "! Browse failed") {
-		t.Fatal("error leaked into another user's pane")
-	}
-	if !strings.Contains(m.browseTabsLine(96), "ijustlikemusic1020 (error)") {
-		t.Fatal("inactive failure has no marker")
-	}
+	failIf(t, strings.Contains(m.renderBrowse(96, 18), "! Browse failed"), "error leaked into another user's pane")
+	failIf(t, !strings.Contains(m.browseTabsLine(96), "ijustlikemusic1020 (error)"), "inactive failure has no marker")
 	m.switchBrowseTab(-1)
 	assertFailure()
 	m.key(key("r"))
@@ -64,9 +56,7 @@ func TestBrowseFailureLifecycle(t *testing.T) {
 	}
 	request = m.browseTabs[0].request
 	update(browseMsg{user: m.browseUser, request: request, err: errors.New("connection reset by peer")})
-	if !strings.Contains(m.renderBrowse(96, 18), "connection reset by peer") {
-		t.Fatal("second failure missing")
-	}
+	failIf(t, !strings.Contains(m.renderBrowse(96, 18), "connection reset by peer"), "second failure missing")
 	m.key(key("r"))
 	update(browseMsg{user: m.browseUser, request: m.browseTabs[0].request, page: daemon.BrowsePage{Revision: 5}})
 	if view := m.renderBrowse(96, 18); !strings.Contains(view, "No shared files.") || strings.Contains(view, "(error)") {
@@ -86,15 +76,11 @@ func TestBrowsePageFailurePersistence(t *testing.T) {
 	failed := m.browsePages[browsePageKey("Music", "")].request
 	m.openBrowse("other", "", false)
 	update(browsePageMsg{user: "peer", folder: "Music", revision: 8, request: failed, err: errors.New("folder unavailable")})
-	if m.browseUser != "other" {
-		t.Fatal("background failure stole focus")
-	}
+	failIf(t, m.browseUser != "other", "background failure stole focus")
 	m.switchBrowseTab(-1)
 	view := m.renderBrowse(96, 18)
 	for _, want := range []string{"Could not load browse page", "Music: folder unavailable", "FILE", "Music"} {
-		if !strings.Contains(view, want) {
-			t.Fatalf("page failure missing %q:\n%s", want, view)
-		}
+		failIfFmt(t, !strings.Contains(view, want), "page failure missing %q:\n%s", want, view)
 	}
 	m.requestRemotePage("", "", 1)
 	request := m.browsePages[browsePageKey("", "")].request
@@ -129,9 +115,7 @@ func TestBrowsePageFailurePersistence(t *testing.T) {
 		t.Fatal("stale page reply restored failure")
 	}
 	update(browsePageMsg{user: "peer", folder: "Music", revision: 8, request: current, page: daemon.BrowsePage{Revision: 8, Folder: "Music"}})
-	if !m.browsePages[browsePageKey("Music", "")].loaded {
-		t.Fatal("successful retry not loaded")
-	}
+	failIf(t, !m.browsePages[browsePageKey("Music", "")].loaded, "successful retry not loaded")
 }
 
 func TestBrowseFailureRenderingBounds(t *testing.T) {
@@ -140,20 +124,14 @@ func TestBrowseFailureRenderingBounds(t *testing.T) {
 			t.Setenv("NO_COLOR", noColor)
 			m := model{workspace: workspaceBrowse, browseTabs: []browseTab{{user: "peer", err: "\x1b[31mreset\x1b[0m\x07\r\n" + strings.Repeat("音楽é very-long-detail ", 80)}}}
 			m.loadBrowseTab(0)
-			if strings.IndexFunc(m.err, unicode.IsControl) >= 0 {
-				t.Fatalf("footer error contains controls: %q", m.err)
-			}
+			failIfFmt(t, strings.IndexFunc(m.err, unicode.IsControl) >= 0, "footer error contains controls: %q", m.err)
 			for _, size := range [][2]int{{96, 18}, {36, 6}, {20, 4}, {8, 2}, {1, 1}, {1, 4}} {
 				width, height := size[0], size[1]
 				heading, detail := m.browseFailure()
 				view := strings.Join(browseErrorLines(heading, detail, width, height), "\n")
 				assertBrowseBounds(t, view, width, height)
-				if width >= 20 && !strings.Contains(view, "Browse failed") {
-					t.Fatalf("failure missing: %q", view)
-				}
-				if height >= 3 && !strings.Contains(view, "…") {
-					t.Fatal("overflow not marked")
-				}
+				failIfFmt(t, width >= 20 && !strings.Contains(view, "Browse failed"), "failure missing: %q", view)
+				failIf(t, height >= 3 && !strings.Contains(view, "…"), "overflow not marked")
 			}
 			for _, size := range [][2]int{{96, 18}, {36, 6}, {32, 3}, {12, 1}} {
 				view := m.renderBrowse(size[0], size[1])
@@ -162,16 +140,12 @@ func TestBrowseFailureRenderingBounds(t *testing.T) {
 			m.width, m.height, m.err = 30, 5, "unrelated error"
 			view := m.View().Content
 			assertBrowseBounds(t, view, 30, 5)
-			if !strings.Contains(view, "Browse failed") || strings.Contains(view, "unrelated error") {
-				t.Fatalf("compact failure: %q", view)
-			}
+			failIfFmt(t, !strings.Contains(view, "Browse failed") || strings.Contains(view, "unrelated error"), "compact failure: %q", view)
 			t.Log("Compact failure:\n" + ansi.Strip(view))
 			t.Log("Normal failure:\n" + ansi.Strip(m.renderBrowse(96, 18)))
 			page := browsePageState{err: "\x1b]0;bad title\x07reason\t\x00", folder: "Music\x1b[2J\r", query: "jazz\x07"}
 			_, detail := (browseTab{pages: map[string]browsePageState{"page": page}}).failure()
-			if detail != "Music · search: jazz: reason" {
-				t.Fatalf("unsafe context: %q", detail)
-			}
+			failIfFmt(t, detail != "Music · search: jazz: reason", "unsafe context: %q", detail)
 		})
 	}
 }
@@ -179,20 +153,12 @@ func TestBrowseFailureRenderingBounds(t *testing.T) {
 func assertBrowseBounds(t *testing.T, view string, width, height int) {
 	t.Helper()
 	plain := ansi.Strip(view)
-	if len(strings.Split(plain, "\n")) > height {
-		t.Fatalf("height exceeds %d: %q", height, plain)
-	}
+	failIfFmt(t, len(strings.Split(plain, "\n")) > height, "height exceeds %d: %q", height, plain)
 	for _, line := range strings.Split(plain, "\n") {
-		if ansi.StringWidth(line) > width {
-			t.Fatalf("width exceeds %d: %q", width, line)
-		}
-		if strings.IndexFunc(line, unicode.IsControl) >= 0 {
-			t.Fatalf("control character: %q", line)
-		}
+		failIfFmt(t, ansi.StringWidth(line) > width, "width exceeds %d: %q", width, line)
+		failIfFmt(t, strings.IndexFunc(line, unicode.IsControl) >= 0, "control character: %q", line)
 	}
-	if !colorsEnabled() && strings.Contains(view, "\x1b") {
-		t.Fatalf("NO_COLOR contains escape: %q", view)
-	}
+	failIfFmt(t, !colorsEnabled() && strings.Contains(view, "\x1b"), "NO_COLOR contains escape: %q", view)
 }
 
 func TestBrowseSuccessStatesRemainDistinct(t *testing.T) {
@@ -203,11 +169,7 @@ func TestBrowseSuccessStatesRemainDistinct(t *testing.T) {
 		m := model{workspace: workspaceBrowse, browseTabs: []browseTab{tab}}
 		m.loadBrowseTab(0)
 		view := m.renderBrowse(96, 18)
-		if !strings.Contains(view, "No matching shared files") || strings.Contains(view, "(error)") {
-			t.Fatalf("success rendered as failure:\n%s", view)
-		}
-		if strings.Contains(view, "(cached)") != cached {
-			t.Fatalf("cached distinction lost:\n%s", view)
-		}
+		failIfFmt(t, !strings.Contains(view, "No matching shared files") || strings.Contains(view, "(error)"), "success rendered as failure:\n%s", view)
+		failIfFmt(t, strings.Contains(view, "(cached)") != cached, "cached distinction lost:\n%s", view)
 	}
 }
