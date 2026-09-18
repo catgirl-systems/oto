@@ -65,9 +65,7 @@ func newTerminal(t *testing.T, server string) *terminal {
 	t.Helper()
 	// Short private paths also keep Unix socket names below sockaddr_un limits.
 	root, err := os.MkdirTemp("", "oto-e2e-")
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	h := &terminal{t: t, root: root, configPath: filepath.Join(root, "config.json")}
 	h.env = []string{
 		"PATH=" + os.Getenv("PATH"), "TERM=xterm-256color", "LANG=C.UTF-8", "NO_COLOR=1",
@@ -89,16 +87,12 @@ func newTerminal(t *testing.T, server string) *terminal {
 	cfg.Logging.Level = "DEBUG"
 	cfg.Soulseek.Username, cfg.Soulseek.Password = "terminal", "local-test-only"
 	reserved, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	cfg.Soulseek.Server, cfg.Soulseek.ListenAddr = server, reserved.Addr().String()
 	_ = reserved.Close()
 	cfg.Soulseek.NATPMPPortMapping, cfg.Soulseek.UPnPPortMapping = false, false
 	cfg.DownloadDir, cfg.AudioMetadata = filepath.Join(root, "downloads"), false
-	if err := cfg.Save(h.configPath); err != nil {
-		t.Fatal(err)
-	}
+	must(t, cfg.Save(h.configPath))
 	h.startDaemon()
 	return h
 }
@@ -107,9 +101,7 @@ func (h *terminal) startDaemon() {
 	t := h.t
 	root := h.root
 	log, err := os.OpenFile(filepath.Join(root, "daemon.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	cmd := exec.Command(binaryPath, "daemon", "--config", h.configPath)
 	cmd.Env, cmd.Stdout, cmd.Stderr = h.env, log, log
 	if err := cmd.Start(); err != nil {

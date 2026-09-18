@@ -118,9 +118,7 @@ func TestCommunityTerminalPrivateChatLifecycle(t *testing.T) {
 	h.wait("fixture PM sent", func() bool {
 		select {
 		case p := <-sent:
-			if !bytes.Equal(p, fixtures["pm-send"]) {
-				t.Fatalf("unexpected PM frame: %x", p)
-			}
+			failIfFmt(t, !bytes.Equal(p, fixtures["pm-send"]), "unexpected PM frame: %x", p)
 			return true
 		default:
 			return false
@@ -182,9 +180,7 @@ func TestCommunityTerminalPrivateChatLifecycle(t *testing.T) {
 		select {
 		case payload := <-sent:
 			want := "q/?猫😀 second line"
-			if len(payload) != 13+len(want) || !bytes.Equal(payload[:9], fixtures["pm-send"][:9]) || binary.LittleEndian.Uint32(payload[9:13]) != uint32(len(want)) || string(payload[13:]) != want {
-				t.Fatal("multiline preview did not match server-compatible wire text")
-			}
+			failIf(t, len(payload) != 13+len(want) || !bytes.Equal(payload[:9], fixtures["pm-send"][:9]) || binary.LittleEndian.Uint32(payload[9:13]) != uint32(len(want)) || string(payload[13:]) != want, "multiline preview did not match server-compatible wire text")
 			return true
 		default:
 			return false
@@ -192,9 +188,7 @@ func TestCommunityTerminalPrivateChatLifecycle(t *testing.T) {
 	})
 	h.screen("first", "[sent]")
 	// Offline sends remain durable and expose usable cancel/retry controls.
-	if err := h.client.SetPresence(context.Background(), daemon.PresenceOffline); err != nil {
-		t.Fatal(err)
-	}
+	must(t, h.client.SetPresence(context.Background(), daemon.PresenceOffline))
 	h.screen("first", "Offline")
 	h.command("send-keys", "-t", "first", "-l", "queued across restart")
 	h.command("send-keys", "-t", "first", "Enter")
@@ -216,15 +210,11 @@ func TestCommunityTerminalPrivateChatLifecycle(t *testing.T) {
 	h.command("send-keys", "-t", "second", "Right", "Enter")
 	h.wait("second detached", func() bool { _, err := h.tmux("has-session", "-t", "second"); return err != nil })
 	before, err := h.client.CommunitySummary(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	h.stopDaemon()
 	h.startDaemon()
 	after, err := h.client.CommunitySummary(context.Background())
-	if err != nil || after.Daemon == before.Daemon {
-		t.Fatal("daemon did not restart", err)
-	}
+	failIf(t, err != nil || after.Daemon == before.Daemon, "daemon did not restart", err)
 	h.wait("offline outbox restored", func() bool {
 		select {
 		case <-sent:
@@ -248,9 +238,7 @@ func TestCommunityTerminalPrivateChatLifecycle(t *testing.T) {
 	incoming <- fixtures["pm-offline"]
 	h.wait("cleared replay acknowledged", func() bool { return acknowledged.Load() == 63 })
 	page, err := h.client.CommunityConversations(context.Background(), daemon.CommunityConversationsRequest{CommunityIdentity: after.CommunityIdentity, Kind: "private"})
-	if err != nil || len(page.Conversations) != 1 || page.Conversations[0].LatestID != 0 || page.Conversations[0].Unread != 0 {
-		t.Fatal("replay resurrected cleared content", page, err)
-	}
+	failIf(t, err != nil || len(page.Conversations) != 1 || page.Conversations[0].LatestID != 0 || page.Conversations[0].Unread != 0, "replay resurrected cleared content", page, err)
 	h.screen("reattached", "No messages in this page")
 	h.command("send-keys", "-t", "reattached", "q")
 }

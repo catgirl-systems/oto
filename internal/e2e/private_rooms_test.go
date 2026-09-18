@@ -183,16 +183,12 @@ func TestCommunityTerminalPrivateRooms(t *testing.T) {
 	h.command("set-buffer", "--", "hello\n世界")
 	h.command("paste-buffer", "-p", "-t", "private")
 	h.screen("private", "hello↵世界")
-	if progress.walls.Load() != 0 {
-		t.Fatal("paste submitted wall")
-	}
+	failIf(t, progress.walls.Load() != 0, "paste submitted wall")
 	h.command("send-keys", "-t", "private", "Enter")
 	h.screen("private", "[Cancel]")
 	h.command("send-keys", "-t", "private", "Enter")
 	h.screen("private", "local draft")
-	if progress.walls.Load() != 0 {
-		t.Fatal("Cancel submitted wall")
-	}
+	failIf(t, progress.walls.Load() != 0, "Cancel submitted wall")
 	h.command("send-keys", "-t", "private", "Enter", "Right", "Enter")
 	h.wait("own wall confirmed", func() bool { return progress.walls.Load() == 1 })
 	h.screen("private", "terminal: hello 世界")
@@ -214,9 +210,7 @@ func TestCommunityTerminalPrivateRooms(t *testing.T) {
 	h.screen("private", "[Cancel]")
 	h.command("send-keys", "-t", "private", "Enter")
 	h.screen("private", "Room wall")
-	if progress.walls.Load() != 3 {
-		t.Fatal("Cancel cleared wall")
-	}
+	failIf(t, progress.walls.Load() != 3, "Cancel cleared wall")
 	h.command("send-keys", "-t", "private", "C", "Right", "Enter")
 	h.wait("clear own wall", func() bool { return progress.walls.Load() == 4 })
 	h.screen("private", "Bob: hello 世界")
@@ -227,9 +221,7 @@ func TestCommunityTerminalPrivateRooms(t *testing.T) {
 		h.command("resize-window", "-t", "private", "-x", fmt.Sprint(size[0]), "-y", fmt.Sprint(size[1]))
 		h.screen("private", "猫😀")
 	}
-	if progress.walls.Load() != 4 {
-		t.Fatal("editing sent wall")
-	}
+	failIf(t, progress.walls.Load() != 4, "editing sent wall")
 	h.command("send-keys", "-t", "private", "Escape")
 	h.screen("private", "Room wall")
 	h.command("send-keys", "-t", "private", "Escape")
@@ -242,9 +234,7 @@ func TestCommunityTerminalPrivateRooms(t *testing.T) {
 	h.screen("private", "[Cancel]")
 	h.command("send-keys", "-t", "private", "Enter")
 	h.screen("private", "Private roles")
-	if progress.roleWrites.Load() != 0 {
-		t.Fatal("Cancel changed membership")
-	}
+	failIf(t, progress.roleWrites.Load() != 0, "Cancel changed membership")
 	h.command("send-keys", "-t", "private", "d", "Right", "Enter")
 	h.screen("private", "Last remove-member: confirmed")
 	h.command("send-keys", "-t", "private", "a")
@@ -259,9 +249,7 @@ func TestCommunityTerminalPrivateRooms(t *testing.T) {
 	h.screen("private", "Last add-operator: confirmed")
 	h.command("send-keys", "-t", "private", "Home", "Down", "O", "Right", "Enter")
 	h.screen("private", "Last remove-operator: confirmed")
-	if progress.roleWrites.Load() != 4 {
-		t.Fatal("unexpected management writes", progress.roleWrites.Load())
-	}
+	failIf(t, progress.roleWrites.Load() != 4, "unexpected management writes", progress.roleWrites.Load())
 	h.command("send-keys", "-t", "private", "I", "Right", "Enter")
 	h.wait("invitations disabled", func() bool { return !progress.invitations.Load() })
 	h.screen("private", "Invitations: false")
@@ -269,9 +257,7 @@ func TestCommunityTerminalPrivateRooms(t *testing.T) {
 	h.screen("private", "Role: member (fresh)")
 	h.command("send-keys", "-t", "private", "a")
 	h.screen("private", "does not permit")
-	if progress.roleWrites.Load() != 5 {
-		t.Fatal("member sent management action")
-	}
+	failIf(t, progress.roleWrites.Load() != 5, "member sent management action")
 	h.command("send-keys", "-t", "private", "c", "Right", "Enter")
 	h.wait("membership revoked", func() bool { return progress.role.Load() == -2 })
 	h.screen("private", "revoked")
@@ -284,11 +270,7 @@ func TestCommunityTerminalPrivateRooms(t *testing.T) {
 	h.startDaemon()
 	h.wait("invitation preference restored", func() bool { return !progress.invitations.Load() })
 	summary, err := h.client.CommunitySummary(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	page, err := h.client.CommunityRooms(context.Background(), daemon.CommunityRoomsRequest{CommunityIdentity: summary.CommunityIdentity, Room: "oto test"})
-	if err != nil || len(page.Rooms) != 1 || page.Rooms[0].Remembered || progress.joins.Load() != 3 {
-		t.Fatal("revoked room rejoined or lost retained history", err, page)
-	}
+	failIf(t, err != nil || len(page.Rooms) != 1 || page.Rooms[0].Remembered || progress.joins.Load() != 3, "revoked room rejoined or lost retained history", err, page)
 }

@@ -76,13 +76,10 @@ func TestCommunityScopedSearchTerminal(t *testing.T) {
 	h.screen("scopes", "No matching results")
 	ctx := context.Background()
 	summary, err := h.client.CommunitySummary(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	for i := range 35 {
-		if _, err := h.client.SetCommunityBuddy(ctx, daemon.CommunityBuddyRequest{CommunityIdentity: summary.CommunityIdentity, Username: fmt.Sprintf("buddy %02d", i)}); err != nil {
-			t.Fatal(err)
-		}
+		_, err := h.client.SetCommunityBuddy(ctx, daemon.CommunityBuddyRequest{CommunityIdentity: summary.CommunityIdentity, Username: fmt.Sprintf("buddy %02d", i)})
+		must(t, err)
 	}
 	h.command("send-keys", "-t", "scopes", "Tab", "Tab", "Tab", "Tab", "C-NPage")
 	h.screen("scopes", "N join/create")
@@ -105,7 +102,5 @@ func TestCommunityScopedSearchTerminal(t *testing.T) {
 	h.command("send-keys", "-t", "scopes", "Enter")
 	h.wait("complete buddy set", func() bool { return buddySearches.Load() == 35 })
 	h.screen("scopes", "No results; scoped searches")
-	if globalSearches.Load() != 0 {
-		t.Fatal("scoped search fell back to global")
-	}
+	failIf(t, globalSearches.Load() != 0, "scoped search fell back to global")
 }

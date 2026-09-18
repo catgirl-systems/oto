@@ -175,13 +175,9 @@ func TestSharedFolderSendTerminalPartialOutcomes(t *testing.T) {
 		return err == nil && summary.Connected
 	})
 	root := filepath.Join(h.root, "shared")
-	if err := os.Mkdir(root, 0700); err != nil {
-		t.Fatal(err)
-	}
+	must(t, os.Mkdir(root, 0700))
 	for _, name := range []string{"accept", "deny"} {
-		if err := os.WriteFile(filepath.Join(root, name), []byte(payload), 0600); err != nil {
-			t.Fatal(err)
-		}
+		must(t, os.WriteFile(filepath.Join(root, name), []byte(payload), 0600))
 	}
 	if _, err := h.client.AddShare(ctx, config.Share{Name: "Music", Path: root}); err != nil {
 		t.Fatal(err)
@@ -213,16 +209,12 @@ func TestSharedFolderSendTerminalPartialOutcomes(t *testing.T) {
 			requestID = strings.TrimSpace(strings.TrimPrefix(line, "Request: "))
 		}
 	}
-	if requestID == "" {
-		t.Fatal("missing request ID", screen)
-	}
+	failIf(t, requestID == "", "missing request ID", screen)
 	h.command("send-keys", "-t", "shared-send", "s")
 	h.screen("shared-send", "[Cancel]")
 	h.command("send-keys", "-t", "shared-send", "Enter")
 	h.screen("shared-send", "Shared send · preview")
-	if offers.Load() != 0 {
-		t.Fatal("default confirmation sent files")
-	}
+	failIf(t, offers.Load() != 0, "default confirmation sent files")
 	h.command("send-keys", "-t", "shared-send", "s")
 	h.screen("shared-send", "[Cancel]")
 	h.command("send-keys", "-t", "shared-send", "Right", "Enter")
@@ -233,9 +225,7 @@ func TestSharedFolderSendTerminalPartialOutcomes(t *testing.T) {
 	h.wait("received expected bytes", func() bool {
 		select {
 		case data := <-received:
-			if string(data) != payload {
-				t.Fatal("incorrect file bytes")
-			}
+			failIf(t, string(data) != payload, "incorrect file bytes")
 			return true
 		default:
 			return false
@@ -243,19 +233,11 @@ func TestSharedFolderSendTerminalPartialOutcomes(t *testing.T) {
 	})
 	h.command("send-keys", "-t", "shared-send", "r")
 	h.screen("shared-send", `[failed] "Music\\deny"`)
-	if offers.Load() != 2 {
-		t.Fatal("duplicate or missing offers", offers.Load())
-	}
+	failIf(t, offers.Load() != 2, "duplicate or missing offers", offers.Load())
 	conversation, err := h.client.OpenCommunityConversation(ctx, daemon.CommunityOpenConversationRequest{CommunityIdentity: summary.CommunityIdentity, Username: pm.Username})
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	page, err := h.client.CommunityMessages(ctx, daemon.CommunityMessagesRequest{CommunityIdentity: summary.CommunityIdentity, ConversationID: conversation.ID, Limit: 200})
-	if err != nil || len(page.Messages) != 200 || page.NextCursor == 0 {
-		t.Fatal("burst history lost or unbounded", err, len(page.Messages))
-	}
+	failIf(t, err != nil || len(page.Messages) != 200 || page.NextCursor == 0, "burst history lost or unbounded", err, len(page.Messages))
 	older, err := h.client.CommunityMessages(ctx, daemon.CommunityMessagesRequest{CommunityIdentity: summary.CommunityIdentity, ConversationID: conversation.ID, Limit: 200, Cursor: page.NextCursor})
-	if err != nil || len(older.Messages) != 56 || older.NextCursor != 0 || acknowledged.Load() != 256 {
-		t.Fatal("burst history pagination or ACK mismatch", err, len(older.Messages))
-	}
+	failIf(t, err != nil || len(older.Messages) != 56 || older.NextCursor != 0 || acknowledged.Load() != 256, "burst history pagination or ACK mismatch", err, len(older.Messages))
 }

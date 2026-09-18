@@ -82,15 +82,11 @@ func TestCommunityTerminalShellAndUserActions(t *testing.T) {
 	h.command("set-buffer", "-b", "input", "Alice\nnot-a-send")
 	h.command("paste-buffer", "-p", "-b", "input", "-t", "community")
 	h.screen("community", "Username must fit")
-	if watches.Load() != 0 {
-		t.Fatal("paste submitted a user request")
-	}
+	failIf(t, watches.Load() != 0, "paste submitted a user request")
 	h.command("set-buffer", "-b", "input", "Alice")
 	h.command("paste-buffer", "-p", "-b", "input", "-t", "community")
 	h.screen("community", "Alice")
-	if watches.Load() != 0 {
-		t.Fatal("single-line paste submitted a user request")
-	}
+	failIf(t, watches.Load() != 0, "single-line paste submitted a user request")
 	h.command("send-keys", "-t", "community", "Enter")
 	h.screen("community", "Status: online")
 	h.screen("community", "Shares: 99 files, 4 folders")
@@ -116,12 +112,8 @@ func TestCommunityTerminalShellAndUserActions(t *testing.T) {
 	h.command("send-keys", "-t", "other", "-l", "Alice")
 	h.command("send-keys", "-t", "other", "Enter")
 	h.screen("other", "Status: online")
-	if watches.Load() != 1 {
-		t.Fatalf("frontends duplicated the shared watch: %d", watches.Load())
-	}
-	if err := h.client.SetPresence(context.Background(), daemon.PresenceOffline); err != nil {
-		t.Fatal(err)
-	}
+	failIfFmt(t, watches.Load() != 1, "frontends duplicated the shared watch: %d", watches.Load())
+	must(t, h.client.SetPresence(context.Background(), daemon.PresenceOffline))
 	h.screen("community", "online (stale)")
 	h.screen("other", "online (stale)")
 	h.command("resize-window", "-t", "community", "-x", "20", "-y", "6")

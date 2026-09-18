@@ -97,29 +97,19 @@ func TestCommunityNicotineProfiles(t *testing.T) {
 	h := newTerminal(t, server.Listener.Addr().String())
 	dir := t.TempDir()
 	picture, err := hex.DecodeString(fixtures["profile-picture"].Arguments["pic"].(map[string]any)["hex"].(string))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "picture.png"), picture, 0600); err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
+	must(t, os.WriteFile(filepath.Join(dir, "picture.png"), picture, 0600))
 	reserved, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	port := reserved.Addr().(*net.TCPAddr).Port
 	_ = reserved.Close()
 	root, err := filepath.Abs("../..")
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Second)
 	defer cancel()
 	logPath := filepath.Join(dir, "reference.log")
 	log, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY, 0600)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	command := exec.CommandContext(ctx, "python3", "-B", filepath.Join(root, "scripts/nicotine-profile-peer.py"), filepath.Join(root, "nicotine-plus"), dir, server.Listener.Addr().String(), strconv.Itoa(port))
 	command.Env = h.env
 	command.Stdout, command.Stderr = log, log
@@ -154,9 +144,7 @@ func TestCommunityNicotineProfiles(t *testing.T) {
 	})
 	h.wait("reference listening", func() bool { mu.Lock(); defer mu.Unlock(); return ports["reference"] != 0 })
 	summary, err := h.client.CommunitySummary(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	request := daemon.CommunityProfileRequest{CommunityIdentity: summary.CommunityIdentity, Username: "reference", Frontend: "nicotine-interop"}
 	if _, err := h.client.StartCommunityProfile(ctx, request); err != nil {
 		t.Fatal(err)
@@ -166,45 +154,29 @@ func TestCommunityNicotineProfiles(t *testing.T) {
 		profile, err = h.client.CommunityProfile(ctx, request)
 		return err == nil && profile.State == "ready"
 	})
-	if profile.Description != "Nicotine reference 世界" || profile.PictureType != "image/png" || profile.PictureWidth != 1 || profile.PictureHeight != 1 || !profile.UploadAllowedKnown || profile.UploadAllowed != 0 {
-		t.Fatalf("reference profile metadata: %+v", profile)
-	}
+	failIfFmt(t, profile.Description != "Nicotine reference 世界" || profile.PictureType != "image/png" || profile.PictureWidth != 1 || profile.PictureHeight != 1 || !profile.UploadAllowedKnown || profile.UploadAllowed != 0, "reference profile metadata: %+v", profile)
 	image, err := h.client.CommunityProfilePicture(ctx, daemon.CommunityProfilePictureRequest{CommunityIdentity: summary.CommunityIdentity, Username: "reference", Revision: profile.PictureRevision})
-	if err != nil || !bytes.Equal(image.Data, picture) {
-		t.Fatal("reference picture bytes changed", err)
-	}
+	failIf(t, err != nil || !bytes.Equal(image.Data, picture), "reference picture bytes changed", err)
 	current, err := h.client.CommunitySelfProfile(ctx, summary.CommunityIdentity)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	current.Description = "oto reference 世界"
 	if _, err := h.client.SetCommunitySelfProfile(ctx, current); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "request"), nil, 0600); err != nil {
-		t.Fatal(err)
-	}
+	must(t, os.WriteFile(filepath.Join(dir, "request"), nil, 0600))
 	h.wait("Nicotine reads oto profile", func() bool { _, err := os.Stat(filepath.Join(dir, "response.json")); return err == nil })
 	var response struct {
 		Username, Description string
 		UploadAllowed         uint32 `json:"upload_allowed"`
 	}
 	data, err := os.ReadFile(filepath.Join(dir, "response.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := json.Unmarshal(data, &response); err != nil {
-		t.Fatal(err)
-	}
-	if response.Username != "terminal" || response.Description != current.Description || response.UploadAllowed != 0 {
-		t.Fatalf("Nicotine parsed oto profile: %+v", response)
-	}
+	must(t, err)
+	must(t, json.Unmarshal(data, &response))
+	failIfFmt(t, response.Username != "terminal" || response.Description != current.Description || response.UploadAllowed != 0, "Nicotine parsed oto profile: %+v", response)
 	verifyNicotineSharePermissions(t, h, ctx, dir)
 	verifyNicotineSharedSend(t, h, ctx, dir)
 	verifyNicotineReceiving(t, h, ctx, dir)
-	if err := os.WriteFile(filepath.Join(dir, "stop"), nil, 0600); err != nil {
-		t.Fatal(err)
-	}
+	must(t, os.WriteFile(filepath.Join(dir, "stop"), nil, 0600))
 	select {
 	case err := <-done:
 		finished = true
@@ -215,10 +187,6 @@ func TestCommunityNicotineProfiles(t *testing.T) {
 		t.Fatal("reference did not stop")
 	}
 	logs, err := os.ReadFile(logPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if bytes.Contains(logs, []byte("Traceback")) {
-		t.Fatalf("reference subprocess failed:\n%s", logs)
-	}
+	must(t, err)
+	failIfFmt(t, bytes.Contains(logs, []byte("Traceback")), "reference subprocess failed:\n%s", logs)
 }

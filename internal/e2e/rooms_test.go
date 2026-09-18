@@ -124,9 +124,7 @@ func TestCommunityTerminalPublicRooms(t *testing.T) {
 	h.command("send-keys", "-t", "rooms", "Enter", "L")
 	h.screen("rooms", "[Cancel]")
 	h.command("send-keys", "-t", "rooms", "Enter")
-	if leaves.Load() != 0 {
-		t.Fatal("Cancel left room")
-	}
+	failIf(t, leaves.Load() != 0, "Cancel left room")
 	h.command("send-keys", "-t", "rooms", "L", "Right", "Enter")
 	h.wait("leave confirmed", func() bool { return leaves.Load() == 1 })
 	h.screen("rooms", "not-joined")
@@ -135,21 +133,15 @@ func TestCommunityTerminalPublicRooms(t *testing.T) {
 	h.screen("rooms", "History gap")
 	h.command("send-keys", "-t", "rooms", "G")
 	h.screen("rooms", "Public feed")
-	if feeds.Load() != 0 {
-		t.Fatal("viewing feed implicitly subscribed")
-	}
+	failIf(t, feeds.Load() != 0, "viewing feed implicitly subscribed")
 	h.command("send-keys", "-t", "rooms", "g")
 	h.wait("explicit feed subscription", func() bool { return feeds.Load() == 1 })
 	h.screen("rooms", "Bob in oto test")
 	h.command("send-keys", "-t", "rooms", "i", "Enter")
-	if sends.Load() != 1 {
-		t.Fatal("feed sent chat")
-	}
+	failIf(t, sends.Load() != 1, "feed sent chat")
 	h.command("send-keys", "-t", "rooms", "Escape")
 	h.screen("rooms", "i compose")
-	if err := h.client.SetPresence(context.Background(), daemon.PresenceOffline); err != nil {
-		t.Fatal(err)
-	}
+	must(t, h.client.SetPresence(context.Background(), daemon.PresenceOffline))
 	h.screen("rooms", "offline; history")
 	h.command("send-keys", "-t", "rooms", "q")
 	h.screen("rooms", "[Cancel]")
@@ -159,11 +151,7 @@ func TestCommunityTerminalPublicRooms(t *testing.T) {
 	h.startDaemon()
 	h.wait("remembered room restored", func() bool { return joins.Load() == 3 })
 	summary, err := h.client.CommunitySummary(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	page, err := h.client.CommunityRooms(context.Background(), daemon.CommunityRoomsRequest{CommunityIdentity: summary.CommunityIdentity, Room: "oto test"})
-	if err != nil || len(page.Rooms) != 1 || !page.Rooms[0].Remembered {
-		t.Fatal("remembered preference lost", err, page)
-	}
+	failIf(t, err != nil || len(page.Rooms) != 1 || !page.Rooms[0].Remembered, "remembered preference lost", err, page)
 }

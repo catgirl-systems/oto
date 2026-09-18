@@ -78,27 +78,19 @@ func TestCommunityTerminalBuddies(t *testing.T) {
 		t.Helper()
 		mu.Lock()
 		defer mu.Unlock()
-		if active == nil {
-			t.Fatal("missing scripted connection")
-		}
-		if err := write(active, name); err != nil {
-			t.Fatal(err)
-		}
+		failIf(t, active == nil, "missing scripted connection")
+		must(t, write(active, name))
 	}
 	summary := func() daemon.CommunitySummary {
 		t.Helper()
 		s, err := h.client.CommunitySummary(ctx)
-		if err != nil {
-			t.Fatal(err)
-		}
+		must(t, err)
 		return s
 	}
 	page := func() daemon.CommunityBuddiesPage {
 		t.Helper()
 		p, err := h.client.CommunityBuddies(ctx, daemon.CommunityBuddiesRequest{CommunityIdentity: summary().CommunityIdentity})
-		if err != nil {
-			t.Fatal(err)
-		}
+		must(t, err)
 		return p
 	}
 	for _, name := range []string{"first", "second"} {
@@ -114,9 +106,7 @@ func TestCommunityTerminalBuddies(t *testing.T) {
 	h.command("set-buffer", "--", "q/?猫😀\nline")
 	h.command("paste-buffer", "-p", "-t", "first")
 	h.screen("first", "q/?猫😀↵line")
-	if len(page().Buddies) != 0 {
-		t.Fatal("paste submitted buddy")
-	}
+	failIf(t, len(page().Buddies) != 0, "paste submitted buddy")
 	for _, size := range [][2]int{{80, 24}, {40, 16}, {20, 6}, {120, 40}} {
 		h.command("resize-window", "-t", "first", "-x", fmt.Sprint(size[0]), "-y", fmt.Sprint(size[1]))
 		h.screen("first", "猫😀")
@@ -126,9 +116,7 @@ func TestCommunityTerminalBuddies(t *testing.T) {
 	h.screen("second", "Alice")
 	h.wait("one shared watch", func() bool { return watches.Load() == 1 })
 	buddy := page().Buddies[0]
-	if buddy.Note != "q/?猫😀\nline" || !buddy.NotifyOnline || !buddy.Priority || !buddy.Trusted || summary().BuddyNotification.Sequence != 0 {
-		t.Fatal("flags/paste/hydration", buddy)
-	}
+	failIf(t, buddy.Note != "q/?猫😀\nline" || !buddy.NotifyOnline || !buddy.Priority || !buddy.Trusted || summary().BuddyNotification.Sequence != 0, "flags/paste/hydration", buddy)
 	h.command("send-keys", "-t", "second", "Enter")
 	h.screen("second", "Country: FR")
 	h.command("send-keys", "-t", "first", "e")
@@ -160,9 +148,7 @@ func TestCommunityTerminalBuddies(t *testing.T) {
 	send("status-online")
 	send("status-away")
 	h.wait("away transition", func() bool { return page().Buddies[0].Status == 1 })
-	if summary().BuddyNotification.Sequence != 1 {
-		t.Fatal("duplicate/away transition notified")
-	}
+	failIf(t, summary().BuddyNotification.Sequence != 1, "duplicate/away transition notified")
 	// Keep an unsaved note across daemon restart. Hydration must not generate an alert.
 	h.command("send-keys", "-t", "first", "e")
 	h.screen("first", "Buddy editor")
@@ -175,33 +161,23 @@ func TestCommunityTerminalBuddies(t *testing.T) {
 	h.screen("first", "restart draft")
 	h.screen("second", "Status: online")
 	buddy = page().Buddies[0]
-	if buddy.LastSeen.UnixMilli() != seen.UnixMilli() || !buddy.Priority || !buddy.Trusted || !buddy.NotifyOnline || !strings.Contains(buddy.Note, "second saved") || strings.Contains(buddy.Note, "restart draft") || summary().BuddyNotification.Sequence != 0 {
-		t.Fatal("restart persistence/hydration", buddy)
-	}
+	failIf(t, buddy.LastSeen.UnixMilli() != seen.UnixMilli() || !buddy.Priority || !buddy.Trusted || !buddy.NotifyOnline || !strings.Contains(buddy.Note, "second saved") || strings.Contains(buddy.Note, "restart draft") || summary().BuddyNotification.Sequence != 0, "restart persistence/hydration", buddy)
 	h.command("send-keys", "-t", "first", "Escape")
 	h.screen("first", "Buddy: Alice")
 	// A separate watch consumer survives removing the buddy. Removing that last
 	// consumer sends exactly one unwatch, regardless of the two attached TUIs.
 	id := summary().CommunityIdentity
-	if err := h.client.WatchCommunityUsers(ctx, daemon.CommunityWatchRequest{CommunityIdentity: id, Frontend: "buddy-e2e", Users: []string{"Alice"}}); err != nil {
-		t.Fatal(err)
-	}
+	must(t, h.client.WatchCommunityUsers(ctx, daemon.CommunityWatchRequest{CommunityIdentity: id, Frontend: "buddy-e2e", Users: []string{"Alice"}}))
 	h.command("send-keys", "-t", "second", "D")
 	h.screen("second", "[Cancel]")
 	h.command("send-keys", "-t", "second", "Enter")
 	h.screen("second", "Buddy: Alice")
-	if len(page().Buddies) != 1 {
-		t.Fatal("Cancel removed buddy")
-	}
+	failIf(t, len(page().Buddies) != 1, "Cancel removed buddy")
 	h.command("send-keys", "-t", "second", "D", "Right", "Enter")
 	h.screen("second", "No matching buddies")
 	h.screen("first", "No matching buddies")
-	if unwatches.Load() != 0 {
-		t.Fatal("buddy removal released another consumer's watch")
-	}
-	if err := h.client.WatchCommunityUsers(ctx, daemon.CommunityWatchRequest{CommunityIdentity: id, Frontend: "buddy-e2e"}); err != nil {
-		t.Fatal(err)
-	}
+	failIf(t, unwatches.Load() != 0, "buddy removal released another consumer's watch")
+	must(t, h.client.WatchCommunityUsers(ctx, daemon.CommunityWatchRequest{CommunityIdentity: id, Frontend: "buddy-e2e"}))
 	h.wait("last consumer unwatched", func() bool { return unwatches.Load() == 1 })
 	h.command("send-keys", "-t", "first", "q")
 	h.screen("first", "[Cancel]")
