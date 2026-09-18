@@ -22,7 +22,6 @@ import (
 )
 
 const (
-	Version           = "v1"
 	MaxBodySize int64 = 1 << 20
 	// Browse replies are bounded pages, including folder ancestry and metadata.
 	MaxBrowseBodySize int64 = 2 << 20
