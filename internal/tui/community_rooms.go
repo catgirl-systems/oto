@@ -890,25 +890,5 @@ func (m model) roomFormView(width, height int) []string {
 }
 func (m model) roomDialogView() string {
 	d := m.community.rooms.dialog
-	width, height := max(1, m.width), max(1, m.height)
-	if width >= 40 {
-		width -= 4
-	}
-	if height >= 8 {
-		height -= 2
-	}
-	cardWidth := max(1, min(64, width))
-	bodyWidth := max(1, cardWidth-4)
-	rows := max(0, height-4)
-	lines := communityPane([]string{strong(d.label)}, bodyWidth, rows, 0)
-	for len(lines) < rows {
-		lines = append(lines, "")
-	}
-	choices := "[Cancel] Confirm"
-	if d.confirm {
-		choices = "Cancel [Confirm]"
-	}
-	lines = append(lines, ansi.Truncate(accent(choices), bodyWidth, "…"), ansi.Truncate(muted("←→ choose · Enter/Esc"), bodyWidth, "…"))
-	card := panelStyle().Width(cardWidth).Padding(0, 1).Render(strings.Join(lines, "\n"))
-	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, card)
+	return confirmationCard(d.label, d.confirm, 0, "←→ choose · Enter/Esc", m.width, m.height)
 }

@@ -566,6 +566,10 @@ func (m model) privateRoomDialogView() string {
 }
 
 func communityConfirmationView(label string, confirm bool, scroll, width, height int) string {
+	return confirmationCard(label, confirm, scroll, "↑↓ preview · ←→ choose · Enter/Esc", width, height)
+}
+
+func confirmationCard(label string, confirm bool, scroll int, hint string, width, height int) string {
 	width, height = max(1, width), max(1, height)
 	if width >= 40 {
 		width -= 4
@@ -584,7 +588,7 @@ func communityConfirmationView(label string, confirm bool, scroll, width, height
 	if confirm {
 		choices = "Cancel [Confirm]"
 	}
-	lines = append(lines, ansi.Truncate(accent(choices), bodyWidth, "…"), ansi.Truncate(muted("↑↓ preview · ←→ choose · Enter/Esc"), bodyWidth, "…"))
+	lines = append(lines, ansi.Truncate(accent(choices), bodyWidth, "…"), ansi.Truncate(muted(hint), bodyWidth, "…"))
 	card := panelStyle().Width(cardWidth).Padding(0, 1).Render(strings.Join(lines, "\n"))
 	return lipgloss.Place(max(1, width), max(1, height), lipgloss.Center, lipgloss.Center, card)
 }
