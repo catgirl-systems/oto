@@ -67,13 +67,6 @@ SELECT * FROM community_messages WHERE account = ? AND conversation_id = ? AND s
 AND (CAST(sqlc.arg(before_id) AS INTEGER) = 0 OR id < sqlc.arg(before_id)) AND instr(body, CAST(sqlc.arg(search_text) AS TEXT)) > 0
 ORDER BY id DESC LIMIT min(max(CAST(sqlc.arg(page_size) AS INTEGER), 1), 200);
 
--- name: CommunityUnread :many
-SELECT c.id, count(m.id) AS unread, CAST(coalesce(sum(m.mention), 0) AS INTEGER) AS mentions
-FROM community_conversations c
-JOIN community_messages m ON m.account = c.account AND m.conversation_id = c.id
-WHERE c.account = ? AND m.id > c.read_through AND m.direction = 'incoming' AND m.state = 'received'
-GROUP BY c.id;
-
 -- name: SetCommunityMessageState :execrows
 UPDATE community_messages SET state = sqlc.arg(new_state), error = sqlc.arg(error)
 WHERE account = sqlc.arg(account) AND id = sqlc.arg(id) AND state = sqlc.arg(old_state);
@@ -89,18 +82,9 @@ ORDER BY id LIMIT min(max(CAST(sqlc.arg(page_size) AS INTEGER), 1), 200);
 SELECT * FROM community_messages WHERE account = ? AND sender = ? AND state = 'held' AND id > sqlc.arg(after_id)
 ORDER BY id LIMIT min(max(CAST(sqlc.arg(page_size) AS INTEGER), 1), 200);
 
--- name: ClearCommunityHistory :execrows
-DELETE FROM community_messages WHERE account = ? AND conversation_id = ? AND state IN ('received', 'sent', 'failed', 'cancelled');
-
--- name: PruneCommunityHistory :execrows
-DELETE FROM community_messages WHERE account = ? AND created_at < sqlc.arg(before_time) AND state IN ('received', 'sent', 'failed', 'cancelled');
-
 -- name: InsertCommunityReceipt :execrows
 INSERT INTO community_receipts(account, sender, server_id, server_time, fingerprint, disposition, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(account, sender, server_id, server_time, fingerprint) DO NOTHING;
-
--- name: GetCommunityReceipt :one
-SELECT * FROM community_receipts WHERE account = ? AND sender = ? AND server_id = ? AND server_time = ? AND fingerprint = ?;
 
 -- name: InsertCommunitySubmission :execrows
 INSERT INTO community_submissions(account, request_id, kind, fingerprint, result, created_at) VALUES (?, ?, ?, ?, ?, ?)
@@ -122,9 +106,6 @@ SELECT * FROM community_rooms WHERE account = ? AND room = ?;
 -- name: ListCommunityRooms :many
 SELECT * FROM community_rooms WHERE account = ? AND room > sqlc.arg(after_room)
 ORDER BY room LIMIT min(max(CAST(sqlc.arg(page_size) AS INTEGER), 1), 200);
-
--- name: DeleteCommunityRoom :execrows
-DELETE FROM community_rooms WHERE account = ? AND room = ?;
 
 -- name: PutCommunityInterest :exec
 INSERT INTO community_interests(account, item, opinion) VALUES (?, ?, ?)
