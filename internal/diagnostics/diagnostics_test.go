@@ -29,35 +29,21 @@ func TestJSONLevelsAndSafeErrors(t *testing.T) {
 	m.Close()
 
 	f, err := os.Open(filepath.Join(dir, "daemon.log"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	defer f.Close()
 	var records []map[string]any
 	s := bufio.NewScanner(f)
 	for s.Scan() {
 		var record map[string]any
-		if err := json.Unmarshal(s.Bytes(), &record); err != nil {
-			t.Fatal(err)
-		}
+		must(t, json.Unmarshal(s.Bytes(), &record))
 		records = append(records, record)
 	}
-	if err := s.Err(); err != nil {
-		t.Fatal(err)
-	}
-	if len(records) != 2 {
-		t.Fatalf("records=%d, want 2", len(records))
-	}
-	if records[0]["level"] != "INFO" || records[1]["level"] != "ERROR" {
-		t.Fatal("missing or incorrect severity", records)
-	}
+	must(t, s.Err())
+	failIfFmt(t, len(records) != 2, "records=%d, want 2", len(records))
+	failIf(t, records[0]["level"] != "INFO" || records[1]["level"] != "ERROR", "missing or incorrect severity", records)
 	for _, record := range records {
-		if record["run_id"] == nil || record["component"] != "daemon" || record["time"] == nil {
-			t.Fatalf("missing defaults: %#v", record)
-		}
-		if strings.Contains(string(mustJSON(record)), "peer secret") || strings.Contains(string(mustJSON(record)), "/private") {
-			t.Fatalf("private error data leaked: %#v", record)
-		}
+		failIfFmt(t, record["run_id"] == nil || record["component"] != "daemon" || record["time"] == nil, "missing defaults: %#v", record)
+		failIfFmt(t, strings.Contains(string(mustJSON(record)), "peer secret") || strings.Contains(string(mustJSON(record)), "/private"), "private error data leaked: %#v", record)
 	}
 }
 
@@ -66,13 +52,9 @@ func TestSafeErrorSyscallDoesNotExposePath(t *testing.T) {
 	var b bytes.Buffer
 	r := slog.NewRecord(time.Unix(0, 0), slog.LevelError, "failed", 0)
 	r.AddAttrs(attrs...)
-	if err := slog.NewJSONHandler(&b, nil).Handle(context.Background(), r); err != nil {
-		t.Fatal(err)
-	}
+	must(t, slog.NewJSONHandler(&b, nil).Handle(context.Background(), r))
 	got := b.String()
-	if strings.Contains(got, "/secret/file") || !strings.Contains(got, "permission denied") {
-		t.Fatalf("unexpected safe attrs: %s", got)
-	}
+	failIfFmt(t, strings.Contains(got, "/secret/file") || !strings.Contains(got, "permission denied"), "unexpected safe attrs: %s", got)
 }
 
 func TestRotationAndRecoveryArchive(t *testing.T) {
@@ -86,18 +68,12 @@ func TestRotationAndRecoveryArchive(t *testing.T) {
 	}
 	m.Close()
 	archives, _ := filepath.Glob(filepath.Join(dir, "daemon-*.log.gz"))
-	if len(archives) == 0 || len(archives) > maxArchives {
-		t.Fatalf("archives=%v", archives)
-	}
+	failIfFmt(t, len(archives) == 0 || len(archives) > maxArchives, "archives=%v", archives)
 	for _, archive := range archives {
 		f, err := os.Open(archive)
-		if err != nil {
-			t.Fatal(err)
-		}
+		must(t, err)
 		z, err := gzip.NewReader(f)
-		if err != nil {
-			t.Fatal(err)
-		}
+		must(t, err)
 		if _, err := io.Copy(io.Discard, z); err != nil {
 			t.Fatal(err)
 		}
@@ -112,40 +88,28 @@ func TestRotationAndRecoveryArchive(t *testing.T) {
 	}
 
 	// A raw segment is compressed on the next startup.
-	if err := os.WriteFile(filepath.Join(dir, "daemon-999999.log"), []byte("recovery\n"), 0600); err != nil {
-		t.Fatal(err)
-	}
+	must(t, os.WriteFile(filepath.Join(dir, "daemon-999999.log"), []byte("recovery\n"), 0600))
 	m2 := New(dir, slog.LevelInfo, io.Discard)
 	m2.Close()
-	if _, err := os.Stat(filepath.Join(dir, "daemon-999999.log.gz")); err != nil {
-		t.Fatal(err)
-	}
+	_, err := os.Stat(filepath.Join(dir, "daemon-999999.log.gz"))
+	must(t, err)
 }
 
 func TestSymlinkAndUnrelatedPreserved(t *testing.T) {
 	dir := t.TempDir()
 	outside := filepath.Join(t.TempDir(), "outside")
-	if err := os.WriteFile(outside, []byte("keep"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(outside, filepath.Join(dir, "daemon.log")); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "notes.txt"), []byte("keep"), 0600); err != nil {
-		t.Fatal(err)
-	}
+	must(t, os.WriteFile(outside, []byte("keep"), 0600))
+	must(t, os.Symlink(outside, filepath.Join(dir, "daemon.log")))
+	must(t, os.WriteFile(filepath.Join(dir, "notes.txt"), []byte("keep"), 0600))
 	m := New(dir, slog.LevelInfo, io.Discard)
 	m.Logger().Info("not written through symlink")
 	m.Close()
 	if got, _ := os.ReadFile(outside); string(got) != "keep" {
 		t.Fatal("symlink target changed")
 	}
-	if _, err := os.Stat(filepath.Join(dir, "notes.txt")); err != nil {
-		t.Fatal(err)
-	}
-	if m.Status().Warning == "" {
-		t.Fatal("expected health warning")
-	}
+	_, err := os.Stat(filepath.Join(dir, "notes.txt"))
+	must(t, err)
+	failIf(t, m.Status().Warning == "", "expected health warning")
 }
 
 func TestConcurrentLoggingAndLevel(t *testing.T) {

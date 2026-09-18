@@ -46,12 +46,8 @@ func TestBoundedQueueAndShutdown(t *testing.T) {
 	close(w.release)
 	<-m.done
 	b, err := os.ReadFile(filepath.Join(m.directory, "daemon.log"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !bytes.Contains(b, []byte("diagnostic records dropped")) {
-		t.Fatal("missing loss summary")
-	}
+	must(t, err)
+	failIf(t, !bytes.Contains(b, []byte("diagnostic records dropped")), "missing loss summary")
 }
 
 type failedOutput struct{}
@@ -64,26 +60,18 @@ func TestOutputFailuresIndependent(t *testing.T) {
 			var mirror bytes.Buffer
 			var output io.Writer = failedOutput{}
 			if brokenFile {
-				if err := os.Mkdir(filepath.Join(dir, "daemon.log"), 0700); err != nil {
-					t.Fatal(err)
-				}
+				must(t, os.Mkdir(filepath.Join(dir, "daemon.log"), 0700))
 				output = &mirror
 			}
 			m := New(dir, slog.LevelInfo, output)
 			m.Logger().Info("still_available")
 			m.Close()
-			if m.Status().Warning == "" {
-				t.Fatal("missing output warning")
-			}
+			failIf(t, m.Status().Warning == "", "missing output warning")
 			if brokenFile {
-				if !strings.Contains(mirror.String(), "still_available") {
-					t.Fatal("stderr lost")
-				}
+				failIf(t, !strings.Contains(mirror.String(), "still_available"), "stderr lost")
 			} else {
 				b, _ := os.ReadFile(filepath.Join(dir, "daemon.log"))
-				if !bytes.Contains(b, []byte("still_available")) {
-					t.Fatal("file lost")
-				}
+				failIf(t, !bytes.Contains(b, []byte("still_available")), "file lost")
 			}
 		})
 	}
@@ -100,12 +88,8 @@ func TestRotationContinuityAndMetadata(t *testing.T) {
 	}
 	m.Close()
 	names, err := archiveNames(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(names) < 1 || len(names) > 3 {
-		t.Fatalf("expected actual rotations, got %v", names)
-	}
+	must(t, err)
+	failIfFmt(t, len(names) < 1 || len(names) > 3, "expected actual rotations, got %v", names)
 	names = append(names, "daemon.log")
 	seen := map[int]bool{}
 	var stored uint64
@@ -114,15 +98,11 @@ func TestRotationContinuityAndMetadata(t *testing.T) {
 		st, _ := os.Stat(p)
 		stored += uint64(st.Size())
 		f, err := os.Open(p)
-		if err != nil {
-			t.Fatal(err)
-		}
+		must(t, err)
 		var r io.Reader = f
 		if strings.HasSuffix(name, ".gz") {
 			z, e := gzip.NewReader(f)
-			if e != nil {
-				t.Fatal(e)
-			}
+			failIf(t, e != nil, e)
 			defer z.Close()
 			r = z
 		}
@@ -133,22 +113,14 @@ func TestRotationContinuityAndMetadata(t *testing.T) {
 			if e == io.EOF {
 				break
 			}
-			if e != nil {
-				t.Fatal(e)
-			}
+			failIf(t, e != nil, e)
 			seen[int(v["number"].(float64))] = true
 		}
 		f.Close()
 	}
-	if len(seen) != 25 {
-		t.Fatalf("lost records during rotation: %d", len(seen))
-	}
-	if m.Status().StoredBytes != stored || m.Status().FileCount != len(names) {
-		t.Fatal("incorrect metadata")
-	}
-	if strings.Count(mirror.String(), "numbered_event") != 25 {
-		t.Fatal("not every event mirrored")
-	}
+	failIfFmt(t, len(seen) != 25, "lost records during rotation: %d", len(seen))
+	failIf(t, m.Status().StoredBytes != stored || m.Status().FileCount != len(names), "incorrect metadata")
+	failIf(t, strings.Count(mirror.String(), "numbered_event") != 25, "not every event mirrored")
 }
 func TestPrivacyGroupsAndOversize(t *testing.T) {
 	var mirror bytes.Buffer
@@ -158,17 +130,11 @@ func TestPrivacyGroupsAndOversize(t *testing.T) {
 	m.Logger().Info(strings.Repeat("x", maxRecordBytes+1))
 	m.Logger().With("before", 1).WithGroup("group").Info("grouped", "inside", 2)
 	m.Close()
-	if strings.Contains(mirror.String(), "SENSITIVE") {
-		t.Fatal("sensitive content leaked")
-	}
+	failIf(t, strings.Contains(mirror.String(), "SENSITIVE"), "sensitive content leaked")
 	for _, line := range bytes.Split(bytes.TrimSpace(mirror.Bytes()), []byte{'\n'}) {
-		if len(line)+1 > maxRecordBytes || !json.Valid(line) {
-			t.Fatal("unbounded or invalid JSON")
-		}
+		failIf(t, len(line)+1 > maxRecordBytes || !json.Valid(line), "unbounded or invalid JSON")
 	}
-	if !strings.Contains(mirror.String(), "record_omitted") {
-		t.Fatal("oversized record not omitted")
-	}
+	failIf(t, !strings.Contains(mirror.String(), "record_omitted"), "oversized record not omitted")
 	if !strings.Contains(mirror.String(), `"group":{"inside":2}`) {
 		t.Fatal("group semantics lost")
 	}
@@ -181,9 +147,7 @@ func TestCorruptArchivePreservesSource(t *testing.T) {
 	m := New(dir, slog.LevelInfo, io.Discard)
 	m.Logger().Info("not_to_file")
 	m.Close()
-	if m.Status().Warning == "" {
-		t.Fatal("corruption not reported")
-	}
+	failIf(t, m.Status().Warning == "", "corruption not reported")
 	if b, _ := os.ReadFile(raw); string(b) != "source\n" {
 		t.Fatal("recovery source lost")
 	}
@@ -237,20 +201,14 @@ func TestInterruptedCompressionRecovery(t *testing.T) {
 			m.Logger().Info("ready")
 			m.Close()
 			if state == "incomplete_orphan" {
-				if m.Status().Warning == "" {
-					t.Fatal("orphan did not suspend files")
-				}
+				failIf(t, m.Status().Warning == "", "orphan did not suspend files")
 				if b, _ := os.ReadFile(tmp); string(b) != "incomplete" {
 					t.Fatal("orphan discarded")
 				}
 				return
 			}
-			if m.Status().Warning != "" {
-				t.Fatal(m.Status().Warning)
-			}
-			if err := validGzip(raw + ".gz"); err != nil {
-				t.Fatal(err)
-			}
+			failIf(t, m.Status().Warning != "", m.Status().Warning)
+			must(t, validGzip(raw+".gz"))
 			for _, p := range []string{raw, tmp} {
 				if _, err := os.Stat(p); !os.IsNotExist(err) {
 					t.Fatal("recovery residue", p)
@@ -277,21 +235,15 @@ func TestWriteRetryAndRotationFailures(t *testing.T) {
 	m.openFileLocked()
 	recovered := m.file != nil
 	m.fileMu.Unlock()
-	if !suspended || retry.Before(time.Now().Add(29*time.Second)) || early || !recovered {
-		t.Fatal("incorrect bounded retry")
-	}
-	if !bytes.Contains(mirror.Bytes(), []byte("write_test")) {
-		t.Fatal("stderr lost during file failure")
-	}
+	failIf(t, !suspended || retry.Before(time.Now().Add(29*time.Second)) || early || !recovered, "incorrect bounded retry")
+	failIf(t, !bytes.Contains(mirror.Bytes(), []byte("write_test")), "stderr lost during file failure")
 	os.Mkdir(filepath.Join(dir, "daemon-000001.log.gz"), 0700)
 	m.fileMu.Lock()
 	before := m.fileBytes
 	err := m.rotateLocked()
 	after := m.fileBytes
 	m.fileMu.Unlock()
-	if err == nil || after != before {
-		t.Fatal("unsafe pruning or failed rotation grew file")
-	}
+	failIf(t, err == nil || after != before, "unsafe pruning or failed rotation grew file")
 	raw := filepath.Join(t.TempDir(), "daemon-000001.log")
 	os.WriteFile(raw, []byte("source"), 0600)
 	os.Mkdir(raw+".gz.tmp", 0700)
@@ -318,7 +270,5 @@ func TestExactRotationBoundary(t *testing.T) {
 		t.Fatal("failed to rotate before exceeding boundary")
 	}
 	st, err := os.Stat(filepath.Join(m.directory, "daemon.log"))
-	if err != nil || st.Size() != int64(len(line)) {
-		t.Fatal("active segment size")
-	}
+	failIf(t, err != nil || st.Size() != int64(len(line)), "active segment size")
 }
