@@ -23,9 +23,7 @@ func legacyDatabase(t *testing.T) (*sql.DB, string) {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "state.sqlite3")
 	db, err := sql.Open("sqlite", sqliteDSN(path))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	db.SetMaxOpenConns(1)
 	t.Cleanup(func() { _ = db.Close() })
 	if _, err := db.Exec(string(schemaV1)); err != nil {
@@ -63,60 +61,42 @@ type legacyTable struct {
 func tableRows(t *testing.T, db *sql.DB, name, columns string) [][]any {
 	t.Helper()
 	rows, err := db.Query("SELECT " + columns + " FROM " + name + " ORDER BY rowid")
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	defer rows.Close()
 	names, err := rows.Columns()
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	var result [][]any
 	for rows.Next() {
 		values, ptrs := make([]any, len(names)), make([]any, len(names))
 		for i := range ptrs {
 			ptrs[i] = &values[i]
 		}
-		if err := rows.Scan(ptrs...); err != nil {
-			t.Fatal(err)
-		}
+		must(t, rows.Scan(ptrs...))
 		result = append(result, values)
 	}
-	if err := rows.Err(); err != nil {
-		t.Fatal(err)
-	}
+	must(t, rows.Err())
 	return result
 }
 
 func legacyContents(t *testing.T, db *sql.DB) map[string]legacyTable {
 	t.Helper()
 	rows, err := db.Query("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name <> 'storage_schema' ORDER BY name")
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	var tables []string
 	for rows.Next() {
 		var name string
-		if err := rows.Scan(&name); err != nil {
-			t.Fatal(err)
-		}
+		must(t, rows.Scan(&name))
 		tables = append(tables, name)
 	}
-	if err := rows.Err(); err != nil {
-		t.Fatal(err)
-	}
+	must(t, rows.Err())
 	_ = rows.Close()
 	result := map[string]legacyTable{}
 	for _, name := range tables {
 		rows, err := db.Query("SELECT * FROM " + name + " LIMIT 0")
-		if err != nil {
-			t.Fatal(err)
-		}
+		must(t, err)
 		columns, err := rows.Columns()
 		_ = rows.Close()
-		if err != nil {
-			t.Fatal(err)
-		}
+		must(t, err)
 		for i := range columns {
 			columns[i] = `"` + columns[i] + `"`
 		}
@@ -143,14 +123,10 @@ func TestCommunityMigrationPreservesV1AndWALBackup(t *testing.T) {
 	}
 	// A statement prepared by a v1 TUI must survive the schema change.
 	statement, err := legacy.Prepare("INSERT INTO history(kind,value,recency) VALUES ('search',?,zeroblob(8))")
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	defer statement.Close()
 	db, err := OpenDaemon(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	assertLegacyContents(t, db.SQL(), before)
 	var access string
 	if err := db.SQL().QueryRow("SELECT access FROM share_roots").Scan(&access); err != nil || access != "public" {
@@ -204,13 +180,9 @@ func TestCommunityMigrationOnlyLockedDaemon(t *testing.T) {
 	if _, err := OpenDaemon(path); !errors.Is(err, ErrDaemonLocked) {
 		t.Fatalf("daemon lock: %v", err)
 	}
-	if err := verifySchema(context.Background(), legacy, 1); err != nil {
-		t.Fatal(err)
-	}
+	must(t, verifySchema(context.Background(), legacy, 1))
 	backups, _ := filepath.Glob(path + ".v1-backup-*.sqlite3")
-	if len(backups) != 0 {
-		t.Fatalf("non-owner made a backup: %v", backups)
-	}
+	failIfFmt(t, len(backups) != 0, "non-owner made a backup: %v", backups)
 }
 
 func TestCommunityMigrationRollback(t *testing.T) {
@@ -222,12 +194,8 @@ func TestCommunityMigrationRollback(t *testing.T) {
 			legacy, path := legacyDatabase(t)
 			before := legacyContents(t, legacy)
 			err := migrateV1(context.Background(), legacy, path, []byte(ddl))
-			if err == nil || !strings.Contains(err.Error(), "validated backup") {
-				t.Fatalf("failed upgrade: %v", err)
-			}
-			if err := verifySchema(context.Background(), legacy, 1); err != nil {
-				t.Fatal(err)
-			}
+			failIfFmt(t, err == nil || !strings.Contains(err.Error(), "validated backup"), "failed upgrade: %v", err)
+			must(t, verifySchema(context.Background(), legacy, 1))
 			assertLegacyContents(t, legacy, before)
 			if _, err := legacy.Exec("UPDATE storage_schema SET version = 2"); err == nil {
 				t.Fatal("rollback lost the original marker CHECK constraint")
@@ -239,14 +207,10 @@ func TestCommunityMigrationRollback(t *testing.T) {
 			// A failed attempt must neither poison the source nor overwrite its
 			// validated backup on the next daemon startup.
 			db, err := OpenDaemon(path)
-			if err != nil {
-				t.Fatal(err)
-			}
+			must(t, err)
 			_ = db.Close()
 			backups, _ := filepath.Glob(path + ".v1-backup-*.sqlite3")
-			if len(backups) != 2 {
-				t.Fatalf("retry backups: %v", backups)
-			}
+			failIfFmt(t, len(backups) != 2, "retry backups: %v", backups)
 		})
 	}
 }
@@ -254,9 +218,7 @@ func TestCommunityMigrationRollback(t *testing.T) {
 func TestCommunityMigrationConcurrentHistory(t *testing.T) {
 	legacy, path := legacyDatabase(t)
 	tx, err := legacy.Begin()
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	defer tx.Rollback()
 	if _, err := tx.Exec("INSERT INTO history VALUES ('filter','concurrent',zeroblob(8))"); err != nil {
 		t.Fatal(err)
@@ -276,14 +238,10 @@ func TestCommunityMigrationConcurrentHistory(t *testing.T) {
 		t.Fatalf("upgrade bypassed active legacy writer: %v", err)
 	case <-time.After(50 * time.Millisecond):
 	}
-	if err := tx.Commit(); err != nil {
-		t.Fatal(err)
-	}
+	must(t, tx.Commit())
 	select {
 	case err := <-done:
-		if err != nil {
-			t.Fatal(err)
-		}
+		must(t, err)
 	case <-time.After(6 * time.Second):
 		t.Fatal("upgrade did not resume after legacy writer")
 	}
@@ -300,14 +258,10 @@ func TestCommunityMigrationBusyAndBackupFailure(t *testing.T) {
 		t.Fatal("backup failure did not stop upgrade")
 	}
 	tx, err := legacy.Begin()
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	defer tx.Rollback()
 	contender, err := sql.Open("sqlite", sqliteDSN(path))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	defer contender.Close()
 	contender.SetMaxOpenConns(1)
 	if _, err := contender.Exec("PRAGMA busy_timeout=25"); err != nil {
@@ -317,18 +271,14 @@ func TestCommunityMigrationBusyAndBackupFailure(t *testing.T) {
 		t.Fatal("upgrade bypassed busy writer")
 	}
 	_ = tx.Rollback()
-	if err := verifySchema(context.Background(), legacy, 1); err != nil {
-		t.Fatal(err)
-	}
+	must(t, verifySchema(context.Background(), legacy, 1))
 	assertLegacyContents(t, legacy, before)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	if err := upgradeV1(ctx, legacy, communitySchema); !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancelled upgrade: %v", err)
 	}
-	if err := verifySchema(context.Background(), legacy, 1); err != nil {
-		t.Fatal(err)
-	}
+	must(t, verifySchema(context.Background(), legacy, 1))
 	// Future schemas must not get a backup or an attempted downgrade.
 	if _, err := legacy.Exec("PRAGMA user_version = 99"); err != nil {
 		t.Fatal(err)
@@ -345,9 +295,7 @@ func TestCommunityMigrationLiveReader(t *testing.T) {
 	legacy, path := legacyDatabase(t)
 	ctx := context.Background()
 	reader, err := legacy.Conn(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	defer reader.Close()
 	if _, err := reader.ExecContext(ctx, "BEGIN DEFERRED"); err != nil {
 		t.Fatal(err)
@@ -358,9 +306,7 @@ func TestCommunityMigrationLiveReader(t *testing.T) {
 		t.Fatalf("old reader snapshot: %d %v", version, err)
 	}
 	database, err := OpenDaemon(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	defer database.Close()
 	if err := reader.QueryRowContext(ctx, "SELECT version FROM storage_schema").Scan(&version); err != nil || version != 1 {
 		t.Fatalf("upgrade invalidated old snapshot: %d %v", version, err)
@@ -379,9 +325,7 @@ func TestCommunityMigrationLiveReader(t *testing.T) {
 func TestCommunityFreshBootstrapRollback(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "state.sqlite3")
 	raw, err := sql.Open("sqlite", sqliteDSN(path))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	defer raw.Close()
 	if err := bootstrapSchema(raw, append(append([]byte(nil), schema...), []byte("; SELECT * FROM nonexistent;")...)); err == nil {
 		t.Fatal("invalid fresh schema succeeded")
@@ -394,11 +338,7 @@ func TestCommunityFreshBootstrapRollback(t *testing.T) {
 		t.Fatalf("failed bootstrap retained objects: %d %v", objects, err)
 	}
 	database, err := OpenDaemon(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	defer database.Close()
-	if err := verifySchema(context.Background(), database.SQL(), 2); err != nil {
-		t.Fatal(err)
-	}
+	must(t, verifySchema(context.Background(), database.SQL(), 2))
 }

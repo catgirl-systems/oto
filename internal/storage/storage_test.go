@@ -12,20 +12,14 @@ import (
 func TestOpenReopenAndSchema(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "nested", "state.sqlite3")
 	db, err := Open(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	if got := db.SQL().Stats().MaxOpenConnections; got != 4 {
 		t.Fatalf("max connections = %d, want 4", got)
 	}
 	for _, pragma := range []struct{ name, want string }{{"user_version", "2"}, {"foreign_keys", "1"}, {"synchronous", "2"}} {
 		var got string
-		if err := db.SQL().QueryRow("PRAGMA " + pragma.name).Scan(&got); err != nil {
-			t.Fatal(err)
-		}
-		if got != pragma.want {
-			t.Fatalf("%s = %q, want %q", pragma.name, got, pragma.want)
-		}
+		must(t, db.SQL().QueryRow("PRAGMA "+pragma.name).Scan(&got))
+		failIfFmt(t, got != pragma.want, "%s = %q, want %q", pragma.name, got, pragma.want)
 	}
 	if err := db.WriteTx(context.Background(), func(tx *sql.Tx) error {
 		_, err := tx.Exec("INSERT INTO ui_preferences(key, value) VALUES ('test', 'ok')")
@@ -33,9 +27,7 @@ func TestOpenReopenAndSchema(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.Close(); err != nil {
-		t.Fatal(err)
-	}
+	must(t, db.Close())
 	for _, name := range []string{filepath.Dir(path), path, path + ".lock", path + "-wal", path + "-shm"} {
 		if info, err := os.Stat(name); err == nil {
 			want := os.FileMode(0600)
@@ -48,40 +40,28 @@ func TestOpenReopenAndSchema(t *testing.T) {
 		}
 	}
 	reopened, err := Open(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	defer reopened.Close()
 	var value string
-	if err := reopened.SQL().QueryRow("SELECT value FROM ui_preferences WHERE key='test'").Scan(&value); err != nil {
-		t.Fatal(err)
-	}
-	if value != "ok" {
-		t.Fatalf("value = %q", value)
-	}
+	must(t, reopened.SQL().QueryRow("SELECT value FROM ui_preferences WHERE key='test'").Scan(&value))
+	failIfFmt(t, value != "ok", "value = %q", value)
 }
 
 func TestRejectsCorruptAndUnsupported(t *testing.T) {
 	corrupt := filepath.Join(t.TempDir(), "corrupt.sqlite3")
-	if err := os.WriteFile(corrupt, []byte("not sqlite"), 0600); err != nil {
-		t.Fatal(err)
-	}
+	must(t, os.WriteFile(corrupt, []byte("not sqlite"), 0600))
 	if _, err := Open(corrupt); !errors.Is(err, ErrCorrupt) {
 		t.Fatalf("corrupt error = %v", err)
 	}
 
 	unsupported := filepath.Join(t.TempDir(), "unsupported.sqlite3")
 	db, err := Open(unsupported)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	if _, err := db.SQL().Exec("PRAGMA user_version = 3"); err != nil {
 		db.Close()
 		t.Fatal(err)
 	}
-	if err := db.Close(); err != nil {
-		t.Fatal(err)
-	}
+	must(t, db.Close())
 	if _, err := Open(unsupported); !errors.Is(err, ErrUnsupportedSchema) {
 		t.Fatalf("unsupported error = %v", err)
 	}
@@ -103,9 +83,7 @@ func TestUint64(t *testing.T) {
 func TestDaemonLockAndReadSnapshot(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "state.sqlite3")
 	first, err := OpenDaemon(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	if _, err := OpenDaemon(path); !errors.Is(err, ErrDaemonLocked) {
 		t.Fatalf("second daemon open = %v", err)
 	}
@@ -114,23 +92,15 @@ func TestDaemonLockAndReadSnapshot(t *testing.T) {
 		if err := snapshot.Conn().QueryRowContext(context.Background(), "SELECT count(*) FROM state_meta").Scan(&count); err != nil {
 			return err
 		}
-		if count != 1 {
-			t.Fatalf("state rows = %d", count)
-		}
+		failIfFmt(t, count != 1, "state rows = %d", count)
 		_, err := snapshot.Conn().ExecContext(context.Background(), "INSERT INTO ui_preferences(key,value) VALUES ('no','write')")
-		if err == nil {
-			t.Fatal("read snapshot allowed a write")
-		}
+		failIf(t, err == nil, "read snapshot allowed a write")
 		return nil
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := first.Close(); err != nil {
-		t.Fatal(err)
-	}
+	must(t, first.Close())
 	second, err := OpenDaemon(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	second.Close()
 }
