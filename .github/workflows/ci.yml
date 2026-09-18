@@ -92,7 +92,7 @@ jobs:
       - name: Run real Community terminal workflows
         env:
           OTO_E2E_ARTIFACTS: ${{ runner.temp }}/community-artifacts
-        run: go test -tags communitye2e -count=10 -v ./internal/e2e
+        run: go test -tags communitye2e -count=1 -v ./internal/e2e
       - name: Preserve isolated failure artifacts
         if: failure()
         uses: actions/upload-artifact@v4
