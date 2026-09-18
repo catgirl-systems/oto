@@ -289,7 +289,7 @@ func (m *model) textToolsKey(k tea.KeyPressMsg) tea.Cmd {
 			e.dialog = "remove"
 			e.confirm = false
 		}
-	case "n", "enter":
+	case "n", "a", "enter":
 		if e.group == 3 {
 			if key == "enter" {
 				e.value.Settings.CTCPVersion = !e.value.Settings.CTCPVersion
@@ -297,7 +297,7 @@ func (m *model) textToolsKey(k tea.KeyPressMsg) tea.Cmd {
 			}
 			return nil
 		}
-		add := key == "n" || len(items) == 0
+		add := key != "enter" || len(items) == 0
 		if add && len(items) >= 32 {
 			e.err = "At most 32 rules per group"
 			return nil
@@ -321,66 +321,74 @@ func (m model) textToolsView() string {
 		return trunc("Text tools: enlarge; Esc closes", max(1, m.width))
 	}
 	e := m.textTools
-	lines := []string{"Chat text tools · " + textToolGroups[e.group]}
+	title := "Chat text tools · " + textToolGroups[e.group]
 	if e.dirty {
-		lines[0] += " · unsaved"
+		title += " · unsaved"
 	}
+	footer := "s save · r reload · Ctrl↑↓ reorder · Esc close"
 	if e.dialog != "" {
-		label := map[string]string{"save": "Save rules for future messages only?", "close": "Discard unsaved changes and close?", "reload": "Discard changes and reload?", "remove": "Remove selected rule from this draft?"}[e.dialog]
-		choices := "[Cancel]  Confirm"
-		if e.confirm {
-			choices = "Cancel  [Confirm]"
-		}
-		lines = append(lines, label, choices, "←→ select · Enter accept · Esc cancel")
+		footer = "←→ select · Enter accept · Esc cancel"
 	} else if e.form != nil {
-		f := e.form
-		fields := 1
-		if e.group == 1 {
-			fields = 2
-		}
-		for i := 0; i < fields; i++ {
-			label := "Value"
+		footer = "Enter keeps draft · Tab field · Esc cancels edit"
+	}
+	return m.cardView(title, footer, func(width, rows int) []string {
+		lines := make([]string, 0, rows)
+		switch {
+		case e.dialog != "":
+			label := map[string]string{"save": "Save rules for future messages only?", "close": "Discard unsaved changes and close?", "reload": "Discard changes and reload?", "remove": "Remove selected rule from this draft?"}[e.dialog]
+			choices := "[Cancel]  Confirm"
+			if e.confirm {
+				choices = "Cancel  [Confirm]"
+			}
+			lines = append(lines, label, choices)
+		case e.form != nil:
+			f := e.form
+			fields := 1
 			if e.group == 1 {
-				label = []string{"From", "To"}[i]
+				fields = 2
 			}
-			cursor := "  "
-			value := f.values[i]
-			if i == f.field {
-				cursor = "> "
-				value = renderInputWindow(value, f.cursor, max(1, m.width-len(label)-4))
+			for i := 0; i < fields; i++ {
+				label := "Value"
+				if e.group == 1 {
+					label = []string{"From", "To"}[i]
+				}
+				cursor := "  "
+				value := f.values[i]
+				if i == f.field {
+					cursor = "> "
+					value = renderInputWindow(value, f.cursor, max(1, width-len(label)-4))
+				}
+				lines = append(lines, cursor+label+": "+value)
 			}
-			lines = append(lines, cursor+label+": "+value)
-		}
-		lines = append(lines, "Enter keeps draft · Tab field · Esc cancels edit")
-	} else {
-		help := []string{"Whole-word Unicode mentions; before censorship.", "Ordered literal replacements; after normalization.", "Whole tokens; * any, ? one; case-insensitive; → ***.", "One reply at a time; 10s globally, 60s per sender."}[e.group]
-		lines = append(lines, help)
-		items := e.items()
-		if len(items) == 0 {
-			lines = append(lines, "No rules. Press n to add.")
-		}
-		count := max(1, m.height-7)
-		start := max(0, e.row-count+1)
-		for i := start; i < min(len(items), start+count); i++ {
-			mark := "  "
-			if i == e.row {
-				mark = "> "
+		default:
+			help := []string{"", "Ordered literal replacements; after normalization.", "Whole tokens; * any, ? one; case-insensitive; → ***.", "One reply at a time; 10s globally, 60s per sender."}[e.group]
+			if help != "" {
+				lines = append(lines, help, "")
 			}
-			lines = append(lines, mark+items[i])
+			items := e.items()
+			if len(items) == 0 {
+				lines = append(lines, "No rules. Press a to add.")
+			}
+			window := max(1, rows-len(lines)-2)
+			start := max(0, e.row-window+1)
+			for i := start; i < min(len(items), start+window); i++ {
+				mark := "  "
+				if i == e.row {
+					mark = "> "
+				}
+				lines = append(lines, mark+items[i])
+			}
+			lines = append(lines, "", "Tab group · a/n add · Enter edit · d remove")
 		}
-		lines = append(lines, "Tab group · n add · Enter edit · d remove", "s save · r reload · Ctrl↑↓ reorder · Esc close")
-	}
-	if e.busy {
-		lines = append(lines, "Working…")
-	}
-	if e.value.CommunityIdentity != m.community.summary.CommunityIdentity {
-		lines = append(lines, "Session changed; r reloads")
-	}
-	if e.err != "" {
-		lines = append(lines, e.err)
-	}
-	for i := range lines {
-		lines[i] = trunc(lines[i], m.width)
-	}
-	return strings.Join(lines[:min(len(lines), m.height)], "\n")
+		if e.busy {
+			lines = append(lines, "Working…")
+		}
+		if e.value.CommunityIdentity != m.community.summary.CommunityIdentity {
+			lines = append(lines, "Session changed; r reloads")
+		}
+		if e.err != "" {
+			lines = append(lines, e.err)
+		}
+		return lines
+	})
 }

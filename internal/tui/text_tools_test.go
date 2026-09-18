@@ -58,6 +58,19 @@ func TestTextToolsEditorWorkflowAndFences(t *testing.T) {
 	text("n")
 	failIf(t, current.form != nil || !strings.Contains(m.textToolsView(), "Session changed"), "session fence")
 }
+
+func TestTextToolsAddKeyAliases(t *testing.T) {
+	m, _ := privateChatModel(t)
+	drainChat(t, &m, m.openTextTools())
+	press := func(code rune) { drainChat(t, &m, m.key(tea.KeyPressMsg(tea.Key{Code: code}))) }
+	press('a')
+	failIf(t, m.textTools.form == nil || !m.textTools.form.add, "a did not start an add form")
+	drainChat(t, &m, m.key(chatPress("word")))
+	press(tea.KeyEnter)
+	failIf(t, len(m.textTools.value.Settings.Keywords) != 1 || m.textTools.value.Settings.Keywords[0] != "word", m.textTools.value.Settings)
+	press(tea.KeyEnter)
+	failIf(t, m.textTools.form == nil || m.textTools.form.add, "enter added instead of editing")
+}
 func TestTextToolsLayouts(t *testing.T) {
 	m, _ := privateChatModel(t)
 	drainChat(t, &m, m.openTextTools())

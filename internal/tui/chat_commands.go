@@ -22,6 +22,7 @@ type chatCommandMsg struct {
 }
 type commandOutput struct {
 	text         string
+	title        string
 	scroll       int
 	broadcast    *broadcastOutput
 	sharedPrompt *sharedSendPrompt
@@ -30,9 +31,9 @@ type commandOutput struct {
 func (m *model) showChatCommandHelp() {
 	text := "Chat: /COMMAND · headless: oto command COMMAND · interactive: oto console\nUse /aliases to list, /alias NAME EXPANSION to create, /unalias to remove.\nQuote arguments with spaces. $1..$128 positional, $* rest, $$ literal dollar.\nExample: /alias wave 'me waves at $1' then /wave Alice\nNo shell evaluation or plugins. Unknown commands are never sent as chat.\n\n"
 	for _, spec := range daemon.CommandSpecs() {
-		text += spec.Usage + "\n  " + spec.Description + "\n"
+		text += spec.Usage + "\n  " + spec.Description + "\n\n"
 	}
-	m.commandOutput = &commandOutput{text: text}
+	m.commandOutput = &commandOutput{title: "Chat commands & aliases", text: text}
 }
 
 func (m *model) sendChatCommand(key chatKey, d chatDraft) tea.Cmd {
@@ -131,8 +132,13 @@ func (m model) commandOutputView() string {
 	if m.width < 20 || m.height < 6 {
 		return trunc("Command result: enlarge; Esc closes", max(1, m.width))
 	}
-	lines := strings.Split(ansi.Wrap(m.commandOutput.text, max(1, m.width-2), ""), "\n")
-	start := min(m.commandOutput.scroll, max(0, len(lines)-(m.height-3)))
-	end := min(len(lines), start+max(1, m.height-3))
-	return strings.Join(append([]string{strong(trunc("Command result · ↑↓ scroll · Esc close", m.width))}, lines[start:end]...), "\n")
+	title := m.commandOutput.title
+	if title == "" {
+		title = "Command result"
+	}
+	return m.cardView(title, "↑↓ / PgUp/PgDn scroll · Esc close", func(width, rows int) []string {
+		lines := strings.Split(ansi.Wrap(m.commandOutput.text, max(1, width), ""), "\n")
+		start := min(m.commandOutput.scroll, max(0, len(lines)-rows))
+		return lines[start:min(len(lines), start+max(1, rows))]
+	})
 }

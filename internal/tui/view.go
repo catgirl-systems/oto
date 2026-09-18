@@ -943,6 +943,44 @@ func (m model) footerView() string {
 	return style.Render(muted(spread(actions, "•  ? all controls", m.width-2)))
 }
 
+// cardView centers the app's standard modal card over the terminal. fill receives the
+// usable inner width and body row count so callers window their own content; excess
+// rows are dropped and long lines truncated. Terminals too small for a border fall
+// back to plain truncated lines. Card width is the total rendered width.
+func (m model) cardView(title, footer string, fill func(width, rows int) []string) string {
+	if m.width < 40 || m.height < 8 {
+		width := max(1, m.width)
+		lines := append([]string{title}, fill(width, max(0, m.height-2))...)
+		if footer != "" {
+			lines = append(lines, footer)
+		}
+		for i := range lines {
+			lines[i] = trunc(lines[i], width)
+		}
+		return strings.Join(lines[:min(len(lines), max(1, m.height))], "\n")
+	}
+	cardWidth := max(34, min(84, m.width-4))
+	inner := max(1, cardWidth-4)
+	tail := 0
+	if footer != "" {
+		tail = 1
+	}
+	rows := max(1, m.height-4-tail)
+	body := fill(inner, rows)
+	if len(body) > rows {
+		body = body[:rows]
+	}
+	lines := append([]string{strong(trunc(title, inner))}, body...)
+	if footer != "" {
+		lines = append(lines, muted(trunc(footer, inner)))
+	}
+	for i := range lines {
+		lines[i] = trunc(lines[i], inner)
+	}
+	card := panelStyle().Width(cardWidth).Padding(0, 1).Render(strings.Join(lines, "\n"))
+	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, card)
+}
+
 func panelStyle() lipgloss.Style {
 	s := lipgloss.NewStyle().Border(lipgloss.RoundedBorder(), true)
 	if colorsEnabled() {

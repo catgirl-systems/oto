@@ -177,47 +177,48 @@ func (m model) awaySettingsView() string {
 		return trunc("Away settings: enlarge; Esc", max(1, m.width))
 	}
 	e := m.awayEditor
-	lines := []string{"Away settings"}
+	title := "Away settings"
 	if e.dirty {
-		lines[0] += " · unsaved"
+		title += " · unsaved"
 	}
+	footer := "Tab field · Enter save preview · Esc close"
 	if e.dialog != "" {
-		label := "Close and discard local edits? An in-flight save may already be committed."
-		if e.dialog == "save" {
-			label = "Save idle timeout and automatic reply for this account?"
-		}
-		choice := "[Cancel]  Confirm"
-		if e.confirm {
-			choice = "Cancel  [Confirm]"
-		}
-		lines = append(lines, label, choice, "←→ choose · Enter accept · Esc cancel")
-	} else {
-		labels := []string{"Idle seconds (0 off)", "Reply (empty off)"}
-		if m.width < 40 {
-			labels = []string{"Seconds (0 off)", "Reply"}
-		}
-		for i, label := range labels {
-			prefix := "  "
-			value := e.form.values[i]
-			if i == e.form.field {
-				prefix = "> "
-				value = renderInputWindow(value, e.form.cursor, max(1, m.width-len(label)-4))
+		footer = "←→ choose · Enter accept · Esc cancel"
+	}
+	return m.cardView(title, footer, func(width, rows int) []string {
+		lines := make([]string, 0, rows)
+		if e.dialog != "" {
+			label := "Close and discard local edits? An in-flight save may already be committed."
+			if e.dialog == "save" {
+				label = "Save idle timeout and automatic reply for this account?"
 			}
-			lines = append(lines, prefix+label+": "+value)
+			choice := "[Cancel]  Confirm"
+			if e.confirm {
+				choice = "Cancel  [Confirm]"
+			}
+			lines = append(lines, label, choice)
+		} else {
+			labels := []string{"Idle seconds (0 off)", "Reply (empty off)"}
+			if m.width < 40 {
+				labels = []string{"Seconds (0 off)", "Reply"}
+			}
+			for i, label := range labels {
+				prefix := "  "
+				value := e.form.values[i]
+				if i == e.form.field {
+					prefix = "> "
+					value = renderInputWindow(value, e.form.cursor, max(1, width-len(label)-4))
+				}
+				lines = append(lines, prefix+label+": "+value)
+			}
+			lines = append(lines, "", "Replies once per sender per away period.", fmt.Sprintf("Automatic Away now: %t", m.community.summary.AutomaticAway))
 		}
-		lines = append(lines, "Manual Away stays until explicit Online.", "Replies once per sender per away period; no offline/CTCP replies.", fmt.Sprintf("Automatic Away now: %t", m.community.summary.AutomaticAway), "Tab field · Enter save preview · Esc close")
-	}
-	if e.busy {
-		lines = append(lines, "Working…")
-	}
-	if e.err != "" {
-		lines = append(lines, e.err)
-	}
-	if len(lines) > m.height {
-		lines = append(lines[:m.height-1], lines[len(lines)-1])
-	}
-	for i := range lines {
-		lines[i] = trunc(lines[i], m.width)
-	}
-	return strings.Join(lines, "\n")
+		if e.busy {
+			lines = append(lines, "Working…")
+		}
+		if e.err != "" {
+			lines = append(lines, e.err)
+		}
+		return lines
+	})
 }

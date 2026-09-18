@@ -9,7 +9,6 @@ import (
 	"unicode/utf8"
 
 	tea "charm.land/bubbletea/v2"
-	"charm.land/lipgloss/v2"
 	"github.com/catgirl-systems/oto/internal/daemon"
 )
 
@@ -414,114 +413,111 @@ func (m model) privacyRulesView() string {
 	if e == nil {
 		return m.mainView()
 	}
-	tiny := m.width < 36 || m.height < 8
-	width, inner, height := max(1, min(84, m.width-4)), max(1, min(80, m.width-8)), max(1, m.height-4)
-	if tiny {
-		width, inner, height = max(1, m.width), max(1, m.width), max(1, m.height)
+	short := m.width < 48
+	title := fmt.Sprintf("Privacy rules · page %d", len(e.back)+1)
+	footer := "a add · e edit · d delete · Esc close"
+	if short {
+		footer = "a+ · e · d · Esc"
 	}
-	var lines []string
 	switch {
 	case e.dialog != nil:
-		d := e.dialog
-		choices := "[Cancel] Confirm"
-		if d.confirm {
-			choices = "Cancel [Confirm]"
-		}
-		lines = []string{"Confirm privacy change"}
-		lines = append(lines, communityPane([]string{d.label}, inner, max(0, height-3), d.scroll)...)
-		footer := "←→ choose · Enter · Esc · PgUp/Dn text"
-		if inner < 40 {
+		title = "Confirm privacy change"
+		footer = "←→ choose · Enter · Esc · PgUp/Dn text"
+		if short {
 			footer = "←→ · Enter · Esc"
 		}
-		lines = append(lines, choices, footer)
 	case e.form != nil:
-		f := e.form
-		lines = []string{"Privacy rule editor"}
-		values := []string{f.rule.Action, f.rule.Kind, f.rule.Value, f.rule.Message}
-		labels := []string{"Action", "Kind", "Value", "Ban message"}
-		if inner < 36 {
-			labels[3] = "Message"
-		}
-		start, end := 0, 4
-		if height < 8 {
-			start, end = f.field, f.field+1
-		}
-		for i := start; i < end; i++ {
-			value := values[i]
-			if i >= 2 && i == f.field {
-				value = renderInputWindow(value, f.cursor, max(1, inner-len(labels[i])-4))
-			}
-			if i < 2 && i == f.field {
-				value = "‹ " + value + " ›"
-			}
-			lines = append(lines, selectedRow(trunc(labels[i]+": "+value, max(1, inner-2)), i == f.field))
-		}
-		if height >= 10 {
-			lines = append(lines, "Ignore: chat only. Ban: sharing/uploads.", "Bans override trust; identity is not cryptographic.")
-		}
-		message := f.err
-		if e.err != "" {
-			message = e.err
-		}
-		if e.identity != m.community.summary.CommunityIdentity {
-			message = "Session changed; Esc to close/reopen"
-		}
-		if e.busy {
-			message = "Saving…"
-		} else if e.loading {
-			message = "Loading…"
-		}
-		if message != "" {
-			lines = append(lines, danger("! "+message))
-		}
-		footer := "Tab fields · Enter next/preview · Esc cancel"
-		if inner < 40 {
+		title = "Privacy rule editor"
+		footer = "Tab fields · Enter next/preview · Esc cancel"
+		if short {
 			footer = "Tab · Enter · Esc"
 		}
-		lines = append(lines, footer)
-	default:
-		lines = []string{fmt.Sprintf("Privacy rules · page %d", len(e.back)+1)}
-		if height >= 9 {
-			lines = append(lines, "Ignore: chat only. Ban: sharing/uploads.", "Bans override trust; identity is not cryptographic.")
-		}
-		message := e.err
-		if !m.community.summary.Connected && message == "" {
-			message = "Offline; rules are saved locally"
-		}
-		if e.loading {
-			message = "Loading…"
-		}
-		if e.identity != m.community.summary.CommunityIdentity {
-			message = "Session changed; Esc to close/reopen"
-		}
-		if message != "" {
-			lines = append(lines, "! "+message)
-		}
-		available := max(1, height-len(lines)-2)
-		start, end := visibleRange(len(e.rules), e.row, available)
-		for i := start; i < end; i++ {
-			rule := e.rules[i]
-			lines = append(lines, selectedRow(trunc(fmt.Sprintf("%s %s %q", rule.Action, rule.Kind, rule.Value), max(1, inner-2)), i == e.row))
-		}
-		if len(e.rules) == 0 && !e.loading {
-			lines = append(lines, "No privacy rules.")
-		}
-		paging := "p previous"
-		if e.nextCursor != "" {
-			paging += " · n next"
-		}
-		footer := "a add · e edit · d delete · Esc close"
-		if inner < 40 {
-			footer = "a+ · e · d · Esc"
-		}
-		lines = append(lines, paging+" · r reload", footer)
 	}
-	for i := range lines {
-		lines[i] = trunc(lines[i], inner)
-	}
-	body := strings.Join(lines[:min(len(lines), height)], "\n")
-	if tiny {
-		return body
-	}
-	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, panelStyle().Width(width).Padding(0, 1).Render(body))
+	return m.cardView(title, footer, func(width, rows int) []string {
+		var lines []string
+		switch {
+		case e.dialog != nil:
+			d := e.dialog
+			choices := "[Cancel] Confirm"
+			if d.confirm {
+				choices = "Cancel [Confirm]"
+			}
+			lines = append(lines, communityPane([]string{d.label}, width, max(0, rows-1), d.scroll)...)
+			lines = append(lines, choices)
+		case e.form != nil:
+			f := e.form
+			values := []string{f.rule.Action, f.rule.Kind, f.rule.Value, f.rule.Message}
+			labels := []string{"Action", "Kind", "Value", "Ban message"}
+			if width < 36 {
+				labels[3] = "Message"
+			}
+			start, end := 0, 4
+			if rows < 8 {
+				start, end = f.field, f.field+1
+			}
+			for i := start; i < end; i++ {
+				value := values[i]
+				if i >= 2 && i == f.field {
+					value = renderInputWindow(value, f.cursor, max(1, width-len(labels[i])-4))
+				}
+				if i < 2 && i == f.field {
+					value = "‹ " + value + " ›"
+				}
+				lines = append(lines, selectedRow(trunc(labels[i]+": "+value, max(1, width-2)), i == f.field))
+			}
+			if rows >= 8 {
+				lines = append(lines, "", "Ignore: chat only. Ban: sharing/uploads.")
+			}
+			message := f.err
+			if e.err != "" {
+				message = e.err
+			}
+			if e.identity != m.community.summary.CommunityIdentity {
+				message = "Session changed; Esc to close/reopen"
+			}
+			if e.busy {
+				message = "Saving…"
+			} else if e.loading {
+				message = "Loading…"
+			}
+			if message != "" {
+				lines = append(lines, danger("! "+message))
+			}
+		default:
+			if rows >= 7 {
+				lines = append(lines, "Ignore: chat only. Ban: sharing/uploads.")
+			}
+			message := e.err
+			if !m.community.summary.Connected && message == "" {
+				message = "Offline; rules are saved locally"
+			}
+			if e.loading {
+				message = "Loading…"
+			}
+			if e.identity != m.community.summary.CommunityIdentity {
+				message = "Session changed; Esc to close/reopen"
+			}
+			if message != "" {
+				lines = append(lines, "! "+message)
+			}
+			if rows >= 7 {
+				lines = append(lines, "")
+			}
+			available := max(1, rows-len(lines)-1)
+			start, end := visibleRange(len(e.rules), e.row, available)
+			for i := start; i < end; i++ {
+				rule := e.rules[i]
+				lines = append(lines, selectedRow(trunc(fmt.Sprintf("%s %s %q", rule.Action, rule.Kind, rule.Value), max(1, width-2)), i == e.row))
+			}
+			if len(e.rules) == 0 && !e.loading {
+				lines = append(lines, "No privacy rules.")
+			}
+			paging := "p previous"
+			if e.nextCursor != "" {
+				paging += " · n next"
+			}
+			lines = append(lines, paging+" · r reload")
+		}
+		return lines
+	})
 }
