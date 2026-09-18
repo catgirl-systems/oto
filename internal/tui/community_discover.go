@@ -49,7 +49,6 @@ type communityDiscoverModel struct {
 	interests                   []daemon.CommunityInterest
 	rows                        []daemon.CommunityDiscoveryRow
 	next, cursor, query, target string
-	total                       int
 	state, err                  string
 	revision, generation        uint64
 	request                     uint64
@@ -271,7 +270,7 @@ func (m *model) applyDiscoverPage(x discoverPageMsg) tea.Cmd {
 		if x.interests.Revision < d.revision {
 			return nil
 		}
-		d.interests, d.next, d.total, d.revision, d.err = x.interests.Interests, x.interests.NextCursor, x.interests.Total, x.interests.Revision, ""
+		d.interests, d.next, d.revision, d.err = x.interests.Interests, x.interests.NextCursor, x.interests.Revision, ""
 		d.row = max(0, min(d.row, len(d.interests)-1))
 		for i, row := range d.interests {
 			if row.Item == d.selected {
@@ -288,7 +287,7 @@ func (m *model) applyDiscoverPage(x discoverPageMsg) tea.Cmd {
 	if p.Generation != 0 && p.Generation < d.generation || p.Revision < d.revision {
 		return nil
 	}
-	d.rows, d.next, d.total, d.state, d.err = p.Rows, p.NextCursor, p.Total, p.State, p.Error
+	d.rows, d.next, d.state, d.err = p.Rows, p.NextCursor, p.State, p.Error
 	d.generation, d.revision = p.Generation, p.Revision
 	for i, row := range m.discoverVisibleRows() {
 		name := row.Item
@@ -346,7 +345,7 @@ func (m *model) setDiscoverMode(mode int) tea.Cmd {
 	}
 	m.saveDiscoverDraft()
 	d.cancelLoad()
-	d.mode, d.row, d.cursor, d.next, d.total, d.state, d.err, d.selected = mode, 0, "", "", 0, "", "", ""
+	d.mode, d.row, d.cursor, d.next, d.state, d.err, d.selected = mode, 0, "", "", "", "", ""
 	d.query, d.target, d.form = "", "", ""
 	d.interests, d.rows = nil, nil
 	d.revision, d.generation = 0, 0
@@ -963,7 +962,7 @@ func (m *model) discoverItemAction(key string) (bool, tea.Cmd) {
 	}
 	d.target, d.query, d.cursor, d.next, d.state, d.selected = normalized, "", "", "", "", ""
 	d.rows = nil
-	d.row, d.total = 0, 0
+	d.row = 0
 	d.revision, d.generation = 0, 0
 	return true, m.loadCommunityDiscover(false)
 }
