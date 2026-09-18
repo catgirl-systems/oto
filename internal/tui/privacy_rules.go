@@ -17,7 +17,6 @@ const privacyRulesPageSize = 200
 
 type privacyRulesEditor struct {
 	identity           daemon.CommunityIdentity
-	selected           string
 	rules              []daemon.CommunityRule
 	cursor, nextCursor string
 	back               []string
@@ -39,13 +38,13 @@ type privacyRuleForm struct {
 }
 
 type privacyRuleDialog struct {
-	kind      string
-	label     string
-	rule, old daemon.CommunityRule
-	identity  daemon.CommunityIdentity
-	revision  uint64
-	confirm   bool
-	scroll    int
+	kind     string
+	label    string
+	rule     daemon.CommunityRule
+	identity daemon.CommunityIdentity
+	revision uint64
+	confirm  bool
+	scroll   int
 }
 
 type privacyRulesPageMsg struct {
@@ -68,7 +67,7 @@ func (m *model) openPrivacyRules(action, selected string) tea.Cmd {
 		m.setNotice("Privacy rules unavailable; refresh Community or restart the daemon")
 		return nil
 	}
-	e := &privacyRulesEditor{identity: m.community.summary.CommunityIdentity, selected: selected}
+	e := &privacyRulesEditor{identity: m.community.summary.CommunityIdentity}
 	m.privacyRules = e
 	if action == "ignore" || action == "ban" {
 		e.form = &privacyRuleForm{rule: daemon.CommunityRule{Action: action, Kind: "username", Value: selected}, cursor: len([]rune(selected))}
@@ -267,11 +266,13 @@ func (m *model) privacyRulesFormKey(k tea.KeyPressMsg) tea.Cmd {
 			f.cursor = privacyRuleFieldCursor(*f)
 			return nil
 		}
-		if err := validatePrivacyRule(&f.rule); err != nil {
+		normalized, err := daemon.NormalizeCommunityRule(f.rule)
+		if err != nil {
 			f.err = err.Error()
 			return nil
 		}
-		e.dialog = &privacyRuleDialog{kind: "save", label: privacyRuleLabel(f.rule, f.old), rule: f.rule, old: f.old, identity: e.identity, revision: e.revision}
+		f.rule = normalized
+		e.dialog = &privacyRuleDialog{kind: "save", label: privacyRuleLabel(f.rule, f.old), rule: f.rule, identity: e.identity, revision: e.revision}
 		return nil
 	}
 	if f.field >= 2 {
@@ -347,14 +348,6 @@ func privacyRuleCycle(f *privacyRuleForm, reverse bool) {
 	}
 	f.dirty = true
 	f.err = ""
-}
-
-func validatePrivacyRule(rule *daemon.CommunityRule) error {
-	normalized, err := daemon.NormalizeCommunityRule(*rule)
-	if err == nil {
-		*rule = normalized
-	}
-	return err
 }
 
 func (m *model) privacyRulesDialogKey(k tea.KeyPressMsg) tea.Cmd {
