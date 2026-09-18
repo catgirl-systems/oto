@@ -20,25 +20,15 @@ func TestCommunityInterestsIPCMultipleFrontends(t *testing.T) {
 	second := NewClient(first.path)
 	ctx := context.Background()
 	summary, err := first.CommunitySummary(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !slices.Contains(summary.Capabilities, "interests") || !slices.Contains(summary.Capabilities, "self-profile") {
-		t.Fatal("missing capabilities")
-	}
+	must(t, err)
+	failIf(t, !slices.Contains(summary.Capabilities, "interests") || !slices.Contains(summary.Capabilities, "self-profile"), "missing capabilities")
 	id := summary.CommunityIdentity
 	added, err := first.SetCommunityInterest(ctx, daemon.CommunityInterestRequest{CommunityIdentity: id, Item: " TECHno ", Opinion: "like"})
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	page, err := second.CommunityInterests(ctx, daemon.CommunityInterestsRequest{CommunityIdentity: id})
-	if err != nil || len(page.Interests) != 1 || page.Interests[0].Item != "techno" {
-		t.Fatal(page, err)
-	}
+	failIf(t, err != nil || len(page.Interests) != 1 || page.Interests[0].Item != "techno", page, err)
 	changed, err := second.SetCommunityInterest(ctx, daemon.CommunityInterestRequest{CommunityIdentity: id, Item: "techno", Opinion: "dislike", Revision: &added.Interest.Revision})
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	if _, err := first.SetCommunityInterest(ctx, daemon.CommunityInterestRequest{CommunityIdentity: id, Item: "techno", Opinion: "like", Revision: &added.Interest.Revision}); err == nil {
 		t.Fatal("stale interest overwrite")
 	}
@@ -51,43 +41,27 @@ func TestCommunityInterestsIPCMultipleFrontends(t *testing.T) {
 		t.Fatal("PUT removed interest")
 	}
 	removed, err := first.SetCommunityInterest(ctx, req)
-	if err != nil || !removed.Removed || removed.Interest.Item != "techno" {
-		t.Fatal(removed, err)
-	}
+	failIf(t, err != nil || !removed.Removed || removed.Interest.Item != "techno", removed, err)
 	p, err := first.CommunitySelfProfile(ctx, id)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	p.Description = "private description 猫/?\nline"
 	saved, err := second.SetCommunitySelfProfile(ctx, p)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	p.Description = "stale"
 	if _, err := first.SetCommunitySelfProfile(ctx, p); err == nil {
 		t.Fatal("stale description overwrite")
 	}
 	latest, err := first.CommunitySelfProfile(ctx, id)
-	if err != nil || latest != saved {
-		t.Fatal(latest, err)
-	}
+	failIf(t, err != nil || latest != saved, latest, err)
 	encoded, err := json.Marshal(service.Snapshot())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(string(encoded), "private description") {
-		t.Fatal("state contains description")
-	}
+	must(t, err)
+	failIf(t, strings.Contains(string(encoded), "private description"), "state contains description")
 	base := "/v1/community/interests?" + communityRoomValues(id).Encode()
 	for _, path := range []string{base + "&limit=-1", base + "&limit=no", base + "&cursor=%1B", base + "&cursor=UPPERCASE", base + "&query=%1B", "/v1/community/profile/self?session=no"} {
 		resp, err := first.http.Do(mustRequest(http.MethodGet, "http://oto.local"+path, nil))
-		if err != nil {
-			t.Fatal(err)
-		}
+		must(t, err)
 		_ = resp.Body.Close()
-		if resp.StatusCode != http.StatusBadRequest {
-			t.Fatal(path, resp.StatusCode)
-		}
+		failIf(t, resp.StatusCode != http.StatusBadRequest, path, resp.StatusCode)
 	}
 	id.Session++
 	if _, err := first.CommunitySelfProfile(ctx, id); err == nil {

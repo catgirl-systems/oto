@@ -18,22 +18,16 @@ func TestReceivingSettingsIPCConsentAndSessionFence(t *testing.T) {
 	client, _ := communityIPC(t, cfg, filepath.Join(t.TempDir(), "state.sqlite3"))
 	ctx := context.Background()
 	summary, err := client.CommunitySummary(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	before, err := client.ReceivingSettings(ctx, summary.CommunityIdentity)
-	if err != nil || before.Settings.Mode != "" {
-		t.Fatal(before, err)
-	}
+	failIf(t, err != nil || before.Settings.Mode != "", before, err)
 	req := daemon.ReceivingSettingsRequest{CommunityIdentity: summary.CommunityIdentity, Expected: before.Settings, Settings: config.Receiving{Mode: "trusted"}}
 	if _, err := client.SetReceivingSettings(ctx, req); err == nil {
 		t.Fatal("missing confirmation accepted")
 	}
 	req.Confirm = true
 	got, err := client.SetReceivingSettings(ctx, req)
-	if err != nil || got.Settings.Mode != "trusted" || got.Settings.CompletionHooks {
-		t.Fatal(got, err)
-	}
+	failIf(t, err != nil || got.Settings.Mode != "trusted" || got.Settings.CompletionHooks, got, err)
 	req.Expected = got.Settings
 	req.Settings.Mode = "everyone"
 	if _, err := client.SetReceivingSettings(ctx, req); err == nil {
@@ -45,7 +39,5 @@ func TestReceivingSettingsIPCConsentAndSessionFence(t *testing.T) {
 		t.Fatal("stale session accepted")
 	}
 	after, err := client.ReceivingSettings(ctx, summary.CommunityIdentity)
-	if err != nil || after.Settings.Mode != "trusted" {
-		t.Fatal(after, err)
-	}
+	failIf(t, err != nil || after.Settings.Mode != "trusted", after, err)
 }

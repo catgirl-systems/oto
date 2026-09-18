@@ -17,14 +17,10 @@ func TestAccountPrivilegesIPCOfflineAndValidation(t *testing.T) {
 	client, _ := communityIPC(t, cfg, filepath.Join(t.TempDir(), "state.db"))
 	ctx := context.Background()
 	summary, err := client.CommunitySummary(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	req := daemon.AccountPrivilegesRequest{CommunityIdentity: summary.CommunityIdentity}
 	out, err := client.AccountPrivileges(ctx, req)
-	if err != nil || out.Fresh || out.Known || out.Error == "" {
-		t.Fatal(out, err)
-	}
+	failIf(t, err != nil || out.Fresh || out.Known || out.Error == "", out, err)
 	if _, err := client.GiftAccountPrivileges(ctx, daemon.AccountPrivilegeGiftRequest{CommunityIdentity: req.CommunityIdentity, Username: "Alice", RequestID: "one", Days: 1, Confirm: true}); err == nil {
 		t.Fatal("offline gift accepted")
 	}

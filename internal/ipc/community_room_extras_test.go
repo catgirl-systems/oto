@@ -17,20 +17,14 @@ func TestCommunityPrivateRoomIPCPreferencesAndValidation(t *testing.T) {
 	client, _ := communityIPC(t, cfg, filepath.Join(t.TempDir(), "state.sqlite3"))
 	ctx := context.Background()
 	summary, err := client.CommunitySummary(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	id := summary.CommunityIdentity
 	if _, err = client.OpenCommunityConversation(ctx, daemon.CommunityOpenConversationRequest{CommunityIdentity: id, Room: "oto test"}); err != nil {
 		t.Fatal(err)
 	}
 	page, err := client.CommunityRooms(ctx, daemon.CommunityRoomsRequest{CommunityIdentity: id})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !page.InvitationsEnabled {
-		t.Fatal("default invitation preference lost")
-	}
+	must(t, err)
+	failIf(t, !page.InvitationsEnabled, "default invitation preference lost")
 	pref := daemon.CommunityRoomInvitationsRequest{CommunityIdentity: id, Revision: page.Revision, Enabled: false}
 	if err = client.SetCommunityRoomInvitations(ctx, pref); err != nil {
 		t.Fatal(err)
@@ -48,9 +42,7 @@ func TestCommunityPrivateRoomIPCPreferencesAndValidation(t *testing.T) {
 		t.Fatal(err)
 	}
 	wall, err := client.CommunityRoomWall(ctx, daemon.CommunityRoomMembersRequest{CommunityIdentity: id, Room: "oto test", Limit: 200})
-	if err != nil || wall.OwnText != wallReq.Text || wall.Fresh || wall.Entries == nil || wall.Room.RoleFresh {
-		t.Fatal(wall, err)
-	}
+	failIf(t, err != nil || wall.OwnText != wallReq.Text || wall.Fresh || wall.Entries == nil || wall.Room.RoleFresh, wall, err)
 	if err = client.SetCommunityRoomWall(ctx, wallReq); err == nil {
 		t.Fatal("stale wall edit accepted")
 	}
@@ -63,13 +55,9 @@ func TestCommunityPrivateRoomIPCPreferencesAndValidation(t *testing.T) {
 		t.Fatal(err)
 	}
 	wall, err = client.CommunityRoomWall(ctx, daemon.CommunityRoomMembersRequest{CommunityIdentity: id, Room: "oto test"})
-	if err != nil || wall.OwnText != "" {
-		t.Fatal(wall, err)
-	}
+	failIf(t, err != nil || wall.OwnText != "", wall, err)
 	members, err := client.CommunityRoomMembers(ctx, daemon.CommunityRoomMembersRequest{CommunityIdentity: id, Room: "oto test", Private: true})
-	if err != nil || members.MembersFresh || members.Members == nil {
-		t.Fatal(members, err)
-	}
+	failIf(t, err != nil || members.MembersFresh || members.Members == nil, members, err)
 	if _, err = client.ChangeCommunityRoomRole(ctx, daemon.CommunityRoomRoleRequest{CommunityIdentity: id, Room: "oto test", Action: soulseek.RoomCancelOwnership, RequestID: "role", Revision: wall.Revision, Confirm: true}); err == nil {
 		t.Fatal("offline role change accepted")
 	}
@@ -90,12 +78,8 @@ func TestCommunityPrivateRoomIPCPreferencesAndValidation(t *testing.T) {
 		"/v1/community/rooms/wall?" + communityRoomValues(id).Encode() + "&room=oto+test&limit=-1",
 	} {
 		response, err := client.http.Do(mustRequest(http.MethodGet, "http://oto.local"+url, nil))
-		if err != nil {
-			t.Fatal(err)
-		}
+		must(t, err)
 		_ = response.Body.Close()
-		if response.StatusCode != http.StatusBadRequest {
-			t.Fatal(url, response.StatusCode)
-		}
+		failIf(t, response.StatusCode != http.StatusBadRequest, url, response.StatusCode)
 	}
 }
