@@ -16,9 +16,7 @@ func TestBroadcastPreparedTextIsValidatedButNotTransformedAgain(t *testing.T) {
 	var err error
 	s.community.text, err = compileCommunityTextTools(config.CommunityTextTools{Substitutions: []config.CommunitySubstitution{{From: "hello", To: "hello!"}}})
 	s.mu.Unlock()
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	req := CommunitySendRequest{CommunityIdentity: id, RequestID: "prepared-broadcast", Username: "Alice", Text: "hello!"}
 	out, err := s.sendCommunityPrivate(ctx, req, true)
 	if err != nil {
@@ -28,9 +26,7 @@ func TestBroadcastPreparedTextIsValidatedButNotTransformedAgain(t *testing.T) {
 		t.Fatal("prepared and ordinary submissions share a fingerprint")
 	}
 	message, err := s.stateDB.Queries().GetCommunityMessage(ctx, db.GetCommunityMessageParams{Account: id.Account, ID: out.MessageID})
-	if err != nil || message.Body != "hello!" {
-		t.Fatal(message, err)
-	}
+	failIf(t, err != nil || message.Body != "hello!", message, err)
 	req.RequestID = "prepared-invalid"
 	req.Text = "\x1b[31munsafe"
 	if _, err := s.sendCommunityPrivate(ctx, req, true); err == nil {

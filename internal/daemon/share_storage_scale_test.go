@@ -22,9 +22,7 @@ func scaleShareEntries(n int) []soulseek.ShareEntry {
 
 func TestShareSnapshotAllowsWritesBetweenBatches(t *testing.T) {
 	db, err := storage.Open(filepath.Join(t.TempDir(), "state.sqlite3"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	defer db.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -64,12 +62,8 @@ func TestShareSnapshotAllowsWritesBetweenBatches(t *testing.T) {
 	if !progress {
 		cancel()
 	}
-	if err := <-finished; err != nil {
-		t.Fatal(err)
-	}
-	if !progress {
-		t.Fatal("inventory held the writer for the entire publication")
-	}
+	must(t, <-finished)
+	failIf(t, !progress, "inventory held the writer for the entire publication")
 }
 
 func TestShareSnapshotBatchBoundaries(t *testing.T) {
@@ -77,9 +71,7 @@ func TestShareSnapshotBatchBoundaries(t *testing.T) {
 		for _, count := range []int{0, 1, storage.ShareBatchSize, storage.ShareBatchSize + 1, 2 * storage.ShareBatchSize} {
 			t.Run(fmt.Sprintf("%s/%d", kind, count), func(t *testing.T) {
 				db, err := storage.Open(filepath.Join(t.TempDir(), "state.sqlite3"))
-				if err != nil {
-					t.Fatal(err)
-				}
+				must(t, err)
 				defer db.Close()
 				entries := scaleShareEntries(count)
 				var files []soulseek.ShareFile
@@ -92,18 +84,12 @@ func TestShareSnapshotBatchBoundaries(t *testing.T) {
 				}
 				ctx := context.Background()
 				id, err := stageShareSnapshot(ctx, db, kind, "", nil, nil, files, entries)
-				if err != nil {
-					t.Fatal(err)
-				}
+				must(t, err)
 				rows, err := db.Queries().ListShareEntries(ctx, id)
-				if err != nil || len(rows) != count {
-					t.Fatalf("entries: %d, want %d: %v", len(rows), count, err)
-				}
+				failIfFmt(t, err != nil || len(rows) != count, "entries: %d, want %d: %v", len(rows), count, err)
 				for i, row := range rows {
 					size, err := storage.DecodeUint64(row.Size)
-					if err != nil || row.Ordinal != int64(i) || row.Kind != kind || row.Path != fmt.Sprintf("music/%d.flac", i) || size != uint64(i) {
-						t.Fatalf("entry %d changed: %+v, %v", i, row, err)
-					}
+					failIfFmt(t, err != nil || row.Ordinal != int64(i) || row.Kind != kind || row.Path != fmt.Sprintf("music/%d.flac", i) || size != uint64(i), "entry %d changed: %+v, %v", i, row, err)
 				}
 			})
 		}

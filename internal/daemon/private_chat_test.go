@@ -25,17 +25,13 @@ func TestCommunityPrivateReceiveHistoryAndRead(t *testing.T) {
 	message := soulseek.PrivateMessage{ID: 42, Timestamp: 1700000000, Username: "Alice", Text: "hello 世界", New: true}
 	apply := func(m soulseek.PrivateMessage) {
 		t.Helper()
-		if err := s.communityUpdate(ctx, identity, m); err != nil {
-			t.Fatal(err)
-		}
+		must(t, s.communityUpdate(ctx, identity, m))
 	}
 	apply(message)
 	message.New = false
 	apply(message) // New/offline is deliberately not part of replay identity.
 	list, err := s.CommunityConversations(ctx, CommunityConversationsRequest{CommunityIdentity: identity})
-	if err != nil || len(list.Conversations) != 1 || list.Conversations[0].Unread != 1 {
-		t.Fatalf("replayed conversation: %+v %v", list, err)
-	}
+	failIfFmt(t, err != nil || len(list.Conversations) != 1 || list.Conversations[0].Unread != 1, "replayed conversation: %+v %v", list, err)
 	conversation := list.Conversations[0].ID
 	message.Timestamp--
 	apply(message) // Earlier remote time still gets a later local ordering ID.
@@ -44,24 +40,14 @@ func TestCommunityPrivateReceiveHistoryAndRead(t *testing.T) {
 	message.Username = "alice"
 	apply(message)
 	list, err = s.CommunityConversations(ctx, CommunityConversationsRequest{CommunityIdentity: identity})
-	if err != nil || len(list.Conversations) != 2 || list.Conversations[0].Unread != 3 || list.Conversations[1].Target != "alice" {
-		t.Fatalf("identity/fingerprint: %+v %v", list, err)
-	}
+	failIfFmt(t, err != nil || len(list.Conversations) != 2 || list.Conversations[0].Unread != 3 || list.Conversations[1].Target != "alice", "identity/fingerprint: %+v %v", list, err)
 	page, err := s.CommunityMessages(ctx, CommunityMessagesRequest{CommunityIdentity: identity, ConversationID: conversation, Limit: 2})
-	if err != nil || len(page.Messages) != 2 || page.NextCursor == 0 || page.NewerCount != 3 {
-		t.Fatalf("history page: %+v %v", page, err)
-	}
+	failIfFmt(t, err != nil || len(page.Messages) != 2 || page.NextCursor == 0 || page.NewerCount != 3, "history page: %+v %v", page, err)
 	older, err := s.CommunityMessages(ctx, CommunityMessagesRequest{CommunityIdentity: identity, ConversationID: conversation, Cursor: page.NextCursor, Limit: 2})
-	if err != nil || len(older.Messages) != 1 || older.NextCursor != 0 || !older.Messages[0].ServerTime.After(*page.Messages[0].ServerTime) {
-		t.Fatalf("local ordering: %+v %v", older, err)
-	}
-	if page.Conversation != list.Conversations[0] {
-		t.Fatalf("history metadata disagrees with list: %+v / %+v", page.Conversation, list.Conversations[0])
-	}
+	failIfFmt(t, err != nil || len(older.Messages) != 1 || older.NextCursor != 0 || !older.Messages[0].ServerTime.After(*page.Messages[0].ServerTime), "local ordering: %+v %v", older, err)
+	failIfFmt(t, page.Conversation != list.Conversations[0], "history metadata disagrees with list: %+v / %+v", page.Conversation, list.Conversations[0])
 	opened, err := s.OpenCommunityConversation(ctx, CommunityOpenConversationRequest{CommunityIdentity: identity, Username: "Alice"})
-	if err != nil || opened != list.Conversations[0] {
-		t.Fatalf("open metadata disagrees with list: %+v / %+v: %v", opened, list.Conversations[0], err)
-	}
+	failIfFmt(t, err != nil || opened != list.Conversations[0], "open metadata disagrees with list: %+v / %+v: %v", opened, list.Conversations[0], err)
 	through := page.Messages[0].ID
 	var wg sync.WaitGroup
 	for _, id := range []int64{through, older.Messages[0].ID, through} {
@@ -75,9 +61,7 @@ func TestCommunityPrivateReceiveHistoryAndRead(t *testing.T) {
 	}
 	wg.Wait()
 	page, err = s.CommunityMessages(ctx, CommunityMessagesRequest{CommunityIdentity: identity, ConversationID: conversation, NewerThan: through})
-	if err != nil || page.Conversation.ReadThrough != through || page.NewerCount != 0 {
-		t.Fatalf("read marker regressed: %+v %v", page, err)
-	}
+	failIfFmt(t, err != nil || page.Conversation.ReadThrough != through || page.NewerCount != 0, "read marker regressed: %+v %v", page, err)
 	if err := s.CommunityConversationAction(ctx, CommunityConversationActionRequest{CommunityIdentity: identity, ConversationID: conversation, Action: "read", ThroughID: through + 100}); !errors.Is(err, ErrCommunityMessageState) {
 		t.Fatal("accepted fabricated read marker", err)
 	}
@@ -86,9 +70,7 @@ func TestCommunityPrivateReceiveHistoryAndRead(t *testing.T) {
 		t.Fatal("unconfirmed clear")
 	}
 	clear.Confirm = true
-	if err := s.CommunityConversationAction(ctx, clear); err != nil {
-		t.Fatal(err)
-	}
+	must(t, s.CommunityConversationAction(ctx, clear))
 	message.Username = "Alice"
 	apply(message) // Cleared content must not reappear.
 	message.ID++
@@ -97,20 +79,12 @@ func TestCommunityPrivateReceiveHistoryAndRead(t *testing.T) {
 		t.Fatal(err)
 	} // Retried clear cannot erase a later arrival.
 	page, err = s.CommunityMessages(ctx, CommunityMessagesRequest{CommunityIdentity: identity, ConversationID: conversation})
-	if err != nil || len(page.Messages) != 1 || page.Messages[0].ID <= through {
-		t.Fatalf("clear resurrected/lost content: %+v %v", page, err)
-	}
+	failIfFmt(t, err != nil || len(page.Messages) != 1 || page.Messages[0].ID <= through, "clear resurrected/lost content: %+v %v", page, err)
 	summary, err := s.CommunitySummary(ctx)
-	if err != nil || summary.Unread != 2 {
-		t.Fatalf("unread isolation: %+v %v", summary, err)
-	}
-	if err := s.CommunityConversationAction(ctx, CommunityConversationActionRequest{CommunityIdentity: identity, ConversationID: conversation, Action: "close"}); err != nil {
-		t.Fatal(err)
-	}
+	failIfFmt(t, err != nil || summary.Unread != 2, "unread isolation: %+v %v", summary, err)
+	must(t, s.CommunityConversationAction(ctx, CommunityConversationActionRequest{CommunityIdentity: identity, ConversationID: conversation, Action: "close"}))
 	list, err = s.CommunityConversations(ctx, CommunityConversationsRequest{CommunityIdentity: identity, IncludeClosed: true})
-	if err != nil || !list.Conversations[0].Closed {
-		t.Fatal("close did not retain history", err)
-	}
+	failIf(t, err != nil || !list.Conversations[0].Closed, "close did not retain history", err)
 	if _, wanted := s.community.users["Alice"]; wanted {
 		t.Fatal("closed conversation kept watch")
 	}
@@ -118,9 +92,7 @@ func TestCommunityPrivateReceiveHistoryAndRead(t *testing.T) {
 		t.Fatal(err)
 	}
 	page, err = s.CommunityMessages(ctx, CommunityMessagesRequest{CommunityIdentity: identity, ConversationID: conversation, Query: "世界"})
-	if err != nil || len(page.Messages) != 1 || page.Conversation.Closed {
-		t.Fatal("reopen/search lost history", err)
-	}
+	failIf(t, err != nil || len(page.Messages) != 1 || page.Conversation.Closed, "reopen/search lost history", err)
 	stale := identity
 	stale.Session++
 	if _, err := s.CommunityMessages(ctx, CommunityMessagesRequest{CommunityIdentity: stale, ConversationID: conversation}); !errors.Is(err, ErrCommunitySession) {
@@ -132,9 +104,8 @@ func TestCommunityPrivateRollbackAndDisplayText(t *testing.T) {
 	s := downloadService(t)
 	_, _, identity := communityTestConnection(t, s)
 	ctx := context.Background()
-	if _, err := s.stateDB.SQL().ExecContext(ctx, `CREATE TRIGGER fail_private BEFORE INSERT ON community_messages BEGIN SELECT RAISE(ABORT, 'scripted storage failure'); END`); err != nil {
-		t.Fatal(err)
-	}
+	_, err := s.stateDB.SQL().ExecContext(ctx, `CREATE TRIGGER fail_private BEFORE INSERT ON community_messages BEGIN SELECT RAISE(ABORT, 'scripted storage failure'); END`)
+	must(t, err)
 	message := soulseek.PrivateMessage{ID: 1, Username: "Alice", Text: "caf\xe9\r\n\x1b[31m\x00\x07\x1b]52;c;data\x07"}
 	if err := s.communityUpdate(ctx, identity, message); err == nil {
 		t.Fatal("storage failure acknowledged")
@@ -143,22 +114,14 @@ func TestCommunityPrivateRollbackAndDisplayText(t *testing.T) {
 	if err := s.stateDB.SQL().QueryRowContext(ctx, "SELECT count(*) FROM community_receipts").Scan(&count); err != nil || count != 0 {
 		t.Fatal("failed insert retained a receipt", count, err)
 	}
-	if len(s.community.users) != 0 {
-		t.Fatal("failed transaction published a watch")
-	}
+	failIf(t, len(s.community.users) != 0, "failed transaction published a watch")
 	if _, err := s.stateDB.SQL().ExecContext(ctx, "DROP TRIGGER fail_private"); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.communityUpdate(ctx, identity, message); err != nil {
-		t.Fatal(err)
-	}
+	must(t, s.communityUpdate(ctx, identity, message))
 	var body string
-	if err := s.stateDB.SQL().QueryRowContext(ctx, "SELECT body FROM community_messages").Scan(&body); err != nil {
-		t.Fatal(err)
-	}
-	if !strings.HasPrefix(body, "café\n") || strings.ContainsAny(body, "\x1b\x00\x07\r") {
-		t.Fatalf("unsafe/incompatible display text: %q", body)
-	}
+	must(t, s.stateDB.SQL().QueryRowContext(ctx, "SELECT body FROM community_messages").Scan(&body))
+	failIfFmt(t, !strings.HasPrefix(body, "café\n") || strings.ContainsAny(body, "\x1b\x00\x07\r"), "unsafe/incompatible display text: %q", body)
 	if got := communityDisplayText("👩‍💻 世界\u202e\tline\n"); got != "👩‍💻 世界�\tline\n" {
 		t.Fatalf("Unicode sanitation: %q", got)
 	}
@@ -170,9 +133,7 @@ func TestCommunityPrivateCommitBeforeAckRestart(t *testing.T) {
 	var original CommunityIdentity
 	for attempt := range 2 {
 		s, err := New(cfg, path)
-		if err != nil {
-			t.Fatal(err)
-		}
+		must(t, err)
 		left, right := net.Pipe()
 		_ = right.SetDeadline(time.Now().Add(3 * time.Second))
 		identity := s.community.identity
@@ -214,9 +175,7 @@ func TestCommunityPrivateCommitBeforeAckRestart(t *testing.T) {
 		}
 		cancel()
 		_ = right.Close()
-		if err := s.Close(); err != nil {
-			t.Fatal(err)
-		}
+		must(t, s.Close())
 	}
 }
 
@@ -225,9 +184,7 @@ func TestCommunityPrivatePageBounds(t *testing.T) {
 	ctx := context.Background()
 	identity := s.community.identity
 	conversation, err := s.OpenCommunityConversation(ctx, CommunityOpenConversationRequest{CommunityIdentity: identity, Username: "Alice"})
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	if err := s.stateDB.WriteTx(ctx, func(tx *sql.Tx) error {
 		q := db.New(tx)
 		for i := range 205 {
@@ -242,13 +199,9 @@ func TestCommunityPrivatePageBounds(t *testing.T) {
 		t.Fatal(err)
 	}
 	page, err := s.CommunityMessages(ctx, CommunityMessagesRequest{CommunityIdentity: identity, ConversationID: conversation.ID, Limit: 999})
-	if err != nil || len(page.Messages) != 200 || page.NextCursor == 0 {
-		t.Fatal("missing record limit", len(page.Messages), err)
-	}
+	failIf(t, err != nil || len(page.Messages) != 200 || page.NextCursor == 0, "missing record limit", len(page.Messages), err)
 	page, err = s.CommunityMessages(ctx, CommunityMessagesRequest{CommunityIdentity: identity, ConversationID: conversation.ID, Cursor: page.NextCursor})
-	if err != nil || len(page.Messages) != 5 || page.NextCursor != 0 {
-		t.Fatal("lost paged rows", len(page.Messages), err)
-	}
+	failIf(t, err != nil || len(page.Messages) != 5 || page.NextCursor != 0, "lost paged rows", len(page.Messages), err)
 	if err := s.stateDB.WriteTx(ctx, func(tx *sql.Tx) error {
 		_, err := tx.ExecContext(ctx, "UPDATE community_messages SET body = ?", strings.Repeat("<", soulseek.MaxChatBytes))
 		return err
@@ -256,13 +209,9 @@ func TestCommunityPrivatePageBounds(t *testing.T) {
 		t.Fatal(err)
 	}
 	page, err = s.CommunityMessages(ctx, CommunityMessagesRequest{CommunityIdentity: identity, ConversationID: conversation.ID})
-	if err != nil || len(page.Messages) != 1 || page.NextCursor == 0 {
-		t.Fatal("missing byte budget", len(page.Messages), err)
-	}
+	failIf(t, err != nil || len(page.Messages) != 1 || page.NextCursor == 0, "missing byte budget", len(page.Messages), err)
 	encoded, err := json.Marshal(page)
-	if err != nil || len(encoded) > 1<<20 {
-		t.Fatal("response exceeds IPC budget", len(encoded), err)
-	}
+	failIf(t, err != nil || len(encoded) > 1<<20, "response exceeds IPC budget", len(encoded), err)
 	for _, req := range []CommunityMessagesRequest{
 		{CommunityIdentity: identity, ConversationID: conversation.ID, Limit: -1},
 		{CommunityIdentity: identity, ConversationID: conversation.ID, Cursor: -1},

@@ -15,9 +15,7 @@ func TestCommunityPrivateRoomRoleStorageFailureAndUnknownRestart(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	cfg, path := testConfig(t), filepath.Join(t.TempDir(), "state.sqlite3")
 	s, err := New(cfg, path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	defer s.Close()
 	client, peer, id := communityTestConnection(t, s)
 	ctx := context.Background()
@@ -30,9 +28,7 @@ func TestCommunityPrivateRoomRoleStorageFailureAndUnknownRestart(t *testing.T) {
 	if _, err = s.ChangeCommunityRoomRole(ctx, req); err == nil {
 		t.Fatal("unpersisted role action written")
 	}
-	if roomSnapshot(t, s, id, req.Room).LastRoleAction != nil {
-		t.Fatal("rolled back role action leaked pending state")
-	}
+	failIf(t, roomSnapshot(t, s, id, req.Room).LastRoleAction != nil, "rolled back role action leaked pending state")
 	if _, err = s.stateDB.SQL().Exec("DROP TRIGGER fail_role"); err != nil {
 		t.Fatal(err)
 	}
@@ -41,29 +37,22 @@ func TestCommunityPrivateRoomRoleStorageFailureAndUnknownRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 	s, err = New(cfg, path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	defer s.Close()
 	client, peer, fresh := communityTestConnection(t, s)
 	req.CommunityIdentity = fresh
 	out, err := s.ChangeCommunityRoomRole(ctx, req)
-	if err != nil || !out.Duplicate || out.State != "unknown" {
-		t.Fatal(out, err)
-	}
+	failIf(t, err != nil || !out.Duplicate || out.State != "unknown", out, err)
 	syncTestRooms(t, s, client, peer, fresh, "room-invitations-true-client") // No automatic role replay after restart.
-	if roomSnapshot(t, s, fresh, req.Room).RoleFresh {
-		t.Fatal("persisted a role as authority")
-	}
+	failIf(t, roomSnapshot(t, s, fresh, req.Room).RoleFresh, "persisted a role as authority")
 }
 
 func TestCommunityPrivateRoomWallBoundsAndControls(t *testing.T) {
 	s := downloadService(t)
 	client, peer, id := communityTestConnection(t, s)
 	ctx := context.Background()
-	if _, err := s.CommunityRoomAction(ctx, CommunityRoomActionRequest{CommunityIdentity: id, Room: "oto test", Action: "join", RequestID: "join"}); err != nil {
-		t.Fatal(err)
-	}
+	_, err := s.CommunityRoomAction(ctx, CommunityRoomActionRequest{CommunityIdentity: id, Room: "oto test", Action: "join", RequestID: "join"})
+	must(t, err)
 	syncTestRooms(t, s, client, peer, id, "room-join-public", "room-invitations-true-client")
 	applyRoomFixture(t, s, id, "room-joined")
 	for _, text := range []string{"bad\x1b[2J", "bad\u202eevil", "two\nlines", strings.Repeat("x", soulseek.MaxChatBytes+1)} {
@@ -72,51 +61,31 @@ func TestCommunityPrivateRoomWallBoundsAndControls(t *testing.T) {
 		}
 	}
 	text := strings.Repeat("<", soulseek.MaxChatBytes)
-	if err := s.SetCommunityRoomWall(ctx, CommunityRoomWallRequest{CommunityIdentity: id, Room: "oto test", Text: text, Revision: roomRevision(t, s, id)}); err != nil {
-		t.Fatal(err)
-	}
+	must(t, s.SetCommunityRoomWall(ctx, CommunityRoomWallRequest{CommunityIdentity: id, Room: "oto test", Text: text, Revision: roomRevision(t, s, id)}))
 	applyRoomEvent(t, s, id, soulseek.RoomWallSnapshot{Room: "oto test", Entries: []soulseek.RoomWallEntry{{Username: "a", Text: text}, {Username: "b", Text: text}}})
 	page, err := s.CommunityRoomWall(ctx, CommunityRoomMembersRequest{CommunityIdentity: id, Room: "oto test"})
-	if err != nil || len(page.Entries) != 1 || page.NextCursor != "a" {
-		t.Fatal(len(page.Entries), page.NextCursor, err)
-	}
+	failIf(t, err != nil || len(page.Entries) != 1 || page.NextCursor != "a", len(page.Entries), page.NextCursor, err)
 	encoded, err := json.Marshal(page)
-	if err != nil || len(encoded) >= 1<<20 {
-		t.Fatal("oversize wall response", len(encoded), err)
-	}
+	failIf(t, err != nil || len(encoded) >= 1<<20, "oversize wall response", len(encoded), err)
 	page, err = s.CommunityRoomWall(ctx, CommunityRoomMembersRequest{CommunityIdentity: id, Room: "oto test", Cursor: page.NextCursor})
-	if err != nil || len(page.Entries) != 1 || page.Entries[0].Username != "b" || page.NextCursor != "" {
-		t.Fatal("wall page lost", err)
-	}
+	failIf(t, err != nil || len(page.Entries) != 1 || page.Entries[0].Username != "b" || page.NextCursor != "", "wall page lost", err)
 	applyRoomEvent(t, s, id, soulseek.RoomWallUpdate{Room: "oto test", RoomWallEntry: soulseek.RoomWallEntry{Username: "control", Text: "hello\x1b[2J\u202e"}})
 	page, err = s.CommunityRoomWall(ctx, CommunityRoomMembersRequest{CommunityIdentity: id, Room: "oto test", Query: "control"})
-	if err != nil || len(page.Entries) != 1 || strings.ContainsAny(page.Entries[0].Text, "\x1b\u202e") {
-		t.Fatal("wall terminal controls survived", err)
-	}
+	failIf(t, err != nil || len(page.Entries) != 1 || strings.ContainsAny(page.Entries[0].Text, "\x1b\u202e"), "wall terminal controls survived", err)
 	for i := 0; ; i++ {
 		err = s.communityUpdate(ctx, id, soulseek.RoomWallUpdate{Room: "oto test", RoomWallEntry: soulseek.RoomWallEntry{Username: fmt.Sprint("user", i), Text: text}})
 		if err != nil {
 			break
 		}
-		if i > communityRoomWallBytes/len(text) {
-			t.Fatal("wall byte limit ignored")
-		}
+		failIf(t, i > communityRoomWallBytes/len(text), "wall byte limit ignored")
 	}
 	r := s.community.rooms["oto test"]
 	before := r.wallBytes
-	if before > communityRoomWallBytes || !strings.Contains(err.Error(), "byte limit") {
-		t.Fatal(before, err)
-	}
+	failIf(t, before > communityRoomWallBytes || !strings.Contains(err.Error(), "byte limit"), before, err)
 	applyRoomEvent(t, s, id, soulseek.RoomWallUpdate{Room: "oto test", RoomWallEntry: soulseek.RoomWallEntry{Username: "a"}, Remove: true})
-	if r.wallBytes != before-len(text)-1 {
-		t.Fatal("wall byte accounting", r.wallBytes, before)
-	}
+	failIf(t, r.wallBytes != before-len(text)-1, "wall byte accounting", r.wallBytes, before)
 	applyRoomEvent(t, s, id, soulseek.RoomWallUpdate{Room: "oto test", RoomWallEntry: soulseek.RoomWallEntry{Username: "b", Text: "short"}})
-	if r.wallBytes != before-2*len(text)+4 {
-		t.Fatal("wall replacement accounting", r.wallBytes, before)
-	}
+	failIf(t, r.wallBytes != before-2*len(text)+4, "wall replacement accounting", r.wallBytes, before)
 	messages, err := s.CommunityMessages(ctx, CommunityMessagesRequest{CommunityIdentity: id, ConversationID: r.conversationID})
-	if err != nil || len(messages.Messages) != 1 {
-		t.Fatal("wall was logged as chat", len(messages.Messages), err)
-	}
+	failIf(t, err != nil || len(messages.Messages) != 1, "wall was logged as chat", len(messages.Messages), err)
 }

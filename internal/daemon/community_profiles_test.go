@@ -20,9 +20,7 @@ func waitCommunityProfile(t *testing.T, s *Service, req CommunityProfileRequest)
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
 		out, err := s.CommunityProfile(context.Background(), req)
-		if err != nil {
-			t.Fatal(err)
-		}
+		must(t, err)
 		if out.State != "pending" {
 			return out
 		}
@@ -36,9 +34,7 @@ func TestCommunityProfilesCoalescingPicturesAndPartialFailure(t *testing.T) {
 	_, _, id := communityTestConnection(t, s)
 	ctx := context.Background()
 	var picture bytes.Buffer
-	if err := png.Encode(&picture, image.NewNRGBA(image.Rect(0, 0, 2, 3))); err != nil {
-		t.Fatal(err)
-	}
+	must(t, png.Encode(&picture, image.NewNRGBA(image.Rect(0, 0, 2, 3))))
 	release := make(chan struct{})
 	defer func() {
 		select {
@@ -59,32 +55,20 @@ func TestCommunityProfilesCoalescingPicturesAndPartialFailure(t *testing.T) {
 	}
 	req := CommunityProfileRequest{CommunityIdentity: id, Username: "Alice", Frontend: "one"}
 	first, err := s.StartCommunityProfile(ctx, req)
-	if err != nil || first.State != "pending" {
-		t.Fatal(first, err)
-	}
+	failIf(t, err != nil || first.State != "pending", first, err)
 	second := req
 	second.Frontend = "two"
 	coalesced, err := s.StartCommunityProfile(ctx, second)
-	if err != nil || coalesced.Generation != first.Generation {
-		t.Fatal(coalesced, err)
-	}
+	failIf(t, err != nil || coalesced.Generation != first.Generation, coalesced, err)
 	close(release)
 	ready := waitCommunityProfile(t, s, req)
-	if ready.State != "ready" || ready.PictureType != "image/png" || ready.PictureWidth != 2 || ready.PictureHeight != 3 || ready.UploadSlots != 3 || ready.QueueLength != 7 || ready.UploadAllowedKnown || strings.ContainsRune(ready.Description, '\x1b') {
-		t.Fatal(ready)
-	}
-	if calls.Load() != 1 {
-		t.Fatal("duplicate fetch", calls.Load())
-	}
+	failIf(t, ready.State != "ready" || ready.PictureType != "image/png" || ready.PictureWidth != 2 || ready.PictureHeight != 3 || ready.UploadSlots != 3 || ready.QueueLength != 7 || ready.UploadAllowedKnown || strings.ContainsRune(ready.Description, '\x1b'), ready)
+	failIf(t, calls.Load() != 1, "duplicate fetch", calls.Load())
 	saved, err := s.CommunityProfilePicture(ctx, CommunityProfilePictureRequest{CommunityIdentity: id, Username: "Alice", Revision: ready.PictureRevision})
-	if err != nil || !bytes.Equal(saved.Data, picture.Bytes()) {
-		t.Fatal(saved, err)
-	}
+	failIf(t, err != nil || !bytes.Equal(saved.Data, picture.Bytes()), saved, err)
 	saved.Data[0] = 0 // Export is not a mutable alias of the cache.
 	again, err := s.CommunityProfilePicture(ctx, CommunityProfilePictureRequest{CommunityIdentity: id, Username: "Alice", Revision: ready.PictureRevision})
-	if err != nil || again.Data[0] == 0 {
-		t.Fatal("mutable cached picture", err)
-	}
+	failIf(t, err != nil || again.Data[0] == 0, "mutable cached picture", err)
 	s.mu.Lock()
 	s.profileFetch = func(context.Context, *soulseek.Client, string) (soulseek.PeerProfile, error) {
 		return soulseek.PeerProfile{}, errors.New("private peer diagnostic")
@@ -95,9 +79,7 @@ func TestCommunityProfilesCoalescingPicturesAndPartialFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	stale := waitCommunityProfile(t, s, req)
-	if stale.State != "stale" || stale.Description != ready.Description || strings.Contains(stale.Error, "private peer diagnostic") {
-		t.Fatal("partial failure", stale)
-	}
+	failIf(t, stale.State != "stale" || stale.Description != ready.Description || strings.Contains(stale.Error, "private peer diagnostic"), "partial failure", stale)
 	s.mu.Lock()
 	s.profileFetch = func(context.Context, *soulseek.Client, string) (soulseek.PeerProfile, error) {
 		return soulseek.PeerProfile{Description: "new", Picture: picture.Bytes()}, nil
@@ -113,26 +95,18 @@ func TestCommunityProfilesCoalescingPicturesAndPartialFailure(t *testing.T) {
 	s.mu.Lock()
 	total := s.community.profiles.pictureBytes
 	s.mu.Unlock()
-	if total != picture.Len() {
-		t.Fatal("replacement double-counted", total)
-	}
+	failIf(t, total != picture.Len(), "replacement double-counted", total)
 	lower := req
 	lower.Username = "alice"
 	empty, err := s.CommunityProfile(ctx, lower)
-	if err != nil || empty.State != "idle" || empty.Description != "" {
-		t.Fatal("case-folded profile", empty, err)
-	}
+	failIf(t, err != nil || empty.State != "idle" || empty.Description != "", "case-folded profile", empty, err)
 	s.mu.Lock()
 	_, aliceWatched := s.community.users["Alice"]
 	s.retireCommunityLocked()
 	s.mu.Unlock()
-	if !aliceWatched {
-		t.Fatal("another frontend watch removed")
-	}
+	failIf(t, !aliceWatched, "another frontend watch removed")
 	offline, err := s.CommunityProfile(ctx, req)
-	if err != nil || offline.State != "offline" || offline.Description != changed.Description {
-		t.Fatal(offline, err)
-	}
+	failIf(t, err != nil || offline.State != "offline" || offline.Description != changed.Description, offline, err)
 }
 func TestCommunityProfilesLimitsCancellationAndAccountFencing(t *testing.T) {
 	s := downloadService(t)
@@ -147,9 +121,8 @@ func TestCommunityProfilesLimitsCancellationAndAccountFencing(t *testing.T) {
 		return soulseek.PeerProfile{Description: "late"}, nil
 	}
 	for i := 0; i < 8; i++ {
-		if _, err := s.StartCommunityProfile(ctx, CommunityProfileRequest{CommunityIdentity: id, Username: strings.Repeat("u", i+1), Frontend: "one"}); err != nil {
-			t.Fatal(err)
-		}
+		_, err := s.StartCommunityProfile(ctx, CommunityProfileRequest{CommunityIdentity: id, Username: strings.Repeat("u", i+1), Frontend: "one"})
+		must(t, err)
 	}
 	for i := 0; i < 8; i++ {
 		select {
@@ -166,9 +139,7 @@ func TestCommunityProfilesLimitsCancellationAndAccountFencing(t *testing.T) {
 	err := s.loadCommunityLocked(ctx)
 	other := s.community.identity
 	s.mu.Unlock()
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	for i := 0; i < 8; i++ {
 		select {
 		case <-cancelled:
@@ -180,9 +151,7 @@ func TestCommunityProfilesLimitsCancellationAndAccountFencing(t *testing.T) {
 		t.Fatal("old session accepted", err)
 	}
 	out, err := s.CommunityProfile(ctx, CommunityProfileRequest{CommunityIdentity: other, Username: "u", Frontend: "one"})
-	if err != nil || out.Description != "" {
-		t.Fatal("old account leaked", out, err)
-	}
+	failIf(t, err != nil || out.Description != "", "old account leaked", out, err)
 	cancelledCtx, cancel := context.WithCancel(ctx)
 	cancel()
 	if _, err := s.StartCommunityProfile(cancelledCtx, CommunityProfileRequest{CommunityIdentity: other, Username: "u", Frontend: "one"}); !errors.Is(err, context.Canceled) {
@@ -194,9 +163,7 @@ func TestCommunityProfilesLimitsCancellationAndAccountFencing(t *testing.T) {
 		}
 	}
 	var large bytes.Buffer
-	if err := png.Encode(&large, image.NewNRGBA(image.Rect(0, 0, 4097, 1))); err != nil {
-		t.Fatal(err)
-	}
+	must(t, png.Encode(&large, image.NewNRGBA(image.Rect(0, 0, 4097, 1))))
 	if kind, _, _ := profilePictureInfo(large.Bytes()); kind != "" {
 		t.Fatal("oversized dimensions accepted")
 	}
@@ -207,9 +174,7 @@ func TestCommunityProfilesCacheEvictionAndPictureRemoval(t *testing.T) {
 	_, _, id := communityTestConnection(t, s)
 	ctx := context.Background()
 	var pngData bytes.Buffer
-	if err := png.Encode(&pngData, image.NewNRGBA(image.Rect(0, 0, 1, 1))); err != nil {
-		t.Fatal(err)
-	}
+	must(t, png.Encode(&pngData, image.NewNRGBA(image.Rect(0, 0, 1, 1))))
 	picture := append(pngData.Bytes(), make([]byte, soulseek.MaxProfilePictureBytes-pngData.Len())...)
 	setFetch := func(data []byte) {
 		s.mu.Lock()
@@ -221,9 +186,8 @@ func TestCommunityProfilesCacheEvictionAndPictureRemoval(t *testing.T) {
 	fetch := func(user int) CommunityProfile {
 		t.Helper()
 		req := CommunityProfileRequest{CommunityIdentity: id, Username: fmt.Sprint("user", user), Frontend: "cache-test", Refresh: true}
-		if _, err := s.StartCommunityProfile(ctx, req); err != nil {
-			t.Fatal(err)
-		}
+		_, err := s.StartCommunityProfile(ctx, req)
+		must(t, err)
 		return waitCommunityProfile(t, s, req)
 	}
 	check := func(entries, pictures, bytes int) {
@@ -239,9 +203,7 @@ func TestCommunityProfilesCacheEvictionAndPictureRemoval(t *testing.T) {
 				t.Fatal("eviction left picture metadata", entry.CommunityProfile)
 			}
 		}
-		if len(s.community.profiles.entries) != entries || count != pictures || total != bytes || s.community.profiles.pictureBytes != total {
-			t.Fatal("cache accounting", len(s.community.profiles.entries), count, total, s.community.profiles.pictureBytes)
-		}
+		failIf(t, len(s.community.profiles.entries) != entries || count != pictures || total != bytes || s.community.profiles.pictureBytes != total, "cache accounting", len(s.community.profiles.entries), count, total, s.community.profiles.pictureBytes)
 	}
 	setFetch(picture)
 	for i := 0; i < 6; i++ {
@@ -266,8 +228,6 @@ func TestCommunityProfilesCacheEvictionAndPictureRemoval(t *testing.T) {
 	}
 	check(32, 0, 0)
 	missing, err := s.CommunityProfile(ctx, CommunityProfileRequest{CommunityIdentity: id, Username: "user0", Frontend: "cache-test"})
-	if err != nil || missing.State != "idle" || missing.Generation != 0 || missing.Description != "" {
-		t.Fatal("evicted entry remained authoritative", missing, err)
-	}
+	failIf(t, err != nil || missing.State != "idle" || missing.Generation != 0 || missing.Description != "", "evicted entry remained authoritative", missing, err)
 	check(32, 0, 0)
 }

@@ -22,20 +22,14 @@ func TestCancelledCleanupPolicies(t *testing.T) {
 					s.uploadUpdate(s.uploadEpoch, e)
 					_, exists := s.transfers[id]
 					wantCleared := state == "completed" && completed || state == "cancelled" && cancelled
-					if exists == wantCleared {
-						t.Fatalf("%s exists=%t", state, exists)
-					}
+					failIfFmt(t, exists == wantCleared, "%s exists=%t", state, exists)
 					if wantCleared {
 						for _, u := range s.journal.Uploads {
-							if u.ID == id {
-								t.Fatal("cleared row remains in journal")
-							}
+							failIf(t, u.ID == id, "cleared row remains in journal")
 						}
 					}
 				}
-				if s.cfg.Downloads.AutoClearCompleted {
-					t.Fatal("upload setting affected downloads")
-				}
+				failIf(t, s.cfg.Downloads.AutoClearCompleted, "upload setting affected downloads")
 			})
 		}
 	}
@@ -51,32 +45,18 @@ func TestCancelledCleanupDisableAndReplacement(t *testing.T) {
 	storageTrigger(t, s, "fail_cleanup", "CREATE TRIGGER fail_cleanup BEFORE DELETE ON uploads BEGIN SELECT RAISE(ABORT, 'cleanup failure'); END")
 	e.State = "cancelled"
 	s.uploadUpdate(s.uploadEpoch, e)
-	if s.telemetry.warning == "" || len(s.uploadCancelEligible) != 1 {
-		t.Fatal("cleanup failure not retained and reported")
-	}
+	failIf(t, s.telemetry.warning == "" || len(s.uploadCancelEligible) != 1, "cleanup failure not retained and reported")
 	next := s.cfg
 	next.Uploads.AutoClearCancelled = false
-	if err := s.UpdateConfig(next); err != nil {
-		t.Fatal(err)
-	}
-	if len(s.uploadCancelEligible) != 0 {
-		t.Fatal("disable kept pending cleanup")
-	}
+	must(t, s.UpdateConfig(next))
+	failIf(t, len(s.uploadCancelEligible) != 0, "disable kept pending cleanup")
 	next.Uploads.AutoClearCancelled = true
-	if err := s.UpdateConfig(next); err != nil {
-		t.Fatal(err)
-	}
+	must(t, s.UpdateConfig(next))
 	dropStorageTrigger(t, s, "fail_cleanup")
-	if err := s.flushStats(); err != nil {
-		t.Fatal(err)
-	}
+	must(t, s.flushStats())
 	result, err := s.UploadAction(UploadActionRequest{Action: "cancel", IDs: []string{id}})
-	if err != nil || result.Skipped != 1 || len(s.Transfers()) != 1 {
-		t.Fatalf("old cancellation swept: %+v %v", result, err)
-	}
-	if s.shareScan != nil {
-		t.Fatal("toggle started a share scan")
-	}
+	failIfFmt(t, err != nil || result.Skipped != 1 || len(s.Transfers()) != 1, "old cancellation swept: %+v %v", result, err)
+	failIf(t, s.shareScan != nil, "toggle started a share scan")
 
 	// A pending deletion must never follow a reused ID into another attempt.
 	e.Attempt, e.State = 2, "queued"
@@ -89,21 +69,15 @@ func TestCancelledCleanupDisableAndReplacement(t *testing.T) {
 	s.uploadUpdate(s.uploadEpoch, e)
 	dropStorageTrigger(t, s, "fail_cleanup2")
 	s.uploadUpdate(s.uploadEpoch, old)
-	if err := s.flushStats(); err != nil {
-		t.Fatal(err)
-	}
-	if uploadRow(t, s, "peer", "one").State != "queued" || len(s.uploadCancelEligible) != 0 {
-		t.Fatal("stale cleanup touched replacement")
-	}
+	must(t, s.flushStats())
+	failIf(t, uploadRow(t, s, "peer", "one").State != "queued" || len(s.uploadCancelEligible) != 0, "stale cleanup touched replacement")
 	e.State = "cancelled"
 	s.uploadUpdate(s.uploadEpoch, e)
 	for _, state := range []string{"queued", "running", "completed", "cancelled"} {
 		e.State = state
 		s.uploadUpdate(s.uploadEpoch, e)
 	}
-	if len(s.Transfers()) != 0 || len(s.journal.Uploads) != 0 {
-		t.Fatal("late callback resurrected cleared upload")
-	}
+	failIf(t, len(s.Transfers()) != 0 || len(s.journal.Uploads) != 0, "late callback resurrected cleared upload")
 }
 
 func TestCancelRetainedUploadsAndRestart(t *testing.T) {
@@ -116,26 +90,16 @@ func TestCancelRetainedUploadsAndRestart(t *testing.T) {
 		s.uploadUpdate(s.uploadEpoch, e)
 	}
 	result, err := s.UploadAction(UploadActionRequest{Action: "cancel", Usernames: []string{"peer"}})
-	if err != nil || result.Changed != 2 || len(result.Errors) != 0 || len(s.Transfers()) != 0 || len(s.journal.Uploads) != 0 {
-		t.Fatalf("retained cancellation: %+v %v", result, err)
-	}
+	failIfFmt(t, err != nil || result.Changed != 2 || len(result.Errors) != 0 || len(s.Transfers()) != 0 || len(s.journal.Uploads) != 0, "retained cancellation: %+v %v", result, err)
 	totals := storageUploadStats(t, s)
 	events := storageCount(t, s, "SELECT count(*) FROM events")
 	seq := s.journal.UploadSequence
-	if err := s.Close(); err != nil {
-		t.Fatal(err)
-	}
+	must(t, s.Close())
 	restored, err := New(s.cfg, s.journalPath)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	defer restored.Close()
-	if len(restored.Transfers()) != 0 || storageUploadStats(t, restored) != totals || storageCount(t, restored, "SELECT count(*) FROM events") != events {
-		t.Fatal("restart lost accounting or restored cleared rows")
-	}
+	failIf(t, len(restored.Transfers()) != 0 || storageUploadStats(t, restored) != totals || storageCount(t, restored, "SELECT count(*) FROM events") != events, "restart lost accounting or restored cleared rows")
 	e := soulseek.TransferEvent{Direction: "upload", Username: "peer", Filename: "fresh", Attempt: 1, State: "queued", Total: 4}
 	restored.uploadUpdate(restored.uploadEpoch, e)
-	if restored.journal.UploadSequence <= seq {
-		t.Fatal("upload ID reused after restart")
-	}
+	failIf(t, restored.journal.UploadSequence <= seq, "upload ID reused after restart")
 }

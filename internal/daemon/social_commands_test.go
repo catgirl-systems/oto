@@ -13,22 +13,14 @@ func TestSocialCommandsReuseDurableSending(t *testing.T) {
 	id := s.community.identity
 	req := CommandRequest{CommunityIdentity: id, Name: "message", Args: []string{"Alice Smith", "hello 世界"}, RequestID: "command-message"}
 	out, err := s.RunCommand(ctx, req)
-	if err != nil || out.Send == nil || out.Send.State != "queued" {
-		t.Fatal(out, err)
-	}
+	failIf(t, err != nil || out.Send == nil || out.Send.State != "queued", out, err)
 	again, err := s.RunCommand(ctx, req)
-	if err != nil || again.Send == nil || !again.Send.Duplicate || again.Send.MessageID != out.Send.MessageID {
-		t.Fatal(again, err)
-	}
+	failIf(t, err != nil || again.Send == nil || !again.Send.Duplicate || again.Send.MessageID != out.Send.MessageID, again, err)
 	req = CommandRequest{CommunityIdentity: id, Name: "me", Username: "Alice Smith", Args: []string{"waves", "hello"}, RequestID: "command-action"}
 	out, err = s.RunCommand(ctx, req)
-	if err != nil || out.Send == nil {
-		t.Fatal(out, err)
-	}
+	failIf(t, err != nil || out.Send == nil, out, err)
 	message, err := s.stateDB.Queries().GetCommunityMessage(ctx, db.GetCommunityMessageParams{Account: id.Account, ID: out.Send.MessageID})
-	if err != nil || message.Body != "/me waves hello" {
-		t.Fatal(message, err)
-	}
+	failIf(t, err != nil || message.Body != "/me waves hello", message, err)
 	req.Room = "lounge"
 	if _, err := s.RunCommand(ctx, req); err == nil {
 		t.Fatal("ambiguous action target accepted")

@@ -13,9 +13,8 @@ func TestCommunityCompletionSourcesAndBounds(t *testing.T) {
 	s := downloadService(t)
 	ctx := context.Background()
 	id := s.community.identity
-	if _, err := s.SetCommunityAlias(ctx, CommunityAliasRequest{CommunityIdentity: id, Name: "hello", Expansion: "help"}); err != nil {
-		t.Fatal(err)
-	}
+	_, err := s.SetCommunityAlias(ctx, CommunityAliasRequest{CommunityIdentity: id, Name: "hello", Expansion: "help"})
+	must(t, err)
 	out, err := s.CompleteCommunity(ctx, CommunityCompletionRequest{CommunityIdentity: id, Kind: "command", Prefix: "he"})
 	if err != nil || !reflect.DeepEqual(out.Candidates, []string{"hello", "help"}) {
 		t.Fatal(out, err)
@@ -36,9 +35,7 @@ func TestCommunityCompletionSourcesAndBounds(t *testing.T) {
 	}
 	s.mu.Unlock()
 	out, err = s.CompleteCommunity(ctx, CommunityCompletionRequest{CommunityIdentity: id, Kind: "user"})
-	if err != nil || len(out.Candidates) > 200 || !out.Truncated {
-		t.Fatal(len(out.Candidates), err)
-	}
+	failIf(t, err != nil || len(out.Candidates) > 200 || !out.Truncated, len(out.Candidates), err)
 	id.Session++
 	if _, err := s.CompleteCommunity(ctx, CommunityCompletionRequest{CommunityIdentity: id, Kind: "user"}); err == nil {
 		t.Fatal("stale completion accepted")

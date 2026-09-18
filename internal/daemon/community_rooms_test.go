@@ -50,9 +50,7 @@ func syncTestRooms(t *testing.T, s *Service, c *soulseek.Client, peer net.Conn, 
 func roomSnapshot(t *testing.T, s *Service, identity CommunityIdentity, name string) CommunityRoom {
 	t.Helper()
 	page, err := s.CommunityRooms(context.Background(), CommunityRoomsRequest{CommunityIdentity: identity, Room: name})
-	if err != nil || len(page.Rooms) != 1 {
-		t.Fatal(page, err)
-	}
+	failIf(t, err != nil || len(page.Rooms) != 1, page, err)
 	return page.Rooms[0]
 }
 
@@ -63,9 +61,7 @@ func TestCommunityRoomLifecycleHistoryAndWatches(t *testing.T) {
 	applyRoomFixture(t, s, identity, "room-directory")
 	join := CommunityRoomActionRequest{CommunityIdentity: identity, Room: "oto test", Action: "join", Remember: true, RequestID: "join"}
 	result, err := s.CommunityRoomAction(ctx, join)
-	if err != nil || result.Room.Joined || result.Room.State != "join-pending" || !result.Room.Remembered {
-		t.Fatal("join invented membership", result, err)
-	}
+	failIf(t, err != nil || result.Room.Joined || result.Room.State != "join-pending" || !result.Room.Remembered, "join invented membership", result, err)
 	if _, err := s.SendCommunityRoom(ctx, CommunityRoomSendRequest{CommunityIdentity: identity, Room: "oto test", Text: "too early", RequestID: "early"}); err == nil {
 		t.Fatal("sent without confirmation")
 	}
@@ -75,15 +71,9 @@ func TestCommunityRoomLifecycleHistoryAndWatches(t *testing.T) {
 	}
 	applyRoomFixture(t, s, identity, "room-joined")
 	r := roomSnapshot(t, s, identity, "oto test")
-	if !r.Joined || !r.RosterFresh || r.Population != 2 || r.ConversationID == 0 {
-		t.Fatal("confirmation", r)
-	}
-	if s.community.users["Alice"].Country != "NL" || !s.community.users["Bob"].StatsFresh {
-		t.Fatal("roster hydration")
-	}
-	if err := s.WatchCommunityUsers(identity, "inspector", []string{"Bob"}); err != nil {
-		t.Fatal(err)
-	}
+	failIf(t, !r.Joined || !r.RosterFresh || r.Population != 2 || r.ConversationID == 0, "confirmation", r)
+	failIf(t, s.community.users["Alice"].Country != "NL" || !s.community.users["Bob"].StatsFresh, "roster hydration")
+	must(t, s.WatchCommunityUsers(identity, "inspector", []string{"Bob"}))
 	applyRoomFixture(t, s, identity, "room-user-left")
 	if _, ok := s.community.users["Bob"]; !ok {
 		t.Fatal("room leave removed another consumer's watch")
@@ -92,26 +82,16 @@ func TestCommunityRoomLifecycleHistoryAndWatches(t *testing.T) {
 	for range 2 {
 		applyRoomFixture(t, s, identity, "room-echo")
 	} // Identical room messages are not PM replays.
-	if err := s.communityUpdate(ctx, identity, soulseek.RoomMessage{Room: "oto test", Username: s.cfg.Soulseek.Username, Text: "own echo"}); err != nil {
-		t.Fatal(err)
-	}
+	must(t, s.communityUpdate(ctx, identity, soulseek.RoomMessage{Room: "oto test", Username: s.cfg.Soulseek.Username, Text: "own echo"}))
 	page, err := s.CommunityMessages(ctx, CommunityMessagesRequest{CommunityIdentity: identity, ConversationID: r.ConversationID})
-	if err != nil || len(page.Messages) != 4 || page.Conversation.Unread != 2 || page.Messages[0].Direction != "outgoing" {
-		t.Fatal(page, err)
-	}
-	if err := s.CommunityConversationAction(ctx, CommunityConversationActionRequest{CommunityIdentity: identity, ConversationID: r.ConversationID, Action: "close"}); err != nil {
-		t.Fatal(err)
-	}
-	if !roomSnapshot(t, s, identity, "oto test").Joined {
-		t.Fatal("close left membership")
-	}
+	failIf(t, err != nil || len(page.Messages) != 4 || page.Conversation.Unread != 2 || page.Messages[0].Direction != "outgoing", page, err)
+	must(t, s.CommunityConversationAction(ctx, CommunityConversationActionRequest{CommunityIdentity: identity, ConversationID: r.ConversationID, Action: "close"}))
+	failIf(t, !roomSnapshot(t, s, identity, "oto test").Joined, "close left membership")
 	if _, err := s.OpenCommunityConversation(ctx, CommunityOpenConversationRequest{CommunityIdentity: identity, Room: "oto test"}); err != nil {
 		t.Fatal(err)
 	}
 	private, err := s.OpenCommunityConversation(ctx, CommunityOpenConversationRequest{CommunityIdentity: identity, Username: "oto test"})
-	if err != nil || private.ID == r.ConversationID {
-		t.Fatal("room/private identity collision", err)
-	}
+	failIf(t, err != nil || private.ID == r.ConversationID, "room/private identity collision", err)
 	leave := CommunityRoomActionRequest{CommunityIdentity: identity, Room: "oto test", Action: "leave", RequestID: "leave"}
 	if _, err := s.CommunityRoomAction(ctx, leave); err != nil {
 		t.Fatal(err)
@@ -125,9 +105,7 @@ func TestCommunityRoomLifecycleHistoryAndWatches(t *testing.T) {
 		t.Fatal("leave changed autojoin", r)
 	}
 	duplicate, err := s.CommunityRoomAction(ctx, join)
-	if err != nil || !duplicate.Duplicate || s.community.rooms["oto test"].wanted {
-		t.Fatal("old join retry overwrote leave", err)
-	}
+	failIf(t, err != nil || !duplicate.Duplicate || s.community.rooms["oto test"].wanted, "old join retry overwrote leave", err)
 	join.RequestID = "join-again"
 	if _, err := s.CommunityRoomAction(ctx, join); err != nil {
 		t.Fatal(err)
@@ -135,9 +113,7 @@ func TestCommunityRoomLifecycleHistoryAndWatches(t *testing.T) {
 	syncTestRooms(t, s, client, peer, identity, "room-join-public")
 	applyRoomFixture(t, s, identity, "room-joined")
 	page, err = s.CommunityMessages(ctx, CommunityMessagesRequest{CommunityIdentity: identity, ConversationID: r.ConversationID})
-	if err != nil || !strings.Contains(page.Messages[0].Text, "History gap") {
-		t.Fatal("missing rejoin gap", err)
-	}
+	failIf(t, err != nil || !strings.Contains(page.Messages[0].Text, "History gap"), "missing rejoin gap", err)
 	summary, _ := s.CommunitySummary(ctx)
 	forget := CommunityRoomActionRequest{CommunityIdentity: identity, Room: "oto test", Action: "forget", RequestID: "forget", Revision: summary.Revision - 1}
 	if _, err := s.CommunityRoomAction(ctx, forget); !errors.Is(err, ErrCommunityMessageState) {
@@ -160,13 +136,9 @@ func TestCommunityRoomFailuresAndReadOnlyOpen(t *testing.T) {
 	client, peer, identity := communityTestConnection(t, s)
 	ctx := context.Background()
 	conversation, err := s.OpenCommunityConversation(ctx, CommunityOpenConversationRequest{CommunityIdentity: identity, Room: "oto test"})
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	syncTestRooms(t, s, client, peer, identity, "room-invitations-true-client")
-	if s.community.rooms["oto test"].wanted {
-		t.Fatal("history open joined")
-	}
+	failIf(t, s.community.rooms["oto test"].wanted, "history open joined")
 	join := CommunityRoomActionRequest{CommunityIdentity: identity, Room: "oto test", Action: "join", RequestID: "join"}
 	if _, err := s.CommunityRoomAction(ctx, join); err != nil {
 		t.Fatal(err)
@@ -199,21 +171,15 @@ func TestCommunityRoomFailuresAndReadOnlyOpen(t *testing.T) {
 		t.Fatal("offline room send", err)
 	}
 	page, err := s.CommunityMessages(ctx, CommunityMessagesRequest{CommunityIdentity: identity, ConversationID: conversation.ID})
-	if err != nil || len(page.Messages) != 1 {
-		t.Fatal("offline history lost", err)
-	}
+	failIf(t, err != nil || len(page.Messages) != 1, "offline history lost", err)
 	s.mu.Lock()
 	s.community.online = true
 	s.community.rooms["oto test"].wanted = true
 	s.community.rooms["oto test"].intent++
 	s.mu.Unlock()
 	syncTestRooms(t, s, client, peer, identity, "room-join-public", "room-invitations-true-client")
-	if err := s.communityUpdate(ctx, identity, soulseek.PrivateMessage{ID: 1, Timestamp: 1, Username: "server", Text: "Could not create room", New: true}); err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(roomSnapshot(t, s, identity, "oto test").Error, "Chats -> server") {
-		t.Fatal("server PM error not surfaced")
-	}
+	must(t, s.communityUpdate(ctx, identity, soulseek.PrivateMessage{ID: 1, Timestamp: 1, Username: "server", Text: "Could not create room", New: true}))
+	failIf(t, !strings.Contains(roomSnapshot(t, s, identity, "oto test").Error, "Chats -> server"), "server PM error not surfaced")
 	s.mu.Lock()
 	s.community.rooms["oto test"].deadline = time.Now().Add(-time.Second)
 	s.mu.Unlock()
@@ -231,17 +197,11 @@ func TestCommunityRoomPagesAndBoundedFeed(t *testing.T) {
 	for i := range 305 {
 		directory.Public = append(directory.Public, soulseek.RoomPopulation{Room: fmt.Sprintf("room-%03d", i), Users: uint32(i), UsersKnown: i != 0})
 	}
-	if err := s.communityUpdate(ctx, identity, directory); err != nil {
-		t.Fatal(err)
-	}
+	must(t, s.communityUpdate(ctx, identity, directory))
 	first, err := s.CommunityRooms(ctx, CommunityRoomsRequest{CommunityIdentity: identity, Limit: 999})
-	if err != nil || len(first.Rooms) != 200 || first.Rooms[0].PopulationKnown || first.NextCursor == "" {
-		t.Fatal(first, err)
-	}
+	failIf(t, err != nil || len(first.Rooms) != 200 || first.Rooms[0].PopulationKnown || first.NextCursor == "", first, err)
 	last, err := s.CommunityRooms(ctx, CommunityRoomsRequest{CommunityIdentity: identity, Cursor: first.NextCursor, Query: "ROOM"})
-	if err != nil || len(last.Rooms) != 105 || last.NextCursor != "" {
-		t.Fatal(last, err)
-	}
+	failIf(t, err != nil || len(last.Rooms) != 105 || last.NextCursor != "", last, err)
 	if _, err := s.CommunityRoomAction(ctx, CommunityRoomActionRequest{CommunityIdentity: identity, Room: "oto test", Action: "join", RequestID: "join"}); err != nil {
 		t.Fatal(err)
 	}
@@ -250,49 +210,27 @@ func TestCommunityRoomPagesAndBoundedFeed(t *testing.T) {
 	for i := range 305 {
 		joined.Users = append(joined.Users, soulseek.RoomUser{Username: fmt.Sprintf("%03d", i) + strings.Repeat("<", 1000), Status: soulseek.UserStatusOnline, StatusKnown: true})
 	}
-	if err := s.communityUpdate(ctx, identity, joined); err != nil {
-		t.Fatal(err)
-	}
+	must(t, s.communityUpdate(ctx, identity, joined))
 	members, err := s.CommunityRoomMembers(ctx, CommunityRoomMembersRequest{CommunityIdentity: identity, Room: "oto test"})
 	encoded, _ := json.Marshal(members)
-	if err != nil || len(encoded) > communityPageBytes+2048 || len(members.Members) >= 200 || members.NextCursor == "" {
-		t.Fatal("roster escaped JSON budget", len(encoded), len(members.Members), err)
-	}
+	failIf(t, err != nil || len(encoded) > communityPageBytes+2048 || len(members.Members) >= 200 || members.NextCursor == "", "roster escaped JSON budget", len(encoded), len(members.Members), err)
 	feed := soulseek.RoomMessage{Room: "oto test", Username: "Alice", Text: strings.Repeat("<", soulseek.MaxChatBytes), PublicFeed: true}
-	if err := s.communityUpdate(ctx, identity, feed); err != nil {
-		t.Fatal(err)
-	}
-	if len(s.community.feed) != 0 {
-		t.Fatal("feed implicitly subscribed")
-	}
-	if err := s.SetCommunityFeed(ctx, CommunityFeedSubscription{CommunityIdentity: identity, Enabled: true}); err != nil {
-		t.Fatal(err)
-	}
+	must(t, s.communityUpdate(ctx, identity, feed))
+	failIf(t, len(s.community.feed) != 0, "feed implicitly subscribed")
+	must(t, s.SetCommunityFeed(ctx, CommunityFeedSubscription{CommunityIdentity: identity, Enabled: true}))
 	syncTestRooms(t, s, client, peer, identity, "public-feed-subscribe")
 	for range 205 {
-		if err := s.communityUpdate(ctx, identity, feed); err != nil {
-			t.Fatal(err)
-		}
+		must(t, s.communityUpdate(ctx, identity, feed))
 	}
-	if s.community.feedBytes > 1<<20 || len(s.community.feed) > 200 {
-		t.Fatal("unbounded feed")
-	}
+	failIf(t, s.community.feedBytes > 1<<20 || len(s.community.feed) > 200, "unbounded feed")
 	page, err := s.CommunityFeed(ctx, CommunityFeedRequest{CommunityIdentity: identity})
 	encoded, _ = json.Marshal(page)
-	if err != nil || len(page.Messages) != 1 || page.NextCursor == 0 || len(encoded) > communityPageBytes+2048 {
-		t.Fatal("feed budget", len(encoded), err)
-	}
-	if err := s.SetCommunityFeed(ctx, CommunityFeedSubscription{CommunityIdentity: identity}); err != nil {
-		t.Fatal(err)
-	}
+	failIf(t, err != nil || len(page.Messages) != 1 || page.NextCursor == 0 || len(encoded) > communityPageBytes+2048, "feed budget", len(encoded), err)
+	must(t, s.SetCommunityFeed(ctx, CommunityFeedSubscription{CommunityIdentity: identity}))
 	syncTestRooms(t, s, client, peer, identity, "public-feed-unsubscribe")
 	id := s.community.feedID
-	if err := s.communityUpdate(ctx, identity, feed); err != nil {
-		t.Fatal(err)
-	}
-	if s.community.feedID != id {
-		t.Fatal("unsubscribed late feed accepted")
-	}
+	must(t, s.communityUpdate(ctx, identity, feed))
+	failIf(t, s.community.feedID != id, "unsubscribed late feed accepted")
 	var count int
 	if err := s.stateDB.SQL().QueryRow("SELECT count(*) FROM community_messages").Scan(&count); err != nil || count != 1 {
 		t.Fatal("feed logged by default", count, err)
@@ -303,9 +241,7 @@ func TestCommunityRoomPreferencesSurviveRestart(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	cfg, path := testConfig(t), filepath.Join(t.TempDir(), "state.sqlite3")
 	s, err := New(cfg, path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	defer s.Close()
 	ctx := context.Background()
 	client, peer, identity := communityTestConnection(t, s)
@@ -314,19 +250,13 @@ func TestCommunityRoomPreferencesSurviveRestart(t *testing.T) {
 	}
 	syncTestRooms(t, s, client, peer, identity, "room-join-public", "room-invitations-true-client")
 	applyRoomFixture(t, s, identity, "room-joined")
-	if err := s.Close(); err != nil {
-		t.Fatal(err)
-	}
+	must(t, s.Close())
 	s, err = New(cfg, path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	defer s.Close()
 	fresh := s.community.identity
 	room := roomSnapshot(t, s, fresh, "oto test")
-	if !room.Remembered || room.Joined || room.RosterFresh || room.ConversationID == 0 {
-		t.Fatal("persisted authority", room)
-	}
+	failIf(t, !room.Remembered || room.Joined || room.RosterFresh || room.ConversationID == 0, "persisted authority", room)
 	if _, err := s.CommunityRooms(ctx, CommunityRoomsRequest{CommunityIdentity: identity}); !errors.Is(err, ErrCommunitySession) {
 		t.Fatal("restart fence", err)
 	}
@@ -334,11 +264,7 @@ func TestCommunityRoomPreferencesSurviveRestart(t *testing.T) {
 	syncTestRooms(t, s, client, peer, fresh, "room-join-public", "room-invitations-true-client")
 	applyRoomFixture(t, s, fresh, "room-joined")
 	page, err := s.CommunityMessages(ctx, CommunityMessagesRequest{CommunityIdentity: fresh, ConversationID: room.ConversationID})
-	if err != nil || len(page.Messages) != 2 || !strings.Contains(page.Messages[0].Text, "History gap") {
-		t.Fatal("restart gap/history", err)
-	}
+	failIf(t, err != nil || len(page.Messages) != 2 || !strings.Contains(page.Messages[0].Text, "History gap"), "restart gap/history", err)
 	// Database/account isolation remains independent of presentation folding.
-	if err := s.stateDB.WriteTx(ctx, func(tx *sql.Tx) error { return db.New(tx).EnsureCommunityAccount(ctx, "other") }); err != nil {
-		t.Fatal(err)
-	}
+	must(t, s.stateDB.WriteTx(ctx, func(tx *sql.Tx) error { return db.New(tx).EnsureCommunityAccount(ctx, "other") }))
 }

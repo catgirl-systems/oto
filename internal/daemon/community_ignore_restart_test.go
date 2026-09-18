@@ -60,16 +60,12 @@ func TestCommunityIgnoreHeldWorkerSurvivesRestart(t *testing.T) {
 			cfg.Soulseek.Server, cfg.Soulseek.ListenAddr = server.Listener.Addr().String(), closedAddress(t)
 			path := filepath.Join(t.TempDir(), "state.sqlite3")
 			s, err := New(cfg, path)
-			if err != nil {
-				t.Fatal(err)
-			}
+			must(t, err)
 			t.Cleanup(func() { _ = s.Close() })
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
 			summary, err := s.CommunitySummary(ctx)
-			if err != nil {
-				t.Fatal(err)
-			}
+			must(t, err)
 			value := "192.0.2.0/24"
 			if blocked {
 				value = "127.0.0.1"
@@ -77,37 +73,23 @@ func TestCommunityIgnoreHeldWorkerSurvivesRestart(t *testing.T) {
 			if _, err := s.SetCommunityRule(ctx, CommunityRuleRequest{CommunityIdentity: summary.CommunityIdentity, Revision: 0, Confirm: true, Rule: CommunityRule{Action: "ignore", Kind: "ip", Value: value}}); err != nil {
 				t.Fatal(err)
 			}
-			if err := s.Start(ctx); err != nil {
-				t.Fatal(err)
-			}
+			must(t, s.Start(ctx))
 			select {
 			case <-ack:
 			case <-ctx.Done():
 				t.Fatal("held message not acknowledged", ctx.Err())
 			}
 			summary, err = s.CommunitySummary(ctx)
-			if err != nil || summary.Unread != 0 {
-				t.Fatal("held unread notification", summary, err)
-			}
+			failIf(t, err != nil || summary.Unread != 0, "held unread notification", summary, err)
 			held, err := s.stateDB.Queries().ListHeldCommunityMessages(ctx, db.ListHeldCommunityMessagesParams{Account: summary.Account, Sender: "Alice", PageSize: 200})
-			if err != nil || len(held) != 1 {
-				t.Fatal("ACK preceded durable holding", held, err)
-			}
-			if err := s.Close(); err != nil {
-				t.Fatal(err)
-			}
+			failIf(t, err != nil || len(held) != 1, "ACK preceded durable holding", held, err)
+			must(t, s.Close())
 			s, err = New(cfg, path)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if err := s.Start(ctx); err != nil {
-				t.Fatal(err)
-			}
+			must(t, err)
+			must(t, s.Start(ctx))
 			for {
 				held, err = s.stateDB.Queries().ListHeldCommunityMessages(ctx, db.ListHeldCommunityMessagesParams{Account: summary.Account, Sender: "Alice", PageSize: 200})
-				if err != nil {
-					t.Fatal(err)
-				}
+				must(t, err)
 				if len(held) == 0 {
 					break
 				}
@@ -118,17 +100,13 @@ func TestCommunityIgnoreHeldWorkerSurvivesRestart(t *testing.T) {
 				}
 			}
 			summary, err = s.CommunitySummary(ctx)
-			if err != nil {
-				t.Fatal(err)
-			}
+			must(t, err)
 			want := 0
 			if !blocked {
 				want = 1
 			}
 			page, err := s.CommunityConversations(ctx, CommunityConversationsRequest{CommunityIdentity: summary.CommunityIdentity})
-			if err != nil || len(page.Conversations) != want || int(summary.Unread) != want {
-				t.Fatal("restart visibility", page, summary, err)
-			}
+			failIf(t, err != nil || len(page.Conversations) != want || int(summary.Unread) != want, "restart visibility", page, summary, err)
 		})
 	}
 }

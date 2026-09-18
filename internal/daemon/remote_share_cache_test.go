@@ -15,9 +15,7 @@ func remoteShareService(t *testing.T) *Service {
 	t.Helper()
 	dir := t.TempDir()
 	service, err := New(testConfig(t), filepath.Join(dir, "state.sqlite3"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	t.Cleanup(func() { _ = service.Close() })
 	return service
 }
@@ -61,9 +59,7 @@ func TestBrowseCompletePublishesProgress(t *testing.T) {
 		t.Fatalf("receiving progress: %+v", progress)
 	}
 	close(release)
-	if err := <-done; err != nil {
-		t.Fatal(err)
-	}
+	must(t, <-done)
 }
 
 func TestRemoteShareCacheRoundTripPreservesOrderAndDuplicates(t *testing.T) {
@@ -78,39 +74,25 @@ func TestRemoteShareCacheRoundTripPreservesOrderAndDuplicates(t *testing.T) {
 		return entries, nil
 	}
 	live, err := service.BrowseComplete(context.Background(), "Alice")
-	if err != nil || live.Cached || !reflect.DeepEqual(live.Entries, entries) {
-		t.Fatalf("live browse: %+v %v", live, err)
-	}
+	failIfFmt(t, err != nil || live.Cached || !reflect.DeepEqual(live.Entries, entries), "live browse: %+v %v", live, err)
 	saved, err := service.SaveBrowse("Alice", live.Revision)
-	if err != nil || saved.Username != "Alice" || saved.SavedAt.IsZero() {
-		t.Fatalf("save browse: %+v %v", saved, err)
-	}
+	failIfFmt(t, err != nil || saved.Username != "Alice" || saved.SavedAt.IsZero(), "save browse: %+v %v", saved, err)
 	browses, err := service.SavedBrowses()
-	if err != nil || len(browses) != 1 || browses[0].Username != "Alice" || !browses[0].SavedAt.Equal(saved.SavedAt) {
-		t.Fatalf("saved browses: %+v %v", browses, err)
-	}
+	failIfFmt(t, err != nil || len(browses) != 1 || browses[0].Username != "Alice" || !browses[0].SavedAt.Equal(saved.SavedAt), "saved browses: %+v %v", browses, err)
 	path := service.journalPath
-	if err := service.Close(); err != nil {
-		t.Fatal(err)
-	}
+	must(t, service.Close())
 	fresh, err := New(testConfig(t), path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	defer fresh.Close()
 	cached, err := fresh.BrowseComplete(context.Background(), "aLiCe")
-	if err != nil || !cached.Cached || !cached.SavedAt.Equal(saved.SavedAt) || !reflect.DeepEqual(cached.Entries, entries) {
-		t.Fatalf("cached browse: %+v %v", cached, err)
-	}
+	failIfFmt(t, err != nil || !cached.Cached || !cached.SavedAt.Equal(saved.SavedAt) || !reflect.DeepEqual(cached.Entries, entries), "cached browse: %+v %v", cached, err)
 }
 
 func TestRemoteShareCacheFallbackAndStaleRevision(t *testing.T) {
 	service := remoteShareService(t)
 	oldEntries := []soulseek.ShareEntry{{Name: `Old\song.mp3`, Size: 1}}
 	old, err := service.rememberBrowse(context.Background(), "peer", oldEntries, false, time.Time{}, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	if _, err := service.SaveBrowse("peer", old.Revision); err != nil {
 		t.Fatal(err)
 	}
@@ -120,17 +102,13 @@ func TestRemoteShareCacheFallbackAndStaleRevision(t *testing.T) {
 		return nil, remoteErr
 	}
 	fallback, err := service.BrowseComplete(context.Background(), "peer")
-	if err != nil || !fallback.Cached || !reflect.DeepEqual(fallback.Entries, oldEntries) {
-		t.Fatalf("fallback: %+v %v", fallback, err)
-	}
+	failIfFmt(t, err != nil || !fallback.Cached || !reflect.DeepEqual(fallback.Entries, oldEntries), "fallback: %+v %v", fallback, err)
 	newEntries := []soulseek.ShareEntry{{Name: `New\song.mp3`, Size: 2}}
 	service.fullBrowse = func(context.Context, *soulseek.Client, string, func(uint64, uint64)) ([]soulseek.ShareEntry, error) {
 		return newEntries, nil
 	}
 	live, err := service.BrowseComplete(context.Background(), "peer")
-	if err != nil || live.Cached || !reflect.DeepEqual(live.Entries, newEntries) {
-		t.Fatalf("refresh: %+v %v", live, err)
-	}
+	failIfFmt(t, err != nil || live.Cached || !reflect.DeepEqual(live.Entries, newEntries), "refresh: %+v %v", live, err)
 	if _, err := service.SaveBrowse("peer", fallback.Revision); !errors.Is(err, ErrBrowseRevision) {
 		t.Fatalf("stale revision accepted: %v", err)
 	}

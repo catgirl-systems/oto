@@ -36,9 +36,7 @@ func TestShutdownForceDuringBlockedPortAdvertisement(t *testing.T) {
 	s.ctx, s.cancel = context.WithCancel(context.Background())
 	s.listenPortFile = "configured-port-file"
 	reserved, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	port := uint16(reserved.Addr().(*net.TCPAddr).Port)
 	reserved.Close()
 	changed := make(chan struct{})
@@ -59,9 +57,7 @@ func TestShutdownForceDuringBlockedPortAdvertisement(t *testing.T) {
 		t.Fatal("port write blocked forced shutdown")
 	}
 	<-changed
-	if err := s.Close(); err != nil {
-		t.Fatal(err)
-	}
+	must(t, s.Close())
 }
 
 func TestShutdownOptInHotConfigAndRecovery(t *testing.T) {
@@ -73,19 +69,11 @@ func TestShutdownOptInHotConfigAndRecovery(t *testing.T) {
 			s.SetConfigPath(filepath.Join(t.TempDir(), "config.json"))
 			cfg.Uploads.WaitForActiveUploadsOnQuit = mode != "default"
 			client := s.client
-			if err := s.UpdateConfig(cfg); err != nil {
-				t.Fatal(err)
-			}
-			if s.client != client || !hotConfigUpdate(previous, cfg) {
-				t.Fatal("setting reconnects")
-			}
+			must(t, s.UpdateConfig(cfg))
+			failIf(t, s.client != client || !hotConfigUpdate(previous, cfg), "setting reconnects")
 			disk, err := config.Load(s.configPath)
-			if err != nil || disk.Uploads.WaitForActiveUploadsOnQuit != cfg.Uploads.WaitForActiveUploadsOnQuit {
-				t.Fatal("setting not saved", err)
-			}
-			if s.Snapshot().Shutdown != nil {
-				t.Fatal("premature shutdown status")
-			}
+			failIf(t, err != nil || disk.Uploads.WaitForActiveUploadsOnQuit != cfg.Uploads.WaitForActiveUploadsOnQuit, "setting not saved", err)
+			failIf(t, s.Snapshot().Shutdown != nil, "premature shutdown status")
 			if _, err := client.QueueUpload("peer", `Music\one`); err != nil {
 				t.Fatal(err)
 			}
@@ -99,14 +87,10 @@ func TestShutdownOptInHotConfigAndRecovery(t *testing.T) {
 				deadline := time.Now().Add(time.Second)
 				for {
 					if st := s.Snapshot().Shutdown; st != nil && st.Draining {
-						if st.ActiveUploads != 1 {
-							t.Fatal(st)
-						}
+						failIf(t, st.ActiveUploads != 1, st)
 						break
 					}
-					if time.Now().After(deadline) {
-						t.Fatal("no drain")
-					}
+					failIf(t, time.Now().After(deadline), "no drain")
 					time.Sleep(time.Millisecond)
 				}
 				select {
@@ -134,17 +118,11 @@ func TestShutdownOptInHotConfigAndRecovery(t *testing.T) {
 			case <-time.After(time.Second):
 				t.Fatal("shutdown did not return")
 			}
-			if err := s.Close(); err != nil {
-				t.Fatal(err)
-			}
+			must(t, s.Close())
 			restored, err := New(cfg, s.journalPath)
-			if err != nil {
-				t.Fatal(err)
-			}
+			must(t, err)
 			defer restored.Close()
-			if len(restored.journal.Uploads) != 1 || !restored.journal.Uploads[0].Recoverable {
-				t.Fatal("restart lost queue")
-			}
+			failIf(t, len(restored.journal.Uploads) != 1 || !restored.journal.Uploads[0].Recoverable, "restart lost queue")
 		})
 	}
 }

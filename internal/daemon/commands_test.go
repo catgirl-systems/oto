@@ -20,7 +20,5 @@ func TestPrivilegeCommandRegistryValidation(t *testing.T) {
 		}
 	}
 	out, err := s.RunCommand(context.Background(), CommandRequest{Name: "help"})
-	if err != nil || len(out.Help) < 2 {
-		t.Fatal(out, err)
-	}
+	failIf(t, err != nil || len(out.Help) < 2, out, err)
 }

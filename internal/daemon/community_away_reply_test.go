@@ -21,22 +21,16 @@ func TestAwayReplyOncePerPeriodAndDurableTranscript(t *testing.T) {
 	message := soulseek.PrivateMessage{ID: 1, Username: "Alice", Text: "hello", New: true}
 	receive := func() {
 		t.Helper()
-		if err := s.receiveCommunityPrivate(ctx, id, message); err != nil {
-			t.Fatal(err)
-		}
+		must(t, s.receiveCommunityPrivate(ctx, id, message))
 	}
 	reply := func() {
 		t.Helper()
 		code, body, err := soulseek.ReadFrame(peer)
-		if err != nil {
-			t.Fatal(err)
-		}
+		must(t, err)
 		d := soulseek.NewDecoder(body)
 		user, e1 := d.String()
 		text, e2 := d.String()
-		if code != soulseek.ServerPrivateMessage || e1 != nil || e2 != nil || d.Done() != nil || user != "Alice" || text != "[Automatic Message] back later" {
-			t.Fatal(code, user, text, e1, e2)
-		}
+		failIf(t, code != soulseek.ServerPrivateMessage || e1 != nil || e2 != nil || d.Done() != nil || user != "Alice" || text != "[Automatic Message] back later", code, user, text, e1, e2)
 		s.wg.Wait()
 	}
 	receive()
@@ -45,25 +39,17 @@ func TestAwayReplyOncePerPeriodAndDurableTranscript(t *testing.T) {
 	receive()
 	s.wg.Wait()
 	list, err := s.CommunityConversations(ctx, CommunityConversationsRequest{CommunityIdentity: id})
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	page, err := s.CommunityMessages(ctx, CommunityMessagesRequest{CommunityIdentity: id, ConversationID: list.Conversations[0].ID})
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	outgoing := 0
 	for _, m := range page.Messages {
 		if m.Direction == "outgoing" {
 			outgoing++
-			if m.State != "sent" {
-				t.Fatal(m)
-			}
+			failIf(t, m.State != "sent", m)
 		}
 	}
-	if outgoing != 1 {
-		t.Fatal("repeat autoreply", page)
-	}
+	failIf(t, outgoing != 1, "repeat autoreply", page)
 	setPresence := func(p Presence) {
 		t.Helper()
 		done := make(chan error, 1)
@@ -71,9 +57,7 @@ func TestAwayReplyOncePerPeriodAndDurableTranscript(t *testing.T) {
 		if _, _, err := soulseek.ReadFrame(peer); err != nil {
 			t.Fatal(err)
 		}
-		if err := <-done; err != nil {
-			t.Fatal(err)
-		}
+		must(t, <-done)
 	}
 	setPresence(PresenceOnline)
 	setPresence(PresenceAway)
@@ -83,14 +67,10 @@ func TestAwayReplyOncePerPeriodAndDurableTranscript(t *testing.T) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, m := range []soulseek.PrivateMessage{{Username: "server", Text: "notice", New: true}, {Username: "Alice", Text: "hello", New: false}, {Username: "Alice", Text: "[Automatic Message] away", New: true}, {Username: "Alice", Text: communityCTCPVersionRequest, New: true}, {Username: "Alice", Text: "VERSION: peer", New: true}} {
-		if s.allowAwayReplyLocked(id, m) {
-			t.Fatal("automatic response loop")
-		}
+		failIf(t, s.allowAwayReplyLocked(id, m), "automatic response loop")
 	}
 	rule, err := NormalizeCommunityRule(CommunityRule{Action: "ignore", Kind: "ip", Value: "192.0.2.0/24"})
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	s.community.rules = []CommunityRule{rule}
 	if s.allowAwayReplyLocked(id, soulseek.PrivateMessage{Username: "Unresolved", Text: "hello", New: true}) {
 		t.Fatal("unresolved address allowed reply")

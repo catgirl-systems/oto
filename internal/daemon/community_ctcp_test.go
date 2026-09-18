@@ -17,72 +17,44 @@ func TestCTCPReplyConsentReplayAndRate(t *testing.T) {
 	s.ctx = ctx
 	s.mu.Unlock()
 	req := soulseek.PrivateMessage{ID: 1, Username: "Alice", Text: communityCTCPVersionRequest, New: true}
-	if err := s.receiveCommunityPrivate(ctx, id, req); err != nil {
-		t.Fatal(err)
-	}
+	must(t, s.receiveCommunityPrivate(ctx, id, req))
 	s.mu.Lock()
-	if s.community.ctcp != nil {
-		t.Fatal("default-on CTCP")
-	}
+	failIf(t, s.community.ctcp != nil, "default-on CTCP")
 	s.community.text, _ = compileCommunityTextTools(CommunityTextTools{CTCPVersion: true})
 	s.mu.Unlock()
 	req.ID++
-	if err := s.receiveCommunityPrivate(ctx, id, req); err != nil {
-		t.Fatal(err)
-	}
+	must(t, s.receiveCommunityPrivate(ctx, id, req))
 	command, payload, err := soulseek.ReadFrame(peer)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	d := soulseek.NewDecoder(payload)
 	username, err := d.String()
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	body, err := d.String()
-	if err != nil || d.Done() != nil || command != soulseek.ServerPrivateMessage || username != "Alice" || !strings.HasPrefix(body, "VERSION: oto") {
-		t.Fatal(command, username, body, err)
-	}
+	failIf(t, err != nil || d.Done() != nil || command != soulseek.ServerPrivateMessage || username != "Alice" || !strings.HasPrefix(body, "VERSION: oto"), command, username, body, err)
 	s.wg.Wait()
 	s.mu.Lock()
 	s.community.ctcp.last = time.Time{}
 	clear(s.community.ctcp.users)
 	s.mu.Unlock()
-	if err := s.receiveCommunityPrivate(ctx, id, req); err != nil {
-		t.Fatal(err)
-	}
+	must(t, s.receiveCommunityPrivate(ctx, id, req))
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if len(s.community.ctcp.users) != 0 {
-		t.Fatal("replay reserved response")
-	}
+	failIf(t, len(s.community.ctcp.users) != 0, "replay reserved response")
 	for _, m := range []soulseek.PrivateMessage{{Username: "Alice", Text: communityCTCPVersionRequest, New: false}, {Username: "server", Text: communityCTCPVersionRequest, New: true}, {Username: "Alice", Text: "VERSION: other", New: true}, {Username: "Alice", Text: "\x01VERSION other\x01", New: true}} {
-		if s.allowCTCPReplyLocked(id, m) {
-			t.Fatal("response loop or offline reply")
-		}
+		failIf(t, s.allowCTCPReplyLocked(id, m), "response loop or offline reply")
 	}
 	id.Session++
-	if s.allowCTCPReplyLocked(id, req) {
-		t.Fatal("stale reply")
-	}
+	failIf(t, s.allowCTCPReplyLocked(id, req), "stale reply")
 }
 func TestCTCPRateBudget(t *testing.T) {
 	c := communityCTCPState{}
 	now := time.Now()
-	if !c.reserve("Alice", now) || c.reserve("Bob", now.Add(time.Minute)) {
-		t.Fatal("busy limit")
-	}
+	failIf(t, !c.reserve("Alice", now) || c.reserve("Bob", now.Add(time.Minute)), "busy limit")
 	c.busy = false
-	if c.reserve("Bob", now.Add(time.Second)) || c.reserve("Alice", now.Add(11*time.Second)) {
-		t.Fatal("rate limit")
-	}
-	if !c.reserve("Bob", now.Add(11*time.Second)) {
-		t.Fatal("independent user")
-	}
+	failIf(t, c.reserve("Bob", now.Add(time.Second)) || c.reserve("Alice", now.Add(11*time.Second)), "rate limit")
+	failIf(t, !c.reserve("Bob", now.Add(11*time.Second)), "independent user")
 	c.busy = false
-	if !c.reserve("Alice", now.Add(time.Minute)) {
-		t.Fatal("expiration")
-	}
+	failIf(t, !c.reserve("Alice", now.Add(time.Minute)), "expiration")
 }
 func TestCTCPExplicitQueryIsDurableAndSanitized(t *testing.T) {
 	s := downloadService(t)
@@ -90,20 +62,12 @@ func TestCTCPExplicitQueryIsDurableAndSanitized(t *testing.T) {
 	ctx := context.Background()
 	req := CommandRequest{CommunityIdentity: id, Name: "ctcp", Args: []string{"Alice"}, RequestID: "version-query"}
 	result, err := s.RunCommand(ctx, req)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	repeat, err := s.RunCommand(ctx, req)
-	if err != nil || !repeat.Send.Duplicate || repeat.Send.MessageID != result.Send.MessageID {
-		t.Fatal(repeat, err)
-	}
+	failIf(t, err != nil || !repeat.Send.Duplicate || repeat.Send.MessageID != result.Send.MessageID, repeat, err)
 	page, err := s.CommunityMessages(ctx, CommunityMessagesRequest{CommunityIdentity: id, ConversationID: result.Send.ConversationID})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(page.Messages) != 1 || page.Messages[0].Text != "[CTCP] VERSION request" {
-		t.Fatal(page)
-	}
+	must(t, err)
+	failIf(t, len(page.Messages) != 1 || page.Messages[0].Text != "[CTCP] VERSION request", page)
 	if _, err := s.SendCommunityPrivate(ctx, CommunitySendRequest{CommunityIdentity: id, Username: "Alice", Text: communityCTCPVersionRequest, RequestID: "raw"}); err == nil {
 		t.Fatal("ordinary text bypassed validation")
 	}

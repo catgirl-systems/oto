@@ -49,9 +49,7 @@ func TestCommunityUploadPoliciesLiveFlagsAndPrivileges(t *testing.T) {
 	assertPosition(supporter, 3) // Supporter priority is explicitly enabled below.
 	cfg := s.cfg
 	cfg.Uploads.PrioritizePrivileged = true
-	if err := s.UpdateConfig(cfg); err != nil {
-		t.Fatal(err)
-	}
+	must(t, s.UpdateConfig(cfg))
 	assertPosition(supporter, 2)
 	assertPosition(normal, 3)
 	update("supporter-expired")
@@ -61,24 +59,18 @@ func TestCommunityUploadPoliciesLiveFlagsAndPrivileges(t *testing.T) {
 	}
 	update("supporter-connection")
 	assertPosition(supporter, 2)
-	if err := s.WatchCommunityUsers(identity, "test", []string{"Supporter"}); err != nil {
-		t.Fatal(err)
-	}
+	must(t, s.WatchCommunityUsers(identity, "test", []string{"Supporter"}))
 	if user := s.community.users["Supporter"]; !user.Privileged || !user.PrivilegeFresh || user.PrivilegeUpdatedAt.IsZero() {
 		t.Fatal("known supporter not hydrated", user)
 	}
 	buddy, err = s.SetCommunityBuddy(ctx, CommunityBuddyRequest{CommunityIdentity: identity, Username: "Buddy", Revision: &buddy.Buddy.Revision})
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	assertPosition(supporter, 1)
 	assertPosition(buddyJob, 3)
 	cfg.Uploads.PrioritizeBuddies = true
 	cfg.Uploads.ExemptBuddiesFromQueueLimits = true
 	cfg.Uploads.MaxQueuedFilesPerUser = 1
-	if err := s.UpdateConfig(cfg); err != nil {
-		t.Fatal(err)
-	}
+	must(t, s.UpdateConfig(cfg))
 	assertPosition(buddyJob, 1)
 	extra, err := manager.TryEnqueue("Buddy", soulseek.TransferRequest{Filename: "extra", Size: 1})
 	if err != nil {
@@ -93,9 +85,7 @@ func TestCommunityUploadPoliciesLiveFlagsAndPrivileges(t *testing.T) {
 	assertPosition(active, 0)
 	assertPosition(supporter, 1)
 	saved, err := config.Load(path)
-	if err != nil || saved.Uploads != cfg.Uploads {
-		t.Fatal("preferences not persisted", err)
-	}
+	failIf(t, err != nil || saved.Uploads != cfg.Uploads, "preferences not persisted", err)
 	s.SetConfigPath(filepath.Join(path, "blocked"))
 	failed := cfg
 	failed.Uploads.PrioritizePrivileged = false
@@ -108,9 +98,7 @@ func TestCommunityUploadPoliciesLiveFlagsAndPrivileges(t *testing.T) {
 	s.retireCommunityLocked()
 	s.mu.Unlock()
 	assertPosition(normal, 1)
-	if len(s.community.privileged) != 0 {
-		t.Fatal("privileges retained across disconnect")
-	}
+	failIf(t, len(s.community.privileged) != 0, "privileges retained across disconnect")
 	if err := s.communityUpdate(ctx, identity, soulseek.PrivilegedUsers{Users: []string{"late"}}); !errors.Is(err, ErrCommunitySession) {
 		t.Fatal("late privileges accepted", err)
 	}
@@ -126,13 +114,9 @@ func TestCommunityUploadPrivilegeBudgetAndExactIdentity(t *testing.T) {
 	identity := s.community.identity
 	ctx := context.Background()
 	for _, message := range []soulseek.SocialMessage{soulseek.PrivilegedUsers{Users: []string{"Alice", "alice"}}, soulseek.UserPresence{Username: "Alice", Status: soulseek.UserStatusOnline}} {
-		if err := s.communityUpdate(ctx, identity, message); err != nil {
-			t.Fatal(err)
-		}
+		must(t, s.communityUpdate(ctx, identity, message))
 	}
-	if len(s.community.privileged) != 1 || s.community.privileged["alice"].IsZero() {
-		t.Fatal("privilege identities folded", s.community.privileged)
-	}
+	failIf(t, len(s.community.privileged) != 1 || s.community.privileged["alice"].IsZero(), "privilege identities folded", s.community.privileged)
 	s.mu.Lock()
 	s.community.privileged = make(map[string]time.Time, soulseek.MaxPrivilegedUsers)
 	for i := 0; i < soulseek.MaxPrivilegedUsers; i++ {
@@ -142,14 +126,8 @@ func TestCommunityUploadPrivilegeBudgetAndExactIdentity(t *testing.T) {
 	if err := s.communityUpdate(ctx, identity, soulseek.PrivilegedUsers{Users: []string{"new"}}); !errors.Is(err, soulseek.ErrTooLarge) {
 		t.Fatal("privilege budget", err)
 	}
-	if len(s.community.privileged) != soulseek.MaxPrivilegedUsers {
-		t.Fatal("partial oversized roster published")
-	}
+	failIf(t, len(s.community.privileged) != soulseek.MaxPrivilegedUsers, "partial oversized roster published")
 	// XXX: undecodable roster entries are dropped; nicotine+ renders whatever it receives.
-	if err := s.communityUpdate(ctx, identity, soulseek.PrivilegedUsers{Users: []string{"\xffbad", ""}}); err != nil {
-		t.Fatal(err)
-	}
-	if len(s.community.privileged) != soulseek.MaxPrivilegedUsers {
-		t.Fatal("undecodable roster entries changed the cache", len(s.community.privileged))
-	}
+	must(t, s.communityUpdate(ctx, identity, soulseek.PrivilegedUsers{Users: []string{"\xffbad", ""}}))
+	failIf(t, len(s.community.privileged) != soulseek.MaxPrivilegedUsers, "undecodable roster entries changed the cache", len(s.community.privileged))
 }

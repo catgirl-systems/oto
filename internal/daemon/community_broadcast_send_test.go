@@ -39,9 +39,7 @@ func TestBroadcastPacingStopAndConfirmationDeduplication(t *testing.T) {
 	}()
 	defer func() { cancel(); <-done }()
 	preview, err := s.PreviewCommunityBroadcast(ctx, CommunityBroadcastRequest{CommunityIdentity: id, RequestID: "paced", Audience: "buddies", Text: "hello"})
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	action := CommunityBroadcastAction{CommunityIdentity: id, RequestID: preview.RequestID, Token: preview.Token, Action: "send"}
 	if out, err := s.ActCommunityBroadcast(ctx, action); err != nil || out.State != "preview" {
 		t.Fatal(out, err)
@@ -53,20 +51,14 @@ func TestBroadcastPacingStopAndConfirmationDeduplication(t *testing.T) {
 	var previous time.Time
 	for _, expected := range []string{"Alice", "Bob"} {
 		code, payload, err := soulseek.ReadFrame(peer)
-		if err != nil {
-			t.Fatal(err)
-		}
+		must(t, err)
 		now := time.Now()
-		if !previous.IsZero() && now.Sub(previous) < time.Second {
-			t.Fatal("broadcast was not paced")
-		}
+		failIf(t, !previous.IsZero() && now.Sub(previous) < time.Second, "broadcast was not paced")
 		previous = now
 		d := soulseek.NewDecoder(payload)
 		name, _ := d.String()
 		text, _ := d.String()
-		if code != soulseek.ServerPrivateMessage || name != expected || text != "hello" {
-			t.Fatal(code, name, text)
-		}
+		failIf(t, code != soulseek.ServerPrivateMessage || name != expected || text != "hello", code, name, text)
 	}
 	action.Action = "stop"
 	if _, err := s.ActCommunityBroadcast(ctx, action); err != nil {
@@ -76,21 +68,15 @@ func TestBroadcastPacingStopAndConfirmationDeduplication(t *testing.T) {
 	var result CommunityBroadcastPage
 	for deadline := time.Now().Add(time.Second); time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
 		result, err = s.CommunityBroadcast(ctx, id, preview.RequestID, 0)
-		if err != nil {
-			t.Fatal(err)
-		}
+		must(t, err)
 		if result.Recipients[1].State == "sent" {
 			break
 		}
 	}
-	if result.State != "stopped" || result.Recipients[0].State != "sent" || result.Recipients[1].State != "sent" || result.Recipients[2].State != "not-submitted" {
-		t.Fatal(result)
-	}
+	failIf(t, result.State != "stopped" || result.Recipients[0].State != "sent" || result.Recipients[1].State != "sent" || result.Recipients[2].State != "not-submitted", result)
 	action.Action = "send"
 	out, err := s.ActCommunityBroadcast(ctx, action)
-	if err != nil || out.State != "stopped" {
-		t.Fatal("blind rebroadcast", out, err)
-	}
+	failIf(t, err != nil || out.State != "stopped", "blind rebroadcast", out, err)
 }
 func TestBroadcastInterruptedWriteIsUnknownAndNeverRebroadcast(t *testing.T) {
 	s := downloadService(t)
@@ -105,9 +91,7 @@ func TestBroadcastInterruptedWriteIsUnknownAndNeverRebroadcast(t *testing.T) {
 	wake := s.community.wake
 	s.mu.Unlock()
 	preview, err := s.PreviewCommunityBroadcast(ctx, CommunityBroadcastRequest{CommunityIdentity: id, RequestID: "partial", Audience: "buddies", Text: "hello"})
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	action := CommunityBroadcastAction{CommunityIdentity: id, RequestID: preview.RequestID, Token: preview.Token, Action: "send", Confirm: true}
 	done := make(chan error, 1)
 	go func() {
@@ -132,11 +116,7 @@ func TestBroadcastInterruptedWriteIsUnknownAndNeverRebroadcast(t *testing.T) {
 	cancel()
 	s.wg.Wait()
 	out, err := s.CommunityBroadcast(context.Background(), id, preview.RequestID, 0)
-	if err != nil || out.Recipients[0].State != "unknown" {
-		t.Fatal(out, err)
-	}
+	failIf(t, err != nil || out.Recipients[0].State != "unknown", out, err)
 	again, err := s.ActCommunityBroadcast(context.Background(), action)
-	if err != nil || again.State == "running" {
-		t.Fatal("unknown automatically retried", again, err)
-	}
+	failIf(t, err != nil || again.State == "running", "unknown automatically retried", again, err)
 }

@@ -20,9 +20,7 @@ func TestCommunityRuleValidationAndMatching(t *testing.T) {
 		{Action: "ignore", Kind: "username", Value: "Case"},
 	} {
 		normal, err := NormalizeCommunityRule(rule)
-		if err != nil {
-			t.Fatal(err)
-		}
+		must(t, err)
 		s := &Service{community: communityState{rules: []CommunityRule{normal}}}
 		if rule.Kind == "ip" {
 			if matched, pending := s.communityRuleLocked(rule.Action, "peer", netip.MustParseAddr("192.0.2.1")); matched == nil || pending {
@@ -65,15 +63,11 @@ func TestCommunityRulesPersistenceConflictAndAccountIsolation(t *testing.T) {
 	cfg := testConfig(t)
 	path := filepath.Join(t.TempDir(), "state.sqlite3")
 	s, err := New(cfg, path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	defer func() { _ = s.Close() }()
 	id := s.community.identity
 	page, err := s.CommunityRules(ctx, CommunityRulesRequest{CommunityIdentity: id})
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	req := CommunityRuleRequest{CommunityIdentity: id, Revision: page.Revision, Rule: CommunityRule{Action: "ban", Kind: "ip", Value: "192.0.2.123/24", Message: "Not available"}, Confirm: true}
 	if _, err := s.SetCommunityRule(ctx, req); err != nil {
 		t.Fatal(err)
@@ -82,28 +76,18 @@ func TestCommunityRulesPersistenceConflictAndAccountIsolation(t *testing.T) {
 		t.Fatal("stale mutation", err)
 	}
 	page, err = s.CommunityRules(ctx, CommunityRulesRequest{CommunityIdentity: id})
-	if err != nil || len(page.Rules) != 1 || page.Rules[0].Value != "192.0.2.0/24" {
-		t.Fatal(page, err)
-	}
-	if err := s.Close(); err != nil {
-		t.Fatal(err)
-	}
+	failIf(t, err != nil || len(page.Rules) != 1 || page.Rules[0].Value != "192.0.2.0/24", page, err)
+	must(t, s.Close())
 	s, err = New(cfg, path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	id = s.community.identity
 	reloaded, err := s.CommunityRules(ctx, CommunityRulesRequest{CommunityIdentity: id})
-	if err != nil || len(reloaded.Rules) != 1 || reloaded.Rules[0].ID != page.Rules[0].ID {
-		t.Fatal(reloaded, err)
-	}
+	failIf(t, err != nil || len(reloaded.Rules) != 1 || reloaded.Rules[0].ID != page.Rules[0].ID, reloaded, err)
 	s.mu.Lock()
 	s.cfg.Soulseek.Username = "other"
 	err = s.loadCommunityLocked(ctx)
 	s.mu.Unlock()
-	if err != nil || len(s.community.rules) != 0 {
-		t.Fatal("account rule leak", err)
-	}
+	failIf(t, err != nil || len(s.community.rules) != 0, "account rule leak", err)
 }
 
 func TestCommunitySharePolicyMatrix(t *testing.T) {
@@ -113,9 +97,7 @@ func TestCommunitySharePolicyMatrix(t *testing.T) {
 	s := &Service{cfg: cfg, uploadEpoch: 1, community: communityState{buddies: map[string]CommunityBuddy{"buddy": {}, "trusted": {Trusted: true}, "self": {Trusted: true}}}}
 	countryAddress := netip.MustParseAddr("8.8.8.8")
 	code := country.Lookup(countryAddress)
-	if code == "" {
-		t.Fatal("country fixture has no country")
-	}
+	failIf(t, code == "", "country fixture has no country")
 	for _, tc := range []struct {
 		name             string
 		rule             CommunityRule
@@ -134,9 +116,7 @@ func TestCommunitySharePolicyMatrix(t *testing.T) {
 		s.community.rules = nil
 		if tc.rule.Action != "" {
 			rule, err := NormalizeCommunityRule(tc.rule)
-			if err != nil {
-				t.Fatal(err)
-			}
+			must(t, err)
 			s.community.rules = []CommunityRule{rule}
 		}
 		for _, reveal := range []bool{false, true} {
@@ -146,9 +126,7 @@ func TestCommunitySharePolicyMatrix(t *testing.T) {
 			for _, username := range []string{"stranger", "buddy", "trusted", "self", "Trusted"} {
 				permission := s.communitySharePermission(1, accountKey(cfg), username, tc.address)
 				blocked := tc.blocked && (tc.name != "username" || username == "trusted")
-				if permission.Banned != blocked || permission.NeedsAddress != tc.pending {
-					t.Fatalf("%s/%s: wrong ban or pending state %+v", tc.name, username, permission)
-				}
+				failIfFmt(t, permission.Banned != blocked || permission.NeedsAddress != tc.pending, "%s/%s: wrong ban or pending state %+v", tc.name, username, permission)
 				for _, root := range []string{"public", "buddy", "trusted"} {
 					allowed := root == "public" || root == "buddy" && (username == "buddy" || username == "trusted") || root == "trusted" && username == "trusted"
 					want := soulseek.ShareHidden
@@ -159,18 +137,12 @@ func TestCommunitySharePolicyMatrix(t *testing.T) {
 							want = soulseek.ShareLocked
 						}
 					}
-					if permission.Roots[root] != want {
-						t.Fatalf("%s/%s/%s reveal=%v: %v != %v", tc.name, username, root, reveal, permission.Roots[root], want)
-					}
+					failIfFmt(t, permission.Roots[root] != want, "%s/%s/%s reveal=%v: %v != %v", tc.name, username, root, reveal, permission.Roots[root], want)
 				}
 			}
 			anonymous := s.communitySharePermission(1, accountKey(cfg), "", netip.Addr{})
-			if anonymous.Banned || anonymous.Roots["public"] != soulseek.ShareAllowed || anonymous.Roots["buddy"] != soulseek.ShareHidden || anonymous.Roots["trusted"] != soulseek.ShareHidden {
-				t.Fatal("anonymous counts disclosed restricted roots", anonymous)
-			}
+			failIf(t, anonymous.Banned || anonymous.Roots["public"] != soulseek.ShareAllowed || anonymous.Roots["buddy"] != soulseek.ShareHidden || anonymous.Roots["trusted"] != soulseek.ShareHidden, "anonymous counts disclosed restricted roots", anonymous)
 		}
 	}
-	if !s.communitySharePermission(2, accountKey(cfg), "trusted", countryAddress).Banned {
-		t.Fatal("stale session allowed")
-	}
+	failIf(t, !s.communitySharePermission(2, accountKey(cfg), "trusted", countryAddress).Banned, "stale session allowed")
 }

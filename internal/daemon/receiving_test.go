@@ -22,9 +22,7 @@ func TestReceivingRecoveryKeepsAccountAndSuppressesHooks(t *testing.T) {
 			cfg.Downloads.AfterFileCommand = "touch " + marker
 			dbPath := filepath.Join(t.TempDir(), "state.sqlite3")
 			s, err := New(cfg, dbPath)
-			if err != nil {
-				t.Fatal(err)
-			}
+			must(t, err)
 			root := filepath.Join(cfg.DownloadDir, "received")
 			now := time.Now().UTC()
 			d := Download{ID: "d-received-1", StatsAccount: account, Username: "sender", Filename: `Music\song`, DownloadDir: root, Destination: "sender/Music/song", Size: 4, State: "queued", CreatedAt: now, UpdatedAt: now}
@@ -34,13 +32,9 @@ func TestReceivingRecoveryKeepsAccountAndSuppressesHooks(t *testing.T) {
 			s.journal.Downloads = []Download{d}
 			err = s.persistDownloadLocked(d)
 			s.mu.Unlock()
-			if err != nil {
-				t.Fatal(err)
-			}
+			must(t, err)
 			part := putPartial(t, d.ID, "data")
-			if err := s.Close(); err != nil {
-				t.Fatal(err)
-			}
+			must(t, s.Close())
 			if mode == "off" {
 				cfg.Receiving[account] = config.Receiving{}
 			}
@@ -48,14 +42,10 @@ func TestReceivingRecoveryKeepsAccountAndSuppressesHooks(t *testing.T) {
 				cfg.Soulseek.Username = "different"
 			}
 			reopened, err := New(cfg, dbPath)
-			if err != nil {
-				t.Fatal(err)
-			}
+			must(t, err)
 			defer reopened.Close()
 			rows := reopened.Downloads()
-			if len(rows) != 1 || !receivedDownload(rows[0]) || rows[0].StatsAccount != account {
-				t.Fatal("lost receiving admission", rows)
-			}
+			failIf(t, len(rows) != 1 || !receivedDownload(rows[0]) || rows[0].StatsAccount != account, "lost receiving admission", rows)
 			if mode == "banned" {
 				reopened.community.rules = []CommunityRule{{Action: "ban", Kind: "username", Value: "sender"}}
 			}
@@ -65,18 +55,12 @@ func TestReceivingRecoveryKeepsAccountAndSuppressesHooks(t *testing.T) {
 			reopened.runDownload(context.Background(), rows[0], make(chan struct{}, 1))
 			result := reopened.Downloads()[0]
 			if mode == "off" || mode == "other-account" || mode == "banned" || mode == "unresolved-ban" {
-				if result.State != "failed" || result.StatsAccount != account {
-					t.Fatal("unconsented recovery", result)
-				}
+				failIf(t, result.State != "failed" || result.StatsAccount != account, "unconsented recovery", result)
 				data, err := os.ReadFile(part)
-				if err != nil || string(data) != "data" {
-					t.Fatal("partial modified without consent", err)
-				}
+				failIf(t, err != nil || string(data) != "data", "partial modified without consent", err)
 			} else {
 				data, err := os.ReadFile(filepath.Join(root, result.Destination))
-				if result.State != "completed" || err != nil || string(data) != "data" {
-					t.Fatal("received recovery failed", result, err)
-				}
+				failIf(t, result.State != "completed" || err != nil || string(data) != "data", "received recovery failed", result, err)
 			}
 			if mode == "hooks" {
 				deadline := time.Now().Add(time.Second)
@@ -87,9 +71,7 @@ func TestReceivingRecoveryKeepsAccountAndSuppressesHooks(t *testing.T) {
 					time.Sleep(time.Millisecond)
 				}
 			}
-			if err := reopened.Close(); err != nil {
-				t.Fatal(err)
-			}
+			must(t, reopened.Close())
 			_, err = os.Stat(marker)
 			if mode == "hooks" {
 				if err != nil {
@@ -106,22 +88,16 @@ func TestReceivingPermissionAndPeerDirectory(t *testing.T) {
 	account := accountKey(s.cfg)
 	s.cfg.Receiving = map[string]config.Receiving{account: {Mode: "users", Users: []string{"Alice", s.cfg.Soulseek.Username}}}
 	address := netip.MustParseAddr("127.0.0.1")
-	if s.receivingPermissionLocked(account, "Alice", address) != nil || s.receivingPermissionLocked(account, "alice", address) == nil || s.receivingPermissionLocked(account, s.cfg.Soulseek.Username, address) == nil || s.receivingPermissionLocked("other", "Alice", address) == nil {
-		t.Fatal("incorrect exact-user consent")
-	}
+	failIf(t, s.receivingPermissionLocked(account, "Alice", address) != nil || s.receivingPermissionLocked(account, "alice", address) == nil || s.receivingPermissionLocked(account, s.cfg.Soulseek.Username, address) == nil || s.receivingPermissionLocked("other", "Alice", address) == nil, "incorrect exact-user consent")
 	s.community.rules = []CommunityRule{{Action: "ban", Kind: "ip", prefix: netip.MustParsePrefix("127.0.0.0/8")}}
 	if s.receivingPermissionLocked(account, "Alice", address) == nil || s.receivingPermissionLocked(account, "Alice", netip.Addr{}) == nil {
 		t.Fatal("ban or unresolved address bypass")
 	}
-	if s.receivingPermissionLocked(account, "Alice", netip.MustParseAddr("192.0.2.1")) != nil {
-		t.Fatal("unrelated address denied")
-	}
+	failIf(t, s.receivingPermissionLocked(account, "Alice", netip.MustParseAddr("192.0.2.1")) != nil, "unrelated address denied")
 	seen := map[string]bool{}
 	for _, name := range []string{"Alice", "alice", "a/b", "a_b", "a%2Fb", ".", "..", receivedUserDirectory(".")} {
 		dir := receivedUserDirectory(name)
-		if dir == "" || dir == "." || dir == ".." || filepath.Base(dir) != dir || seen[dir] {
-			t.Fatal("unsafe/colliding peer directory", name, dir)
-		}
+		failIf(t, dir == "" || dir == "." || dir == ".." || filepath.Base(dir) != dir || seen[dir], "unsafe/colliding peer directory", name, dir)
 		seen[dir] = true
 	}
 }

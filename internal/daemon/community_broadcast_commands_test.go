@@ -9,13 +9,10 @@ func TestBroadcastCommandConfirmationIsExplicitAndCanonical(t *testing.T) {
 	s := downloadService(t)
 	ctx := context.Background()
 	id := s.community.identity
-	if _, err := s.SetCommunityBuddy(ctx, CommunityBuddyRequest{CommunityIdentity: id, Username: "Alice"}); err != nil {
-		t.Fatal(err)
-	}
+	_, err := s.SetCommunityBuddy(ctx, CommunityBuddyRequest{CommunityIdentity: id, Username: "Alice"})
+	must(t, err)
 	preview, err := s.RunCommand(ctx, CommandRequest{CommunityIdentity: id, Name: "broadcast", RequestID: "command-preview", Args: []string{"buddies", "hello", "Alice"}})
-	if err != nil || preview.Broadcast == nil || preview.Broadcast.State != "preview" {
-		t.Fatal(preview, err)
-	}
+	failIf(t, err != nil || preview.Broadcast == nil || preview.Broadcast.State != "preview", preview, err)
 	req := CommandRequest{CommunityIdentity: id, Name: "broadcast-stop", RequestID: "wrong", Args: []string{preview.Broadcast.RequestID, preview.Broadcast.Token}, Confirm: true}
 	if _, err := s.RunCommand(ctx, req); err == nil {
 		t.Fatal("mismatched confirmation ID")

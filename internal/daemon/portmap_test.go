@@ -23,9 +23,7 @@ type mappingServerObservation struct {
 func startMappingServer(t *testing.T, closeAfterLogin bool, events chan<- string) (string, <-chan mappingServerObservation) {
 	t.Helper()
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	observations := make(chan mappingServerObservation, 8)
 	t.Cleanup(func() { _ = listener.Close() })
 	go func() {
@@ -100,9 +98,7 @@ func prepareConnectOnce(t *testing.T, server string, natPMP, upnp bool) (*Servic
 	cfg.Soulseek.Server, cfg.Soulseek.ListenAddr = server, closedAddress(t)
 	cfg.Soulseek.NATPMPPortMapping, cfg.Soulseek.UPnPPortMapping = natPMP, upnp
 	service, err := New(cfg, t.TempDir()+"/state.sqlite3")
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	service.runCtx, service.runCancel = context.WithCancel(context.Background())
 	service.ctx, service.cancel = context.WithCancel(service.runCtx)
 	service.presence = PresenceOnline
@@ -114,9 +110,7 @@ func awaitMappingObservation(t *testing.T, observations <-chan mappingServerObse
 	t.Helper()
 	select {
 	case observation := <-observations:
-		if observation.err != nil {
-			t.Fatal(observation.err)
-		}
+		failIf(t, observation.err != nil, observation.err)
 		return observation
 	case <-time.After(2 * time.Second):
 		t.Fatal("timed out waiting for login")
@@ -139,24 +133,16 @@ func TestPortMappingRunsBeforeLoginAndClosesOnShutdown(t *testing.T) {
 		changed(62000)
 		return &fakePortMapping{closed: &closed}, nil
 	}
-	if err := service.connectOnce(ctx); err != nil {
-		t.Fatal(err)
-	}
+	must(t, service.connectOnce(ctx))
 	if first, second := <-events, <-events; first != "map" || second != "login" {
 		t.Fatalf("startup order=%q, %q", first, second)
 	}
 	if observation := awaitMappingObservation(t, observations); observation.port != 62000 {
 		t.Fatalf("advertised port=%d", observation.port)
 	}
-	if internalPort == 0 || internalPort == 62000 {
-		t.Fatalf("internal port=%d", internalPort)
-	}
-	if err := service.Close(); err != nil {
-		t.Fatal(err)
-	}
-	if closed.Load() != 1 {
-		t.Fatalf("mapping closes=%d", closed.Load())
-	}
+	failIfFmt(t, internalPort == 0 || internalPort == 62000, "internal port=%d", internalPort)
+	must(t, service.Close())
+	failIfFmt(t, closed.Load() != 1, "mapping closes=%d", closed.Load())
 }
 
 func TestPortMappingFailureDisabledAndListenPortFilePrecedence(t *testing.T) {
@@ -171,18 +157,12 @@ func TestPortMappingFailureDisabledAndListenPortFilePrecedence(t *testing.T) {
 			internalPort = port
 			return failed, errors.New("router unavailable")
 		}
-		if err := service.connectOnce(ctx); err != nil {
-			t.Fatal(err)
-		}
+		must(t, service.connectOnce(ctx))
 		if observation := awaitMappingObservation(t, observations); calls.Load() != 1 || observation.port != internalPort {
 			t.Fatalf("calls=%d advertised=%d internal=%d", calls.Load(), observation.port, internalPort)
 		}
-		if err := service.SetPresence(PresenceOffline); err != nil {
-			t.Fatal(err)
-		}
-		if err := service.SetPresence(PresenceOnline); err != nil {
-			t.Fatal(err)
-		}
+		must(t, service.SetPresence(PresenceOffline))
+		must(t, service.SetPresence(PresenceOnline))
 		if observation := awaitMappingObservation(t, observations); calls.Load() != 2 || observation.port != internalPort {
 			t.Fatalf("reconnect: calls=%d advertised=%d internal=%d", calls.Load(), observation.port, internalPort)
 		}
@@ -196,9 +176,7 @@ func TestPortMappingFailureDisabledAndListenPortFilePrecedence(t *testing.T) {
 			calls.Add(1)
 			return nil, nil
 		}
-		if err := service.connectOnce(ctx); err != nil {
-			t.Fatal(err)
-		}
+		must(t, service.connectOnce(ctx))
 		if observation := awaitMappingObservation(t, observations); calls.Load() != 0 || observation.port != service.client.ListenPort() {
 			t.Fatalf("calls=%d advertised=%d listener=%d", calls.Load(), observation.port, service.client.ListenPort())
 		}
@@ -213,9 +191,7 @@ func TestPortMappingFailureDisabledAndListenPortFilePrecedence(t *testing.T) {
 			calls.Add(1)
 			return nil, nil
 		}
-		if err := service.connectOnce(ctx); err != nil {
-			t.Fatal(err)
-		}
+		must(t, service.connectOnce(ctx))
 		cfg := service.Config()
 		if observation := awaitMappingObservation(t, observations); calls.Load() != 0 || observation.port != service.client.ListenPort() || !cfg.Soulseek.NATPMPPortMapping || !cfg.Soulseek.UPnPPortMapping {
 			t.Fatalf("calls=%d advertised=%d listener=%d config=%+v", calls.Load(), observation.port, service.client.ListenPort(), cfg.Soulseek)
@@ -234,9 +210,7 @@ func TestPortMappingFailureDisabledAndListenPortFilePrecedence(t *testing.T) {
 			calls.Add(1)
 			return nil, nil
 		}
-		if err := service.connectOnce(ctx); err != nil {
-			t.Fatal(err)
-		}
+		must(t, service.connectOnce(ctx))
 		if observation := awaitMappingObservation(t, observations); calls.Load() != 0 || observation.port != uint16(port) {
 			t.Fatalf("calls=%d advertised=%d file port=%d", calls.Load(), observation.port, port)
 		}
@@ -250,9 +224,7 @@ func TestPortMappingClosesBeforeReconnect(t *testing.T) {
 	cfg.Soulseek.Server, cfg.Soulseek.ListenAddr = server, closedAddress(t)
 	cfg.Soulseek.NATPMPPortMapping = true
 	service, err := New(cfg, t.TempDir()+"/state.sqlite3")
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	var opened, closed atomic.Int32
 	service.portMapOpen = func(_ context.Context, _ uint16, _, _ bool, changed func(uint16)) (portMapping, error) {
 		id := opened.Add(1)
@@ -260,23 +232,17 @@ func TestPortMappingClosesBeforeReconnect(t *testing.T) {
 		changed(uint16(62000 + id))
 		return &fakePortMapping{closed: &closed, events: events, name: "close-" + strconv.Itoa(int(id))}, nil
 	}
-	if err := service.Start(context.Background()); err != nil {
-		t.Fatal(err)
-	}
+	must(t, service.Start(context.Background()))
 	defer service.Close()
 
 	want := []string{"open-1", "close-1", "open-2"}
 	for i, expected := range want {
 		select {
 		case got := <-events:
-			if got != expected {
-				t.Fatalf("event %d=%q, want %q", i, got, expected)
-			}
+			failIfFmt(t, got != expected, "event %d=%q, want %q", i, got, expected)
 		case <-time.After(3 * time.Second):
 			t.Fatalf("timed out waiting for %q", expected)
 		}
 	}
-	if opened.Load() < 2 || closed.Load() < 1 {
-		t.Fatalf("opened=%d closed=%d", opened.Load(), closed.Load())
-	}
+	failIfFmt(t, opened.Load() < 2 || closed.Load() < 1, "opened=%d closed=%d", opened.Load(), closed.Load())
 }
