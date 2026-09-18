@@ -26,6 +26,7 @@ const (
 	settingPrioritizePrivileged
 	settingExemptBuddiesFromQueueLimits
 	settingAccountPrivileges
+	settingViewLog
 )
 
 func (m model) downloadFilterFields() []settingField {

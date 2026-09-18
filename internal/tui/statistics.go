@@ -10,34 +10,37 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/catgirl-systems/oto/internal/daemon"
+	"github.com/catgirl-systems/oto/internal/diagnostics"
 	"github.com/catgirl-systems/oto/internal/ipc"
 	"github.com/catgirl-systems/oto/internal/stats"
 	"github.com/charmbracelet/x/ansi"
 )
 
 type statsViewState struct {
-	page, rangeIndex   int
-	request            uint64
-	loading            bool
-	overview           daemon.StatsOverview
-	downloads, uploads []stats.Daily
-	peers              stats.PeerPage
-	log                stats.LogPage
-	filter             stats.Filter
-	edit               string
-	value              string
-	cursor             int
-	detail             *stats.Event
-	detailCursor       int
-	sortBytes          bool
-	prune              bool
-	pruneConfirm       bool
-	pruneDays          string
-	prunePending       bool
-	pruneGeneration    uint64
-	pruneRequest       ipc.PruneRequest
-	preview            stats.PruneResult
-	err                string
+	page, rangeIndex      int
+	request               uint64
+	loading               bool
+	overview              daemon.StatsOverview
+	downloads, uploads    []stats.Daily
+	peers                 stats.PeerPage
+	log                   stats.LogPage
+	filter                stats.Filter
+	edit                  string
+	value                 string
+	cursor                int
+	detail                *stats.Event
+	detailCursor          int
+	logs                  []diagnostics.Record
+	logsLevel, logsSearch string
+	sortBytes             bool
+	prune                 bool
+	pruneConfirm          bool
+	pruneDays             string
+	prunePending          bool
+	pruneGeneration       uint64
+	pruneRequest          ipc.PruneRequest
+	preview               stats.PruneResult
+	err                   string
 }
 type statsMsg struct {
 	request uint64
@@ -50,7 +53,7 @@ type statsPruneMsg struct {
 	err     error
 }
 
-var statsPages = []string{"Overview", "History", "Peers", "Log"}
+var statsPages = []string{"Overview", "History", "Peers", "Log", "Diagnostics"}
 var statsRanges = []int{7, 30, 90, 365, 0}
 
 func (m *model) loadStats() tea.Cmd {
@@ -97,6 +100,8 @@ func (m *model) loadStats() tea.Cmd {
 				view.peers, err = m.client.StatsPeers(m.ctx, f)
 			case 3:
 				view.log, err = m.client.TransferLog(m.ctx, f)
+			case 4:
+				view.logs, err = m.client.Logs(m.ctx, 1000)
 			}
 		}
 		view.err = errText(err)
@@ -151,6 +156,10 @@ func (m *model) statsKey(k tea.KeyPressMsg) tea.Cmd {
 				} else {
 					v.filter.To = at
 				}
+			case "logs":
+				v.logsSearch = strings.TrimSpace(v.value)
+				v.edit = ""
+				return nil
 			}
 			v.edit = ""
 			v.filter.Cursor = ""
@@ -163,9 +172,9 @@ func (m *model) statsKey(k tea.KeyPressMsg) tea.Cmd {
 	case "ctrl+pgup", "ctrl+pgdown":
 		step := 1
 		if s == "ctrl+pgup" {
-			step = 3
+			step = len(statsPages) - 1
 		}
-		v.page = (v.page + step) % 4
+		v.page = (v.page + step) % len(statsPages)
 		if v.page != 3 {
 			v.filter.Kinds = nil
 		}
@@ -185,6 +194,9 @@ func (m *model) statsKey(k tea.KeyPressMsg) tea.Cmd {
 	case "home":
 		m.cursor = 0
 	case "r":
+		if v.page == 4 {
+			return m.refreshStats()
+		}
 		v.rangeIndex = (v.rangeIndex + 1) % len(statsRanges)
 		v.filter.From, v.filter.To = time.Time{}, time.Time{}
 		v.filter.Cursor = ""
@@ -201,9 +213,20 @@ func (m *model) statsKey(k tea.KeyPressMsg) tea.Cmd {
 		v.filter.Cursor = ""
 		return m.refreshStats()
 	case "/":
+		if v.page == 4 {
+			v.edit, v.value = "logs", v.logsSearch
+			v.cursor = len([]rune(v.value))
+			return nil
+		}
 		v.edit = "peer"
 		v.value = v.filter.Peer
 		v.cursor = len([]rune(v.value))
+	case "f":
+		if v.page == 4 {
+			levels := []string{"", "WARN", "ERROR"}
+			v.logsLevel = levels[(slices.Index(levels, v.logsLevel)+1)%len(levels)]
+			return nil
+		}
 	case "[":
 		v.edit = "from"
 		v.value = ""
@@ -264,6 +287,10 @@ func (m *model) statsKey(k tea.KeyPressMsg) tea.Cmd {
 	case "P":
 		m.openStatsPrune()
 	case "esc":
+		if v.page == 4 {
+			v.logsLevel, v.logsSearch = "", ""
+			return nil
+		}
 		v.filter.Peer = ""
 		v.filter.Cursor = ""
 		return m.refreshStats()
@@ -283,6 +310,25 @@ func (m *model) statsKey(k tea.KeyPressMsg) tea.Cmd {
 	}
 	return nil
 }
+
+var logLevelRank = map[string]int{"DEBUG": 0, "INFO": 1, "WARN": 2, "ERROR": 3}
+
+// filterLogRecords keeps records at or above level containing the search text.
+func filterLogRecords(records []diagnostics.Record, level, search string) []diagnostics.Record {
+	search = strings.ToLower(search)
+	out := make([]diagnostics.Record, 0, len(records))
+	for _, r := range records {
+		if level != "" && logLevelRank[r.Level] < logLevelRank[level] {
+			continue
+		}
+		if search != "" && !strings.Contains(strings.ToLower(r.Msg+" "+r.Text), search) {
+			continue
+		}
+		out = append(out, r)
+	}
+	return out
+}
+
 func statsRatio(upload, download uint64) string {
 	if download == 0 {
 		return "—"
@@ -556,6 +602,25 @@ func (m model) renderStats(width, height int) string {
 		for i := start; i < end; i++ {
 			e := v.log.Entries[i]
 			lines = append(lines, selectedRow(fmt.Sprintf("%s %-11s %-12s %9s %s", e.At.UTC().Format("01-02 15:04"), e.Kind, e.Peer, formatBytes(e.Bytes), e.Filename), i == m.cursor))
+		}
+	case 4:
+		records := filterLogRecords(v.logs, v.logsLevel, v.logsSearch)
+		lines = append(lines, muted(fmt.Sprintf("%s of %d records · f level · / search", countLabel(len(records), "match"), len(v.logs))))
+		var filters []string
+		if v.logsLevel != "" {
+			filters = append(filters, "≥ "+v.logsLevel)
+		}
+		if v.logsSearch != "" {
+			filters = append(filters, "find: "+v.logsSearch)
+		}
+		if len(filters) > 0 {
+			lines = append(lines, accent(strings.Join(filters, " · ")))
+		}
+		start, end := visibleRange(len(records), m.cursor, max(1, height-len(lines)-2))
+		for i := start; i < end; i++ {
+			r := records[i]
+			line := fmt.Sprintf("%s %-5s %s", r.Time.Local().Format("01-02 15:04:05"), r.Level, strings.TrimSpace(r.Msg+"  "+r.Text))
+			lines = append(lines, selectedRow(trunc(line, width), i == m.cursor))
 		}
 	}
 	if v.page < 2 {

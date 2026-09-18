@@ -718,7 +718,7 @@ func (m model) settingFields() []settingField {
 			{settingStatsPrune, "Prune", days + " " + pruneDayUnit(days) + " · Enter to edit", settingAction},
 		}
 	case settingsLogging:
-		return []settingField{{settingLoggingLevel, "Level", m.choiceValue(settingLoggingLevel, m.cfg.Logging.Level), settingChoice}}
+		return []settingField{{settingLoggingLevel, "Level", m.choiceValue(settingLoggingLevel, m.cfg.Logging.Level), settingChoice}, {settingViewLog, "Diagnostic log", "Press Enter", settingAction}}
 	case settingsShares:
 		return []settingField{
 			{settingAudioMetadata, "Audio metadata (optional ffprobe)", strconv.FormatBool(m.cfg.AudioMetadata), settingBool},

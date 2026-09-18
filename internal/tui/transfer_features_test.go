@@ -40,12 +40,12 @@ func TestSelectedFilteredFilesAndScopeConfirmation(t *testing.T) {
 }
 
 func TestStatsPageNavigation(t *testing.T) {
-	for action, step := range map[string]int{"ctrl+pgup": 3, "ctrl+pgdown": 1} {
-		for page := range 4 {
+	for action, step := range map[string]int{"ctrl+pgup": len(statsPages) - 1, "ctrl+pgdown": 1} {
+		for page := range len(statsPages) {
 			m := model{workspace: workspaceStats, cursor: 5}
 			m.stats.page = page
 			m.stats.filter = stats.Filter{Direction: "upload", Kinds: []string{"failed"}, Cursor: "next"}
-			want := (page + step) % 4
+			want := (page + step) % len(statsPages)
 			if cmd := m.statsKey(key(action)); cmd == nil || m.stats.page != want || m.cursor != 0 || m.stats.filter.Cursor != "" {
 				t.Fatalf("%s from page %d: page=%d cursor=%d filter=%+v", action, page, m.stats.page, m.cursor, m.stats.filter)
 			}
