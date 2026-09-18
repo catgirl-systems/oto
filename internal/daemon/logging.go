@@ -25,6 +25,14 @@ func (s *Service) SetDiagnostics(manager *diagnostics.Manager) error {
 	return nil
 }
 
+// LogRecords returns recent diagnostic records from the daemon's log directory.
+func (s *Service) LogRecords(limit int) ([]diagnostics.Record, error) {
+	if s.diagnostics == nil {
+		return nil, errors.New("diagnostics unavailable")
+	}
+	return s.diagnostics.Records(limit)
+}
+
 func (s *Service) logger() *slog.Logger {
 	if s.diagnostics == nil {
 		return nil

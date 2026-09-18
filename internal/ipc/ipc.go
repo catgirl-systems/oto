@@ -102,6 +102,7 @@ func (s *Server) handler() http.Handler {
 	s.registerStats(mux)
 	s.registerCommunity(mux)
 	mux.HandleFunc("GET /v1/state", s.state)
+	mux.HandleFunc("GET /v1/logs", s.logs)
 	mux.HandleFunc("GET /v1/network/interfaces", s.networkInterfaces)
 	mux.HandleFunc("POST /v1/network/port-check", s.checkListeningPort)
 	mux.HandleFunc("PUT /v1/presence", s.presence)
