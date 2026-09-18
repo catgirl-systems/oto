@@ -12,6 +12,16 @@ import (
 	"github.com/catgirl-systems/oto/internal/daemon"
 )
 
+// globalKey reports keys handled globally even inside Stats and Community:
+// workspace cycling, quit, help, presence, and the 1-8 workspace jumps.
+func globalKey(s string) bool {
+	switch s {
+	case "tab", "shift+tab", "q", "ctrl+c", "?", "o", "1", "2", "3", "4", "5", "6", "7", "8":
+		return true
+	}
+	return false
+}
+
 func (m *model) key(k tea.KeyPressMsg) tea.Cmd {
 	s := k.String()
 	m.community.chats.navigation++
@@ -77,7 +87,20 @@ func (m *model) key(k tea.KeyPressMsg) tea.Cmd {
 	}
 	if m.help {
 		if s == "?" || s == "esc" {
-			m.help = false
+			m.help, m.helpScroll = false, 0
+			return nil
+		}
+		switch s {
+		case "up", "k":
+			m.helpScroll = max(0, m.helpScroll-1)
+		case "down", "j":
+			m.helpScroll++
+		case "pgup":
+			m.helpScroll = max(0, m.helpScroll-m.pageRows())
+		case "pgdown":
+			m.helpScroll += m.pageRows()
+		case "home":
+			m.helpScroll = 0
 		}
 		return nil
 	}
@@ -111,10 +134,10 @@ func (m *model) key(k tea.KeyPressMsg) tea.Cmd {
 	if m.editing {
 		return m.editKey(k)
 	}
-	if m.workspace == workspaceCommunity && (m.community.inspectEditing || m.community.peer.form || m.community.peer.dialog || m.community.view == 2 && (m.community.buddies.editor != nil || m.community.buddies.form != "") || m.community.view == 3 && (m.community.discover.form != "" || m.community.discover.dialog != nil) || m.community.chats.composing || m.community.chats.form != "" || m.community.rooms.form != "" || m.community.rooms.private.editing() || m.community.view == 1 && m.community.pane == 1 && m.community.rooms.private.view == "roles" && s == "o" || s != "tab" && s != "shift+tab" && s != "q" && s != "ctrl+c" && s != "?" && s != "o") {
+	if m.workspace == workspaceCommunity && (m.community.inspectEditing || m.community.peer.form || m.community.peer.dialog || m.community.view == 2 && (m.community.buddies.editor != nil || m.community.buddies.form != "") || m.community.view == 3 && (m.community.discover.form != "" || m.community.discover.dialog != nil) || m.community.chats.composing || m.community.chats.form != "" || m.community.rooms.form != "" || m.community.rooms.private.editing() || m.community.view == 1 && m.community.pane == 1 && m.community.rooms.private.view == "roles" && s == "o" || !globalKey(s)) {
 		return m.communityKey(k)
 	}
-	if m.workspace == workspaceStats && s != "tab" && s != "shift+tab" && s != "q" && s != "ctrl+c" && s != "?" && s != "o" {
+	if m.workspace == workspaceStats && !globalKey(s) {
 		return m.statsKey(k)
 	}
 	switch s {
@@ -160,14 +183,12 @@ func (m *model) key(k tea.KeyPressMsg) tea.Cmd {
 			m.closeBrowseTab()
 		}
 	case "tab":
-		m.switchWorkspace(m.workspace + 1)
-		if m.workspace == workspaceSettings && m.settingsSection == settingsConnection {
-			return m.loadNetworkInterfaces()
-		}
+		return m.jumpWorkspace(m.workspace + 1)
 	case "shift+tab":
-		m.switchWorkspace(m.workspace - 1)
-		if m.workspace == workspaceSettings && m.settingsSection == settingsConnection {
-			return m.loadNetworkInterfaces()
+		return m.jumpWorkspace(m.workspace - 1)
+	case "1", "2", "3", "4", "5", "6", "7", "8":
+		if n := int(s[0] - '1'); n < int(workspaceCount) {
+			return m.jumpWorkspace(workspace(n))
 		}
 	case "right":
 		if m.workspace == workspaceSettings {
@@ -242,6 +263,10 @@ func (m *model) key(k tea.KeyPressMsg) tea.Cmd {
 				m.cfg.AudioMetadata = !m.cfg.AudioMetadata
 			case settingStatsASCII:
 				m.cfg.Statistics.ASCIICharts = !m.cfg.Statistics.ASCIICharts
+			case settingViewLog:
+				m.switchWorkspace(workspaceStats)
+				m.stats.page = len(statsPages) - 1
+				return m.refreshStats()
 			case settingStatsPrune:
 				m.openStatsPrune()
 			case settingDownloadFilters:
@@ -492,6 +517,14 @@ func (m *model) key(k tea.KeyPressMsg) tea.Cmd {
 	case "/":
 		m.beginEdit()
 		return nil
+	}
+	return nil
+}
+
+func (m *model) jumpWorkspace(next workspace) tea.Cmd {
+	m.switchWorkspace(next)
+	if m.workspace == workspaceSettings && m.settingsSection == settingsConnection {
+		return m.loadNetworkInterfaces()
 	}
 	return nil
 }

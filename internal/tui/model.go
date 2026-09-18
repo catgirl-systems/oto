@@ -229,6 +229,7 @@ type model struct {
 	historyCursor                          historyCursor
 	transient                              bool
 	setup, help, confirm, editing, loading bool
+	helpScroll                             int
 	choiceChoosing, addingBandwidthProfile bool
 	details, folderMenu, statusMenu        bool
 	uploadStatusMenu, uploadConfirm        bool
