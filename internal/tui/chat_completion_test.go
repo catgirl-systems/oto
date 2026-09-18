@@ -16,9 +16,7 @@ func TestCompletionQuotingCyclingAndFencing(t *testing.T) {
 	text := `/msg "Al" hi`
 	cursor := 8
 	kind, prefix, _, start, end, ok := m.completionContext(text, cursor)
-	if !ok || kind != "user" || prefix != "Al" {
-		t.Fatal(kind, prefix, start, end)
-	}
+	failIf(t, !ok || kind != "user" || prefix != "Al", kind, prefix, start, end)
 	m.setChatDraft(text, cursor)
 	c := &m.community.chats
 	c.completion = chatCompletion{identity: id, key: m.chatKey(), text: text, cursor: cursor, start: start, end: end, kind: kind, candidates: []string{"Alice Smith", "Alfred"}}
@@ -45,15 +43,11 @@ func TestCompletionQuotingCyclingAndFencing(t *testing.T) {
 	msg := chatCompletionMsg{request: c.completionRequest, navigation: c.navigation, identity: id, key: m.chatKey(), text: "/he", cursor: 3, kind: "command", candidates: []string{"help"}}
 	m.setChatDraft("/hi", 3)
 	m.applyChatCompletion(msg)
-	if c.drafts[m.chatKey()].text != "/hi" {
-		t.Fatal("late completion overwrote edit")
-	}
+	failIf(t, c.drafts[m.chatKey()].text != "/hi", "late completion overwrote edit")
 	m.setChatDraft("/he", 3)
 	c.completion = chatCompletion{identity: id, key: m.chatKey(), text: "/he", cursor: 3, start: 0, end: 3, kind: "command"}
 	msg.request = c.completionRequest
 	m.applyChatCompletion(msg)
 	d := c.drafts[m.chatKey()]
-	if d.text != "/help" || d.cursor != utf8.RuneCountInString(d.text) {
-		t.Fatal(d)
-	}
+	failIf(t, d.text != "/help" || d.cursor != utf8.RuneCountInString(d.text), d)
 }

@@ -25,9 +25,7 @@ func TestRemoteBrowseLazyPagesSelectionAndFiltering(t *testing.T) {
 	requests := atomic.Int32{}
 	queued := make(chan daemon.BrowseDownloadRequest, 1)
 	listener, err := net.Listen("unix", filepath.Join(t.TempDir(), "ipc.sock"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	server := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests.Add(1)
 		if r.URL.Path == "/v1/browse/download" {
@@ -69,18 +67,12 @@ func TestRemoteBrowseLazyPagesSelectionAndFiltering(t *testing.T) {
 	update := func(msg tea.Msg) { next, _ := m.Update(msg); m = next.(model) }
 	m.openBrowse("peer", "", false)
 	update(browseMsg{user: "peer", request: m.browseTabs[0].request, page: root})
-	if len(m.entries) != 1 || len(m.browseTree.nodes) != 1 {
-		t.Fatal("opening eagerly populated the share")
-	}
+	failIf(t, len(m.entries) != 1 || len(m.browseTree.nodes) != 1, "opening eagerly populated the share")
 	m.toggle() // Select the unopened folder, including files not present in the TUI.
 	cmd := m.openTreeNode(false)
-	if cmd == nil {
-		t.Fatal("folder expansion did not request a page")
-	}
+	failIf(t, cmd == nil, "folder expansion did not request a page")
 	update(cmd())
-	if len(m.entries) != 201 || requests.Load() != 1 {
-		t.Fatalf("not a single bounded folder page: entries=%d requests=%d", len(m.entries), requests.Load())
-	}
+	failIfFmt(t, len(m.entries) != 201 || requests.Load() != 1, "not a single bounded folder page: entries=%d requests=%d", len(m.entries), requests.Load())
 	m.cursor = 0
 	if cmd := m.openTreeNode(true); cmd != nil {
 		t.Fatal("collapse fetched peer")
@@ -95,60 +87,40 @@ func TestRemoteBrowseLazyPagesSelectionAndFiltering(t *testing.T) {
 		}
 	}
 	cmd = m.openTreeNode(true)
-	if cmd == nil {
-		t.Fatal("next-page row did not request a page")
-	}
+	failIf(t, cmd == nil, "next-page row did not request a page")
 	update(cmd())
-	if len(m.entries) != 2 || m.browsePages[browsePageKey("Music", "")].cursor != 200 {
-		t.Fatalf("pages accumulated instead of replacing: %d", len(m.entries))
-	}
+	failIfFmt(t, len(m.entries) != 2 || m.browsePages[browsePageKey("Music", "")].cursor != 200, "pages accumulated instead of replacing: %d", len(m.entries))
 	index, node := m.browseTree.node(m.cursor)
-	if node == nil || node.id != remoteNodeID(202) || !m.remoteNodeChosen(index) {
-		t.Fatal("next page lost inherited selection or cursor")
-	}
+	failIf(t, node == nil || node.id != remoteNodeID(202) || !m.remoteNodeChosen(index), "next page lost inherited selection or cursor")
 	m.toggle()
 	if value, ok := m.selected[202]; !ok || value || m.remoteMark(m.browseTree.byID[remoteNodeID(1)]) != "◐" {
 		t.Fatal("file exclusion lost")
 	}
 	m.cursor = 0
 	m.toggle()
-	if len(m.selected) != 1 || !m.selected[1] {
-		t.Fatal("selecting partial folder did not clear descendant overrides")
-	}
+	failIf(t, len(m.selected) != 1 || !m.selected[1], "selecting partial folder did not clear descendant overrides")
 	cmd = m.queueBrowse()
 	if msg := cmd().(folderDownloadMsg); msg.err != nil {
 		t.Fatal(msg.err)
 	}
 	req := <-queued
-	if req.Revision != 17 || len(req.Selection) != 1 || !req.Selection[1] {
-		t.Fatalf("queue enumerated loaded files instead of snapshot rules: %+v", req)
-	}
+	failIfFmt(t, req.Revision != 17 || len(req.Selection) != 1 || !req.Selection[1], "queue enumerated loaded files instead of snapshot rules: %+v", req)
 	m.editing, m.browseFindEditing, m.input = true, true, "hidden"
 	cmd = m.editKey(key("enter"))
-	if cmd == nil {
-		t.Fatal("find did not query snapshot")
-	}
+	failIf(t, cmd == nil, "find did not query snapshot")
 	update(cmd())
-	if len(m.entries) != 1 || m.entries[0].name != hidden.Name || !m.entries[0].private {
-		t.Fatalf("find missed unloaded/private entry: %+v", m.entries)
-	}
+	failIfFmt(t, len(m.entries) != 1 || m.entries[0].name != hidden.Name || !m.entries[0].private, "find missed unloaded/private entry: %+v", m.entries)
 	m.selected = map[int]bool{1: true}
-	if !m.remoteNodeChosen(0) {
-		t.Fatal("flat find result lost unloaded ancestor selection")
-	}
+	failIf(t, !m.remoteNodeChosen(0), "flat find result lost unloaded ancestor selection")
 	m.openBrowse("other", "", false)
-	if m.browseUser != "other" {
-		t.Fatal("tab switch failed")
-	}
+	failIf(t, m.browseUser != "other", "tab switch failed")
 	if cmd := m.openBrowse("peer", "", false); cmd != nil || m.browseFilter != "hidden" || len(m.entries) != 1 {
 		t.Fatal("tab did not retain bounded find page")
 	}
 	old := m.browseTabs[0].request
 	m.openBrowse("peer", "", true)
 	update(browseMsg{user: "peer", request: old, page: root})
-	if m.browseLoaded || len(m.entries) != 0 {
-		t.Fatal("stale browse response replaced refresh")
-	}
+	failIf(t, m.browseLoaded || len(m.entries) != 0, "stale browse response replaced refresh")
 }
 
 func TestBrowsePageHistoryAndStaleReply(t *testing.T) {
@@ -167,9 +139,7 @@ func TestBrowsePageHistoryAndStaleReply(t *testing.T) {
 	m.browsePages[browsePageKey("", "")] = state
 	next, _ := m.Update(browsePageMsg{user: "peer", request: 9, revision: 7, page: page})
 	m = next.(model)
-	if !m.browsePages[browsePageKey("", "")].loading {
-		t.Fatal("stale revision consumed current request")
-	}
+	failIf(t, !m.browsePages[browsePageKey("", "")].loading, "stale revision consumed current request")
 }
 
 func TestBrowseFolderPageRetry(t *testing.T) {

@@ -9,9 +9,7 @@ import (
 func drainActivity(t *testing.T, m *model, cmd tea.Cmd) {
 	t.Helper()
 	for n := 0; cmd != nil; n++ {
-		if n > 2 {
-			t.Fatal("unbounded activity reporting")
-		}
+		failIf(t, n > 2, "unbounded activity reporting")
 		msg := cmd()
 		if _, ok := msg.(activityReportMsg); !ok {
 			t.Fatalf("input unexpectedly triggered %T", msg)
@@ -24,36 +22,24 @@ func drainActivity(t *testing.T, m *model, cmd tea.Cmd) {
 func TestActivityOnlyReportsInputAndCoalesces(t *testing.T) {
 	m, _ := privateChatModel(t)
 	before, err := m.client.CommunitySummary(m.ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	drainChat(t, &m, m.loadCommunitySummary())
 	after, err := m.client.CommunitySummary(m.ctx)
-	if err != nil || !after.LastActivity.Equal(before.LastActivity) {
-		t.Fatal("poll counted as activity")
-	}
+	failIf(t, err != nil || !after.LastActivity.Equal(before.LastActivity), "poll counted as activity")
 	updated, cmd := m.Update(tea.PasteMsg{Content: ""})
 	m = updated.(model)
-	if cmd == nil || !m.activityBusy {
-		t.Fatal("paste did not schedule activity")
-	}
+	failIf(t, cmd == nil || !m.activityBusy, "paste did not schedule activity")
 	next, second := m.Update(tea.PasteMsg{Content: ""})
 	m = next.(model)
-	if second != nil || m.activityQueued.Account == "" {
-		t.Fatal("input not coalesced")
-	}
+	failIf(t, second != nil || m.activityQueued.Account == "", "input not coalesced")
 	drainActivity(t, &m, cmd)
 	after, err = m.client.CommunitySummary(m.ctx)
-	if err != nil || !after.LastActivity.After(before.LastActivity) || m.activityBusy || m.activityQueued.Account != "" {
-		t.Fatal("activity not recorded/settled", err)
-	}
+	failIf(t, err != nil || !after.LastActivity.After(before.LastActivity) || m.activityBusy || m.activityQueued.Account != "", "activity not recorded/settled", err)
 	updated, cmd = m.Update(tea.PasteMsg{Content: ""})
 	m = updated.(model)
 	next, _ = m.Update(tea.PasteMsg{Content: ""})
 	m = next.(model)
 	m.community.summary.Session++
 	drainActivity(t, &m, cmd)
-	if m.activityBusy || m.activityQueued.Account != "" {
-		t.Fatal("stale queued activity retained")
-	}
+	failIf(t, m.activityBusy || m.activityQueued.Account != "", "stale queued activity retained")
 }

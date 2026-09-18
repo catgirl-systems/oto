@@ -29,9 +29,7 @@ func privateChatModel(t *testing.T) (model, *storage.DB) {
 	cfg.Soulseek.Username, cfg.Soulseek.Password, cfg.DownloadDir = "local", "local-only", t.TempDir()
 	path := filepath.Join(t.TempDir(), "state.sqlite3")
 	service, err := daemon.New(cfg, path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	service.SetConfigPath(filepath.Join(t.TempDir(), "config.toml"))
 	socket := filepath.Join(t.TempDir(), "ipc.sock")
 	server := ipc.NewServer(service, socket)
@@ -44,15 +42,11 @@ func privateChatModel(t *testing.T) (model, *storage.DB) {
 		if _, err := client.CommunitySummary(ctx); err == nil {
 			break
 		}
-		if time.Now().After(deadline) {
-			t.Fatal("IPC not ready")
-		}
+		failIf(t, time.Now().After(deadline), "IPC not ready")
 		time.Sleep(time.Millisecond)
 	}
 	store, err := storage.Open(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	t.Cleanup(func() { _ = store.Close() })
 	m := newModel(ctx, client, "", false, cfg)
 	m.workspace, m.width, m.height = workspaceCommunity, 120, 40
@@ -63,9 +57,7 @@ func drainChat(t *testing.T, m *model, cmd tea.Cmd) {
 	t.Helper()
 	queue := []tea.Cmd{cmd}
 	for n := 0; len(queue) > 0; n++ {
-		if n > 100 {
-			t.Fatal("unbounded chat command loop")
-		}
+		failIf(t, n > 100, "unbounded chat command loop")
 		cmd, queue = queue[0], queue[1:]
 		if cmd == nil {
 			continue
@@ -89,9 +81,7 @@ func seedChat(t *testing.T, m *model, store *storage.DB, username string, count 
 	t.Helper()
 	identity := m.community.summary.CommunityIdentity
 	conversation, err := m.client.OpenCommunityConversation(m.ctx, daemon.CommunityOpenConversationRequest{CommunityIdentity: identity, Username: username})
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	err = store.WriteTx(m.ctx, func(tx *sql.Tx) error {
 		q := db.New(tx)
 		for i := range count {
@@ -102,69 +92,45 @@ func seedChat(t *testing.T, m *model, store *storage.DB, username string, count 
 		_, err := q.BumpCommunityRevision(m.ctx, identity.Account)
 		return err
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	return conversation
 }
 
 func TestCommunityPrivateComposerWorkflow(t *testing.T) {
 	m, _ := privateChatModel(t)
 	drainChat(t, &m, m.openCommunityChat("猫Alice", true))
-	if m.community.chats.conversation.ID == 0 {
-		t.Fatal("chat not opened")
-	}
+	failIf(t, m.community.chats.conversation.ID == 0, "chat not opened")
 	m.key(chatPress("q/?猫👩‍💻"))
 	updated, cmd := m.Update(tea.PasteMsg{Content: "\nsecond line"})
 	m = updated.(model)
 	drainActivity(t, &m, cmd)
-	if m.help || m.workspace != workspaceCommunity {
-		t.Fatal("paste or text became action")
-	}
+	failIf(t, m.help || m.workspace != workspaceCommunity, "paste or text became action")
 	original := m.community.chats.drafts[m.chatKey()]
 	m.key(tea.KeyPressMsg(tea.Key{Code: tea.KeyEnter}))
-	if m.community.chats.dialog == nil || m.community.chats.dialog.confirm {
-		t.Fatal("multiline lacks default-cancel preview")
-	}
-	if !strings.Contains(m.View().Content, "second line") {
-		t.Fatal("preview missing")
-	}
+	failIf(t, m.community.chats.dialog == nil || m.community.chats.dialog.confirm, "multiline lacks default-cancel preview")
+	failIf(t, !strings.Contains(m.View().Content, "second line"), "preview missing")
 	m.key(tea.KeyPressMsg(tea.Key{Code: tea.KeyEnter}))
-	if m.community.chats.drafts[m.chatKey()] != original {
-		t.Fatal("cancel discarded draft")
-	}
+	failIf(t, m.community.chats.drafts[m.chatKey()] != original, "cancel discarded draft")
 	m.key(tea.KeyPressMsg(tea.Key{Code: tea.KeyEnter}))
 	m.key(tea.KeyPressMsg(tea.Key{Code: tea.KeyRight}))
 	drainChat(t, &m, m.key(tea.KeyPressMsg(tea.Key{Code: tea.KeyEnter})))
-	if m.community.chats.err != "" || m.chatDraftCount() != 0 {
-		t.Fatal("send", m.community.chats.err)
-	}
-	if len(m.community.chats.messages) != 1 || m.community.chats.messages[0].State != "queued" || m.community.chats.messages[0].Text != strings.ReplaceAll(original.text, "\n", " ") {
-		t.Fatal("offline queue", m.community.chats.messages)
-	}
+	failIf(t, m.community.chats.err != "" || m.chatDraftCount() != 0, "send", m.community.chats.err)
+	failIf(t, len(m.community.chats.messages) != 1 || m.community.chats.messages[0].State != "queued" || m.community.chats.messages[0].Text != strings.ReplaceAll(original.text, "\n", " "), "offline queue", m.community.chats.messages)
 	// Independent draft and exact-case identity, with username completion.
 	m.key(chatPress("猫A"))
 	drainChat(t, &m, m.key(tea.KeyPressMsg(tea.Key{Code: tea.KeyTab})))
-	if m.community.chats.drafts[m.chatKey()].text != "猫Alice" {
-		t.Fatal("completion")
-	}
+	failIf(t, m.community.chats.drafts[m.chatKey()].text != "猫Alice", "completion")
 	m.key(tea.KeyPressMsg(tea.Key{Code: tea.KeyEscape}))
 	key := m.chatKey()
 	drainChat(t, &m, m.openCommunityChat("猫alice", true))
 	m.key(chatPress("other draft"))
 	m.key(tea.KeyPressMsg(tea.Key{Code: tea.KeyEscape}))
 	drainChat(t, &m, m.openCommunityChat("猫Alice", false))
-	if m.chatKey() != key || m.community.chats.drafts[key].text != "猫Alice" || m.chatDraftCount() != 2 {
-		t.Fatal("draft isolation")
-	}
+	failIf(t, m.chatKey() != key || m.community.chats.drafts[key].text != "猫Alice" || m.chatDraftCount() != 2, "draft isolation")
 	m.key(chatPress("q"))
-	if m.community.chats.dialog == nil || m.community.chats.dialog.confirm {
-		t.Fatal("draft quit did not default to Cancel")
-	}
+	failIf(t, m.community.chats.dialog == nil || m.community.chats.dialog.confirm, "draft quit did not default to Cancel")
 	m.key(tea.KeyPressMsg(tea.Key{Code: tea.KeyEnter}))
-	if m.chatDraftCount() != 2 {
-		t.Fatal("cancelled quit lost drafts")
-	}
+	failIf(t, m.chatDraftCount() != 2, "cancelled quit lost drafts")
 	m.key(chatPress("q"))
 	m.key(tea.KeyPressMsg(tea.Key{Code: tea.KeyRight}))
 	if _, ok := m.key(tea.KeyPressMsg(tea.Key{Code: tea.KeyEnter}))().(tea.QuitMsg); !ok {
@@ -176,63 +142,41 @@ func TestCommunityPrivatePagingReadAndTwoFrontends(t *testing.T) {
 	m, store := privateChatModel(t)
 	conversation := seedChat(t, &m, store, "Alice", 205)
 	drainChat(t, &m, m.loadCommunitySummary())
-	if m.community.summary.Unread != 205 || m.community.summary.Mentions != 205 {
-		t.Fatal("unread sidebar")
-	}
+	failIf(t, m.community.summary.Unread != 205 || m.community.summary.Mentions != 205, "unread sidebar")
 	other := newModel(m.ctx, m.client, "", false, config.Default())
 	other.workspace, other.width, other.height = workspaceCommunity, 40, 16
 	drainChat(t, &other, other.loadCommunitySummary())
 	other.community.chats.blurred = true
 	drainChat(t, &other, other.openCommunityChat("Alice", true))
 	other.key(chatPress("only on second frontend"))
-	if other.community.summary.Unread != 205 {
-		t.Fatal("background terminal marked read")
-	}
+	failIf(t, other.community.summary.Unread != 205, "background terminal marked read")
 	// Read is allowed only with visible latest content, never the list/overlay.
 	m.width, m.height = 40, 16
 	cmd := m.openCommunityChat("Alice", false)
 	m.community.pane = 0
 	drainChat(t, &m, cmd)
-	if m.community.summary.Unread != 205 {
-		t.Fatal("narrow sidebar marked read")
-	}
+	failIf(t, m.community.summary.Unread != 205, "narrow sidebar marked read")
 	m.community.pane = 1
 	drainChat(t, &m, m.readCommunityChat())
-	if m.community.summary.Unread != 0 || len(m.community.chats.messages) != 200 {
-		t.Fatal("visible latest read or page bound", m.community.summary)
-	}
+	failIf(t, m.community.summary.Unread != 0 || len(m.community.chats.messages) != 200, "visible latest read or page bound", m.community.summary)
 	drainChat(t, &other, other.loadCommunitySummary())
-	if other.community.chats.drafts[other.chatKey()].text != "only on second frontend" || other.community.summary.Unread != 0 {
-		t.Fatal("cross-frontend state")
-	}
+	failIf(t, other.community.chats.drafts[other.chatKey()].text != "only on second frontend" || other.community.summary.Unread != 0, "cross-frontend state")
 	m.scrollCommunityChat("home")
 	anchor := m.community.chats.position.anchor
 	seedChat(t, &m, store, "Alice", 1)
 	drainChat(t, &m, m.loadCommunitySummary())
-	if m.community.chats.position.anchor != anchor || m.community.chats.position.follow || m.community.chats.newerCount != 1 || m.community.summary.Unread != 1 {
-		t.Fatal("poll stole scroll/read state", m.community.chats.position, m.community.chats.newerCount)
-	}
+	failIf(t, m.community.chats.position.anchor != anchor || m.community.chats.position.follow || m.community.chats.newerCount != 1 || m.community.summary.Unread != 1, "poll stole scroll/read state", m.community.chats.position, m.community.chats.newerCount)
 	drainChat(t, &m, m.key(chatPress("p")))
-	if len(m.community.chats.messages) != 5 || m.community.chats.messages[4].ID != 1 {
-		t.Fatal("older history", m.community.chats.messages)
-	}
+	failIf(t, len(m.community.chats.messages) != 5 || m.community.chats.messages[4].ID != 1, "older history", m.community.chats.messages)
 	drainChat(t, &m, m.key(chatPress("n")))
-	if len(m.community.chats.messages) != 200 {
-		t.Fatal("newer page")
-	}
+	failIf(t, len(m.community.chats.messages) != 200, "newer page")
 	m.key(chatPress("f"))
 	m.key(chatPress("hello 001"))
 	drainChat(t, &m, m.key(tea.KeyPressMsg(tea.Key{Code: tea.KeyEnter})))
-	if len(m.community.chats.messages) != 1 || !strings.Contains(m.community.chats.messages[0].Text, "001") || m.community.summary.Unread != 1 {
-		t.Fatal("find changed read state")
-	}
+	failIf(t, len(m.community.chats.messages) != 1 || !strings.Contains(m.community.chats.messages[0].Text, "001") || m.community.summary.Unread != 1, "find changed read state")
 	drainChat(t, &m, m.key(tea.KeyPressMsg(tea.Key{Code: tea.KeyEnd})))
-	if m.community.summary.Unread != 0 || !m.community.chats.position.follow {
-		t.Fatal("End did not reach latest")
-	}
-	if m.community.chats.conversation.ID != conversation.ID {
-		t.Fatal("history changed conversation")
-	}
+	failIf(t, m.community.summary.Unread != 0 || !m.community.chats.position.follow, "End did not reach latest")
+	failIf(t, m.community.chats.conversation.ID != conversation.ID, "history changed conversation")
 }
 
 func TestCommunityPrivateSendReconciliationAndActions(t *testing.T) {
@@ -249,41 +193,27 @@ func TestCommunityPrivateSendReconciliationAndActions(t *testing.T) {
 		t.Fatal("pending submission mutated")
 	}
 	drainChat(t, &m, m.sendCommunityChat())
-	if len(m.community.chats.messages) != 1 || m.chatDraftCount() != 0 {
-		t.Fatal("retry duplicated API submission")
-	}
+	failIf(t, len(m.community.chats.messages) != 1 || m.chatDraftCount() != 0, "retry duplicated API submission")
 	m.community.chats.composing = false
 	m.key(chatPress("X"))
-	if m.community.chats.dialog == nil || m.community.chats.dialog.confirm {
-		t.Fatal("cancel confirmation")
-	}
+	failIf(t, m.community.chats.dialog == nil || m.community.chats.dialog.confirm, "cancel confirmation")
 	m.key(tea.KeyPressMsg(tea.Key{Code: tea.KeyRight}))
 	drainChat(t, &m, m.key(tea.KeyPressMsg(tea.Key{Code: tea.KeyEnter})))
-	if m.community.chats.messages[0].State != "cancelled" || m.community.chats.dialog != nil {
-		t.Fatal("cancel did not persist")
-	}
+	failIf(t, m.community.chats.messages[0].State != "cancelled" || m.community.chats.dialog != nil, "cancel did not persist")
 	m.key(chatPress("R"))
 	m.key(tea.KeyPressMsg(tea.Key{Code: tea.KeyRight}))
 	drainChat(t, &m, m.key(tea.KeyPressMsg(tea.Key{Code: tea.KeyEnter})))
-	if m.community.chats.messages[0].State != "queued" {
-		t.Fatal("retry did not queue")
-	}
+	failIf(t, m.community.chats.messages[0].State != "queued", "retry did not queue")
 	// Clear identifies a fixed boundary and cannot erase the unresolved outbox.
 	m.key(chatPress("C"))
 	m.key(tea.KeyPressMsg(tea.Key{Code: tea.KeyRight}))
 	drainChat(t, &m, m.key(tea.KeyPressMsg(tea.Key{Code: tea.KeyEnter})))
-	if len(m.community.chats.messages) != 1 {
-		t.Fatal("clear erased queued message")
-	}
+	failIf(t, len(m.community.chats.messages) != 1, "clear erased queued message")
 	m.setChatDraft("keep across close", 17)
 	drainChat(t, &m, m.key(tea.KeyPressMsg(tea.Key{Code: 'w', Mod: tea.ModCtrl})))
-	if m.community.chats.conversation.ID != 0 || m.chatDraftCount() != 1 {
-		t.Fatal("close lost draft")
-	}
+	failIf(t, m.community.chats.conversation.ID != 0 || m.chatDraftCount() != 1, "close lost draft")
 	drainChat(t, &m, m.openCommunityChat("Alice", false))
-	if len(m.community.chats.messages) != 1 || m.community.chats.drafts[m.chatKey()].text != "keep across close" {
-		t.Fatal("reopen lost history/draft")
-	}
+	failIf(t, len(m.community.chats.messages) != 1 || m.community.chats.drafts[m.chatKey()].text != "keep across close", "reopen lost history/draft")
 }
 
 func TestCommunityPrivateInputAndResponsiveRendering(t *testing.T) {
@@ -296,29 +226,21 @@ func TestCommunityPrivateInputAndResponsiveRendering(t *testing.T) {
 	original := m.community.chats.drafts[m.chatKey()]
 	for _, text := range []string{"\x1b[31m", "\x00", "\u202e", string([]byte{255}), strings.Repeat("x", soulseek.MaxChatBytes+1)} {
 		m.pasteCommunityChat(text)
-		if m.community.chats.drafts[m.chatKey()] != original || m.community.chats.err == "" {
-			t.Fatal("invalid paste changed draft")
-		}
+		failIf(t, m.community.chats.drafts[m.chatKey()] != original || m.community.chats.err == "", "invalid paste changed draft")
 	}
 	m.community.chats.err = ""
 	for _, size := range [][2]int{{120, 40}, {80, 24}, {40, 16}, {36, 8}, {20, 6}} {
 		m.width, m.height = size[0], size[1]
 		view := m.View().Content
-		if lipgloss.Width(view) > m.width || lipgloss.Height(view) > m.height {
-			t.Fatalf("%v: %dx%d\n%s", size, lipgloss.Width(view), lipgloss.Height(view), view)
-		}
-		if !strings.Contains(ansi.Strip(view), "q/?") {
-			t.Fatalf("composer hidden at %v\n%s", size, view)
-		}
+		failIfFmt(t, lipgloss.Width(view) > m.width || lipgloss.Height(view) > m.height, "%v: %dx%d\n%s", size, lipgloss.Width(view), lipgloss.Height(view), view)
+		failIfFmt(t, !strings.Contains(ansi.Strip(view), "q/?"), "composer hidden at %v\n%s", size, view)
 	}
 	m.community.chats.composing = false
 	for _, size := range [][2]int{{120, 40}, {80, 24}, {40, 16}, {20, 6}} {
 		m.width, m.height = size[0], size[1]
 		m.confirmChatDraftQuit()
 		view := m.View().Content
-		if lipgloss.Width(view) > m.width || lipgloss.Height(view) > m.height {
-			t.Fatalf("dialog exceeds %v", size)
-		}
+		failIfFmt(t, lipgloss.Width(view) > m.width || lipgloss.Height(view) > m.height, "dialog exceeds %v", size)
 	}
 }
 
@@ -333,14 +255,10 @@ func TestCommunityPrivateStaleSessionAndNavigation(t *testing.T) {
 	newSummary.Session++
 	m.applyCommunitySummary(communitySummaryMsg{request: m.community.summaryRequest, summary: newSummary})
 	m.applyChatData(msg)
-	if m.community.chats.historyReady || m.chatDraftCount() != 1 {
-		t.Fatal("stale history or lost draft")
-	}
+	failIf(t, m.community.chats.historyReady || m.chatDraftCount() != 1, "stale history or lost draft")
 	newSummary.Account = "other account"
 	m.applyCommunitySummary(communitySummaryMsg{request: m.community.summaryRequest, summary: newSummary})
-	if m.community.chats.conversation.ID != 0 || m.community.chats.composing || m.community.chats.drafts[key].text != "original account" {
-		t.Fatal("account privacy/draft handling")
-	}
+	failIf(t, m.community.chats.conversation.ID != 0 || m.community.chats.composing || m.community.chats.drafts[key].text != "original account", "account privacy/draft handling")
 	// An asynchronous Ctrl+N result must not pull the user out of another workspace.
 	m.community.summary.CommunityIdentity = identity
 	m.community.chats.busy = true
@@ -358,13 +276,9 @@ func TestCommunityPrivateExportFiles(t *testing.T) {
 	for _, format := range []string{"json", "text"} {
 		path := filepath.Join(t.TempDir(), "export."+format)
 		req := daemon.CommunityExportRequest{CommunityIdentity: identity, ConversationID: conversation.ID, Format: format, Limit: 2}
-		if err := exportChatFile(m.ctx, m.client, req, path); err != nil {
-			t.Fatal(err)
-		}
+		must(t, exportChatFile(m.ctx, m.client, req, path))
 		info, _ := os.Stat(path)
-		if info.Mode().Perm() != 0600 {
-			t.Fatal("export is not private")
-		}
+		failIf(t, info.Mode().Perm() != 0600, "export is not private")
 		data, _ := os.ReadFile(path)
 		if format == "json" {
 			var messages []daemon.CommunityMessage
@@ -386,14 +300,10 @@ func TestCommunityPrivateExportFiles(t *testing.T) {
 			t.Fatal("cancelled export succeeded")
 		}
 		files, _ := os.ReadDir(filepath.Dir(path))
-		if len(files) != 1 {
-			t.Fatal("partial or temporary export leaked", files)
-		}
+		failIf(t, len(files) != 1, "partial or temporary export leaked", files)
 	}
 	summary, err := m.client.CommunitySummary(m.ctx)
-	if err != nil || summary.Unread != 205 {
-		t.Fatal("export marked read")
-	}
+	failIf(t, err != nil || summary.Unread != 205, "export marked read")
 }
 
 func TestCommunityPrivateDelayedActionsPreserveNavigation(t *testing.T) {
@@ -405,18 +315,12 @@ func TestCommunityPrivateDelayedActionsPreserveNavigation(t *testing.T) {
 	m.key(tea.KeyPressMsg(tea.Key{Code: tea.KeyHome}))
 	m.community.chats.position.follow = false
 	drainChat(t, &m, func() tea.Msg { return response })
-	if m.community.chats.position.follow || m.chatDraftCount() != 0 {
-		t.Fatal("send completion stole anchor or failed to reconcile")
-	}
+	failIf(t, m.community.chats.position.follow || m.chatDraftCount() != 0, "send completion stole anchor or failed to reconcile")
 	response = m.chatConversationAction("close", m.community.chats.conversation.ID, 0)()
 	m.key(tea.KeyPressMsg(tea.Key{Code: tea.KeyF6}))
-	if m.community.pane != 2 {
-		t.Fatal("test did not focus inspector")
-	}
+	failIf(t, m.community.pane != 2, "test did not focus inspector")
 	drainChat(t, &m, func() tea.Msg { return response })
-	if m.community.pane != 2 {
-		t.Fatal("close completion stole inspector focus")
-	}
+	failIf(t, m.community.pane != 2, "close completion stole inspector focus")
 }
 
 func TestCommunityPrivateShortTranscriptSelectsEveryMessage(t *testing.T) {
@@ -432,9 +336,7 @@ func TestCommunityPrivateShortTranscriptSelectsEveryMessage(t *testing.T) {
 	m.community.chats.position = chatPosition{follow: true, selected: 3, seenLatest: 3}
 	for _, id := range []int64{2, 1} {
 		m.key(tea.KeyPressMsg(tea.Key{Code: tea.KeyUp}))
-		if m.community.chats.position.selected != id {
-			t.Fatalf("Up selected %d; want %d", m.community.chats.position.selected, id)
-		}
+		failIfFmt(t, m.community.chats.position.selected != id, "Up selected %d; want %d", m.community.chats.position.selected, id)
 	}
 	m.key(tea.KeyPressMsg(tea.Key{Code: tea.KeyDown}))
 	if message, ok := m.selectedChatMessage(); !ok || message.ID != 2 {
@@ -444,9 +346,7 @@ func TestCommunityPrivateShortTranscriptSelectsEveryMessage(t *testing.T) {
 		t.Fatal("middle message copy unavailable")
 	}
 	m.key(chatPress("R"))
-	if m.community.chats.dialog == nil || m.community.chats.dialog.message != 2 || m.community.chats.dialog.confirm {
-		t.Fatal("middle message retry unavailable")
-	}
+	failIf(t, m.community.chats.dialog == nil || m.community.chats.dialog.message != 2 || m.community.chats.dialog.confirm, "middle message retry unavailable")
 }
 
 func TestCommunityPrivateTinyConfirmationControlsStayVisible(t *testing.T) {
@@ -458,12 +358,8 @@ func TestCommunityPrivateTinyConfirmationControlsStayVisible(t *testing.T) {
 	for _, kind := range []string{"paste", "clear", "retry", "quit"} {
 		m.community.chats.dialog.kind = kind
 		view := m.View().Content
-		if !strings.Contains(view, "[Cancel]") || !strings.Contains(view, "Confirm") {
-			t.Fatalf("%s hides confirmation controls: %q", kind, view)
-		}
-		if lipgloss.Height(view) > m.height || lipgloss.Width(view) > m.width {
-			t.Fatal("tiny dialog exceeds viewport")
-		}
+		failIfFmt(t, !strings.Contains(view, "[Cancel]") || !strings.Contains(view, "Confirm"), "%s hides confirmation controls: %q", kind, view)
+		failIf(t, lipgloss.Height(view) > m.height || lipgloss.Width(view) > m.width, "tiny dialog exceeds viewport")
 	}
 }
 
@@ -489,22 +385,14 @@ func TestCommunityPrivateNextUnreadBeyondFirstPage(t *testing.T) {
 		_, err := q.BumpCommunityRevision(m.ctx, account)
 		return err
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	drainChat(t, &m, m.loadCommunitySummary())
-	if len(m.community.chats.conversations) != 200 {
-		t.Fatal("sidebar is not paged")
-	}
+	failIf(t, len(m.community.chats.conversations) != 200, "sidebar is not paged")
 	drainChat(t, &m, m.key(tea.KeyPressMsg(tea.Key{Code: 'n', Mod: tea.ModCtrl})))
-	if m.community.chats.conversation.ID != target.ID || m.community.chats.conversation.Closed || m.community.summary.Unread != 0 {
-		t.Fatal("Ctrl+N missed closed unread chat after page 1")
-	}
+	failIf(t, m.community.chats.conversation.ID != target.ID || m.community.chats.conversation.Closed || m.community.summary.Unread != 0, "Ctrl+N missed closed unread chat after page 1")
 	m.community.chats.composing = true
 	m.pasteCommunityChat("one\rtwo\r\nthree")
-	if m.community.chats.drafts[m.chatKey()].text != "one\ntwo\nthree" {
-		t.Fatal("terminal newline normalization")
-	}
+	failIf(t, m.community.chats.drafts[m.chatKey()].text != "one\ntwo\nthree", "terminal newline normalization")
 }
 
 func TestCommunityPrivateUnknownRequiresExplicitRetry(t *testing.T) {
@@ -513,29 +401,22 @@ func TestCommunityPrivateUnknownRequiresExplicitRetry(t *testing.T) {
 	m.setChatDraft("uncertain", 9)
 	drainChat(t, &m, m.sendCommunityChat())
 	message := m.community.chats.messages[0]
-	if _, err := store.Queries().SetCommunityMessageState(m.ctx, db.SetCommunityMessageStateParams{Account: m.community.summary.Account, ID: message.ID, OldState: "queued", NewState: "unknown", Error: "write interrupted"}); err != nil {
-		t.Fatal(err)
-	}
+	_, err := store.Queries().SetCommunityMessageState(m.ctx, db.SetCommunityMessageStateParams{Account: m.community.summary.Account, ID: message.ID, OldState: "queued", NewState: "unknown", Error: "write interrupted"})
+	must(t, err)
 	m.community.chats.composing = false
 	drainChat(t, &m, m.loadCommunityChats(true))
-	if !strings.Contains(m.View().Content, "[unknown]") {
-		t.Fatal("uncertainty not rendered")
-	}
+	failIf(t, !strings.Contains(m.View().Content, "[unknown]"), "uncertainty not rendered")
 	m.key(chatPress("R"))
 	if d := m.community.chats.dialog; d == nil || !strings.Contains(d.label, "already have reached") || d.confirm {
 		t.Fatal("retry lacks explicit uncertainty warning")
 	}
 	m.key(tea.KeyPressMsg(tea.Key{Code: tea.KeyEnter}))
 	drainChat(t, &m, m.loadCommunityChats(true))
-	if m.community.chats.messages[0].State != "unknown" {
-		t.Fatal("default Cancel retried Unknown")
-	}
+	failIf(t, m.community.chats.messages[0].State != "unknown", "default Cancel retried Unknown")
 	m.key(chatPress("R"))
 	m.key(tea.KeyPressMsg(tea.Key{Code: tea.KeyRight}))
 	drainChat(t, &m, m.key(tea.KeyPressMsg(tea.Key{Code: tea.KeyEnter})))
-	if m.community.chats.messages[0].State != "queued" {
-		t.Fatal("explicit retry did not queue Unknown")
-	}
+	failIf(t, m.community.chats.messages[0].State != "queued", "explicit retry did not queue Unknown")
 }
 
 func TestCommunityPrivateExportFormDoesNotCloseLaterForm(t *testing.T) {
@@ -546,20 +427,14 @@ func TestCommunityPrivateExportFormDoesNotCloseLaterForm(t *testing.T) {
 	m.key(chatPress("E"))
 	m.key(chatPress(path))
 	cmd := m.key(tea.KeyPressMsg(tea.Key{Code: tea.KeyEnter}))
-	if cmd == nil {
-		t.Fatal("export form did not submit")
-	}
+	failIf(t, cmd == nil, "export form did not submit")
 	response := cmd()
 	m.key(tea.KeyPressMsg(tea.Key{Code: tea.KeyEscape}))
 	m.key(chatPress("f"))
 	m.key(chatPress("keep typing"))
 	drainChat(t, &m, func() tea.Msg { return response })
-	if m.community.chats.form != "find" || m.community.chats.input != "keep typing" {
-		t.Fatal("late export completion closed a later form")
-	}
+	failIf(t, m.community.chats.form != "find" || m.community.chats.input != "keep typing", "late export completion closed a later form")
 	data, err := os.ReadFile(path)
 	var messages []daemon.CommunityMessage
-	if err != nil || json.Unmarshal(data, &messages) != nil || len(messages) != 1 {
-		t.Fatal("export workflow did not write complete JSON", err)
-	}
+	failIf(t, err != nil || json.Unmarshal(data, &messages) != nil || len(messages) != 1, "export workflow did not write complete JSON", err)
 }

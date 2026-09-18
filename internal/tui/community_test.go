@@ -36,28 +36,18 @@ func TestCommunityResponsiveLayout(t *testing.T) {
 				m.community.pane, m.community.target = pane, "猫😀"
 				m.community.summary.Unread, m.community.summary.Mentions = 3, 1
 				view := m.mainView()
-				if lipgloss.Width(view) > m.width || lipgloss.Height(view) > m.height {
-					t.Fatalf("%v pane %d: %dx%d\n%s", size, pane, lipgloss.Width(view), lipgloss.Height(view), view)
-				}
-				if !strings.Contains(ansi.Strip(view), "[Community]") {
-					t.Fatalf("active workspace missing: %v\n%s", size, view)
-				}
+				failIfFmt(t, lipgloss.Width(view) > m.width || lipgloss.Height(view) > m.height, "%v pane %d: %dx%d\n%s", size, pane, lipgloss.Width(view), lipgloss.Height(view), view)
+				failIfFmt(t, !strings.Contains(ansi.Strip(view), "[Community]"), "active workspace missing: %v\n%s", size, view)
 				if m.width < 36 {
 					continue
 				}
-				if !strings.Contains(view, "Unread:3") {
-					t.Fatalf("unread hidden: %v\n%s", size, view)
-				}
+				failIfFmt(t, !strings.Contains(view, "Unread:3"), "unread hidden: %v\n%s", size, view)
 				if m.height < 10 {
 					continue
 				}
-				if m.width >= 110 && !strings.Contains(view, " │ ") {
-					t.Fatal("wide pane separation missing")
-				}
+				failIf(t, m.width >= 110 && !strings.Contains(view, " │ "), "wide pane separation missing")
 				if m.width < 80 || m.width < 110 && pane == 2 {
-					if !strings.Contains(view, communityPanes[pane]) || !strings.Contains(view, "Esc back") {
-						t.Fatalf("focused pane/back hidden: %v\n%s", size, view)
-					}
+					failIfFmt(t, !strings.Contains(view, communityPanes[pane]) || !strings.Contains(view, "Esc back"), "focused pane/back hidden: %v\n%s", size, view)
 				}
 			}
 		}
@@ -69,9 +59,7 @@ func TestCommunityResponsiveLayout(t *testing.T) {
 			m.community.summary.Unread, m.community.summary.Mentions = 1<<40, 1<<40
 			bar := ansi.Strip(m.workspaceTabs(width))
 			name := strings.Fields(m.workspaceNames()[workspace])[0]
-			if ansi.StringWidth(bar) > width || !strings.Contains(bar, "["+name) || (!strings.Contains(bar, "Unread:") && !strings.Contains(bar, "U:")) {
-				t.Fatalf("%d %s: %q", width, name, bar)
-			}
+			failIfFmt(t, ansi.StringWidth(bar) > width || !strings.Contains(bar, "["+name) || (!strings.Contains(bar, "Unread:") && !strings.Contains(bar, "U:")), "%d %s: %q", width, name, bar)
 		}
 	}
 }
@@ -80,26 +68,16 @@ func TestCommunityNavigationAndInputPrecedence(t *testing.T) {
 	m := communityViewModel()
 	m.workspace = workspaceTransfers
 	m.key(tea.KeyPressMsg(tea.Key{Code: tea.KeyTab}))
-	if m.workspace != workspaceCommunity {
-		t.Fatal("Community does not follow Transfers")
-	}
+	failIf(t, m.workspace != workspaceCommunity, "Community does not follow Transfers")
 	m.key(tea.KeyPressMsg(tea.Key{Code: tea.KeyPgDown, Mod: tea.ModCtrl}))
-	if m.community.view != 1 {
-		t.Fatal("room navigation")
-	}
+	failIf(t, m.community.view != 1, "room navigation")
 	m.key(tea.KeyPressMsg(tea.Key{Code: tea.KeyPgUp, Mod: tea.ModCtrl}))
-	if m.community.view != 0 {
-		t.Fatal("chat navigation")
-	}
+	failIf(t, m.community.view != 0, "chat navigation")
 	m.key(tea.KeyPressMsg(tea.Key{Code: tea.KeyF6}))
 	m.key(tea.KeyPressMsg(tea.Key{Code: tea.KeyF6}))
-	if m.community.pane != 2 {
-		t.Fatal("inspector focus")
-	}
+	failIf(t, m.community.pane != 2, "inspector focus")
 	m.key(tea.KeyPressMsg(tea.Key{Code: tea.KeyF6, Mod: tea.ModShift}))
-	if m.community.pane != 1 {
-		t.Fatal("reverse pane focus")
-	}
+	failIf(t, m.community.pane != 1, "reverse pane focus")
 	m.key(tea.KeyPressMsg(tea.Key{Code: '/', Text: "/"}))
 	for _, r := range "q/?猫😀" {
 		if cmd := m.key(tea.KeyPressMsg(tea.Key{Code: r, Text: string(r)})); cmd != nil {
@@ -107,33 +85,21 @@ func TestCommunityNavigationAndInputPrecedence(t *testing.T) {
 		}
 	}
 	m.key(tea.KeyPressMsg(tea.Key{Code: tea.KeyTab}))
-	if m.workspace != workspaceCommunity || m.help || m.community.input != "q/?猫😀" {
-		t.Fatal("editing precedence")
-	}
+	failIf(t, m.workspace != workspaceCommunity || m.help || m.community.input != "q/?猫😀", "editing precedence")
 	updated, cmd := m.Update(tea.PasteMsg{Content: "more"})
 	m = updated.(model)
-	if cmd != nil || !m.community.inspectEditing || m.community.input != "q/?猫😀more" {
-		t.Fatal("paste submitted or lost input")
-	}
+	failIf(t, cmd != nil || !m.community.inspectEditing || m.community.input != "q/?猫😀more", "paste submitted or lost input")
 	updated, _ = m.Update(tea.PasteMsg{Content: "one\ntwo"})
 	m = updated.(model)
-	if m.community.inputErr == "" || m.community.input != "q/?猫😀more" {
-		t.Fatal("multiline username accepted")
-	}
+	failIf(t, m.community.inputErr == "" || m.community.input != "q/?猫😀more", "multiline username accepted")
 	updated, _ = m.Update(tea.WindowSizeMsg{Width: 40, Height: 16})
 	m = updated.(model)
-	if !strings.Contains(m.mainView(), "q/?猫😀more") || !m.community.inspectEditing {
-		t.Fatal("resize lost input")
-	}
+	failIf(t, !strings.Contains(m.mainView(), "q/?猫😀more") || !m.community.inspectEditing, "resize lost input")
 	m.key(tea.KeyPressMsg(tea.Key{Code: tea.KeyEscape}))
 	m.key(tea.KeyPressMsg(tea.Key{Code: tea.KeyTab}))
-	if m.workspace != workspaceStats || m.community.pane != 1 {
-		t.Fatal("navigation state lost")
-	}
+	failIf(t, m.workspace != workspaceStats || m.community.pane != 1, "navigation state lost")
 	m.key(tea.KeyPressMsg(tea.Key{Code: tea.KeyTab, Mod: tea.ModShift}))
-	if m.workspace != workspaceCommunity || m.community.pane != 1 {
-		t.Fatal("reverse workspace navigation")
-	}
+	failIf(t, m.workspace != workspaceCommunity || m.community.pane != 1, "reverse workspace navigation")
 }
 
 func TestCommunityStaleResponsesAndPartialState(t *testing.T) {
@@ -144,21 +110,13 @@ func TestCommunityStaleResponsesAndPartialState(t *testing.T) {
 	identity := c.summary.CommunityIdentity
 	page := daemon.CommunityUsersPage{CommunityIdentity: identity, Revision: 6, Users: []daemon.CommunityUser{{Username: "Alice", Exists: true, Status: soulseek.UserStatusOnline, StatusFresh: true, StatusUpdatedAt: time.Now()}}}
 	m.applyCommunityUser(communityUserMsg{request: 8, identity: identity, username: "Alice", page: page})
-	if c.user.Username != "" {
-		t.Fatal("old request accepted")
-	}
+	failIf(t, c.user.Username != "", "old request accepted")
 	m.applyCommunityUser(communityUserMsg{request: 9, identity: identity, username: "alice", page: page})
-	if c.user.Username != "" {
-		t.Fatal("folded username accepted")
-	}
+	failIf(t, c.user.Username != "", "folded username accepted")
 	m.applyCommunityUser(communityUserMsg{request: 9, identity: identity, username: "Alice", page: page})
-	if c.user.Username != "Alice" || c.pane != 2 || c.inspectorScroll != 3 || c.input != "draft field" {
-		t.Fatal("resource refresh lost focus/state")
-	}
+	failIf(t, c.user.Username != "Alice" || c.pane != 2 || c.inspectorScroll != 3 || c.input != "draft field", "resource refresh lost focus/state")
 	m.applyCommunitySummary(communitySummaryMsg{request: 6, err: errors.New("obsolete error")})
-	if c.err != "" {
-		t.Fatal("obsolete error published")
-	}
+	failIf(t, c.err != "", "obsolete error published")
 	offline := c.summary
 	offline.Connected, offline.Revision = false, 8
 	m.applyCommunitySummary(communitySummaryMsg{request: 7, summary: offline})
@@ -166,27 +124,19 @@ func TestCommunityStaleResponsesAndPartialState(t *testing.T) {
 		t.Fatalf("partial/stale data: %s", text)
 	}
 	m.applyCommunitySummary(communitySummaryMsg{request: 7, summary: daemon.CommunitySummary{CommunityIdentity: identity, Revision: 1}})
-	if c.summary.Revision != 8 {
-		t.Fatal("revision regressed")
-	}
+	failIf(t, c.summary.Revision != 8, "revision regressed")
 	reconnected := offline
 	reconnected.Session++
 	cancelled := false
 	c.userCancel = func() { cancelled = true }
 	m.applyCommunitySummary(communitySummaryMsg{request: 7, summary: reconnected})
 	m.applyCommunityUser(communityUserMsg{request: c.userRequest, identity: identity, username: "Alice", page: page})
-	if !cancelled || c.user.Username != "" || c.target != "Alice" || c.pane != 2 || c.input != "draft field" {
-		t.Fatal("session invalidation or local state preservation")
-	}
+	failIf(t, !cancelled || c.user.Username != "" || c.target != "Alice" || c.pane != 2 || c.input != "draft field", "session invalidation or local state preservation")
 	reconnected.Account = "server/another-account"
 	m.applyCommunitySummary(communitySummaryMsg{request: 7, summary: reconnected})
-	if c.target != "" || c.input != "" {
-		t.Fatal("cross-account input leaked")
-	}
+	failIf(t, c.target != "" || c.input != "", "cross-account input leaked")
 	m.applyCommunitySummary(communitySummaryMsg{request: 7, err: errors.New("404 Not Found")})
-	if c.supports("users") || !strings.Contains(m.mainView(), "Community unavailable") {
-		t.Fatal("unsupported daemon not actionable")
-	}
+	failIf(t, c.supports("users") || !strings.Contains(m.mainView(), "Community unavailable"), "unsupported daemon not actionable")
 }
 
 func TestCommunityContextualUserActions(t *testing.T) {
@@ -219,32 +169,24 @@ func TestCommunityContextualUserActions(t *testing.T) {
 	m.openUserActions()
 	m.community.summary.Session++
 	m.key(tea.KeyPressMsg(tea.Key{Code: tea.KeyEnter}))
-	if m.userActions == nil || !strings.Contains(m.userActions.err, "changed") {
-		t.Fatal("stale menu performed action")
-	}
+	failIf(t, m.userActions == nil || !strings.Contains(m.userActions.err, "changed"), "stale menu performed action")
 	m.key(tea.KeyPressMsg(tea.Key{Code: tea.KeyEscape}))
 	m.community.summary.Capabilities = nil
 	m.openUserActions()
 	m.key(tea.KeyPressMsg(tea.Key{Code: tea.KeyEnter}))
-	if m.userActions == nil || !strings.Contains(m.userActions.err, "unavailable") {
-		t.Fatal("capability gate missing")
-	}
+	failIf(t, m.userActions == nil || !strings.Contains(m.userActions.err, "unavailable"), "capability gate missing")
 	m.userActions = nil
 	m.workspace, m.community.target, m.browseUser = workspaceBrowse, "", "Alice"
 	m.browseTabs = []browseTab{{user: "Alice", loaded: true}, {user: "alice", loaded: true}}
 	m.openBrowse("alice", "", false)
-	if m.browseTabIndex != 1 || m.browseUser != "alice" {
-		t.Fatal("case-folded browse tab became Community identity")
-	}
+	failIf(t, m.browseTabIndex != 1 || m.browseUser != "alice", "case-folded browse tab became Community identity")
 }
 
 func TestCommunityRealIPCRefreshAndFrontendIsolation(t *testing.T) {
 	cfg := config.Default()
 	cfg.Soulseek.Username, cfg.Soulseek.Password, cfg.DownloadDir = "local", "local-only", t.TempDir()
 	service, err := daemon.New(cfg, filepath.Join(t.TempDir(), "config.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	path := filepath.Join(t.TempDir(), "ipc.sock")
 	server := ipc.NewServer(service, path)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -257,9 +199,7 @@ func TestCommunityRealIPCRefreshAndFrontendIsolation(t *testing.T) {
 		if _, err = client.CommunitySummary(ctx); err == nil {
 			break
 		}
-		if time.Now().After(deadline) {
-			t.Fatal(err)
-		}
+		failIf(t, time.Now().After(deadline), err)
 		time.Sleep(time.Millisecond)
 	}
 	var frontends []string
@@ -268,35 +208,23 @@ func TestCommunityRealIPCRefreshAndFrontendIsolation(t *testing.T) {
 		cmd := m.loadCommunitySummary()
 		updated, _ := m.Update(cmd())
 		m = updated.(model)
-		if !m.community.ready {
-			t.Fatal("summary command not applied")
-		}
+		failIf(t, !m.community.ready, "summary command not applied")
 		cmd = m.openUserInspector(username)
-		if cmd == nil {
-			t.Fatal("user resource command missing")
-		}
+		failIf(t, cmd == nil, "user resource command missing")
 		if again := m.loadCommunityUser(); again != nil {
 			t.Fatal("unbounded concurrent refresh")
 		}
 		drainChat(t, &m, cmd)
-		if m.community.userErr != "" || m.community.user.Username != username || m.community.user.StatusFresh {
-			t.Fatalf("IPC resource: %+v", m.community)
-		}
+		failIfFmt(t, m.community.userErr != "" || m.community.user.Username != username || m.community.user.StatusFresh, "IPC resource: %+v", m.community)
 		frontends = append(frontends, m.community.frontend)
 		// Leaving cancels stale work, not the other frontend's lease.
 		m.switchWorkspace(workspaceSearch)
 	}
-	if frontends[0] == frontends[1] {
-		t.Fatal("frontends share a lease")
-	}
+	failIf(t, frontends[0] == frontends[1], "frontends share a lease")
 	summary, err := client.CommunitySummary(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	users, err := client.CommunityUsers(ctx, daemon.CommunityUsersRequest{CommunityIdentity: summary.CommunityIdentity})
-	if err != nil || len(users.Users) != 2 {
-		t.Fatalf("frontend watch isolation: %+v %v", users, err)
-	}
+	failIfFmt(t, err != nil || len(users.Users) != 2, "frontend watch isolation: %+v %v", users, err)
 }
 
 func TestCommunityInspectorControlSafety(t *testing.T) {
@@ -305,9 +233,7 @@ func TestCommunityInspectorControlSafety(t *testing.T) {
 	m.community.userErr = "failure\x1b]52;c;ignored\a\x00\nretry"
 	m.community.user.Country = "\x1b[2J"
 	text := strings.Join(m.community.inspectorLines(), "\n")
-	if strings.ContainsAny(text, "\x1b\x00\a\r") {
-		t.Fatalf("terminal control in data: %q", text)
-	}
+	failIfFmt(t, strings.ContainsAny(text, "\x1b\x00\a\r"), "terminal control in data: %q", text)
 	m.community.target = strings.Repeat("猫", 300)
 	for _, width := range []int{40, 80, 120} {
 		m.width, m.height, m.community.pane = width, 16, 2
@@ -335,9 +261,7 @@ func TestCommunityMissingUserResponseDoesNotRefreshOldData(t *testing.T) {
 		c.user = daemon.CommunityUser{Username: "Alice", Exists: true, StatusFresh: true, Status: soulseek.UserStatusOnline}
 		c.userRefreshed = time.Now()
 		m.applyCommunityUser(communityUserMsg{identity: c.summary.CommunityIdentity, username: "Alice", page: daemon.CommunityUsersPage{CommunityIdentity: c.summary.CommunityIdentity, Users: users}})
-		if c.user.Username != "" || c.userErr == "" || !c.userRefreshed.IsZero() {
-			t.Fatalf("missing response retained fresh data: %+v", c)
-		}
+		failIfFmt(t, c.user.Username != "" || c.userErr == "" || !c.userRefreshed.IsZero(), "missing response retained fresh data: %+v", c)
 	}
 	m := communityViewModel()
 	c := &m.community
@@ -349,7 +273,5 @@ func TestCommunityMissingUserResponseDoesNotRefreshOldData(t *testing.T) {
 	wrong.Session++
 	m.applyCommunityUser(communityUserMsg{identity: c.summary.CommunityIdentity, username: "Alice", page: daemon.CommunityUsersPage{CommunityIdentity: wrong}})
 	text := strings.Join(c.inspectorLines(), "\n")
-	if c.user.Username != "Alice" || !c.userRefreshed.Equal(refreshed) || !strings.Contains(c.userErr, "session") || !strings.Contains(text, "online (stale)") || !strings.Contains(text, "Speed (stale)") {
-		t.Fatalf("mismatched response freshness: %s", text)
-	}
+	failIfFmt(t, c.user.Username != "Alice" || !c.userRefreshed.Equal(refreshed) || !strings.Contains(c.userErr, "session") || !strings.Contains(text, "online (stale)") || !strings.Contains(text, "Speed (stale)"), "mismatched response freshness: %s", text)
 }

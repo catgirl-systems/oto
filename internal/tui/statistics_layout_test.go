@@ -35,20 +35,14 @@ func TestStatsOverviewLayout(t *testing.T) {
 	wide := m.renderStats(144, 40)
 	t.Log("\n" + wide)
 	for _, want := range []string{"32 MiB", "64 MiB", "2.0 GiB", "4.0 GiB", "Session", "Lifetime", "Last (UTC)", "2.0 MiB/s", "1.0 MiB/s", "19:34:00", "19:34:05 UTC"} {
-		if !strings.Contains(wide, want) {
-			t.Fatalf("missing %q in overview", want)
-		}
+		failIfFmt(t, !strings.Contains(wide, want), "missing %q in overview", want)
 	}
-	if strings.Contains(wide, "Peer:") || strings.Contains(wide, "\x1b") {
-		t.Fatal("empty filter or color escapes in overview")
-	}
+	failIf(t, strings.Contains(wide, "Peer:") || strings.Contains(wide, "\x1b"), "empty filter or color escapes in overview")
 	beside := false
 	for _, line := range strings.Split(wide, "\n") {
 		beside = beside || (strings.Contains(line, "Download") && strings.Contains(line, "Upload"))
 	}
-	if !beside {
-		t.Fatal("wide overview did not put directions side by side")
-	}
+	failIf(t, !beside, "wide overview did not put directions side by side")
 	for _, width := range []int{1, 12, 40, 80, 123, 124, 144} {
 		for _, ascii := range []bool{false, true} {
 			m.cfg.Statistics.ASCIICharts = ascii
@@ -56,13 +50,9 @@ func TestStatsOverviewLayout(t *testing.T) {
 			for _, height := range []int{8, 24, 40} {
 				view := m.renderStats(width, height)
 				lines := strings.Split(view, "\n")
-				if len(lines) > height {
-					t.Fatalf("height overflow at %dx%d", width, height)
-				}
+				failIfFmt(t, len(lines) > height, "height overflow at %dx%d", width, height)
 				for _, line := range lines {
-					if ansi.StringWidth(line) > width {
-						t.Fatalf("width overflow at %dx%d: %q", width, height, line)
-					}
+					failIfFmt(t, ansi.StringWidth(line) > width, "width overflow at %dx%d: %q", width, height, line)
 				}
 			}
 		}
@@ -70,30 +60,20 @@ func TestStatsOverviewLayout(t *testing.T) {
 	m.cursor = 0
 	narrow := m.renderStats(80, 200)
 	last, upload := strings.Index(narrow, "Last (UTC)"), strings.Index(narrow, "Upload  ")
-	if last < 0 || upload <= last {
-		t.Fatal("narrow overview did not stack directions")
-	}
+	failIf(t, last < 0 || upload <= last, "narrow overview did not stack directions")
 	top := m.renderStats(80, 12)
 	m.statsKey(key("pgdown"))
-	if m.cursor == 0 || m.renderStats(80, 12) == top {
-		t.Fatal("narrow overview cannot scroll")
-	}
+	failIf(t, m.cursor == 0 || m.renderStats(80, 12) == top, "narrow overview cannot scroll")
 	m.cursor = 1000
-	if !strings.Contains(m.renderStats(80, 12), "Last (UTC)") {
-		t.Fatal("bottom of stacked overview is inaccessible")
-	}
+	failIf(t, !strings.Contains(m.renderStats(80, 12), "Last (UTC)"), "bottom of stacked overview is inaccessible")
 	m.cursor = 0
 	m.stats.filter.Peer = "bob"
 	peer := m.renderStats(80, 200)
-	if !strings.Contains(peer, "Peer: bob") || !strings.Contains(peer, "Live activity is account-wide") || !strings.Contains(peer, "Last (UTC)") {
-		t.Fatal("peer scope is missing or ambiguous")
-	}
+	failIf(t, !strings.Contains(peer, "Peer: bob") || !strings.Contains(peer, "Live activity is account-wide") || !strings.Contains(peer, "Last (UTC)"), "peer scope is missing or ambiguous")
 	// Color styling must preserve the same cell geometry.
 	t.Setenv("NO_COLOR", "")
 	for _, line := range strings.Split(m.renderStats(144, 40), "\n") {
-		if ansi.StringWidth(line) > 144 {
-			t.Fatalf("colored overview overflow: %q", line)
-		}
+		failIfFmt(t, ansi.StringWidth(line) > 144, "colored overview overflow: %q", line)
 	}
 }
 
@@ -102,21 +82,13 @@ func TestStatsPlotAndContextHints(t *testing.T) {
 	for _, ascii := range []bool{false, true} {
 		for _, values := range [][]uint64{nil, {0, 0}, {0, math.MaxUint64}} {
 			lines := statsChart("Rate B/s", values, 40, ascii)
-			if len(lines) != 6 {
-				t.Fatal("unstable chart height")
-			}
+			failIf(t, len(lines) != 6, "unstable chart height")
 			for _, line := range lines[1:5] {
-				if ansi.StringWidth(line) != 40 {
-					t.Fatal("plot does not use available width")
-				}
-				if ascii && strings.ContainsAny(line, "▁▂▃▄▅▆▇█") {
-					t.Fatal("Unicode plot in ASCII mode")
-				}
+				failIf(t, ansi.StringWidth(line) != 40, "plot does not use available width")
+				failIf(t, ascii && strings.ContainsAny(line, "▁▂▃▄▅▆▇█"), "Unicode plot in ASCII mode")
 			}
 			if len(values) == 0 || values[len(values)-1] == 0 {
-				if strings.TrimSpace(strings.Join(lines[1:5], "")) != "" {
-					t.Fatal("empty or zero traffic rendered as a positive bar")
-				}
+				failIf(t, strings.TrimSpace(strings.Join(lines[1:5], "")) != "", "empty or zero traffic rendered as a positive bar")
 			} else if strings.TrimSpace(lines[1]) == "" {
 				t.Fatal("large counters did not reach the top of the plot")
 			}
@@ -126,12 +98,8 @@ func TestStatsPlotAndContextHints(t *testing.T) {
 	for page := range statsPages {
 		m.stats.page = page
 		hints := strings.Join(m.footerHints(), " · ")
-		if !strings.Contains(hints, "ctrl+pgup/down") || !strings.Contains(hints, "P prune") {
-			t.Fatal("lost common controls")
-		}
-		if strings.Contains(hints, "e outcome") != (page == 3) || strings.Contains(hints, "s sort") != (page == 2) {
-			t.Fatalf("irrelevant controls on page %d: %s", page, hints)
-		}
+		failIf(t, !strings.Contains(hints, "ctrl+pgup/down") || !strings.Contains(hints, "P prune"), "lost common controls")
+		failIfFmt(t, strings.Contains(hints, "e outcome") != (page == 3) || strings.Contains(hints, "s sort") != (page == 2), "irrelevant controls on page %d: %s", page, hints)
 	}
 }
 
@@ -143,21 +111,15 @@ func TestDiagnosticStatsLayoutAndOldDaemon(t *testing.T) {
 	m.stats.overview.Logging = &diagnostics.Status{Level: "DEBUG", Directory: strings.Repeat("/long-state", 40), StoredBytes: 33, FileCount: 2, DroppedRecords: 7, RotationBytes: 10 << 20, MaxArchives: 3, Warning: "file output suspended"}
 	full := m.renderStats(144, 200)
 	for _, want := range []string{"Diagnostic logs · daemon-wide", "33 B stored", "2 files", "7 dropped", "history warning", "file output suspended", "retain 3 closed segments"} {
-		if !strings.Contains(full, want) {
-			t.Fatalf("missing %q", want)
-		}
+		failIfFmt(t, !strings.Contains(full, want), "missing %q", want)
 	}
 	for _, width := range []int{1, 12, 40, 80, 144} {
 		m.cursor = 0
 		for _, line := range strings.Split(m.renderStats(width, 24), "\n") {
-			if ansi.StringWidth(line) > width {
-				t.Fatalf("logging layout overflows %d", width)
-			}
+			failIfFmt(t, ansi.StringWidth(line) > width, "logging layout overflows %d", width)
 		}
 	}
 	m.stats.overview.Logging = nil
 	m.cursor = 0
-	if strings.Contains(m.renderStats(144, 200), "Diagnostic logs") {
-		t.Fatal("old daemon rendered fictitious logs")
-	}
+	failIf(t, strings.Contains(m.renderStats(144, 200), "Diagnostic logs"), "old daemon rendered fictitious logs")
 }

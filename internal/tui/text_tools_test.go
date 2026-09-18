@@ -14,9 +14,7 @@ func TestTextToolsEditorWorkflowAndFences(t *testing.T) {
 	text := func(value string) { drainChat(t, &m, m.key(chatPress(value))) }
 	drainChat(t, &m, m.openTextTools())
 	e := m.textTools
-	if e == nil || e.busy || e.err != "" {
-		t.Fatal(e)
-	}
+	failIf(t, e == nil || e.busy || e.err != "", e)
 	text("n")
 	m.pasteTextTools("keyword 世界")
 	press(tea.KeyEnter)
@@ -32,49 +30,33 @@ func TestTextToolsEditorWorkflowAndFences(t *testing.T) {
 	press(tea.KeyEnter)
 	press(tea.KeyTab)
 	press(tea.KeyEnter)
-	if !e.dirty || !e.value.Settings.CTCPVersion || len(e.value.Settings.Substitutions) != 1 || m.chatDraftCount() != 1 {
-		t.Fatal(e)
-	}
+	failIf(t, !e.dirty || !e.value.Settings.CTCPVersion || len(e.value.Settings.Substitutions) != 1 || m.chatDraftCount() != 1, e)
 	text("s")
 	press(tea.KeyEnter)
-	if !e.dirty || e.busy {
-		t.Fatal("default cancel saved")
-	}
+	failIf(t, !e.dirty || e.busy, "default cancel saved")
 	text("s")
 	press(tea.KeyRight)
 	press(tea.KeyEnter)
-	if e.dirty || e.err != "" {
-		t.Fatal("save", e.err)
-	}
+	failIf(t, e.dirty || e.err != "", "save", e.err)
 	drainChat(t, &m, m.openTextTools())
 	e = m.textTools
-	if !e.value.Settings.CTCPVersion || e.value.Settings.Keywords[0] != "keyword 世界" {
-		t.Fatal("reload", e)
-	}
+	failIf(t, !e.value.Settings.CTCPVersion || e.value.Settings.Keywords[0] != "keyword 世界", "reload", e)
 	text("d")
 	press(tea.KeyEnter)
-	if len(e.value.Settings.Keywords) != 1 {
-		t.Fatal("default delete")
-	}
+	failIf(t, len(e.value.Settings.Keywords) != 1, "default delete")
 	text("n")
 	m.pasteTextTools(strings.Repeat("x", 1025))
-	if e.form.values[0] != "" || e.err == "" {
-		t.Fatal("oversized paste accepted")
-	}
+	failIf(t, e.form.values[0] != "" || e.err == "", "oversized paste accepted")
 	press(tea.KeyEscape)
 	old := textToolsMsg{owner: e, value: e.value}
 	drainChat(t, &m, m.openTextTools())
 	current := m.textTools
 	old.value.Settings.Keywords = []string{"stale"}
 	m.applyTextTools(old)
-	if current.value.Settings.Keywords[0] == "stale" {
-		t.Fatal("old editor response applied")
-	}
+	failIf(t, current.value.Settings.Keywords[0] == "stale", "old editor response applied")
 	m.community.summary.Session++
 	text("n")
-	if current.form != nil || !strings.Contains(m.textToolsView(), "Session changed") {
-		t.Fatal("session fence")
-	}
+	failIf(t, current.form != nil || !strings.Contains(m.textToolsView(), "Session changed"), "session fence")
 }
 func TestTextToolsLayouts(t *testing.T) {
 	m, _ := privateChatModel(t)
@@ -84,9 +66,7 @@ func TestTextToolsLayouts(t *testing.T) {
 		for _, dialog := range []string{"", "save", "remove", "close"} {
 			m.textTools.dialog = dialog
 			view := m.textToolsView()
-			if lipgloss.Width(view) > m.width || lipgloss.Height(view) > m.height {
-				t.Fatal(size, view)
-			}
+			failIf(t, lipgloss.Width(view) > m.width || lipgloss.Height(view) > m.height, size, view)
 		}
 	}
 }
