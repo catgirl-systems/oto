@@ -176,6 +176,8 @@ const (
 	settingDeleteBandwidthProfile
 	settingUploadLimitScope
 	settingUploadScheduling
+	settingUploadSlotBandwidth
+	settingUploadSlots
 	settingRespondToIncomingSearches
 	settingMinimumIncomingSearchLength
 	settingMaximumIncomingSearchResults

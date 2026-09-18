@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"path/filepath"
 	"slices"
 	"sync"
@@ -452,6 +453,7 @@ func (s *Service) telemetryLoop(ctx context.Context) {
 			s.mu.Lock()
 			s.statsOnlineLocked(now)
 			rates := map[string]RateSample{accountKey(s.cfg): {At: now.UTC()}}
+			var uploadBytesPerSecond uint64
 			for account := range s.telemetry.samples {
 				rates[account] = RateSample{At: now.UTC()}
 			}
@@ -464,6 +466,7 @@ func (s *Service) telemetryLoop(ctx context.Context) {
 				tr := s.transferTiming[id].snapshot(s.transfers[id], now)
 				if a.event.Direction == "upload" {
 					sample.Upload += tr.SpeedBPS
+					uploadBytesPerSecond += tr.SpeedBPS
 				} else {
 					sample.Download += tr.SpeedBPS
 				}
@@ -481,6 +484,11 @@ func (s *Service) telemetryLoop(ctx context.Context) {
 			}
 			client := s.client
 			s.mu.Unlock()
+			if client != nil {
+				// A measured rate of zero must still reach the manager so bandwidth-
+				// driven slots resume after the last upload finishes.
+				client.SetUploadBandwidth(int64(min(uploadBytesPerSecond, math.MaxInt64)))
+			}
 			checkpoints++
 			if checkpoints%5 == 0 {
 				if client != nil {

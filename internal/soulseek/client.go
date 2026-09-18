@@ -260,6 +260,10 @@ func (c *Client) ConfigureUploads(policy UploadPolicy) {
 	c.cfg.Uploads.Configure(policy)
 }
 
+func (c *Client) SetUploadBandwidth(bytesPerSecond int64) {
+	c.cfg.Uploads.SetBandwidth(bytesPerSecond)
+}
+
 func (c *Client) ConfigureIncomingSearch(policy IncomingSearchPolicy) {
 	c.mu.Lock()
 	c.incomingSearch = policy

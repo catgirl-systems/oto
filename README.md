@@ -245,7 +245,7 @@ oto focuses on file sharing and a detachable terminal UI. [Nicotine+](https://ni
 | Search the network for a transfer's file or folder name | :white_check_mark: | :white_check_mark: |
 | Remove the associated incomplete file when deleting a transfer | :white_check_mark: | :white_check_mark: |
 
-### Uploads (29/30 - 97%)
+### Uploads (30/30 - 100%)
 
 | Feature | oto | Nicotine+ |
 | --- | --- | --- |
@@ -271,7 +271,7 @@ oto focuses on file sharing and a detachable terminal UI. [Nicotine+](https://ni
 | Round-robin upload scheduling | :white_check_mark: | :white_check_mark: |
 | Random upload scheduling | :white_check_mark: | :x: |
 | Smallest-file-first upload scheduling | :white_check_mark: | :x: |
-| Allocate upload slots until a bandwidth threshold is reached | :x: | :white_check_mark: |
+| Allocate upload slots until a bandwidth threshold is reached | :white_check_mark: | :white_check_mark: |
 | Prioritize buddies in the upload queue | :white_check_mark: | :white_check_mark: |
 | Prioritize Soulseek privileged users | :white_check_mark: | :white_check_mark: |
 | Per-user queued-file limit (oto includes active files) | :white_check_mark: | :white_check_mark: |

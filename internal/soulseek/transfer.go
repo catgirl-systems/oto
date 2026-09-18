@@ -194,12 +194,16 @@ type UploadPolicy struct {
 	PerTransfer           bool
 	MaxQueuedFilesPerUser uint64
 	MaxQueuedBytesPerUser uint64
+	// SlotBandwidthBytesPerSecond gates slot allocation by measured upload
+	// throughput instead of the fixed slot count. Zero leaves slots fixed.
+	SlotBandwidthBytesPerSecond int64
 }
 
 // UploadManager schedules passive uploads with global slots and one slot per user.
 type UploadManager struct {
 	mu                    sync.Mutex
 	max, active           int
+	measuredBPS           int64
 	byUser                map[string]int
 	outstandingFiles      map[string]uint64
 	outstandingBytes      map[string]uint64
@@ -246,6 +250,27 @@ func (m *UploadManager) Policy() UploadPolicy {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.policy
+}
+
+// SetBandwidth records the measured aggregate upload rate and re-evaluates
+// bandwidth-driven slot allocation.
+func (m *UploadManager) SetBandwidth(bytesPerSecond int64) {
+	if bytesPerSecond < 0 {
+		bytesPerSecond = 0
+	}
+	m.mu.Lock()
+	m.measuredBPS = bytesPerSecond
+	m.promote()
+	m.mu.Unlock()
+}
+
+// slotAvailable reports whether another upload may start right now.
+// m.mu must be held.
+func (m *UploadManager) slotAvailable() bool {
+	if m.active >= m.max {
+		return false
+	}
+	return m.policy.SlotBandwidthBytesPerSecond <= 0 || m.measuredBPS < m.policy.SlotBandwidthBytesPerSecond
 }
 
 // Drain freezes admission and promotion; only jobs already holding slots finish.
@@ -383,7 +408,16 @@ func (m *UploadManager) nextIndex() int {
 }
 
 func (m *UploadManager) promote() {
-	for !m.recovering && m.drainDone == nil && len(m.q) > 0 && m.active < m.max {
+	limit := m.max
+	if m.policy.SlotBandwidthBytesPerSecond > 0 {
+		// Add one slot per measurement so a stale low reading cannot drain the
+		// queue, and stop once measured throughput reaches the threshold.
+		if m.measuredBPS >= m.policy.SlotBandwidthBytesPerSecond {
+			return
+		}
+		limit = min(m.max, m.active+1)
+	}
+	for !m.recovering && m.drainDone == nil && len(m.q) > 0 && m.active < limit {
 		i := m.nextIndex()
 		if i < 0 {
 			return

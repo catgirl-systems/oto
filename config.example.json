@@ -46,7 +46,8 @@
     "auto_clear_cancelled": false,
     "wait_for_active_uploads_on_quit": false,
     "limit_scope": "total",
-    "scheduling": "fifo"
+    "scheduling": "fifo",
+    "slot_bandwidth_kib": 0
   },
   "downloads": {
     "filters_enabled": false,

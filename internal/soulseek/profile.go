@@ -129,7 +129,7 @@ func (c *Client) SelfProfile() PeerProfile {
 	uploads := c.cfg.Uploads
 	uploads.mu.Lock()
 	defer uploads.mu.Unlock()
-	return PeerProfile{Description: description, UploadSlots: uint32(min(uint64(max(0, uploads.max)), uint64(^uint32(0)))), QueueLength: uint32(min(uint64(len(uploads.q)), uint64(^uint32(0)))), SlotsAvailable: uploads.drainDone == nil && uploads.active < uploads.max, UploadAllowedKnown: true}
+	return PeerProfile{Description: description, UploadSlots: uint32(min(uint64(max(0, uploads.max)), uint64(^uint32(0)))), QueueLength: uint32(min(uint64(len(uploads.q)), uint64(^uint32(0)))), SlotsAvailable: uploads.drainDone == nil && uploads.slotAvailable(), UploadAllowedKnown: true}
 }
 func requestPeerProfile(ctx context.Context, peer net.Conn) (PeerProfile, error) {
 	stop := context.AfterFunc(ctx, func() { _ = peer.Close() })

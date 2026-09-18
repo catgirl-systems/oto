@@ -798,6 +798,8 @@ func (m model) settingFields() []settingField {
 			{settingWaitForActiveUploadsOnQuit, "Wait for active uploads on quit", strconv.FormatBool(m.cfg.Uploads.WaitForActiveUploadsOnQuit), settingBool},
 			{settingUploadFileCap, "Per-user files (queued + active, 0 unlimited)", strconv.FormatUint(m.cfg.Uploads.MaxQueuedFilesPerUser, 10), settingInt},
 			{settingUploadByteCap, "Per-user bytes (queued + active, 0 unlimited)", strconv.FormatUint(m.cfg.Uploads.MaxQueuedBytesPerUser, 10) + " B", settingText},
+			{settingUploadSlotBandwidth, "Slot bandwidth threshold (KiB/s, 0 fixed slots)", strconv.Itoa(m.cfg.Uploads.SlotBandwidthKiB), settingInt},
+			{settingUploadSlots, "Upload slots (fixed count / bandwidth ceiling)", strconv.Itoa(m.cfg.UploadSlots), settingInt},
 		}
 	default:
 		return []settingField{
@@ -843,6 +845,10 @@ func (m *model) setSettingValue(value string) error {
 		target, namespace = &cfg.Search.FilterHistoryLimit, "Search.FilterHistoryLimit"
 	case settingWishlistInterval:
 		target, namespace = &cfg.Search.WishlistIntervalMinutes, "Search.WishlistIntervalMinutes"
+	case settingUploadSlots:
+		target, namespace = &cfg.UploadSlots, "UploadSlots"
+	case settingUploadSlotBandwidth:
+		target, namespace = &cfg.Uploads.SlotBandwidthKiB, "Uploads.SlotBandwidthKiB"
 	case settingUploadSpeedLimit, settingDownloadSpeedLimit:
 		cfg.Bandwidth.Profiles = slices.Clone(cfg.Bandwidth.Profiles)
 		i := m.activeBandwidthProfileIndex()

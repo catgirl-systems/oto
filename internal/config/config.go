@@ -113,6 +113,7 @@ type Uploads struct {
 	WaitForActiveUploadsOnQuit   bool             `json:"wait_for_active_uploads_on_quit"`
 	LimitScope                   UploadLimitScope `json:"limit_scope" validate:"oneof=total per_transfer"`
 	Scheduling                   UploadScheduling `json:"scheduling" validate:"oneof=fifo round_robin random smallest_first"`
+	SlotBandwidthKiB             int              `json:"slot_bandwidth_kib" validate:"min=0,max=1000000"`
 }
 
 type legacyUploadProfile struct {

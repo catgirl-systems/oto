@@ -32,6 +32,7 @@ func TestBandwidthSaveDuringConnect(t *testing.T) {
 	}
 	next := s.cfg
 	next.Bandwidth = config.Bandwidth{ActiveProfile: "During login", Profiles: []config.BandwidthProfile{{Name: "During login", UploadSpeedLimitKiB: 7, DownloadSpeedLimitKiB: 11}}}
+	next.Uploads.SlotBandwidthKiB = 64
 	must(t, s.UpdateConfig(next))
 	close(release)
 	select {
@@ -41,12 +42,12 @@ func TestBandwidthSaveDuringConnect(t *testing.T) {
 		t.Fatal("connect did not finish")
 	}
 	awaitMappingObservation(t, observations)
-	failIf(t, s.client.DownloadLimit() != 11*1024 || s.client.UploadPolicy().BytesPerSecond != 7*1024, "published client used stale bandwidth config")
+	failIf(t, s.client.DownloadLimit() != 11*1024 || s.client.UploadPolicy().BytesPerSecond != 7*1024 || s.client.UploadPolicy().SlotBandwidthBytesPerSecond != 64*1024, "published client used stale bandwidth config")
 	loaded, err := config.Load(s.configPath)
 	must(t, err)
 	// The next daemon/client lifecycle derives the same two rates from disk.
 	restarted, err := New(loaded, filepath.Join(t.TempDir(), "state.sqlite3"))
 	must(t, err)
 	defer restarted.Close()
-	failIf(t, downloadLimit(restarted.cfg) != 11*1024 || newUploadManager(restarted.cfg).Policy().BytesPerSecond != 7*1024, "restart lost bandwidth settings")
+	failIf(t, downloadLimit(restarted.cfg) != 11*1024 || newUploadManager(restarted.cfg).Policy().BytesPerSecond != 7*1024 || newUploadManager(restarted.cfg).Policy().SlotBandwidthBytesPerSecond != 64*1024, "restart lost bandwidth settings")
 }

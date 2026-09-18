@@ -645,7 +645,7 @@ func (s *Service) stopSessionLocked(offline bool) {
 }
 
 func uploadPolicy(c config.Config) soulseek.UploadPolicy {
-	return soulseek.UploadPolicy{MaxQueuedFilesPerUser: c.Uploads.MaxQueuedFilesPerUser, MaxQueuedBytesPerUser: c.Uploads.MaxQueuedBytesPerUser, Scheduling: string(c.Uploads.Scheduling), BytesPerSecond: int64(c.Bandwidth.ActiveProfileLimits().UploadSpeedLimitKiB) * 1024, PerTransfer: c.Uploads.LimitScope == config.UploadLimitPerTransfer}
+	return soulseek.UploadPolicy{MaxQueuedFilesPerUser: c.Uploads.MaxQueuedFilesPerUser, MaxQueuedBytesPerUser: c.Uploads.MaxQueuedBytesPerUser, Scheduling: string(c.Uploads.Scheduling), BytesPerSecond: int64(c.Bandwidth.ActiveProfileLimits().UploadSpeedLimitKiB) * 1024, PerTransfer: c.Uploads.LimitScope == config.UploadLimitPerTransfer, SlotBandwidthBytesPerSecond: int64(c.Uploads.SlotBandwidthKiB) * 1024}
 }
 
 func downloadLimit(c config.Config) int64 {

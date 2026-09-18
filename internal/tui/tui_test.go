@@ -1186,6 +1186,8 @@ func TestIntegerSettingsValidation(t *testing.T) {
 		{settingsSearch, settingWishlistInterval, 0, 525600},
 		{settingsBandwidth, settingUploadSpeedLimit, 0, 1000000},
 		{settingsBandwidth, settingDownloadSpeedLimit, 0, 1000000},
+		{settingsUploads, settingUploadSlots, 1, maxInt},
+		{settingsUploads, settingUploadSlotBandwidth, 0, 1000000},
 	} {
 		t.Run(fmt.Sprint(test.field), func(t *testing.T) {
 			m := model{cfg: config.Default(), settingsSection: test.section, cursor: -1}
