@@ -79,14 +79,10 @@ func TestCommunityPrivilegeCallbackPrecedesPeerRouting(t *testing.T) {
 	defer c.Close()
 	done := make(chan error, 1)
 	go func() { done <- c.Run(ctx) }()
-	if err := WriteFrame(right, fixture.Code, payload); err != nil {
-		t.Fatal(err)
-	}
+	must(t, WriteFrame(right, fixture.Code, payload))
 	select {
 	case err := <-done:
-		if !errors.Is(err, stop) {
-			t.Fatal(err)
-		}
+		failIf(t, !errors.Is(err, stop), err)
 	case <-ctx.Done():
 		t.Fatal(ctx.Err())
 	}
@@ -94,9 +90,7 @@ func TestCommunityPrivilegeCallbackPrecedesPeerRouting(t *testing.T) {
 
 func TestUploadRecoveryCoordinatorRenewsAfterClose(t *testing.T) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	defer listener.Close()
 	ready := make(chan struct{})
 	m := NewUploadManager(1)
@@ -107,15 +101,11 @@ func TestUploadRecoveryCoordinatorRenewsAfterClose(t *testing.T) {
 	defer c.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	if err := c.Connect(ctx); err != nil {
-		t.Fatal(err)
-	}
+	must(t, c.Connect(ctx))
 	m.SetUserPolicies(map[string]UploadUserPolicy{"buddy": {Preferred: true}})
 	normal := m.EnqueueRestored("normal", TransferRequest{})
 	buddy := m.EnqueueRestored("buddy", TransferRequest{})
-	if uploadReady(normal) || uploadReady(buddy) {
-		t.Fatal("reconnected recovery reserved slots early")
-	}
+	failIf(t, uploadReady(normal) || uploadReady(buddy), "reconnected recovery reserved slots early")
 	close(ready)
 	select {
 	case <-buddy.Ready:

@@ -16,9 +16,7 @@ func TestDownloadAuthorizationRechecksFileConnectionBeforeOffset(t *testing.T) {
 	c := NewClient(ClientConfig{})
 	defer c.Close()
 	file, err := os.CreateTemp(t.TempDir(), "receive")
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	defer file.Close()
 	denied := errors.New("consent revoked")
 	pending := &pendingDownload{username: "sender", filename: "Music/song", size: 3, ctx: context.Background(), writer: file, done: make(chan error, 1), authorize: func(netip.Addr) error { return denied }}

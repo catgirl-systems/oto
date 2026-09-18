@@ -72,20 +72,15 @@ func TestSoulfindPublicRoomLifecycle(t *testing.T) {
 	}
 	alice, a := start(aliceName)
 	bob, b := start(bobName)
-	if _, err := alice.JoinRoom(ctx, room, false, nil); err != nil {
-		t.Fatal(err)
-	}
+	_, err := alice.JoinRoom(ctx, room, false, nil)
+	must(t, err)
 	first := wait(a, "creator joins", joined).(RoomJoined)
-	if first.Private || len(first.Users) != 1 || first.Users[0].Username != aliceName {
-		t.Fatal("unexpected creator roster", first)
-	}
+	failIf(t, first.Private || len(first.Users) != 1 || first.Users[0].Username != aliceName, "unexpected creator roster", first)
 	if _, err := bob.JoinRoom(ctx, room, false, nil); err != nil {
 		t.Fatal(err)
 	}
 	second := wait(b, "second participant joins", joined).(RoomJoined)
-	if second.Private || len(second.Users) != 2 {
-		t.Fatal("unexpected second roster", second)
-	}
+	failIf(t, second.Private || len(second.Users) != 2, "unexpected second roster", second)
 	wait(a, "participant arrival", func(msg SocialMessage) bool {
 		x, ok := msg.(RoomUserJoined)
 		return ok && x.Room == room && x.User.Username == bobName
@@ -95,9 +90,7 @@ func TestSoulfindPublicRoomLifecycle(t *testing.T) {
 	}
 	wait(a, "authoritative own-message echo", message)
 	wait(b, "other participant receives", message)
-	if err := bob.RequestRoomDirectory(ctx); err != nil {
-		t.Fatal(err)
-	}
+	must(t, bob.RequestRoomDirectory(ctx))
 	wait(b, "explicit directory includes small room", func(msg SocialMessage) bool {
 		x, ok := msg.(RoomDirectory)
 		if !ok {
@@ -124,9 +117,7 @@ func TestSoulfindPublicRoomLifecycle(t *testing.T) {
 	if _, err := bob.SetPublicFeed(ctx, true, nil); err != nil {
 		t.Fatal(err)
 	}
-	if err := bob.RequestUserStats(ctx, aliceName); err != nil {
-		t.Fatal(err)
-	}
+	must(t, bob.RequestUserStats(ctx, aliceName))
 	wait(b, "feed subscription processing barrier", statsReply)
 	if _, err := alice.SendRoomMessage(ctx, room, "feed 世界", nil); err != nil {
 		t.Fatal(err)
@@ -138,9 +129,7 @@ func TestSoulfindPublicRoomLifecycle(t *testing.T) {
 	if _, err := bob.SetPublicFeed(ctx, false, nil); err != nil {
 		t.Fatal(err)
 	}
-	if err := bob.RequestUserStats(ctx, aliceName); err != nil {
-		t.Fatal(err)
-	}
+	must(t, bob.RequestUserStats(ctx, aliceName))
 	wait(b, "feed unsubscription processing barrier", statsReply)
 	if _, err := bob.JoinRoom(ctx, room, false, nil); err != nil {
 		t.Fatal(err)

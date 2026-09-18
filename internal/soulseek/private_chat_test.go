@@ -17,9 +17,7 @@ func TestCommunityPrivateProtocol(t *testing.T) {
 		payload := fixture.Payload(t)
 		decoded, err := DecodeServerMessage(fixture.Code, payload)
 		want := PrivateMessage{ID: 42, Timestamp: 1700000000, Username: "Alice", Text: "hello 世界", New: name == "pm-online"}
-		if err != nil || decoded != want {
-			t.Fatalf("%s: %+v, %v", name, decoded, err)
-		}
+		failIfFmt(t, err != nil || decoded != want, "%s: %+v, %v", name, decoded, err)
 		for n := range len(payload) {
 			if _, err := DecodePrivateMessage(payload[:n]); err == nil {
 				t.Fatalf("accepted truncated PM at %d", n)
@@ -185,26 +183,16 @@ func TestCommunityPrivateWriteStages(t *testing.T) {
 				}()
 			}
 			attempted, err := client.SendPrivateMessage(ctx, "Alice", "hello 世界", prepare)
-			if attempted != (mode == "partial" || mode == "complete") || prepared != (mode != "cancel-before") {
-				t.Fatalf("wrong write stage: attempted %t, prepared %t, err %v", attempted, prepared, err)
-			}
+			failIfFmt(t, attempted != (mode == "partial" || mode == "complete") || prepared != (mode != "cancel-before"), "wrong write stage: attempted %t, prepared %t, err %v", attempted, prepared, err)
 			switch mode {
 			case "complete":
-				if err != nil || <-read != nil {
-					t.Fatal("complete write failed")
-				}
+				failIf(t, err != nil || <-read != nil, "complete write failed")
 			case "partial":
-				if !errors.Is(err, io.ErrUnexpectedEOF) || <-read == nil {
-					t.Fatal("partial frame did not retire transport")
-				}
+				failIf(t, !errors.Is(err, io.ErrUnexpectedEOF) || <-read == nil, "partial frame did not retire transport")
 			case "prepare-fails":
-				if !errors.Is(err, prepareErr) {
-					t.Fatal(err)
-				}
+				failIf(t, !errors.Is(err, prepareErr), err)
 			default:
-				if !errors.Is(err, context.Canceled) {
-					t.Fatal(err)
-				}
+				failIf(t, !errors.Is(err, context.Canceled), err)
 			}
 		})
 	}

@@ -18,14 +18,10 @@ func TestSoulfindTargetedSearch(t *testing.T) {
 	defer cancel()
 	for _, targets := range [][]string{{a.cfg.Username}, {a.cfg.Username, b.cfg.Username}, {"missing" + stamp}} {
 		results, err := observer.Search(ctx, name, targets...)
-		if err != nil {
-			t.Fatal(err)
-		}
+		must(t, err)
 		want := map[string]bool{}
 		if len(targets) == 1 && targets[0] == "missing"+stamp {
-			if len(results) != 0 {
-				t.Fatal("missing target fell back to global")
-			}
+			failIf(t, len(results) != 0, "missing target fell back to global")
 			continue
 		}
 		for _, user := range targets {
@@ -33,13 +29,9 @@ func TestSoulfindTargetedSearch(t *testing.T) {
 		}
 		seen := map[string]bool{}
 		for _, r := range results {
-			if !want[r.Username] {
-				t.Fatalf("out of scope: %+v", r)
-			}
+			failIfFmt(t, !want[r.Username], "out of scope: %+v", r)
 			seen[r.Username] = true
 		}
-		if len(seen) != len(want) {
-			t.Fatalf("target search missed results: targets=%v results=%+v", targets, results)
-		}
+		failIfFmt(t, len(seen) != len(want), "target search missed results: targets=%v results=%+v", targets, results)
 	}
 }

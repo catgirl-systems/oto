@@ -22,14 +22,10 @@ func TestSharePolicyAdmissionPublicationFence(t *testing.T) {
 	})
 	defer c.Close()
 	_, created, err := c.registerUploadWithAddress("Alice", "Public/song.mp3", false, netip.MustParseAddr("127.0.0.1"), false, "")
-	if err == nil || created || calls.Load() != 2 || len(c.uploads) != 0 {
-		t.Fatal("publication fence", created, err, calls.Load())
-	}
+	failIf(t, err == nil || created || calls.Load() != 2 || len(c.uploads) != 0, "publication fence", created, err, calls.Load())
 	c.cfg.Uploads.mu.Lock()
 	defer c.cfg.Uploads.mu.Unlock()
-	if c.cfg.Uploads.outstandingFiles["Alice"] != 0 {
-		t.Fatal("denied reservation retained accounting")
-	}
+	failIf(t, c.cfg.Uploads.outstandingFiles["Alice"] != 0, "denied reservation retained accounting")
 }
 
 func TestSharePolicyRevokesWaitingUpload(t *testing.T) {
@@ -44,20 +40,14 @@ func TestSharePolicyRevokesWaitingUpload(t *testing.T) {
 	defer c.Close()
 	c.cfg.UploadsReady = make(chan struct{})
 	a, created, err := c.registerUploadWithAddress("Alice", "Public/song.mp3", false, netip.MustParseAddr("127.0.0.1"), true, "")
-	if err != nil || !created {
-		t.Fatal(err)
-	}
+	failIf(t, err != nil || !created, err)
 	allow.Store(false)
 	c.RevalidateSharePolicy()
-	if a.ctx.Err() == nil {
-		t.Fatal("waiting upload not revoked")
-	}
+	failIf(t, a.ctx.Err() == nil, "waiting upload not revoked")
 	a.mu.Lock()
 	notify, reason := a.notify, a.policyReason
 	a.mu.Unlock()
-	if !notify || reason != "Unavailable" {
-		t.Fatal("queued peer notification missing", notify, reason)
-	}
+	failIf(t, !notify || reason != "Unavailable", "queued peer notification missing", notify, reason)
 	select {
 	case <-a.done:
 	case <-time.After(3 * time.Second):
@@ -94,15 +84,11 @@ func TestSharePolicyCancelsObsoleteResponses(t *testing.T) {
 	c.RevalidateSharePolicy()
 	select {
 	case err := <-done:
-		if err == nil {
-			t.Fatal("obsolete response completed")
-		}
+		failIf(t, err == nil, "obsolete response completed")
 	case <-time.After(time.Second):
 		t.Fatal("blocked response retained")
 	}
-	if ctx.Err() == nil || c.shareResponseContext().Err() != nil {
-		t.Fatal("response generation not renewed")
-	}
+	failIf(t, ctx.Err() == nil || c.shareResponseContext().Err() != nil, "response generation not renewed")
 	if err := writeShareMessage(ctx, peer, SharedListResponse{}); !errors.Is(err, context.Canceled) {
 		t.Fatal("obsolete snapshot was reused", err)
 	}
@@ -133,9 +119,7 @@ func TestSharePolicyRevocationFencesBatchBeforeCancellation(t *testing.T) {
 	var attempts []*uploadAttempt
 	for _, user := range []string{"Alice", "Bob", "Carol"} {
 		a, _, err := c.registerUploadWithAddress(user, "Public/song.mp3", false, netip.MustParseAddr("127.0.0.1"), true, "")
-		if err != nil {
-			t.Fatal(err)
-		}
+		must(t, err)
 		attempts = append(attempts, a)
 	}
 	for _, a := range attempts {
@@ -159,11 +143,7 @@ func TestSharePolicyRevocationFencesBatchBeforeCancellation(t *testing.T) {
 		case <-time.After(3 * time.Second):
 			t.Fatal("revoked batch worker retained")
 		}
-		if a.state != "cancelled" || !a.notify || a.policyReason != "Policy changed" {
-			t.Fatal("lost queued denial", a.state, a.notify, a.policyReason)
-		}
+		failIf(t, a.state != "cancelled" || !a.notify || a.policyReason != "Policy changed", "lost queued denial", a.state, a.notify, a.policyReason)
 	}
-	if early.Load() {
-		t.Fatal("cancelled worker before fencing the full scheduler batch")
-	}
+	failIf(t, early.Load(), "cancelled worker before fencing the full scheduler batch")
 }

@@ -63,9 +63,7 @@ func TestCommunityDiscoveryReferenceProtocol(t *testing.T) {
 
 func TestCommunityDiscoveryBoundsAndNormalization(t *testing.T) {
 	item, err := NormalizeInterest("  TECHno 世界  ")
-	if err != nil || item != "techno 世界" {
-		t.Fatal("normalization", item, err)
-	}
+	failIf(t, err != nil || item != "techno 世界", "normalization", item, err)
 	for _, item := range []string{"", strings.Repeat("a", MaxInterestBytes+1), "a\x1b[2J", "a\u202eb", string([]byte{0xff})} {
 		if _, err := NormalizeInterest(item); err == nil {
 			t.Fatal("invalid interest accepted")
@@ -85,14 +83,10 @@ func TestCommunityDiscoveryBoundsAndNormalization(t *testing.T) {
 	// Nicotine+ accepts the legacy one-list response and Latin-1 display text.
 	legacy := f.Payload(t)[:18]
 	m, err := DecodeDiscoveryResponse(ServerGlobalRecommendations, legacy)
-	if err != nil || len(m.Recommendations) != 1 {
-		t.Fatal("legacy response rejected", err)
-	}
+	failIf(t, err != nil || len(m.Recommendations) != 1, "legacy response rejected", err)
 	raw := []byte{1, 0, 0, 0, 4, 0, 0, 0, 'c', 'a', 'f', 0xe9, 1, 0, 0, 0}
 	m, err = DecodeDiscoveryResponse(ServerGlobalRecommendations, raw)
-	if err != nil || m.Recommendations[0].Item != string(raw[8:12]) {
-		t.Fatal("legacy text rejected", err)
-	}
+	failIf(t, err != nil || m.Recommendations[0].Item != string(raw[8:12]), "legacy text rejected", err)
 	if _, err := DecodeDiscoveryResponse(ServerGlobalRecommendations, make([]byte, MaxDiscoveryBytes+1)); err == nil {
 		t.Fatal("unbounded discovery payload")
 	}
@@ -114,8 +108,6 @@ func FuzzCommunityDiscoveryDecode(f *testing.F) {
 	}
 	f.Fuzz(func(t *testing.T, code uint32, payload []byte) {
 		m, err := DecodeDiscoveryResponse(code, payload)
-		if err == nil && len(m.Recommendations)+len(m.Users)+len(m.Likes)+len(m.Dislikes) > MaxDiscoveryEntries {
-			t.Fatal("decoder exceeded entry ceiling")
-		}
+		failIf(t, err == nil && len(m.Recommendations)+len(m.Users)+len(m.Likes)+len(m.Dislikes) > MaxDiscoveryEntries, "decoder exceeded entry ceiling")
 	})
 }

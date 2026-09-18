@@ -20,19 +20,13 @@ func TestBrowseBeyondOldEntryLimit(t *testing.T) {
 	raw.U32(1)
 	_ = raw.String("Music")
 	raw.U32(500_000)
-	if err := (SearchResult{Path: "song.flac", Size: 42}).encode(&file); err != nil {
-		t.Fatal(err)
-	}
+	must(t, (SearchResult{Path: "song.flac", Size: 42}).encode(&file))
 	raw.Raw(bytes.Repeat(file.Payload(), 500_000))
 	raw.U32(0)
 	payload, err := CompressZlib(raw.Payload())
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	got, err := DecodeSharedListResponse(payload)
-	if err != nil || len(got.Entries) != 500_001 {
-		t.Fatalf("large share: entries=%d err=%v", len(got.Entries), err)
-	}
+	failIfFmt(t, err != nil || len(got.Entries) != 500_001, "large share: entries=%d err=%v", len(got.Entries), err)
 }
 
 func TestBrowseConfiguredLimits(t *testing.T) {
@@ -68,13 +62,9 @@ func TestBrowseConfiguredLimits(t *testing.T) {
 					message = FolderResponse{Token: 1, Path: path, Entries: entries}
 				}
 				var encoded Encoder
-				if err := message.encode(&encoded); err != nil {
-					t.Fatal(err)
-				}
+				must(t, message.encode(&encoded))
 				raw, err := DecompressZlib(encoded.Payload())
-				if err != nil {
-					t.Fatal(err)
-				}
+				must(t, err)
 				limits := BrowseLimits{2, len(encoded.Payload()) + 4, len(raw)}
 				want := ""
 				switch limit {
@@ -93,9 +83,7 @@ func TestBrowseConfiguredLimits(t *testing.T) {
 				defer cancel()
 				got, err := client.Browse(ctx, left, path)
 				if want == "" {
-					if err != nil || len(got) != 2 {
-						t.Fatalf("exact limits: entries=%d err=%v", len(got), err)
-					}
+					failIfFmt(t, err != nil || len(got) != 2, "exact limits: entries=%d err=%v", len(got), err)
 				} else if !errors.Is(err, ErrTooLarge) || !strings.Contains(err.Error(), want) {
 					t.Fatalf("expected %q size limit: %v", want, err)
 				}
@@ -112,16 +100,12 @@ func TestBrowseLimitIncludesPrivateEntries(t *testing.T) {
 	err := (SharedListResponse{Entries: []ShareEntry{
 		{Name: `Music\public.flac`}, {Name: `Private\private.flac`, Private: true},
 	}}).encode(&encoded)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	limits := BrowseLimits{MaxEntries: 3}.withDefaults()
 	if _, err := decodeSharedListResponse(encoded.Payload(), limits); !errors.Is(err, ErrTooLarge) {
 		t.Fatalf("public + private entries must share one budget: %v", err)
 	}
 	limits.MaxEntries = 4
 	got, err := decodeSharedListResponse(encoded.Payload(), limits)
-	if err != nil || len(got.Entries) != 4 || !got.Entries[3].Private {
-		t.Fatalf("exact public + private budget: entries=%d err=%v", len(got.Entries), err)
-	}
+	failIfFmt(t, err != nil || len(got.Entries) != 4 || !got.Entries[3].Private, "exact public + private budget: entries=%d err=%v", len(got.Entries), err)
 }

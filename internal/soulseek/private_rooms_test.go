@@ -89,9 +89,7 @@ func TestCommunityPrivateRoomValidation(t *testing.T) {
 		func() (bool, error) { return client.SetRoomInvitations(ctx, true, nil) },
 	} {
 		attempted, err := send()
-		if attempted || err == nil {
-			t.Fatal("cancelled/disconnected request attempted write", attempted, err)
-		}
+		failIf(t, attempted || err == nil, "cancelled/disconnected request attempted write", attempted, err)
 	}
 }
 func FuzzCommunityPrivateRoomDecode(f *testing.F) {

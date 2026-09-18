@@ -84,9 +84,7 @@ func TestCommunityUserProtocol(t *testing.T) {
 	}
 	for _, username := range []string{"Alice", "alice", " Alice ", "猫"} {
 		var e Encoder
-		if err := encodeUsername(&e, username); err != nil {
-			t.Fatal(err)
-		}
+		must(t, encodeUsername(&e, username))
 		if got, err := decodeUsername(NewDecoder(e.Payload())); err != nil || got != username {
 			t.Fatalf("identity rewritten: %q %v", got, err)
 		}
@@ -95,31 +93,23 @@ func TestCommunityUserProtocol(t *testing.T) {
 	// it receives and never drops the session over one odd name.
 	for _, raw := range []string{"", "\nAlice", string([]byte{0xff})} {
 		var e Encoder
-		if err := e.String(raw); err != nil {
-			t.Fatal(err)
-		}
+		must(t, e.String(raw))
 		if got, err := decodeUsername(NewDecoder(e.Payload())); err != nil || got != raw {
 			t.Fatalf("wire name dropped: %q %v", got, err)
 		}
 	}
 	for _, raw := range []string{string(bytes.Repeat([]byte{'x'}, MaxUsernameBytes+1))} {
 		var e Encoder
-		if err := e.String(raw); err != nil {
-			t.Fatal(err)
-		}
+		must(t, e.String(raw))
 		if _, err := decodeUsername(NewDecoder(e.Payload())); !errors.Is(err, ErrTooLarge) {
 			t.Fatalf("oversize name accepted: %v", err)
 		}
 	}
 	// Peer code 5 is a share list, never a server watch response.
 	encoded, err := EncodeMessage(SharedListResponse{})
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	cmd, payload, err := ReadFrame(bytes.NewReader(encoded))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	decoded, err := DecodeMessage(cmd, payload)
 	if _, ok := decoded.(SharedListResponse); !ok || err != nil {
 		t.Fatalf("peer namespace: %T %v", decoded, err)
@@ -183,18 +173,12 @@ func TestCommunityDispatchBurst(t *testing.T) {
 	close(release)
 	select {
 	case err := <-run:
-		if !errors.Is(err, stop) {
-			t.Fatal(err)
-		}
+		failIf(t, !errors.Is(err, stop), err)
 	case <-ctx.Done():
 		t.Fatal(ctx.Err())
 	}
-	if err := <-written; err != nil {
-		t.Fatal(err)
-	}
-	if seen.Load() != count || len(client.events) != cap(client.events) {
-		t.Fatalf("lost authoritative updates: %d, diagnostics %d", seen.Load(), len(client.events))
-	}
+	must(t, <-written)
+	failIfFmt(t, seen.Load() != count || len(client.events) != cap(client.events), "lost authoritative updates: %d, diagnostics %d", seen.Load(), len(client.events))
 }
 
 func TestCommunityDispatchCancellation(t *testing.T) {
@@ -219,9 +203,7 @@ func TestCommunityDispatchCancellation(t *testing.T) {
 				if mode == "malformed" {
 					payload = payload[:len(payload)-1]
 				}
-				if err := WriteFrame(right, fixture.Code, payload); err != nil {
-					t.Fatal(err)
-				}
+				must(t, WriteFrame(right, fixture.Code, payload))
 				if mode != "malformed" {
 					select {
 					case <-entered:
@@ -238,9 +220,7 @@ func TestCommunityDispatchCancellation(t *testing.T) {
 			select {
 			case err := <-run:
 				if mode == "malformed" {
-					if !errors.Is(err, ErrTruncated) {
-						t.Fatal(err)
-					}
+					failIf(t, !errors.Is(err, ErrTruncated), err)
 				} else if !errors.Is(err, context.Canceled) {
 					t.Fatal(err)
 				}
@@ -296,9 +276,7 @@ func TestCommunityAddressCancellationAndClose(t *testing.T) {
 	client.route(ServerGetPeerAddress, PeerAddress{Username: "Alice", IP: "127.0.0.1"})
 	select {
 	case err := <-second:
-		if err != nil {
-			t.Fatal(err)
-		}
+		must(t, err)
 	case <-time.After(time.Second):
 		t.Fatal("shared lookup did not finish")
 	}
@@ -310,9 +288,7 @@ func TestCommunityAddressCancellationAndClose(t *testing.T) {
 	_ = client.Close()
 	select {
 	case err := <-pending:
-		if !errors.Is(err, ErrNotConnected) {
-			t.Fatal(err)
-		}
+		failIf(t, !errors.Is(err, ErrNotConnected), err)
 	case <-time.After(time.Second):
 		t.Fatal("lookup leaked on close")
 	}
@@ -342,9 +318,8 @@ func TestCommunityInterruptedFrameRetiresTransport(t *testing.T) {
 	result := make(chan error, 1)
 	go func() { result <- client.WatchUser(ctx, "Alice") }()
 	prefix := make([]byte, 2)
-	if _, err := io.ReadFull(right, prefix); err != nil {
-		t.Fatal(err)
-	}
+	_, err := io.ReadFull(right, prefix)
+	must(t, err)
 	cancel() // The server has only half of the length prefix.
 	if err := <-result; err == nil {
 		t.Fatal("partial write reported success")
@@ -371,14 +346,8 @@ func TestCommunityCancelledRequestDoesNotWrite(t *testing.T) {
 	result := make(chan error, 1)
 	go func() { result <- client.WatchUser(context.Background(), "Bob") }()
 	cmd, payload, err := ReadFrame(right)
-	if err != nil || cmd != ServerWatchUser {
-		t.Fatalf("next request: %d %v", cmd, err)
-	}
+	failIfFmt(t, err != nil || cmd != ServerWatchUser, "next request: %d %v", cmd, err)
 	username, err := NewDecoder(payload).String()
-	if err != nil || username != "Bob" {
-		t.Fatalf("cancelled request was transmitted: %s %v", username, err)
-	}
-	if err := <-result; err != nil {
-		t.Fatal(err)
-	}
+	failIfFmt(t, err != nil || username != "Bob", "cancelled request was transmitted: %s %v", username, err)
+	must(t, <-result)
 }

@@ -84,9 +84,7 @@ func TestCommunityRoomValidationAndBounds(t *testing.T) {
 		}
 	}
 	for _, room := range []string{"a", "Music", "music", "! a + b ?", strings.Repeat("x", 24)} {
-		if err := ValidateRoomName(room); err != nil {
-			t.Fatal(err)
-		}
+		must(t, ValidateRoomName(room))
 	}
 	for _, text := range []string{"", " \t", "\xff", "two\nlines", "two\rlines", strings.Repeat("x", MaxChatBytes+1)} {
 		if _, err := EncodeMessage(RoomMessageRequest{Room: "test", Text: text}); err == nil {
@@ -206,14 +204,10 @@ func TestCommunityRoomClientWrites(t *testing.T) {
 		case "public-feed-unsubscribe":
 			attempted, err = c.SetPublicFeed(ctx, false, nil)
 		}
-		if err != nil || !attempted {
-			t.Fatal(name, err)
-		}
+		failIf(t, err != nil || !attempted, name, err)
 		select {
 		case err := <-read:
-			if err != nil {
-				t.Fatal(err)
-			}
+			must(t, err)
 		case <-ctx.Done():
 			t.Fatal(ctx.Err())
 		}

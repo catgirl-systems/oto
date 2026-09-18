@@ -13,9 +13,7 @@ import (
 func TestAudioProbeMissing(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
 	probe := NewAudioProbe()
-	if probe.Available() || probe.ErrorDescription() == "" {
-		t.Fatalf("missing ffprobe reported as available: %#v", probe)
-	}
+	failIfFmt(t, probe.Available() || probe.ErrorDescription() == "", "missing ffprobe reported as available: %#v", probe)
 }
 
 func TestAudioProbeParsingAndBounds(t *testing.T) {
@@ -27,18 +25,12 @@ printf '%s' '{"streams":[{"codec_type":"video"},{"codec_type":"audio","bit_rate"
 `)
 	t.Setenv("PATH", dir)
 	path := filepath.Join(dir, "song.flac")
-	if err := os.WriteFile(path, []byte("not really audio"), 0600); err != nil {
-		t.Fatal(err)
-	}
+	must(t, os.WriteFile(path, []byte("not really audio"), 0600))
 	probe := NewAudioProbe()
 	got, err := probe.Probe(context.Background(), path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	want := AudioMetadata{Bitrate: 192, Duration: 12, SampleRate: 48000, BitDepth: 24}
-	if got != want {
-		t.Fatalf("metadata = %#v, want %#v", got, want)
-	}
+	failIfFmt(t, got != want, "metadata = %#v, want %#v", got, want)
 	for _, suffix := range []string{" {}", " trailing"} {
 		if _, err := parseAudioProbe([]byte(`{"streams":[{"codec_type":"audio"}]}` + suffix)); err == nil {
 			t.Fatalf("accepted trailing JSON content: %q", suffix)
@@ -62,19 +54,13 @@ func TestAudioProbeGeneratedWAV(t *testing.T) {
 	writeWAV(t, path, 8000, 16, 1)
 	probe := NewAudioProbe()
 	got, err := probe.Probe(context.Background(), path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got.SampleRate != 8000 || got.BitDepth != 16 || got.Duration != 1 {
-		t.Fatalf("metadata = %#v", got)
-	}
+	must(t, err)
+	failIfFmt(t, got.SampleRate != 8000 || got.BitDepth != 16 || got.Duration != 1, "metadata = %#v", got)
 }
 
 func writeFakeFFProbe(t *testing.T, path, body string) {
 	t.Helper()
-	if err := os.WriteFile(path, []byte("#!/bin/sh\n"+body+"\n"), 0700); err != nil {
-		t.Fatal(err)
-	}
+	must(t, os.WriteFile(path, []byte("#!/bin/sh\n"+body+"\n"), 0700))
 }
 
 func writeWAV(t *testing.T, path string, sampleRate, bits, seconds int) {
@@ -95,7 +81,5 @@ func writeWAV(t *testing.T, path string, sampleRate, bits, seconds int) {
 	binary.LittleEndian.PutUint16(b[34:], uint16(bits))
 	copy(b[36:], "data")
 	binary.LittleEndian.PutUint32(b[40:], uint32(dataSize))
-	if err := os.WriteFile(path, b, 0600); err != nil {
-		t.Fatal(err)
-	}
+	must(t, os.WriteFile(path, b, 0600))
 }

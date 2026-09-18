@@ -14,22 +14,14 @@ func permissionTestClient(t *testing.T, policy func(string, netip.Addr) SharePer
 	t.Helper()
 	root := t.TempDir()
 	for _, name := range []string{"Public", "Locked", "Hidden"} {
-		if err := os.Mkdir(filepath.Join(root, name), 0700); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(root, name, "song.mp3"), []byte(name), 0600); err != nil {
-			t.Fatal(err)
-		}
+		must(t, os.Mkdir(filepath.Join(root, name), 0700))
+		must(t, os.WriteFile(filepath.Join(root, name, "song.mp3"), []byte(name), 0600))
 	}
 	index := NewShareIndex()
 	for _, name := range []string{"Public", "Locked", "Hidden"} {
-		if err := index.AddRoot(name, filepath.Join(root, name)); err != nil {
-			t.Fatal(err)
-		}
+		must(t, index.AddRoot(name, filepath.Join(root, name)))
 	}
-	if err := index.ScanContext(context.Background()); err != nil {
-		t.Fatal(err)
-	}
+	must(t, index.ScanContext(context.Background()))
 	return NewClient(ClientConfig{Share: index, SharePolicy: policy, IncomingSearch: &IncomingSearchPolicy{Respond: true, MaximumResults: 2}})
 }
 
@@ -51,47 +43,27 @@ func TestSharePolicyServingMatrix(t *testing.T) {
 
 	permission := client.sharePermission("peer", wantAddress)
 	results := client.incomingSearchResultsFor("song", "peer", wantAddress)
-	if len(results) != 2 {
-		t.Fatalf("search policy filtering = %+v", results)
-	}
+	failIfFmt(t, len(results) != 2, "search policy filtering = %+v", results)
 	for _, result := range results {
-		if shareRoot(result.Path) == "Hidden" {
-			t.Fatalf("hidden search result disclosed: %+v", result)
-		}
-		if shareRoot(result.Path) == "Locked" && result.Public {
-			t.Fatalf("locked search result marked public: %+v", result)
-		}
+		failIfFmt(t, shareRoot(result.Path) == "Hidden", "hidden search result disclosed: %+v", result)
+		failIfFmt(t, shareRoot(result.Path) == "Locked" && result.Public, "locked search result marked public: %+v", result)
 	}
 	entries := client.shareEntriesFor("peer", wantAddress)
-	if len(entries) != 4 {
-		t.Fatalf("shared list entries = %d, want public+locked files/directories", len(entries))
-	}
+	failIfFmt(t, len(entries) != 4, "shared list entries = %d, want public+locked files/directories", len(entries))
 	for _, entry := range entries {
-		if shareRoot(entry.Name) == "Hidden" {
-			t.Fatalf("hidden entry disclosed: %+v", entry)
-		}
-		if shareRoot(entry.Name) == "Locked" && !entry.Private {
-			t.Fatalf("locked entry not marked private: %+v", entry)
-		}
+		failIfFmt(t, shareRoot(entry.Name) == "Hidden", "hidden entry disclosed: %+v", entry)
+		failIfFmt(t, shareRoot(entry.Name) == "Locked" && !entry.Private, "locked entry not marked private: %+v", entry)
 	}
 	locked, err := client.shareIndex().Subtree("Locked")
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	locked = client.filterShareEntries(locked, permission)
-	if len(locked) != 0 {
-		t.Fatal("folder wire format cannot mark locked files")
-	}
+	failIf(t, len(locked) != 0, "folder wire format cannot mark locked files")
 	hidden, err := client.shareIndex().Subtree("Hidden")
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	if got := client.filterShareEntries(hidden, permission); len(got) != 0 {
 		t.Fatalf("hidden folder disclosed: %+v", got)
 	}
-	if calls.Load() != 3 {
-		t.Fatal("serving paths did not query the policy")
-	}
+	failIf(t, calls.Load() != 3, "serving paths did not query the policy")
 }
 
 func TestSharePolicyUploadAdmissionAndStreamRevalidation(t *testing.T) {
@@ -130,9 +102,7 @@ func TestSharePolicyUploadAdmissionAndStreamRevalidation(t *testing.T) {
 func TestSharePolicyLegacyAndEmptyRoots(t *testing.T) {
 	legacy := permissionTestClient(t, nil)
 	defer legacy.Close()
-	if len(legacy.shareEntries()) == 0 {
-		t.Fatal("nil callback did not preserve public legacy shares")
-	}
+	failIf(t, len(legacy.shareEntries()) == 0, "nil callback did not preserve public legacy shares")
 	empty := permissionTestClient(t, func(string, netip.Addr) SharePermission {
 		return SharePermission{Roots: map[string]ShareVisibility{}}
 	})
@@ -148,7 +118,5 @@ func TestSharePermissionSnapshotCopiesRoots(t *testing.T) {
 	defer client.Close()
 	permission := client.sharePermission("peer", netip.Addr{})
 	roots["Public"] = ShareHidden
-	if permission.Roots["Public"] != ShareAllowed {
-		t.Fatal("permission was not snapshotted")
-	}
+	failIf(t, permission.Roots["Public"] != ShareAllowed, "permission was not snapshotted")
 }

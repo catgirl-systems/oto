@@ -9,9 +9,7 @@ import (
 
 func TestShareExclusionsDefaults(t *testing.T) {
 	e, err := NewShareExclusions(nil)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	cases := []struct {
 		path      string
 		dir, want bool
@@ -33,9 +31,7 @@ func TestShareExclusionsDefaults(t *testing.T) {
 
 func TestShareExclusionsMatching(t *testing.T) {
 	e, err := NewShareExclusions([]string{"foo?bar", "[abc]file", "cache/", "nested/name", "*.log"})
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	for _, tc := range []struct {
 		path      string
 		dir, want bool
@@ -50,9 +46,7 @@ func TestShareExclusionsMatching(t *testing.T) {
 		}
 	}
 	empty, err := NewShareExclusions([]string{})
-	if err != nil || empty.Excluded("share/cache/x", true) {
-		t.Fatalf("empty exclusions: %v", err)
-	}
+	failIfFmt(t, err != nil || empty.Excluded("share/cache/x", true), "empty exclusions: %v", err)
 }
 
 func TestShareExclusionsRejectsInvalid(t *testing.T) {
@@ -63,9 +57,7 @@ func TestShareExclusionsRejectsInvalid(t *testing.T) {
 
 func TestShareExclusionsVirtualBoundariesAndRoots(t *testing.T) {
 	e, err := NewShareExclusions([]string{"Music/Temp/*", "Music/*.tmp", "cache/", "a*b/end"})
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	for _, tc := range []struct {
 		name                string
 		directory, excluded bool
@@ -85,38 +77,22 @@ func TestShareExclusionsIndexAndExactPaths(t *testing.T) {
 	root := t.TempDir()
 	for _, name := range []string{"@eaDir/song", "album/song.tmp", "album/song.flac", ".hidden/song"} {
 		local := filepath.Join(root, name)
-		if err := os.MkdirAll(filepath.Dir(local), 0700); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(local, []byte("x"), 0600); err != nil {
-			t.Fatal(err)
-		}
+		must(t, os.MkdirAll(filepath.Dir(local), 0700))
+		must(t, os.WriteFile(local, []byte("x"), 0600))
 	}
-	if err := os.Symlink(filepath.Join(root, "album"), filepath.Join(root, "link")); err != nil {
-		t.Fatal(err)
-	}
+	must(t, os.Symlink(filepath.Join(root, "album"), filepath.Join(root, "link")))
 	for _, rules := range [][]string{nil, {}} {
 		index, err := NewShareIndexWithExclusions(rules)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := index.AddRoot("Music", root); err != nil {
-			t.Fatal(err)
-		}
-		if err := index.ScanContext(context.Background()); err != nil {
-			t.Fatal(err)
-		}
+		must(t, err)
+		must(t, index.AddRoot("Music", root))
+		must(t, index.ScanContext(context.Background()))
 		for _, virtual := range []string{"Music/@eaDir/song", "Music/album/song.tmp", "Music/.hidden/song", "Music/link/song.flac"} {
 			_, err := index.Resolve(virtual)
 			want := rules == nil || virtual == "Music/.hidden/song" || virtual == "Music/link/song.flac"
-			if (err != nil) != want {
-				t.Fatalf("resolve %s: %v", virtual, err)
-			}
+			failIfFmt(t, (err != nil) != want, "resolve %s: %v", virtual, err)
 		}
 		for _, file := range index.Files() {
-			if index.Excluded(file.Root+"/"+file.Path, file.Directory) {
-				t.Fatalf("indexed excluded file: %+v", file)
-			}
+			failIfFmt(t, index.Excluded(file.Root+"/"+file.Path, file.Directory), "indexed excluded file: %+v", file)
 		}
 	}
 }
@@ -126,25 +102,15 @@ func TestQueuedUploadRevalidatesExclusions(t *testing.T) {
 	c, events, local := uploadClient(t, address, []byte("data"))
 	blocker := c.cfg.Uploads.Enqueue("blocker", TransferRequest{})
 	_, _, err := c.registerUpload("peer", "Music/song", true) // queued behind the occupied slot
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	index, err := NewShareIndexWithExclusions([]string{"song"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := index.AddRoot("Music", filepath.Dir(local)); err != nil {
-		t.Fatal(err)
-	}
-	if err := index.ScanContext(context.Background()); err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
+	must(t, index.AddRoot("Music", filepath.Dir(local)))
+	must(t, index.ScanContext(context.Background()))
 	c.SetShareIndex(index)
 	c.cfg.Uploads.Done(blocker)
 	failed := uploadEvent(t, events, "failed")
-	if failed.Done != 0 {
-		t.Fatal("excluded upload sent data")
-	}
+	failIf(t, failed.Done != 0, "excluded upload sent data")
 	if got := <-received; len(got) != 0 {
 		t.Fatalf("sent excluded bytes: %q", got)
 	}
@@ -157,15 +123,9 @@ func TestStreamingUploadSurvivesExclusionPublication(t *testing.T) {
 	address, _, received := uploadPeer(t, "normal", 0)
 	c, events, local := uploadClient(t, address, []byte("data"))
 	index, err := NewShareIndexWithExclusions([]string{"song"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := index.AddRoot("Music", filepath.Dir(local)); err != nil {
-		t.Fatal(err)
-	}
-	if err := index.ScanContext(context.Background()); err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
+	must(t, index.AddRoot("Music", filepath.Dir(local)))
+	must(t, index.ScanContext(context.Background()))
 	c.cfg.UploadStreamStart = func(TransferEvent) { c.SetShareIndex(index) }
 	if _, err := c.QueueUpload("peer", "Music/song"); err != nil {
 		t.Fatal(err)

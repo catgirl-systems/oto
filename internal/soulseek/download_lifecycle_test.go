@@ -27,9 +27,7 @@ func (w *blockingDownloadWriter) WriteAt(p []byte, _ int64) (int, error) {
 
 func TestDownloadCancellationWaitsForWriter(t *testing.T) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	defer listener.Close()
 	client := NewClient(ClientConfig{})
 	defer client.Close()
@@ -51,9 +49,7 @@ func TestDownloadCancellationWaitsForWriter(t *testing.T) {
 	go func() { result <- client.Download(ctx, "peer", "song", 4, 0, writer, nil) }()
 	_ = listener.(*net.TCPListener).SetDeadline(time.Now().Add(time.Second))
 	peer, err := listener.Accept()
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	defer peer.Close()
 	_ = peer.SetDeadline(time.Now().Add(2 * time.Second))
 	if _, _, err := ReadInitFrame(peer); err != nil {
@@ -62,9 +58,7 @@ func TestDownloadCancellationWaitsForWriter(t *testing.T) {
 	if _, _, err := ReadFrame(peer); err != nil {
 		t.Fatal(err)
 	}
-	if err := writeMessage(peer, TransferRequest{Direction: 1, Token: 7, Filename: "song", Size: 4}); err != nil {
-		t.Fatal(err)
-	}
+	must(t, writeMessage(peer, TransferRequest{Direction: 1, Token: 7, Filename: "song", Size: 4}))
 	if _, _, err := ReadFrame(peer); err != nil {
 		t.Fatal(err)
 	}
@@ -100,25 +94,19 @@ func TestDownloadCancellationWaitsForWriter(t *testing.T) {
 	close(writer.release)
 	select {
 	case err := <-result:
-		if !errors.Is(err, context.Canceled) {
-			t.Fatalf("cancel result: %v", err)
-		}
+		failIfFmt(t, !errors.Is(err, context.Canceled), "cancel result: %v", err)
 	case <-time.After(time.Second):
 		t.Fatal("Download failed to release stopped writer")
 	}
 	client.mu.Lock()
 	defer client.mu.Unlock()
-	if len(client.requested) != 0 || len(client.downloads) != 0 {
-		t.Fatal("cancelled download left pending requests")
-	}
+	failIf(t, len(client.requested) != 0 || len(client.downloads) != 0, "cancelled download left pending requests")
 }
 
 func TestShortDownloadPreservesReadError(t *testing.T) {
 	var target bytes.Buffer
 	err := copyAtMost(context.Background(), &target, bytes.NewBufferString("ab"), 4, 0, nil)
-	if !errors.Is(err, ErrMalformed) || !errors.Is(err, io.ErrUnexpectedEOF) || target.String() != "ab" {
-		t.Fatalf("short download must retain partial data and retryable error: %q %v", target.String(), err)
-	}
+	failIfFmt(t, !errors.Is(err, ErrMalformed) || !errors.Is(err, io.ErrUnexpectedEOF) || target.String() != "ab", "short download must retain partial data and retryable error: %q %v", target.String(), err)
 }
 
 func TestDownloadControlConnectionLifetime(t *testing.T) {
@@ -127,9 +115,7 @@ func TestDownloadControlConnectionLifetime(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 			listener, err := net.Listen("tcp", "127.0.0.1:0")
-			if err != nil {
-				t.Fatal(err)
-			}
+			must(t, err)
 			defer listener.Close()
 			_ = listener.(*net.TCPListener).SetDeadline(time.Now().Add(5 * time.Second))
 			var stderr io.Writer
@@ -146,9 +132,7 @@ func TestDownloadControlConnectionLifetime(t *testing.T) {
 			close(lookup.done)
 			client.addresses["peer"] = lookup
 			file, err := os.CreateTemp(t.TempDir(), "partial")
-			if err != nil {
-				t.Fatal(err)
-			}
+			must(t, err)
 			defer file.Close()
 			if action == "disk_failure" {
 				file.Close()
@@ -156,9 +140,8 @@ func TestDownloadControlConnectionLifetime(t *testing.T) {
 			var prefix []byte
 			if action == "resume" {
 				prefix = []byte("pre")
-				if _, err := file.WriteAt(prefix, 0); err != nil {
-					t.Fatal(err)
-				}
+				_, err := file.WriteAt(prefix, 0)
+				must(t, err)
 			}
 			chunk := bytes.Repeat([]byte("a"), 32<<10)
 			contents := append(append(append([]byte(nil), prefix...), chunk...), []byte("tail")...)
@@ -168,9 +151,7 @@ func TestDownloadControlConnectionLifetime(t *testing.T) {
 				result <- client.Download(ctx, "peer", "song", uint64(len(contents)), uint64(len(prefix)), file, func(p Progress) { progress <- p })
 			}()
 			peer, err := listener.Accept()
-			if err != nil {
-				t.Fatal(err)
-			}
+			must(t, err)
 			defer peer.Close()
 			_ = peer.SetDeadline(time.Now().Add(5 * time.Second))
 			if _, _, err := ReadInitFrame(peer); err != nil {
@@ -203,9 +184,7 @@ func TestDownloadControlConnectionLifetime(t *testing.T) {
 			if action == "separate_size_change" {
 				request.Size++
 			}
-			if err := writeMessage(control, request); err != nil {
-				t.Fatal(err)
-			}
+			must(t, writeMessage(control, request))
 			if action == "separate_size_change" {
 				if err := <-result; err == nil || err.Error() != "soulseek: remote file size changed" {
 					t.Fatalf("lost incoming setup failure: %v", err)
@@ -228,9 +207,7 @@ func TestDownloadControlConnectionLifetime(t *testing.T) {
 			defer right.Close()
 			_ = right.SetDeadline(time.Now().Add(5 * time.Second))
 			go client.serveFile(left)
-			if err := binary.Write(right, binary.LittleEndian, uint32(7)); err != nil {
-				t.Fatal(err)
-			}
+			must(t, binary.Write(right, binary.LittleEndian, uint32(7)))
 			var offset uint64
 			if err := binary.Read(right, binary.LittleEndian, &offset); err != nil || offset != uint64(len(prefix)) {
 				t.Fatalf("resume offset: %d %v", offset, err)
@@ -258,9 +235,7 @@ func TestDownloadControlConnectionLifetime(t *testing.T) {
 				for i := 0; i < 1024; i++ {
 					manager.Logger().Debug("queue_pressure")
 				}
-				if manager.Status().DroppedRecords == 0 {
-					t.Fatal("queue did not fill")
-				}
+				failIf(t, manager.Status().DroppedRecords == 0, "queue did not fill")
 			}
 			if separate {
 				_ = peer.Close()
@@ -271,18 +246,14 @@ func TestDownloadControlConnectionLifetime(t *testing.T) {
 				}
 			}
 			if action == "separate_failure" {
-				if err := writeMessage(control, QueueFailedMessage{Filename: "song"}); err != nil {
-					t.Fatal(err)
-				}
+				must(t, writeMessage(control, QueueFailedMessage{Filename: "song"}))
 				if err := <-result; !errors.Is(err, ErrUploadFailed) {
 					t.Fatalf("lost incoming upload failure: %v", err)
 				}
 				return
 			}
 			if action == "rejected" || action == "separate_rejection" {
-				if err := writeMessage(control, QueueDenied{Filename: "song", Reason: "File not shared"}); err != nil {
-					t.Fatal(err)
-				}
+				must(t, writeMessage(control, QueueDenied{Filename: "song", Reason: "File not shared"}))
 				var rejected *DownloadRejectedError
 				if err := <-result; !errors.As(err, &rejected) || rejected.Reason != "File not shared" {
 					t.Fatalf("lost explicit rejection: %v", err)
@@ -302,9 +273,7 @@ func TestDownloadControlConnectionLifetime(t *testing.T) {
 				if wait != nil && *wait >= 42 {
 					break
 				}
-				if ctx.Err() != nil {
-					t.Fatal("active file never exposed its data wait")
-				}
+				failIf(t, ctx.Err() != nil, "active file never exposed its data wait")
 				time.Sleep(time.Millisecond)
 			}
 			tail := []byte("tail")
@@ -318,9 +287,7 @@ func TestDownloadControlConnectionLifetime(t *testing.T) {
 			_ = right.Close()
 			err = <-result
 			if action == "short_file" {
-				if !errors.Is(err, io.ErrUnexpectedEOF) {
-					t.Fatalf("short file lost retryable error: %v", err)
-				}
+				failIfFmt(t, !errors.Is(err, io.ErrUnexpectedEOF), "short file lost retryable error: %v", err)
 			} else if err != nil {
 				t.Fatalf("download failed: %v", err)
 			}
@@ -342,9 +309,7 @@ func TestDownloadFileSetupDeadline(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 			file, err := os.CreateTemp(t.TempDir(), "partial")
-			if err != nil {
-				t.Fatal(err)
-			}
+			must(t, err)
 			defer file.Close()
 			pending := &pendingDownload{size: 4, writer: file, done: make(chan error, 1), ctx: ctx}
 			peer, remote := net.Pipe()
@@ -352,9 +317,7 @@ func TestDownloadFileSetupDeadline(t *testing.T) {
 			defer remote.Close()
 			go func() { _, _, _ = ReadFrame(remote) }()
 			start := time.Now()
-			if err := client.acceptDownload(peer, pending, TransferRequest{Token: 7, Size: 4}); err != nil {
-				t.Fatal(err)
-			}
+			must(t, client.acceptDownload(peer, pending, TransferRequest{Token: 7, Size: 4}))
 			collision := &pendingDownload{size: 4, done: make(chan error, 1), ctx: ctx}
 			if err := client.acceptDownload(peer, collision, TransferRequest{Token: 7, Size: 4}); err == nil {
 				t.Fatal("accepted a duplicate file connection token")
@@ -368,18 +331,14 @@ func TestDownloadFileSetupDeadline(t *testing.T) {
 				}
 				client.mu.Lock()
 				defer client.mu.Unlock()
-				if len(client.downloads) != 0 {
-					t.Fatal("expired file token remains registered")
-				}
+				failIf(t, len(client.downloads) != 0, "expired file token remains registered")
 				return
 			}
 			left, right := net.Pipe()
 			defer left.Close()
 			defer right.Close()
 			go client.serveFile(left)
-			if err := binary.Write(right, binary.LittleEndian, uint32(7)); err != nil {
-				t.Fatal(err)
-			}
+			must(t, binary.Write(right, binary.LittleEndian, uint32(7)))
 			if phase == "stalled_offset" {
 				if err := <-pending.done; !errors.Is(err, os.ErrDeadlineExceeded) {
 					t.Fatalf("offset handshake did not time out: %v", err)
@@ -387,9 +346,7 @@ func TestDownloadFileSetupDeadline(t *testing.T) {
 				return
 			}
 			var offset uint64
-			if err := binary.Read(right, binary.LittleEndian, &offset); err != nil {
-				t.Fatal(err)
-			}
+			must(t, binary.Read(right, binary.LittleEndian, &offset))
 			time.Sleep(2 * time.Minute) // Virtual time: setup deadlines must not cap a live transfer.
 			select {
 			case err := <-pending.done:
@@ -399,9 +356,7 @@ func TestDownloadFileSetupDeadline(t *testing.T) {
 			if _, err := right.Write([]byte("data")); err != nil {
 				t.Fatal(err)
 			}
-			if err := <-pending.done; err != nil {
-				t.Fatal(err)
-			}
+			must(t, <-pending.done)
 		})
 	}
 }

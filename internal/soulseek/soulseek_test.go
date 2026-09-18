@@ -27,14 +27,10 @@ func (c remoteAddressConn) RemoteAddr() net.Addr { return c.remote }
 
 func TestCodecMalformedAndCompressionLimit(t *testing.T) {
 	var e Encoder
-	if err := e.String("héllo"); err != nil {
-		t.Fatal(err)
-	}
+	must(t, e.String("héllo"))
 	d := NewDecoder(e.Payload())
 	got, err := d.String()
-	if err != nil || got != "héllo" {
-		t.Fatalf("decode=%q %v", got, err)
-	}
+	failIfFmt(t, err != nil || got != "héllo", "decode=%q %v", got, err)
 	if _, err := NewDecoder([]byte{4, 0, 0}).String(); err != ErrTruncated {
 		t.Fatalf("short length: %v", err)
 	}
@@ -98,9 +94,7 @@ func TestFrameTransportErrors(t *testing.T) {
 				} else {
 					_, _, err = ReadFrameWithProgress(reader, func(uint64, uint64) {})
 				}
-				if !errors.Is(err, tc.want) || errors.Is(err, ErrTruncated) {
-					t.Fatalf("transport error: got %v, want %v", err, tc.want)
-				}
+				failIfFmt(t, !errors.Is(err, tc.want) || errors.Is(err, ErrTruncated), "transport error: got %v, want %v", err, tc.want)
 			})
 		}
 	}
@@ -108,58 +102,36 @@ func TestFrameTransportErrors(t *testing.T) {
 
 func TestReadFrameWithProgress(t *testing.T) {
 	var wire bytes.Buffer
-	if err := WriteFrame(&wire, PeerSharedList, []byte("abc")); err != nil {
-		t.Fatal(err)
-	}
+	must(t, WriteFrame(&wire, PeerSharedList, []byte("abc")))
 	var updates [][2]uint64
 	command, payload, err := ReadFrameWithProgress(iotest.OneByteReader(bytes.NewReader(wire.Bytes())), func(received, total uint64) {
 		updates = append(updates, [2]uint64{received, total})
 	})
-	if err != nil || command != PeerSharedList || string(payload) != "abc" {
-		t.Fatalf("frame: command=%d payload=%q err=%v", command, payload, err)
-	}
+	failIfFmt(t, err != nil || command != PeerSharedList || string(payload) != "abc", "frame: command=%d payload=%q err=%v", command, payload, err)
 	if len(updates) < 3 || updates[0] != [2]uint64{0, 7} || updates[len(updates)-1] != [2]uint64{7, 7} {
 		t.Fatalf("progress updates: %v", updates)
 	}
 	for i := 1; i < len(updates); i++ {
-		if updates[i][0] <= updates[i-1][0] || updates[i][1] != 7 {
-			t.Fatalf("non-monotonic progress: %v", updates)
-		}
+		failIfFmt(t, updates[i][0] <= updates[i-1][0] || updates[i][1] != 7, "non-monotonic progress: %v", updates)
 	}
 }
 
 func TestShareScanSearchAndContainment(t *testing.T) {
 	d := t.TempDir()
 	root := filepath.Join(d, "music")
-	if err := os.Mkdir(root, 0700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(root, "Beyoncé.mp3"), []byte("x"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(root, "secret"), []byte("x"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(root, ".hidden"), []byte("x"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(filepath.Join(d, "outside"), filepath.Join(root, "link")); err != nil {
-		t.Fatal(err)
-	}
+	must(t, os.Mkdir(root, 0700))
+	must(t, os.WriteFile(filepath.Join(root, "Beyoncé.mp3"), []byte("x"), 0600))
+	must(t, os.WriteFile(filepath.Join(root, "secret"), []byte("x"), 0600))
+	must(t, os.WriteFile(filepath.Join(root, ".hidden"), []byte("x"), 0600))
+	must(t, os.Symlink(filepath.Join(d, "outside"), filepath.Join(root, "link")))
 	s := NewShareIndex()
-	if err := s.AddRoot("Songs", root); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.ScanContext(context.Background()); err != nil {
-		t.Fatal(err)
-	}
+	must(t, s.AddRoot("Songs", root))
+	must(t, s.ScanContext(context.Background()))
 	if counts := sharedCounts(s); counts != (SharedCounts{Folders: 1, Files: 2}) {
 		t.Fatalf("shared counts: %+v", counts)
 	}
 	got := s.Search("Beyoncé -secret", 500)
-	if len(got) != 1 || got[0].Path != "Beyoncé.mp3" {
-		t.Fatalf("search: %+v", got)
-	}
+	failIfFmt(t, len(got) != 1 || got[0].Path != "Beyoncé.mp3", "search: %+v", got)
 	if _, err := s.Resolve("Songs/../outside"); err == nil {
 		t.Fatal("traversal accepted")
 	}
@@ -167,9 +139,7 @@ func TestShareScanSearchAndContainment(t *testing.T) {
 		t.Fatal("symlink accepted")
 	}
 	entries, err := s.Browse("Songs")
-	if err != nil || len(entries) != 2 {
-		t.Fatalf("browse %v %+v", err, entries)
-	}
+	failIfFmt(t, err != nil || len(entries) != 2, "browse %v %+v", err, entries)
 }
 
 func TestRestoreShareIndexValidatesCachedFiles(t *testing.T) {
@@ -179,13 +149,9 @@ func TestRestoreShareIndexValidatesCachedFiles(t *testing.T) {
 		{Root: "Music", Path: "Album", Directory: true},
 		{Root: "Music", Path: "Album/song.flac", Size: 5},
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	entries, err := index.Browse("Music/Album")
-	if err != nil || len(entries) != 1 || entries[0].Name != "song.flac" || entries[0].Size != 5 {
-		t.Fatalf("restored entries: %+v %v", entries, err)
-	}
+	failIfFmt(t, err != nil || len(entries) != 1 || entries[0].Name != "song.flac" || entries[0].Size != 5, "restored entries: %+v %v", entries, err)
 
 	for name, file := range map[string]ShareFile{
 		"unknown root":     {Root: "Other", Path: "song.flac"},
@@ -207,34 +173,18 @@ func TestRestoreShareIndexValidatesCachedFiles(t *testing.T) {
 func TestBrowseUsesBoundedSnapshotChildren(t *testing.T) {
 	root := t.TempDir()
 	album := filepath.Join(root, "Album")
-	if err := os.Mkdir(album, 0700); err != nil {
-		t.Fatal(err)
-	}
+	must(t, os.Mkdir(album, 0700))
 	song := filepath.Join(album, "song.flac")
-	if err := os.WriteFile(song, []byte("audio"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(root, "cover.jpg"), []byte("jpg"), 0600); err != nil {
-		t.Fatal(err)
-	}
+	must(t, os.WriteFile(song, []byte("audio"), 0600))
+	must(t, os.WriteFile(filepath.Join(root, "cover.jpg"), []byte("jpg"), 0600))
 	index := NewShareIndex()
-	if err := index.AddRoot("Music", root); err != nil {
-		t.Fatal(err)
-	}
-	if err := index.ScanContext(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Remove(song); err != nil {
-		t.Fatal(err)
-	}
+	must(t, index.AddRoot("Music", root))
+	must(t, index.ScanContext(context.Background()))
+	must(t, os.Remove(song))
 	children, err := index.Browse("Music")
-	if err != nil || len(children) != 2 || !children[0].Directory || children[0].Name != "Album" {
-		t.Fatalf("root snapshot children: %+v %v", children, err)
-	}
+	failIfFmt(t, err != nil || len(children) != 2 || !children[0].Directory || children[0].Name != "Album", "root snapshot children: %+v %v", children, err)
 	nested, err := index.Browse(`Music\Album`)
-	if err != nil || len(nested) != 1 || nested[0].Name != "song.flac" || nested[0].Size != 5 {
-		t.Fatalf("nested snapshot children: %+v %v", nested, err)
-	}
+	failIfFmt(t, err != nil || len(nested) != 1 || nested[0].Name != "song.flac" || nested[0].Size != 5, "nested snapshot children: %+v %v", nested, err)
 	for _, path := range []string{"../Music", "/Music", "Missing", "Music/cover.jpg"} {
 		if _, err := index.Browse(path); err == nil {
 			t.Fatalf("invalid browse path accepted: %q", path)
@@ -245,37 +195,21 @@ func TestBrowseUsesBoundedSnapshotChildren(t *testing.T) {
 func TestProtocolFixture(t *testing.T) {
 	m := LoginRequest{Username: "u", Password: "p", Version: ProtocolVersion, MinorVersion: ProtocolMinor, Hash: "up"}
 	b, err := EncodeMessage(m)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	cmd, p, err := ReadFrame(bytes.NewReader(b))
-	if err != nil || cmd != ServerLogin {
-		t.Fatalf("frame %d %v", cmd, err)
-	}
+	failIfFmt(t, err != nil || cmd != ServerLogin, "frame %d %v", cmd, err)
 	got, err := DecodeLoginRequest(p)
-	if err != nil || got != m {
-		t.Fatalf("login %+v %v", got, err)
-	}
+	failIfFmt(t, err != nil || got != m, "login %+v %v", got, err)
 	r := SearchResponse{Token: 7, Username: "peer", SlotFree: true, Speed: 42, QueueLength: 3, Results: []SearchResult{{Path: "Songs/a.mp3", Extension: "mp3", Size: 3, Bitrate: 320, Duration: 125, VBR: true, SampleRate: 44100, BitDepth: 24, Public: true}, {Path: "Secret/b.flac", Extension: "flac", Size: 4}}}
 	b, err = EncodeMessage(r)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	cmd, p, err = ReadFrame(bytes.NewReader(b))
-	if err != nil || cmd != PeerSearch {
-		t.Fatal(err)
-	}
+	failIf(t, err != nil || cmd != PeerSearch, err)
 	rr, err := DecodeSearchResponse(p)
-	if err != nil || rr.Token != 7 || len(rr.Results) != 2 {
-		t.Fatalf("search %+v %v", rr, err)
-	}
+	failIfFmt(t, err != nil || rr.Token != 7 || len(rr.Results) != 2, "search %+v %v", rr, err)
 	public, private := rr.Results[0], rr.Results[1]
-	if !public.Public || public.Bitrate != 320 || public.Duration != 125 || !public.VBR || public.SampleRate != 44100 || public.BitDepth != 24 || !public.SlotFree || public.Speed != 42 || public.QueueLength != 3 {
-		t.Fatalf("public search metadata: %+v", public)
-	}
-	if private.Public || private.Path != "Secret/b.flac" || !private.SlotFree || private.QueueLength != 3 {
-		t.Fatalf("private search result: %+v", private)
-	}
+	failIfFmt(t, !public.Public || public.Bitrate != 320 || public.Duration != 125 || !public.VBR || public.SampleRate != 44100 || public.BitDepth != 24 || !public.SlotFree || public.Speed != 42 || public.QueueLength != 3, "public search metadata: %+v", public)
+	failIfFmt(t, private.Public || private.Path != "Secret/b.flac" || !private.SlotFree || private.QueueLength != 3, "private search result: %+v", private)
 }
 
 func TestSearchResponseCountry(t *testing.T) {
@@ -292,9 +226,7 @@ func TestSearchResponseCountry(t *testing.T) {
 	}()
 
 	message, err := EncodeMessage(SearchResponse{Token: 7, Username: "peer", Results: []SearchResult{{Path: "song.flac"}}})
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	if _, err := writer.Write(message); err != nil {
 		t.Fatal(err)
 	}
@@ -324,19 +256,11 @@ func TestTransferPathAndPipe(t *testing.T) {
 	dstRoot := t.TempDir()
 	name := "nested/file.bin"
 	data := []byte("hello soulseek")
-	if err := os.MkdirAll(filepath.Join(srcRoot, "nested"), 0700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(srcRoot, name), data, 0600); err != nil {
-		t.Fatal(err)
-	}
+	must(t, os.MkdirAll(filepath.Join(srcRoot, "nested"), 0700))
+	must(t, os.WriteFile(filepath.Join(srcRoot, name), data, 0600))
 	offset := uint64(5)
-	if err := os.MkdirAll(filepath.Join(dstRoot, "nested"), 0700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dstRoot, name), data[:offset], 0600); err != nil {
-		t.Fatal(err)
-	}
+	must(t, os.MkdirAll(filepath.Join(dstRoot, "nested"), 0700))
+	must(t, os.WriteFile(filepath.Join(dstRoot, name), data[:offset], 0600))
 	a, b := net.Pipe()
 	defer a.Close()
 	defer b.Close()
@@ -344,16 +268,11 @@ func TestTransferPathAndPipe(t *testing.T) {
 	defer cancel()
 	done := make(chan error, 1)
 	go func() { done <- SendFile(ctx, srcRoot, name, a, uint64(len(data)), offset, nil) }()
-	if _, err := ReceiveFile(ctx, dstRoot, name, b, uint64(len(data)), offset, nil); err != nil {
-		t.Fatal(err)
-	}
-	if err := <-done; err != nil {
-		t.Fatal(err)
-	}
+	_, err := ReceiveFile(ctx, dstRoot, name, b, uint64(len(data)), offset, nil)
+	must(t, err)
+	must(t, <-done)
 	got, err := os.ReadFile(filepath.Join(dstRoot, name))
-	if err != nil || string(got) != string(data) {
-		t.Fatalf("received %q %v", got, err)
-	}
+	failIfFmt(t, err != nil || string(got) != string(data), "received %q %v", got, err)
 }
 
 func TestPipeLogin(t *testing.T) {
@@ -401,27 +320,17 @@ func TestPipeLogin(t *testing.T) {
 		}
 		server <- e
 	}()
-	if err := c.Login(ctx); err != nil {
-		t.Fatal(err)
-	}
+	must(t, c.Login(ctx))
 	if got := c.PublicIP(); got != "1.2.3.4" {
 		t.Fatalf("public IP = %q, want 1.2.3.4", got)
 	}
-	if err := c.SetStatus(UserStatusAway); err != nil {
-		t.Fatal(err)
-	}
-	if err := c.SetStatus(UserStatusOnline); err != nil {
-		t.Fatal(err)
-	}
+	must(t, c.SetStatus(UserStatusAway))
+	must(t, c.SetStatus(UserStatusOnline))
 	if err := c.SetStatus(0); err == nil {
 		t.Fatal("invalid user status accepted")
 	}
-	if err := <-server; err != nil {
-		t.Fatal(err)
-	}
-	if err := c.Close(); err != nil {
-		t.Fatal(err)
-	}
+	must(t, <-server)
+	must(t, c.Close())
 	if got := c.PublicIP(); got != "" {
 		t.Fatalf("public IP after close = %q, want empty", got)
 	}
@@ -430,14 +339,10 @@ func TestPipeLogin(t *testing.T) {
 func TestChangePassword(t *testing.T) {
 	message := ChangePassword{Password: " new secret "}
 	frame, err := EncodeMessage(message)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	command, payload, err := ReadFrame(bytes.NewReader(frame))
 	decoded, decodeErr := DecodeMessage(command, payload)
-	if err != nil || decodeErr != nil || command != ServerChangePassword || decoded != message {
-		t.Fatalf("password frame: command=%d message=%#v errors=%v/%v", command, decoded, err, decodeErr)
-	}
+	failIfFmt(t, err != nil || decodeErr != nil || command != ServerChangePassword || decoded != message, "password frame: command=%d message=%#v errors=%v/%v", command, decoded, err, decodeErr)
 
 	t.Run("matching acknowledgement ignores stale response", func(t *testing.T) {
 		clientConn, serverConn := net.Pipe()
@@ -472,15 +377,9 @@ func TestChangePassword(t *testing.T) {
 			}
 			serverDone <- err
 		}()
-		if err := client.ChangePassword(ctx, message.Password); err != nil {
-			t.Fatal(err)
-		}
-		if client.cfg.Password != message.Password {
-			t.Fatal("client credential was not updated")
-		}
-		if err := <-serverDone; err != nil {
-			t.Fatal(err)
-		}
+		must(t, client.ChangePassword(ctx, message.Password))
+		failIf(t, client.cfg.Password != message.Password, "client credential was not updated")
+		must(t, <-serverDone)
 		cancel()
 		_ = clientConn.Close()
 		<-runDone
@@ -505,19 +404,14 @@ func TestChangePassword(t *testing.T) {
 		}()
 		first := make(chan error, 1)
 		go func() { first <- client.ChangePassword(ctx, "first") }()
-		if err := <-requestRead; err != nil {
-			t.Fatal(err)
-		}
+		must(t, <-requestRead)
 		if err := client.ChangePassword(ctx, "second"); err == nil || !strings.Contains(err.Error(), "already in progress") {
 			t.Fatalf("concurrent password change: %v", err)
 		}
 		ack, _ := EncodeMessage(ChangePassword{Password: "first"})
-		if _, err := serverConn.Write(ack); err != nil {
-			t.Fatal(err)
-		}
-		if err := <-first; err != nil {
-			t.Fatal(err)
-		}
+		_, err := serverConn.Write(ack)
+		must(t, err)
+		must(t, <-first)
 	})
 
 	t.Run("cancellation and connection closure", func(t *testing.T) {
@@ -540,12 +434,8 @@ func TestChangePassword(t *testing.T) {
 				_ = serverConn.Close()
 			}
 			err := <-result
-			if closeConnection && (err == nil || !strings.Contains(err.Error(), "connection closed")) {
-				t.Fatalf("connection closure: %v", err)
-			}
-			if !closeConnection && !errors.Is(err, context.DeadlineExceeded) {
-				t.Fatalf("cancellation: %v", err)
-			}
+			failIfFmt(t, closeConnection && (err == nil || !strings.Contains(err.Error(), "connection closed")), "connection closure: %v", err)
+			failIfFmt(t, !closeConnection && !errors.Is(err, context.DeadlineExceeded), "cancellation: %v", err)
 			cancel()
 			stopRun()
 			_ = clientConn.Close()
@@ -558,30 +448,20 @@ func TestDecodeLegacyDownloadRequestWithSize(t *testing.T) {
 	var payload Encoder
 	payload.U32(0)
 	payload.U32(7)
-	if err := payload.String("Music\\track.flac"); err != nil {
-		t.Fatal(err)
-	}
+	must(t, payload.String("Music\\track.flac"))
 	payload.U64(0)
 	request, err := DecodeTransferRequest(payload.Payload())
-	if err != nil || request.Direction != 0 || request.Token != 7 || request.Filename != "Music\\track.flac" || request.Size != 0 {
-		t.Fatalf("legacy transfer request: %+v %v", request, err)
-	}
+	failIfFmt(t, err != nil || request.Direction != 0 || request.Token != 7 || request.Filename != "Music\\track.flac" || request.Size != 0, "legacy transfer request: %+v %v", request, err)
 }
 
 func TestUploadFIFO(t *testing.T) {
 	m := NewUploadManager(1)
 	a := m.Enqueue("a", TransferRequest{})
 	b := m.Enqueue("b", TransferRequest{})
-	if err := m.Wait(context.Background(), a); err != nil {
-		t.Fatal(err)
-	}
-	if len(m.q) != 1 || m.q[0] != b {
-		t.Fatalf("queue: %+v", m.q)
-	}
+	must(t, m.Wait(context.Background(), a))
+	failIfFmt(t, len(m.q) != 1 || m.q[0] != b, "queue: %+v", m.q)
 	m.Done(a)
-	if err := m.Wait(context.Background(), b); err != nil {
-		t.Fatal(err)
-	}
+	must(t, m.Wait(context.Background(), b))
 	m.Done(b)
 }
 
@@ -599,13 +479,9 @@ func TestUploadFIFOUsesEligibleSlots(t *testing.T) {
 	first := m.Enqueue("a", TransferRequest{})
 	blocked := m.Enqueue("a", TransferRequest{})
 	other := m.Enqueue("b", TransferRequest{})
-	if !uploadReady(first) || uploadReady(blocked) || !uploadReady(other) {
-		t.Fatalf("eligible FIFO jobs: first=%v blocked=%v other=%v", uploadReady(first), uploadReady(blocked), uploadReady(other))
-	}
+	failIfFmt(t, !uploadReady(first) || uploadReady(blocked) || !uploadReady(other), "eligible FIFO jobs: first=%v blocked=%v other=%v", uploadReady(first), uploadReady(blocked), uploadReady(other))
 	m.Done(first)
-	if !uploadReady(blocked) {
-		t.Fatal("blocked user was not promoted when its prior upload finished")
-	}
+	failIf(t, !uploadReady(blocked), "blocked user was not promoted when its prior upload finished")
 	m.Done(other)
 	m.Done(blocked)
 }
@@ -619,9 +495,7 @@ func TestUploadRoundRobinUsers(t *testing.T) {
 	b2 := m.Enqueue("b", TransferRequest{})
 	c1 := m.Enqueue("c", TransferRequest{})
 	for _, job := range []*UploadJob{a1, b1, c1, a2, b2} {
-		if !uploadReady(job) {
-			t.Fatalf("round-robin did not promote %q", job.User)
-		}
+		failIfFmt(t, !uploadReady(job), "round-robin did not promote %q", job.User)
 		m.Done(job)
 	}
 }
@@ -638,9 +512,7 @@ func TestUploadRandomChoosesEligibleUser(t *testing.T) {
 		random := *m.random
 		selected := rand.New(&random).IntN(2) // Two users, not three files.
 		m.Done(blocker)
-		if uploadReady(a) != (selected == 0) || uploadReady(b1) != (selected == 1) || uploadReady(b2) {
-			t.Fatalf("seed %d: random scheduler did not choose the selected user's oldest file", seed)
-		}
+		failIfFmt(t, uploadReady(a) != (selected == 0) || uploadReady(b1) != (selected == 1) || uploadReady(b2), "seed %d: random scheduler did not choose the selected user's oldest file", seed)
 		m.Done(a)
 		m.Done(b1)
 		m.Done(b2)
@@ -655,13 +527,9 @@ func TestUploadSmallestFirstAndArrivalTie(t *testing.T) {
 	firstSmall := m.Enqueue("small-a", TransferRequest{Size: 10})
 	secondSmall := m.Enqueue("small-b", TransferRequest{Size: 10})
 	m.Done(blocker)
-	if !uploadReady(firstSmall) || uploadReady(large) || uploadReady(secondSmall) {
-		t.Fatal("smallest-first order or arrival tie-break was not preserved")
-	}
+	failIf(t, !uploadReady(firstSmall) || uploadReady(large) || uploadReady(secondSmall), "smallest-first order or arrival tie-break was not preserved")
 	m.Done(firstSmall)
-	if !uploadReady(secondSmall) {
-		t.Fatal("second equal-sized upload was not next")
-	}
+	failIf(t, !uploadReady(secondSmall), "second equal-sized upload was not next")
 	m.Done(secondSmall)
 	m.Done(large)
 }
@@ -713,9 +581,8 @@ func TestUploadLimiterReservationsAndCancellation(t *testing.T) {
 
 	m.Configure(UploadPolicy{Scheduling: UploadScheduleFIFO, BytesPerSecond: 1024})
 	var dst bytes.Buffer
-	if _, err := m.LimitWriter(context.Background(), one, &dst).Write(make([]byte, 1024)); err != nil {
-		t.Fatal(err)
-	}
+	_, err := m.LimitWriter(context.Background(), one, &dst).Write(make([]byte, 1024))
+	must(t, err)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	if _, err := m.LimitWriter(ctx, one, &dst).Write([]byte{1}); !errors.Is(err, ErrTransferCancelled) {
@@ -726,13 +593,9 @@ func TestUploadLimiterReservationsAndCancellation(t *testing.T) {
 func TestWireFramingAndDistributedFixtures(t *testing.T) {
 	var frame bytes.Buffer
 	err := WriteFrame(&frame, 0x01020304, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	want := []byte{4, 0, 0, 0, 4, 3, 2, 1}
-	if !bytes.Equal(frame.Bytes(), want) {
-		t.Fatalf("frame %x want %x", frame.Bytes(), want)
-	}
+	failIfFmt(t, !bytes.Equal(frame.Bytes(), want), "frame %x want %x", frame.Bytes(), want)
 	var addressPayload Encoder
 	_ = addressPayload.String("peer")
 	addressPayload.U32(0x7f000001)
@@ -740,18 +603,12 @@ func TestWireFramingAndDistributedFixtures(t *testing.T) {
 	addressPayload.U32(0)
 	addressPayload.U16(0)
 	address, err := DecodePeerAddress(addressPayload.Payload())
-	if err != nil || address.IP != "127.0.0.1" {
-		t.Fatalf("address %+v %v", address, err)
-	}
+	failIfFmt(t, err != nil || address.IP != "127.0.0.1", "address %+v %v", address, err)
 	query := DistributedSearchQuery{Username: "peer", Token: 9, Query: "one -two"}
 	payload, err := query.MarshalBinary()
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	decoded, err := DecodeDistributedSearch(payload)
-	if err != nil || decoded != query {
-		t.Fatalf("distributed: %+v %v", decoded, err)
-	}
+	failIfFmt(t, err != nil || decoded != query, "distributed: %+v %v", decoded, err)
 	payload[0] = 48
 	if _, err := DecodeDistributedSearch(payload); err == nil {
 		t.Fatal("accepted invalid distributed identifier")
@@ -764,17 +621,11 @@ func TestSharedListRoundTrip(t *testing.T) {
 		{Name: "Locked\\secret.flac", Size: 84, Private: true},
 	}}
 	wire, err := EncodeMessage(message)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	command, payload, err := ReadFrame(bytes.NewReader(wire))
-	if err != nil || command != PeerSharedList {
-		t.Fatalf("frame: %d %v", command, err)
-	}
+	failIfFmt(t, err != nil || command != PeerSharedList, "frame: %d %v", command, err)
 	decoded, err := DecodeSharedListResponse(payload)
-	if err != nil || len(decoded.Entries) != 4 || decoded.Entries[1].Name != "Music\\Album\\song.mp3" || decoded.Entries[1].Size != 42 || decoded.Entries[1].Bitrate != 320 || decoded.Entries[1].Duration != 125 || !decoded.Entries[1].VBR || decoded.Entries[2].Name != "Locked" || !decoded.Entries[2].Private || decoded.Entries[3].Name != "Locked\\secret.flac" || !decoded.Entries[3].Private {
-		t.Fatalf("shared list: %+v %v", decoded, err)
-	}
+	failIfFmt(t, err != nil || len(decoded.Entries) != 4 || decoded.Entries[1].Name != "Music\\Album\\song.mp3" || decoded.Entries[1].Size != 42 || decoded.Entries[1].Bitrate != 320 || decoded.Entries[1].Duration != 125 || !decoded.Entries[1].VBR || decoded.Entries[2].Name != "Locked" || !decoded.Entries[2].Private || decoded.Entries[3].Name != "Locked\\secret.flac" || !decoded.Entries[3].Private, "shared list: %+v %v", decoded, err)
 }
 
 func TestSharedListAcceptsLargeLibraries(t *testing.T) {
@@ -784,60 +635,34 @@ func TestSharedListAcceptsLargeLibraries(t *testing.T) {
 		entries[i].Name = `Music\file.mp3`
 	}
 	wire, err := EncodeMessage(SharedListResponse{Entries: entries})
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	_, payload, err := ReadFrame(bytes.NewReader(wire))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	decoded, err := DecodeSharedListResponse(payload)
-	if err != nil || len(decoded.Entries) != fileCount+1 {
-		t.Fatalf("large shared list: entries=%d err=%v", len(decoded.Entries), err)
-	}
+	failIfFmt(t, err != nil || len(decoded.Entries) != fileCount+1, "large shared list: entries=%d err=%v", len(decoded.Entries), err)
 }
 
 func TestFolderResponseAndShareSubtree(t *testing.T) {
 	root := t.TempDir()
 	for _, dir := range []string{"Album/Disc", "Album/Empty"} {
-		if err := os.MkdirAll(filepath.Join(root, dir), 0700); err != nil {
-			t.Fatal(err)
-		}
+		must(t, os.MkdirAll(filepath.Join(root, dir), 0700))
 	}
-	if err := os.WriteFile(filepath.Join(root, "Album", "cover.jpg"), []byte("jpg"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(root, "Album", "Disc", "song.flac"), []byte("audio"), 0600); err != nil {
-		t.Fatal(err)
-	}
+	must(t, os.WriteFile(filepath.Join(root, "Album", "cover.jpg"), []byte("jpg"), 0600))
+	must(t, os.WriteFile(filepath.Join(root, "Album", "Disc", "song.flac"), []byte("audio"), 0600))
 	index := NewShareIndex()
-	if err := index.AddRoot("Music", root); err != nil {
-		t.Fatal(err)
-	}
-	if err := index.ScanContext(context.Background()); err != nil {
-		t.Fatal(err)
-	}
+	must(t, index.AddRoot("Music", root))
+	must(t, index.ScanContext(context.Background()))
 	children, err := index.Browse(`Music\Album`)
-	if err != nil || len(children) != 3 {
-		t.Fatalf("immediate browse changed: %+v %v", children, err)
-	}
+	failIfFmt(t, err != nil || len(children) != 3, "immediate browse changed: %+v %v", children, err)
 	entries, err := index.Subtree(`Music\Album`)
-	if err != nil || len(entries) != 5 {
-		t.Fatalf("subtree: %+v %v", entries, err)
-	}
+	failIfFmt(t, err != nil || len(entries) != 5, "subtree: %+v %v", entries, err)
 
 	encoded, err := EncodeMessage(FolderResponse{Token: 9, Path: `Music\Album`, Entries: entries})
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	command, payload, err := ReadFrame(bytes.NewReader(encoded))
-	if err != nil || command != PeerFolderResponse {
-		t.Fatalf("folder frame: %d %v", command, err)
-	}
+	failIfFmt(t, err != nil || command != PeerFolderResponse, "folder frame: %d %v", command, err)
 	response, err := DecodeFolderResponse(payload)
-	if err != nil || response.Token != 9 || response.Path != `Music\Album` || len(response.Entries) != 5 {
-		t.Fatalf("folder response: %+v %v", response, err)
-	}
+	failIfFmt(t, err != nil || response.Token != 9 || response.Path != `Music\Album` || len(response.Entries) != 5, "folder response: %+v %v", response, err)
 	got := make(map[string]ShareEntry, len(response.Entries))
 	for _, entry := range response.Entries {
 		got[entry.Name] = entry
@@ -886,9 +711,7 @@ func TestOptionalPrivateLists(t *testing.T) {
 	compress := func(raw *Encoder) []byte {
 		t.Helper()
 		payload, err := CompressZlib(raw.Payload())
-		if err != nil {
-			t.Fatal(err)
-		}
+		must(t, err)
 		return payload
 	}
 	file := SearchResult{Path: "song.flac", Size: 42}
@@ -903,9 +726,7 @@ func TestOptionalPrivateLists(t *testing.T) {
 	search.U32(0)
 	search.U32(0) // Unknown field; peers may omit the empty private-list count.
 	result, err := DecodeSearchResponse(compress(&search))
-	if err != nil || len(result.Results) != 1 || !result.Results[0].Public {
-		t.Fatalf("public-only search response: %+v %v", result, err)
-	}
+	failIfFmt(t, err != nil || len(result.Results) != 1 || !result.Results[0].Public, "public-only search response: %+v %v", result, err)
 
 	var shares Encoder
 	shares.U32(1)
@@ -914,9 +735,7 @@ func TestOptionalPrivateLists(t *testing.T) {
 	_ = file.encode(&shares)
 	shares.U32(0) // Unknown field; peers may omit the empty private-list count.
 	list, err := DecodeSharedListResponse(compress(&shares))
-	if err != nil || len(list.Entries) != 2 || list.Entries[1].Private {
-		t.Fatalf("public-only shared list: %+v %v", list, err)
-	}
+	failIfFmt(t, err != nil || len(list.Entries) != 2 || list.Entries[1].Private, "public-only shared list: %+v %v", list, err)
 }
 
 func TestBrowseLimitDiagnostics(t *testing.T) {
@@ -940,21 +759,15 @@ func TestBrowseLimitDiagnostics(t *testing.T) {
 					raw.U32(maxShareEntries) // Files plus the directory exceed the limit.
 				}
 				payload, err := CompressZlib(raw.Payload())
-				if err != nil {
-					t.Fatal(err)
-				}
+				must(t, err)
 				if kind == "folder response" {
 					_, err = DecodeFolderResponse(payload)
 				} else {
 					_, err = DecodeSharedListResponse(payload)
 				}
-				if !errors.Is(err, ErrTooLarge) {
-					t.Fatalf("expected size limit: %v", err)
-				}
+				failIfFmt(t, !errors.Is(err, ErrTooLarge), "expected size limit: %v", err)
 				for _, detail := range []string{fmt.Sprint(maxShareEntries + 1), fmt.Sprintf("limit %d", maxShareEntries), "directories"} {
-					if !strings.Contains(err.Error(), detail) {
-						t.Fatalf("missing %q in error: %v", detail, err)
-					}
+					failIfFmt(t, !strings.Contains(err.Error(), detail), "missing %q in error: %v", detail, err)
 				}
 			})
 		}
@@ -965,9 +778,7 @@ func TestFileConnectionCancellation(t *testing.T) {
 	left, right := net.Pipe()
 	defer right.Close()
 	file, err := os.OpenFile(filepath.Join(t.TempDir(), "part"), os.O_CREATE|os.O_RDWR, 0600)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	defer file.Close()
 	ctx, cancel := context.WithCancel(context.Background())
 	pending := &pendingDownload{size: 32 << 10, writer: file, done: make(chan error, 1), ctx: ctx}
@@ -990,9 +801,7 @@ func TestFileConnectionCancellation(t *testing.T) {
 	cancel()
 	select {
 	case err := <-pending.done:
-		if err == nil {
-			t.Fatal("cancelled file connection completed")
-		}
+		failIf(t, err == nil, "cancelled file connection completed")
 	case <-time.After(time.Second):
 		t.Fatal("cancel did not interrupt file connection")
 	}
@@ -1021,15 +830,11 @@ func TestConcurrentPeerAddressLookupsShareRequest(t *testing.T) {
 	}
 	close(start)
 	command, _, err := ReadFrame(serverConn)
-	if err != nil || command != ServerGetPeerAddress {
-		t.Fatalf("peer lookup request: command=%d err=%v", command, err)
-	}
+	failIfFmt(t, err != nil || command != ServerGetPeerAddress, "peer lookup request: command=%d err=%v", command, err)
 	time.Sleep(20 * time.Millisecond)
 	client.route(ServerGetPeerAddress, PeerAddress{Username: "peer", IP: "0.0.0.0"})
 	for range callers {
-		if err := <-results; err != nil {
-			t.Fatal(err)
-		}
+		must(t, <-results)
 	}
 	_ = serverConn.SetReadDeadline(time.Now().Add(20 * time.Millisecond))
 	if _, _, err := ReadFrame(serverConn); err == nil {

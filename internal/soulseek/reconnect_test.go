@@ -57,18 +57,14 @@ func TestClientReconnectRenewsLifecycle(t *testing.T) {
 		_, profileErr := requestPeerProfile(ctx, right)
 		_ = right.Close()
 		<-peerDone
-		if profileErr != nil {
-			t.Fatalf("reconnected profile serving: %v", profileErr)
-		}
+		failIfFmt(t, profileErr != nil, "reconnected profile serving: %v", profileErr)
 		if _, created, err := c.registerUpload("Alice", "Music\\song", false); err != nil || !created {
 			t.Fatalf("reconnected upload admission: created=%v error=%v", created, err)
 		}
 		if cmd, _, err := ReadFrame(server); err != nil || cmd != ServerGetPeerAddress {
 			t.Fatalf("reconnected address lookup: command=%d error=%v", cmd, err)
 		}
-		if err := c.Close(); err != nil {
-			t.Fatal(err)
-		}
+		must(t, c.Close())
 		<-runDone
 		_ = server.Close()
 		uploadEvent(t, uploads, "failed") // Close still releases blocked uploads.

@@ -23,16 +23,10 @@ func startSoulfindClient(t *testing.T, addr, username string, files map[string][
 	if len(files) > 0 {
 		root := t.TempDir()
 		for name, contents := range files {
-			if err := os.WriteFile(filepath.Join(root, name), contents, 0600); err != nil {
-				t.Fatal(err)
-			}
+			must(t, os.WriteFile(filepath.Join(root, name), contents, 0600))
 		}
-		if err := shares.AddRoot("Music", root); err != nil {
-			t.Fatal(err)
-		}
-		if err := shares.ScanContext(context.Background()); err != nil {
-			t.Fatal(err)
-		}
+		must(t, shares.AddRoot("Music", root))
+		must(t, shares.ScanContext(context.Background()))
 	}
 	client := NewClient(ClientConfig{Address: addr, Username: username, Password: "pw", ListenAddr: "0.0.0.0:0", Share: shares, Uploads: uploads})
 	t.Cleanup(func() { _ = client.Close() })
@@ -56,9 +50,7 @@ func connectSoulfind(t *testing.T, client *Client) {
 		if err == nil {
 			break
 		}
-		if time.Now().After(deadline) {
-			t.Fatalf("connect to Soulfind: %v", err)
-		}
+		failIfFmt(t, time.Now().After(deadline), "connect to Soulfind: %v", err)
 		time.Sleep(100 * time.Millisecond)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)

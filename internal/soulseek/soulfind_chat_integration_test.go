@@ -50,9 +50,7 @@ func TestSoulfindPrivateChatOnlineOffline(t *testing.T) {
 				if message.Text != text {
 					continue
 				} // An unacknowledged prior wire attempt may replay on reconnect.
-				if message.Username != bobName || message.New != online || message.Timestamp == 0 {
-					t.Fatalf("unexpected private message metadata: %+v", message)
-				}
+				failIfFmt(t, message.Username != bobName || message.New != online || message.Timestamp == 0, "unexpected private message metadata: %+v", message)
 				return
 			case <-ctx.Done():
 				t.Fatalf("did not receive %s message: %v", text, ctx.Err())
@@ -63,9 +61,7 @@ func TestSoulfindPrivateChatOnlineOffline(t *testing.T) {
 	receive("online 世界", true)
 	stopAlice()
 	requestStatus := func(username string) UserPresence {
-		if err := bob.RequestUserStatus(ctx, username); err != nil {
-			t.Fatal(err)
-		}
+		must(t, bob.RequestUserStatus(ctx, username))
 		for {
 			select {
 			case status := <-statuses:

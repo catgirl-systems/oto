@@ -17,9 +17,7 @@ type syscallConner interface {
 func socketDevice(t *testing.T, socket syscallConner) string {
 	t.Helper()
 	raw, err := socket.SyscallConn()
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	var device string
 	var socketErr error
 	if err := raw.Control(func(fd uintptr) {
@@ -27,17 +25,13 @@ func socketDevice(t *testing.T, socket syscallConner) string {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if socketErr != nil {
-		t.Fatal(socketErr)
-	}
+	failIf(t, socketErr != nil, socketErr)
 	return device
 }
 
 func TestNetworkInterfaceBindsEverySoulseekSocket(t *testing.T) {
 	server, err := net.Listen("tcp4", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	defer server.Close()
 	accepted := make(chan net.Conn, 4)
 	go func() {
@@ -54,9 +48,7 @@ func TestNetworkInterfaceBindsEverySoulseekSocket(t *testing.T) {
 	defer cancel()
 	client := NewClient(ClientConfig{Address: server.Addr().String(), ListenAddr: "127.0.0.1:0", Username: "u", NetworkInterface: "lo"})
 	defer client.Close()
-	if err := client.Connect(ctx); err != nil {
-		t.Fatal(err)
-	}
+	must(t, client.Connect(ctx))
 	serverConn := <-accepted
 	defer serverConn.Close()
 	if got := socketDevice(t, client.conn.(syscallConner)); got != "lo" {
@@ -67,9 +59,7 @@ func TestNetworkInterfaceBindsEverySoulseekSocket(t *testing.T) {
 	}
 
 	peer, err := client.connectAddress(ctx, server.Addr().String(), "P")
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	defer peer.Close()
 	peerServerConn := <-accepted
 	defer peerServerConn.Close()
@@ -78,14 +68,10 @@ func TestNetworkInterfaceBindsEverySoulseekSocket(t *testing.T) {
 	}
 
 	reserved, err := net.Listen("tcp4", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	port := reserved.Addr().(*net.TCPAddr).Port
 	reserved.Close()
-	if err := client.SetListenPort(uint16(port)); err != nil {
-		t.Fatal(err)
-	}
+	must(t, client.SetListenPort(uint16(port)))
 	if got := socketDevice(t, client.listener.(*net.TCPListener)); got != "lo" {
 		t.Fatalf("replacement listener device = %q", got)
 	}

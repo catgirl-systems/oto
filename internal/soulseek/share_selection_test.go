@@ -13,9 +13,7 @@ func TestSelectUploadFilesCapturesExactIndexedFolder(t *testing.T) {
 	ctx := context.Background()
 	want := []string{"Music/album/disc/猫.flac", "Music/album/song"}
 	out, err := s.SelectUploadFiles(ctx, nil, `Music\album`)
-	if err != nil || !reflect.DeepEqual(out, want) {
-		t.Fatal(out, err)
-	}
+	failIf(t, err != nil || !reflect.DeepEqual(out, want), out, err)
 	selected, err := s.SelectUploadFiles(ctx, []string{`Music\album\song`, "Music/album/song"}, "")
 	if err != nil || !reflect.DeepEqual(selected, []string{"Music/album/song"}) {
 		t.Fatal(selected, err)
@@ -30,9 +28,7 @@ func TestSelectUploadFilesCapturesExactIndexedFolder(t *testing.T) {
 	}
 	s.files = append(s.files, ShareFile{Root: "Music", Path: "album/new"})
 	sortShareFiles(s.files)
-	if !reflect.DeepEqual(out, want) {
-		t.Fatal("captured selection changed")
-	}
+	failIf(t, !reflect.DeepEqual(out, want), "captured selection changed")
 	cancelled, cancel := context.WithCancel(ctx)
 	cancel()
 	if _, err := s.SelectUploadFiles(cancelled, nil, "Music"); err == nil {

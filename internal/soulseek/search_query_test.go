@@ -4,12 +4,8 @@ import "testing"
 
 func TestSearchQuerySyntaxAndValidation(t *testing.T) {
 	query, err := parseSearchQuery(`"live session" *radio -remix`)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if query.wire != "live session radio" {
-		t.Fatalf("wire query = %q", query.wire)
-	}
+	must(t, err)
+	failIfFmt(t, query.wire != "live session radio", "wire query = %q", query.wire)
 	if !query.matches(SearchResult{Username: "peer", Path: `Music\Live Session Radio.flac`}) {
 		t.Fatal("matching result rejected")
 	}
