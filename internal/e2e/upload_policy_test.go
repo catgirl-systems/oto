@@ -43,22 +43,16 @@ func TestCommunityUploadPolicyTerminalPersistence(t *testing.T) {
 		h.screen("preferences", text)
 	}
 	before, err := h.client.Status(context.Background())
-	if err != nil || before.Config.Uploads.PrioritizeBuddies || before.Config.Uploads.PrioritizePrivileged || before.Config.Uploads.ExemptBuddiesFromQueueLimits {
-		t.Fatal("unsaved draft changed daemon", err)
-	}
+	failIf(t, err != nil || before.Config.Uploads.PrioritizeBuddies || before.Config.Uploads.PrioritizePrivileged || before.Config.Uploads.ExemptBuddiesFromQueueLimits, "unsaved draft changed daemon", err)
 	h.command("send-keys", "-t", "preferences", "s")
 	h.screen("preferences", "Settings saved")
 	saved, err := config.Load(h.configPath)
-	if err != nil || !saved.Uploads.PrioritizeBuddies || !saved.Uploads.PrioritizePrivileged || !saved.Uploads.ExemptBuddiesFromQueueLimits {
-		t.Fatal("terminal preferences not persisted", saved.Uploads, err)
-	}
+	failIf(t, err != nil || !saved.Uploads.PrioritizeBuddies || !saved.Uploads.PrioritizePrivileged || !saved.Uploads.ExemptBuddiesFromQueueLimits, "terminal preferences not persisted", saved.Uploads, err)
 	h.command("kill-session", "-t", "preferences")
 	h.stopDaemon()
 	h.startDaemon()
 	after, err := h.client.Status(context.Background())
-	if err != nil || after.Config.Uploads != saved.Uploads {
-		t.Fatal("restart lost queue preferences", err)
-	}
+	failIf(t, err != nil || after.Config.Uploads != saved.Uploads, "restart lost queue preferences", err)
 	h.attach("restored", 80, 24)
 	h.screen("restored", "No matching results")
 	h.command("send-keys", "-t", "restored", "Tab", "Tab", "Tab", "Tab", "Tab", "Tab", "Tab", "Right", "Right", "Right", "Right")

@@ -64,14 +64,10 @@ func TestCommunityPrivilegeGiftTerminalConfirmation(t *testing.T) {
 	h.screen("gift", "Alice")
 	h.command("send-keys", "-t", "gift", "Tab", "Enter")
 	h.screen("gift", "Confirm privilege gift")
-	if gifts.Load() != 0 {
-		t.Fatal("preview sent gift")
-	}
+	failIf(t, gifts.Load() != 0, "preview sent gift")
 	h.command("send-keys", "-t", "gift", "Enter")
 	h.screen("gift", "Gift only after explicit confirmation")
-	if gifts.Load() != 0 {
-		t.Fatal("default cancel sent gift")
-	}
+	failIf(t, gifts.Load() != 0, "default cancel sent gift")
 	h.command("send-keys", "-t", "gift", "Enter")
 	h.screen("gift", "Confirm privilege gift")
 	h.command("send-keys", "-t", "gift", "Right", "Enter")
@@ -80,9 +76,7 @@ func TestCommunityPrivilegeGiftTerminalConfirmation(t *testing.T) {
 	h.command("send-keys", "-t", "gift", "r")
 	h.screen("gift", "Outcome: unknown")
 	h.command("send-keys", "-t", "gift", "Enter", "Enter")
-	if gifts.Load() != 1 {
-		t.Fatal("uncertain gift retried")
-	}
+	failIf(t, gifts.Load() != 1, "uncertain gift retried")
 	command := func(args ...string) daemon.CommandResult {
 		t.Helper()
 		cmd := exec.Command(binaryPath, append([]string{"command"}, args...)...)
@@ -104,9 +98,7 @@ func TestCommunityPrivilegeGiftTerminalConfirmation(t *testing.T) {
 		t.Fatal("headless balance", out)
 	}
 	preview := command("gift", "Alice", "1").Gift
-	if preview == nil || preview.State != "preview" || gifts.Load() != 1 {
-		t.Fatal("headless preview", preview)
-	}
+	failIf(t, preview == nil || preview.State != "preview" || gifts.Load() != 1, "headless preview", preview)
 	args := []string{"--confirm", "--request-id", preview.RequestID, "--revision", strconv.FormatUint(preview.Balance.Revision, 10), "--account", preview.Account, "--daemon", preview.Daemon, "--session", strconv.FormatUint(preview.Session, 10), "gift", "Alice", "1"}
 	if out := command(args...); out.Gift == nil || out.Gift.State != "unknown" {
 		t.Fatal("headless confirmation", out)
@@ -114,21 +106,13 @@ func TestCommunityPrivilegeGiftTerminalConfirmation(t *testing.T) {
 	if out := command(args...); out.Gift == nil || !out.Gift.Duplicate {
 		t.Fatal("headless reconciliation", out)
 	}
-	if gifts.Load() != 2 {
-		t.Fatal("headless gift duplicated", gifts.Load())
-	}
+	failIf(t, gifts.Load() != 2, "headless gift duplicated", gifts.Load())
 	alias := command("alias", "credits", "privileges").Alias
-	if alias == nil || alias.Revision == "" {
-		t.Fatal("alias was not created")
-	}
+	failIf(t, alias == nil || alias.Revision == "", "alias was not created")
 	aliases := command("aliases").Aliases
-	if aliases == nil || len(aliases.Aliases) != 1 || aliases.Aliases[0].Name != "credits" {
-		t.Fatal("alias listing", aliases)
-	}
+	failIf(t, aliases == nil || len(aliases.Aliases) != 1 || aliases.Aliases[0].Name != "credits", "alias listing", aliases)
 	page, err := h.client.CommunityAliases(context.Background(), daemon.CommunityAliasesRequest{CommunityIdentity: aliases.CommunityIdentity})
-	if err != nil || len(page.Aliases) != 1 {
-		t.Fatal("alias resource", page, err)
-	}
+	failIf(t, err != nil || len(page.Aliases) != 1, "alias resource", page, err)
 	if _, err := h.client.SetCommunityAlias(context.Background(), daemon.CommunityAliasRequest{CommunityIdentity: aliases.CommunityIdentity, Name: "credits", Expansion: "help", Revision: "stale"}); err == nil {
 		t.Fatal("stale alias edit accepted")
 	}
@@ -145,13 +129,9 @@ func TestCommunityPrivilegeGiftTerminalConfirmation(t *testing.T) {
 		if err := decoder.Decode(&result); err != nil {
 			t.Fatal(kind, err, string(data))
 		}
-		if kind == "help" && len(result.Help) < 2 || kind == "balance" && (result.Privileges == nil || !result.Privileges.Fresh) || kind == "preview" && (result.Gift == nil || result.Gift.State != "preview") {
-			t.Fatal(kind, result)
-		}
+		failIf(t, kind == "help" && len(result.Help) < 2 || kind == "balance" && (result.Privileges == nil || !result.Privileges.Fresh) || kind == "preview" && (result.Gift == nil || result.Gift.State != "preview"), kind, result)
 	}
-	if gifts.Load() != 2 {
-		t.Fatal("console implicitly confirmed a gift")
-	}
+	failIf(t, gifts.Load() != 2, "console implicitly confirmed a gift")
 	command("--confirm", "--request-id", "remove-credits", "--account", aliases.Account, "--daemon", aliases.Daemon, "--session", strconv.FormatUint(aliases.Session, 10), "unalias", "credits", alias.Revision)
 	if page := command("aliases").Aliases; page == nil || len(page.Aliases) != 0 {
 		t.Fatal("alias removal failed", page)

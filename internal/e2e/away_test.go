@@ -75,13 +75,9 @@ func TestCommunityAutoAwayUsesRealInputNotPolling(t *testing.T) {
 	h.screen("away-b", "No matching results")
 	ctx := context.Background()
 	summary, err := h.client.CommunitySummary(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	current, err := h.client.CommunityAwaySettings(ctx, summary.CommunityIdentity)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	req := daemon.CommunityAwaySettingsRequest{CommunityIdentity: summary.CommunityIdentity, Expected: current.Settings, Settings: current.Settings}
 	req.Settings.AutoAwaySeconds = 2
 	req.Settings.AutoReply = "back later"
@@ -111,29 +107,19 @@ func TestCommunityAutoAwayUsesRealInputNotPolling(t *testing.T) {
 		s, err := h.client.CommunitySummary(ctx)
 		return err == nil && !s.AutomaticAway && status.Load() == 2
 	})
-	if err := h.client.SetPresence(ctx, daemon.PresenceAway); err != nil {
-		t.Fatal(err)
-	}
+	must(t, h.client.SetPresence(ctx, daemon.PresenceAway))
 	before, err := h.client.CommunitySummary(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	h.command("send-keys", "-t", "away-a", "Down")
 	h.wait("manual away receives activity", func() bool {
 		s, err := h.client.CommunitySummary(ctx)
 		return err == nil && s.LastActivity.After(before.LastActivity)
 	})
 	time.Sleep(2200 * time.Millisecond) // Cross two daemon idle ticks; activity must never clear manual Away.
-	if replies.Load() != 2 {
-		t.Fatalf("expected one reply in each away period, got %d", replies.Load())
-	}
+	failIfFmt(t, replies.Load() != 2, "expected one reply in each away period, got %d", replies.Load())
 	now, err := h.client.CommunitySummary(ctx)
-	if err != nil || now.AutomaticAway || status.Load() != 1 {
-		t.Fatal("manual away overridden", now, err)
-	}
-	if err := h.client.SetPresence(ctx, daemon.PresenceOnline); err != nil {
-		t.Fatal(err)
-	}
+	failIf(t, err != nil || now.AutomaticAway || status.Load() != 1, "manual away overridden", now, err)
+	must(t, h.client.SetPresence(ctx, daemon.PresenceOnline))
 	req.Expected = req.Settings
 	req.Settings.AutoAwaySeconds = 0
 	if _, err := h.client.SetCommunityAwaySettings(ctx, req); err != nil {

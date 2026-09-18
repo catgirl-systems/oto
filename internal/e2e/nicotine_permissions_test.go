@@ -21,70 +21,48 @@ func verifyNicotineSharePermissions(t *testing.T, h *terminal, ctx context.Conte
 	t.Helper()
 	for _, access := range []string{"public", "buddy", "trusted"} {
 		root := t.TempDir()
-		if err := os.WriteFile(filepath.Join(root, "sample.txt"), []byte("local interoperability"), 0600); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := h.client.AddShare(ctx, config.Share{Name: access, Path: root, Access: access}); err != nil {
-			t.Fatal(err)
-		}
+		must(t, os.WriteFile(filepath.Join(root, "sample.txt"), []byte("local interoperability"), 0600))
+		_, err := h.client.AddShare(ctx, config.Share{Name: access, Path: root, Access: access})
+		must(t, err)
 	}
 	summary, err := h.client.CommunitySummary(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	id := summary.CommunityIdentity
 	sequence := 0
 	browse := func(public, locked []string) {
 		t.Helper()
 		sequence++
 		request := filepath.Join(state, "browse-request.json")
-		if err := os.WriteFile(request+".tmp", []byte(fmt.Sprint(sequence)), 0600); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.Rename(request+".tmp", request); err != nil {
-			t.Fatal(err)
-		}
+		must(t, os.WriteFile(request+".tmp", []byte(fmt.Sprint(sequence)), 0600))
+		must(t, os.Rename(request+".tmp", request))
 		response := filepath.Join(state, fmt.Sprintf("shares-%d.json", sequence))
 		h.wait("Nicotine tiered browse", func() bool { _, err := os.Stat(response); return err == nil })
 		data, err := os.ReadFile(response)
-		if err != nil {
-			t.Fatal(err)
-		}
+		must(t, err)
 		var got struct{ Public, Locked []string }
-		if err := json.Unmarshal(data, &got); err != nil {
-			t.Fatal(err)
-		}
-		if !slices.Equal(got.Public, public) || !slices.Equal(got.Locked, locked) {
-			t.Fatalf("Nicotine browse %d: public=%v locked=%v; want %v/%v", sequence, got.Public, got.Locked, public, locked)
-		}
+		must(t, json.Unmarshal(data, &got))
+		failIfFmt(t, !slices.Equal(got.Public, public) || !slices.Equal(got.Locked, locked), "Nicotine browse %d: public=%v locked=%v; want %v/%v", sequence, got.Public, got.Locked, public, locked)
 	}
 	access := func(name, tier string, reveal bool) {
 		t.Helper()
 		snapshot, err := h.client.Status(ctx)
-		if err != nil {
-			t.Fatal(err)
-		}
+		must(t, err)
 		for _, root := range snapshot.Shares {
 			if root.Name != name {
 				continue
 			}
-			if _, err := h.client.SetShareAccess(ctx, daemon.ShareAccessRequest{CommunityIdentity: id, Expected: root, Revision: snapshot.ShareIndexRevision, Access: tier, Reveal: reveal, Confirm: true}); err != nil {
-				t.Fatal(err)
-			}
+			_, err := h.client.SetShareAccess(ctx, daemon.ShareAccessRequest{CommunityIdentity: id, Expected: root, Revision: snapshot.ShareIndexRevision, Access: tier, Reveal: reveal, Confirm: true})
+			must(t, err)
 			return
 		}
 		t.Fatal("missing share root", name)
 	}
 	browse([]string{"public"}, nil)
 	buddy, err := h.client.SetCommunityBuddy(ctx, daemon.CommunityBuddyRequest{CommunityIdentity: id, Username: "reference", Confirm: true})
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	browse([]string{"buddy", "public"}, nil)
 	buddy, err = h.client.SetCommunityBuddy(ctx, daemon.CommunityBuddyRequest{CommunityIdentity: id, Username: "reference", Revision: &buddy.Buddy.Revision, Trusted: true, Confirm: true})
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	browse([]string{"buddy", "public", "trusted"}, nil)
 	if _, err := h.client.SetCommunityBuddy(ctx, daemon.CommunityBuddyRequest{CommunityIdentity: id, Username: "reference", Revision: &buddy.Buddy.Revision, Remove: true, Confirm: true}); err != nil {
 		t.Fatal(err)
@@ -95,21 +73,13 @@ func verifyNicotineSharePermissions(t *testing.T, h *terminal, ctx context.Conte
 	browse([]string{"public"}, []string{"buddy", "trusted"})
 	for _, rule := range []daemon.CommunityRule{{Action: "ban", Kind: "username", Value: "reference"}, {Action: "ban", Kind: "ip", Value: "127.0.0.1"}} {
 		page, err := h.client.CommunityRules(ctx, daemon.CommunityRulesRequest{CommunityIdentity: id})
-		if err != nil {
-			t.Fatal(err)
-		}
+		must(t, err)
 		page, err = h.client.SetCommunityRule(ctx, daemon.CommunityRuleRequest{CommunityIdentity: id, Revision: page.Revision, Rule: rule, Confirm: true})
-		if err != nil {
-			t.Fatal(err)
-		}
+		must(t, err)
 		browse(nil, nil)
 		page, err = h.client.CommunityRules(ctx, daemon.CommunityRulesRequest{CommunityIdentity: id})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if len(page.Rules) != 1 {
-			t.Fatal("unexpected local rules")
-		}
+		must(t, err)
+		failIf(t, len(page.Rules) != 1, "unexpected local rules")
 		if _, err := h.client.SetCommunityRule(ctx, daemon.CommunityRuleRequest{CommunityIdentity: id, Revision: page.Revision, Rule: page.Rules[0], Remove: true, Confirm: true}); err != nil {
 			t.Fatal(err)
 		}
@@ -139,33 +109,23 @@ func verifyNicotineSharePermissions(t *testing.T, h *terminal, ctx context.Conte
 	rules := func() daemon.CommunityRulesPage {
 		t.Helper()
 		page, err := h.client.CommunityRules(ctx, daemon.CommunityRulesRequest{CommunityIdentity: id})
-		if err != nil {
-			t.Fatal(err)
-		}
+		must(t, err)
 		return page
 	}
-	if len(rules().Rules) != 0 {
-		t.Fatal("paste submitted a rule")
-	}
+	failIf(t, len(rules().Rules) != 0, "paste submitted a rule")
 	h.command("send-keys", "-t", "permissions", "Enter")
 	h.screen("permissions", "Confirm privacy change")
 	h.command("send-keys", "-t", "permissions", "Enter")
 	h.screen("permissions", "Privacy rule editor")
-	if len(rules().Rules) != 0 {
-		t.Fatal("default confirmation mutated privacy")
-	}
+	failIf(t, len(rules().Rules) != 0, "default confirmation mutated privacy")
 	h.command("send-keys", "-t", "permissions", "Enter", "Right", "Enter")
 	h.screen("permissions", "Privacy rules · page")
 	h.wait("terminal privacy save", func() bool { return len(rules().Rules) == 1 })
-	if rules().Rules[0].Message != "q/?猫" {
-		t.Fatal("paste changed rejection message")
-	}
+	failIf(t, rules().Rules[0].Message != "q/?猫", "paste changed rejection message")
 	browse(nil, nil)
 	h.command("send-keys", "-t", "permissions", "d", "Enter")
 	h.screen("permissions", "Privacy rules · page")
-	if len(rules().Rules) != 1 {
-		t.Fatal("default delete confirmed")
-	}
+	failIf(t, len(rules().Rules) != 1, "default delete confirmed")
 	h.command("send-keys", "-t", "permissions", "d", "Right", "Enter")
 	h.wait("terminal privacy removal", func() bool { return len(rules().Rules) == 0 })
 	browse([]string{"buddy", "public", "trusted"}, nil)

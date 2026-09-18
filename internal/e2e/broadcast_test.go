@@ -62,9 +62,8 @@ func TestCommunityBroadcastCommandsAndPacedOutcomes(t *testing.T) {
 		return err == nil && summary.Connected
 	})
 	for _, name := range []string{"Alice", "Bob"} {
-		if _, err := h.client.SetCommunityBuddy(ctx, daemon.CommunityBuddyRequest{CommunityIdentity: summary.CommunityIdentity, Username: name}); err != nil {
-			t.Fatal(err)
-		}
+		_, err := h.client.SetCommunityBuddy(ctx, daemon.CommunityBuddyRequest{CommunityIdentity: summary.CommunityIdentity, Username: name})
+		must(t, err)
 	}
 	command := func(args ...string) daemon.CommandResult {
 		t.Helper()
@@ -75,15 +74,11 @@ func TestCommunityBroadcastCommandsAndPacedOutcomes(t *testing.T) {
 			t.Fatalf("command failed: %s: %v", data, err)
 		}
 		var out daemon.CommandResult
-		if err := json.Unmarshal(data, &out); err != nil {
-			t.Fatal(err)
-		}
+		must(t, json.Unmarshal(data, &out))
 		return out
 	}
 	preview := command("broadcast", "buddies", "hello 世界", "Alice", "Bob").Broadcast
-	if preview == nil || preview.Total != 2 || preview.Text != "hello 世界" || sent.Load() != 0 {
-		t.Fatal(preview, sent.Load())
-	}
+	failIf(t, preview == nil || preview.Total != 2 || preview.Text != "hello 世界" || sent.Load() != 0, preview, sent.Load())
 	if out := command("broadcast-send", preview.RequestID, preview.Token); out.Broadcast == nil || out.Broadcast.State != "preview" || sent.Load() != 0 {
 		t.Fatal("implicit confirmation", out)
 	}
@@ -91,9 +86,7 @@ func TestCommunityBroadcastCommandsAndPacedOutcomes(t *testing.T) {
 	command(args...)
 	h.wait("two paced messages", func() bool { return sent.Load() == 2 })
 	first, second := <-arrivals, <-arrivals
-	if second.Sub(first) < time.Second {
-		t.Fatal("unpaced broadcast")
-	}
+	failIf(t, second.Sub(first) < time.Second, "unpaced broadcast")
 	h.wait("persisted per-recipient outcomes", func() bool {
 		out, err := h.client.CommunityBroadcast(ctx, preview.CommunityIdentity, preview.RequestID, 0)
 		return err == nil && out.State == "completed" && out.Recipients[0].State == "sent" && out.Recipients[1].State == "sent"
@@ -110,9 +103,7 @@ func TestCommunityBroadcastCommandsAndPacedOutcomes(t *testing.T) {
 	h.command("send-keys", "-t", "broadcast", "Enter")
 	h.screen("broadcast", "Command result")
 	h.screen("broadcast", "Broadcast · buddies · completed")
-	if sent.Load() != 2 {
-		t.Fatal("broadcast repeated", sent.Load())
-	}
+	failIf(t, sent.Load() != 2, "broadcast repeated", sent.Load())
 	h.command("send-keys", "-t", "broadcast", "Escape")
 	h.screen("broadcast", "Enter send")
 	h.command("send-keys", "-t", "broadcast", "-l", `/broadcast buddies "hello 世界" Alice Bob`)
@@ -125,16 +116,12 @@ func TestCommunityBroadcastCommandsAndPacedOutcomes(t *testing.T) {
 			requestID = strings.TrimSpace(strings.TrimPrefix(line, "Request: "))
 		}
 	}
-	if requestID == "" {
-		t.Fatal("missing broadcast request ID", screen)
-	}
+	failIf(t, requestID == "", "missing broadcast request ID", screen)
 	h.command("send-keys", "-t", "broadcast", "s")
 	h.screen("broadcast", "[Cancel]")
 	h.command("send-keys", "-t", "broadcast", "Enter")
 	h.screen("broadcast", "Broadcast · buddies · preview")
-	if sent.Load() != 2 {
-		t.Fatal("default confirmation sent messages")
-	}
+	failIf(t, sent.Load() != 2, "default confirmation sent messages")
 	h.command("send-keys", "-t", "broadcast", "s")
 	h.screen("broadcast", "[Cancel]")
 	h.command("send-keys", "-t", "broadcast", "Right", "Enter")

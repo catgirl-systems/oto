@@ -65,9 +65,7 @@ func TestCommunityComposerCommands(t *testing.T) {
 		h.wait("outgoing "+want, func() bool {
 			select {
 			case got := <-sent:
-				if got != want {
-					t.Fatalf("got %q want %q", got, want)
-				}
+				failIfFmt(t, got != want, "got %q want %q", got, want)
 				return true
 			default:
 				return false
@@ -97,13 +95,9 @@ func TestCommunityComposerCommands(t *testing.T) {
 	expect("/literal")
 	ctx := context.Background()
 	summary, err := h.client.CommunitySummary(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	settings, err := h.client.CommunityTextSettings(ctx, summary.CommunityIdentity)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	enter(`/text-tools ` + settings.Revision + ` '{"substitutions":[{"from":"replace-me","to":"replaced 世界"}]}'`)
 	h.screen("commands", "Command result")
 	h.screen("commands", "substitutions")
@@ -112,9 +106,7 @@ func TestCommunityComposerCommands(t *testing.T) {
 	enter("replace-me")
 	expect("replaced 世界")
 	settings, err = h.client.CommunityTextSettings(ctx, summary.CommunityIdentity)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	settings.Settings.Substitutions[0].To = "second replacement"
 	if _, err = h.client.SetCommunityTextSettings(ctx, settings); err != nil {
 		t.Fatal(err)
@@ -149,9 +141,7 @@ func TestCommunityComposerCommands(t *testing.T) {
 	h.screen("commands", "[Cancel]")
 	h.command("send-keys", "-t", "commands", "Enter")
 	unchanged, err := h.client.CommunityTextSettings(ctx, summary.CommunityIdentity)
-	if err != nil || len(unchanged.Settings.Keywords) != 0 {
-		t.Fatal("default save changed settings", err)
-	}
+	failIf(t, err != nil || len(unchanged.Settings.Keywords) != 0, "default save changed settings", err)
 	h.command("send-keys", "-t", "commands", "s", "Right", "Enter")
 	h.wait("text editor saved", func() bool {
 		got, err := h.client.CommunityTextSettings(ctx, summary.CommunityIdentity)

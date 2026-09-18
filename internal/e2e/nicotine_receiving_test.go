@@ -18,20 +18,14 @@ import (
 func verifyNicotineReceiving(t *testing.T, h *terminal, ctx context.Context, state string) {
 	t.Helper()
 	summary, err := h.client.CommunitySummary(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	id := summary.CommunityIdentity
 	send := func(sequence int, files []string) {
 		t.Helper()
 		data, _ := json.Marshal(map[string]any{"sequence": sequence, "files": files})
 		path := filepath.Join(state, "send-request.json")
-		if err := os.WriteFile(path+".tmp", data, 0600); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.Rename(path+".tmp", path); err != nil {
-			t.Fatal(err)
-		}
+		must(t, os.WriteFile(path+".tmp", data, 0600))
+		must(t, os.Rename(path+".tmp", path))
 	}
 	rejected := func(sequence int) {
 		t.Helper()
@@ -55,20 +49,14 @@ func verifyNicotineReceiving(t *testing.T, h *terminal, ctx context.Context, sta
 	downloads := func() []daemon.Download {
 		t.Helper()
 		snapshot, err := h.client.Status(ctx)
-		if err != nil {
-			t.Fatal(err)
-		}
+		must(t, err)
 		return snapshot.Downloads
 	}
 	send(1, []string{"blocked.txt"})
 	rejected(1)
-	if len(downloads()) != 0 {
-		t.Fatal("default-off offer admitted")
-	}
+	failIf(t, len(downloads()) != 0, "default-off offer admitted")
 	before, err := h.client.ReceivingSettings(ctx, id)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	root := filepath.Join(h.root, "received")
 	settings := config.Receiving{Mode: "users", Users: []string{"reference"}, Directory: root}
 	h.attach("receiving", 120, 40)
@@ -88,9 +76,7 @@ func verifyNicotineReceiving(t *testing.T, h *terminal, ctx context.Context, sta
 	h.command("send-keys", "-t", "receiving", "Enter")
 	h.screen("receiving", "Directory:")
 	current, err := h.client.ReceivingSettings(ctx, id)
-	if err != nil || current.Settings.Mode != before.Settings.Mode {
-		t.Fatal("terminal implicitly enabled receiving", err)
-	}
+	failIf(t, err != nil || current.Settings.Mode != before.Settings.Mode, "terminal implicitly enabled receiving", err)
 	h.command("send-keys", "-t", "receiving", "Enter")
 	h.screen("receiving", "[Cancel]")
 	h.command("send-keys", "-t", "receiving", "Right", "Enter")
@@ -100,12 +86,8 @@ func verifyNicotineReceiving(t *testing.T, h *terminal, ctx context.Context, sta
 		return err == nil && current.Settings.Mode == "users" && current.Settings.Directory == root && len(current.Settings.Users) == 1 && !current.Settings.CompletionHooks
 	})
 	occupied := filepath.Join(root, "reference", "Reference", "Album", "one.txt")
-	if err := os.MkdirAll(filepath.Dir(occupied), 0700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(occupied, []byte("keep existing"), 0600); err != nil {
-		t.Fatal(err)
-	}
+	must(t, os.MkdirAll(filepath.Dir(occupied), 0700))
+	must(t, os.WriteFile(occupied, []byte("keep existing"), 0600))
 	send(2, []string{"one.txt", "世界.txt", "empty"})
 	h.wait("durable received folder", func() bool {
 		rows := downloads()
@@ -120,43 +102,31 @@ func verifyNicotineReceiving(t *testing.T, h *terminal, ctx context.Context, sta
 		return true
 	})
 	for _, d := range downloads() {
-		if !strings.HasPrefix(d.ID, "d-received-") || d.StatsAccount != id.Account || d.DownloadDir != root {
-			t.Fatal("wrong received ownership", d)
-		}
+		failIf(t, !strings.HasPrefix(d.ID, "d-received-") || d.StatsAccount != id.Account || d.DownloadDir != root, "wrong received ownership", d)
 		name := filepath.Base(strings.ReplaceAll(d.Filename, "\\", "/"))
 		want := "reference offer " + name
 		if name == "empty" {
 			want = ""
 		}
 		data, err := os.ReadFile(filepath.Join(d.DownloadDir, d.Destination))
-		if err != nil || string(data) != want {
-			t.Fatal("wrong received bytes", d, err)
-		}
+		failIf(t, err != nil || string(data) != want, "wrong received bytes", d, err)
 	}
 	data, err := os.ReadFile(occupied)
-	if err != nil || string(data) != "keep existing" {
-		t.Fatal("received file overwrote collision", err)
-	}
+	failIf(t, err != nil || string(data) != "keep existing", "received file overwrote collision", err)
 	send(3, []string{"one.txt", "世界.txt", "empty"})
 	rejected(3)
-	if len(downloads()) != 3 {
-		t.Fatal("duplicate offer created new downloads")
-	}
+	failIf(t, len(downloads()) != 3, "duplicate offer created new downloads")
 	settings.Mode = "off"
 	if _, err := h.client.SetReceivingSettings(ctx, daemon.ReceivingSettingsRequest{CommunityIdentity: id, Expected: current.Settings, Settings: settings, Confirm: true}); err != nil {
 		t.Fatal(err)
 	}
 	send(4, []string{"revoked.txt"})
 	rejected(4)
-	if len(downloads()) != 3 {
-		t.Fatal("revoked consent accepted offer")
-	}
+	failIf(t, len(downloads()) != 3, "revoked consent accepted offer")
 	setMode := func(mode string) {
 		t.Helper()
 		before, err := h.client.ReceivingSettings(ctx, id)
-		if err != nil {
-			t.Fatal(err)
-		}
+		must(t, err)
 		next := before.Settings
 		next.Mode = mode
 		next.Users = nil
@@ -188,23 +158,17 @@ func verifyNicotineReceiving(t *testing.T, h *terminal, ctx context.Context, sta
 	setMode("trusted")
 	accepted(6, "trusted.txt", 5)
 	buddies, err := h.client.CommunityBuddies(ctx, daemon.CommunityBuddiesRequest{CommunityIdentity: id, Username: "reference"})
-	if err != nil || len(buddies.Buddies) != 1 {
-		t.Fatal("missing reference buddy", err)
-	}
+	failIf(t, err != nil || len(buddies.Buddies) != 1, "missing reference buddy", err)
 	buddy := buddies.Buddies[0]
 	if _, err := h.client.SetCommunityBuddy(ctx, daemon.CommunityBuddyRequest{CommunityIdentity: id, Username: buddy.Username, Revision: &buddy.Revision, Note: buddy.Note, NotifyOnline: buddy.NotifyOnline, Priority: buddy.Priority, Trusted: false, Confirm: true}); err != nil {
 		t.Fatal(err)
 	}
 	send(7, []string{"untrusted.txt"})
 	rejected(7)
-	if len(downloads()) != 5 {
-		t.Fatal("trusted receiving accepted untrusted buddy")
-	}
+	failIf(t, len(downloads()) != 5, "trusted receiving accepted untrusted buddy")
 	setMode("users")
 	cfg, err := config.Load(h.configPath)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	cfg.Downloads.FiltersEnabled = true
 	cfg.Downloads.FilterPatterns = []string{"*.blocked"}
 	if _, err := h.client.UpdateConfig(ctx, cfg); err != nil {
@@ -213,16 +177,12 @@ func verifyNicotineReceiving(t *testing.T, h *terminal, ctx context.Context, sta
 	send(8, []string{"filtered.blocked"})
 	rejected(8)
 	rows := downloads()
-	if len(rows) != 6 || rows[5].State != "filtered" || rows[5].Offset != 0 {
-		t.Fatal("received filter bypassed", rows)
-	}
+	failIf(t, len(rows) != 6 || rows[5].State != "filtered" || rows[5].Offset != 0, "received filter bypassed", rows)
 	if _, err := os.Stat(filepath.Join(rows[5].DownloadDir, rows[5].Destination)); !os.IsNotExist(err) {
 		t.Fatal("filtered file written", err)
 	}
 	cfg, err = config.Load(h.configPath)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	for i := range cfg.Bandwidth.Profiles {
 		cfg.Bandwidth.Profiles[i].DownloadSpeedLimitKiB = 32
 	}
@@ -247,19 +207,13 @@ func verifyNicotineReceiving(t *testing.T, h *terminal, ctx context.Context, sta
 	h.stopDaemon()
 	partPath := filepath.Join(h.root, "oto", "incomplete", receiveID+".part")
 	partial, err := os.ReadFile(partPath)
-	if err != nil || len(partial) == 0 || len(partial) >= len("resume-test\n")*65536 {
-		t.Fatal("received partial not checkpointed", len(partial), err)
-	}
+	failIf(t, err != nil || len(partial) == 0 || len(partial) >= len("resume-test\n")*65536, "received partial not checkpointed", len(partial), err)
 	cfg, err = config.Load(h.configPath)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	for i := range cfg.Bandwidth.Profiles {
 		cfg.Bandwidth.Profiles[i].DownloadSpeedLimitKiB = 0
 	}
-	if err := cfg.Save(h.configPath); err != nil {
-		t.Fatal(err)
-	}
+	must(t, cfg.Save(h.configPath))
 	h.startDaemon()
 	h.wait("received transfer resumed after daemon restart", func() bool {
 		for _, d := range downloads() {
@@ -272,12 +226,8 @@ func verifyNicotineReceiving(t *testing.T, h *terminal, ctx context.Context, sta
 	for _, d := range downloads() {
 		if d.ID == receiveID {
 			data, err := os.ReadFile(filepath.Join(d.DownloadDir, d.Destination))
-			if err != nil || string(data) != strings.Repeat("resume-test\n", 65536) {
-				t.Fatal("resumed received bytes changed", err)
-			}
+			failIf(t, err != nil || string(data) != strings.Repeat("resume-test\n", 65536), "resumed received bytes changed", err)
 		}
 	}
-	if len(downloads()) != 7 {
-		t.Fatal("restart duplicated receiving admission")
-	}
+	failIf(t, len(downloads()) != 7, "restart duplicated receiving admission")
 }

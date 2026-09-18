@@ -15,21 +15,14 @@ import (
 func verifyNicotineSharedSend(t *testing.T, h *terminal, ctx context.Context, state string) {
 	t.Helper()
 	root := t.TempDir()
-	if err := os.Mkdir(filepath.Join(root, "Album"), 0700); err != nil {
-		t.Fatal(err)
-	}
+	must(t, os.Mkdir(filepath.Join(root, "Album"), 0700))
 	for _, name := range []string{"blocked", "Album/one.txt", "Album/世界.txt"} {
-		if err := os.WriteFile(filepath.Join(root, filepath.FromSlash(name)), []byte("manual reference "+name), 0600); err != nil {
-			t.Fatal(err)
-		}
+		must(t, os.WriteFile(filepath.Join(root, filepath.FromSlash(name)), []byte("manual reference "+name), 0600))
 	}
-	if _, err := h.client.AddShare(ctx, config.Share{Name: "manual", Path: root}); err != nil {
-		t.Fatal(err)
-	}
+	_, err := h.client.AddShare(ctx, config.Share{Name: "manual", Path: root})
+	must(t, err)
 	summary, err := h.client.CommunitySummary(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	id := summary.CommunityIdentity
 	submit := func(request daemon.SharedSendRequest, want int) daemon.SharedSendPage {
 		t.Helper()
@@ -41,13 +34,10 @@ func verifyNicotineSharedSend(t *testing.T, h *terminal, ctx context.Context, st
 			page, err = h.client.PreviewSharedSend(ctx, request)
 			return err == nil && page.Total == want
 		})
-		if page.Eligible != want {
-			t.Fatal("unexpected sender permission failure", page)
-		}
+		failIf(t, page.Eligible != want, "unexpected sender permission failure", page)
 		action := daemon.SharedSendAction{CommunityIdentity: id, RequestID: page.RequestID, Token: page.Token, Action: "send", Confirm: true}
-		if _, err := h.client.ActSharedSend(ctx, action); err != nil {
-			t.Fatal(err)
-		}
+		_, err := h.client.ActSharedSend(ctx, action)
+		must(t, err)
 		h.wait("reference shared-send outcomes", func() bool {
 			var err error
 			page, err = h.client.SharedSend(ctx, id, request.RequestID, 0)
@@ -64,18 +54,12 @@ func verifyNicotineSharedSend(t *testing.T, h *terminal, ctx context.Context, st
 		return page
 	}
 	denied := submit(daemon.SharedSendRequest{RequestID: "reference-reject", Files: []string{`manual\blocked`}}, 1)
-	if denied.Files[0].State != "failed" {
-		t.Fatal("Nicotine default-off receiving accepted offer", denied)
-	}
-	if err := os.WriteFile(filepath.Join(state, "enable-receiving"), nil, 0600); err != nil {
-		t.Fatal(err)
-	}
+	failIf(t, denied.Files[0].State != "failed", "Nicotine default-off receiving accepted offer", denied)
+	must(t, os.WriteFile(filepath.Join(state, "enable-receiving"), nil, 0600))
 	h.wait("reference explicitly enables buddy receiving", func() bool { _, err := os.Stat(filepath.Join(state, "receiving-ready.json")); return err == nil })
 	accepted := submit(daemon.SharedSendRequest{RequestID: "reference-folder", Folder: `manual\Album`}, 2)
 	for _, file := range accepted.Files {
-		if file.State != "completed" || file.UploadID == "" {
-			t.Fatal("reference did not receive folder", accepted)
-		}
+		failIf(t, file.State != "completed" || file.UploadID == "", "reference did not receive folder", accepted)
 	}
 	for _, name := range []string{"one.txt", "世界.txt"} {
 		h.wait("reference received exact file bytes", func() bool {

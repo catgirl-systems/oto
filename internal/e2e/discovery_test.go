@@ -130,25 +130,19 @@ func TestCommunityTerminalDiscoveryAndProfiles(t *testing.T) {
 	identity := func() daemon.CommunityIdentity {
 		t.Helper()
 		s, err := h.client.CommunitySummary(ctx)
-		if err != nil {
-			t.Fatal(err)
-		}
+		must(t, err)
 		return s.CommunityIdentity
 	}
 	interests := func() daemon.CommunityInterestsPage {
 		t.Helper()
 		p, err := h.client.CommunityInterests(ctx, daemon.CommunityInterestsRequest{CommunityIdentity: identity()})
-		if err != nil {
-			t.Fatal(err)
-		}
+		must(t, err)
 		return p
 	}
 	self := func() daemon.CommunitySelfProfile {
 		t.Helper()
 		p, err := h.client.CommunitySelfProfile(ctx, identity())
-		if err != nil {
-			t.Fatal(err)
-		}
+		must(t, err)
 		return p
 	}
 	keys := func(name string, key ...string) {
@@ -176,9 +170,7 @@ func TestCommunityTerminalDiscoveryAndProfiles(t *testing.T) {
 	h.command("set-buffer", "--", "TeChNo")
 	h.command("paste-buffer", "-p", "-t", "first")
 	h.screen("first", "TeChNo")
-	if len(interests().Interests) != 0 {
-		t.Fatal("paste submitted interest")
-	}
+	failIf(t, len(interests().Interests) != 0, "paste submitted interest")
 	keys("first", "Enter")
 	h.wait("normalized like written", func() bool { return count(51) == 1 })
 	h.screen("first", "techno (like · sent)")
@@ -189,9 +181,7 @@ func TestCommunityTerminalDiscoveryAndProfiles(t *testing.T) {
 	keys("first", "D")
 	h.screen("first", "[Cancel]")
 	keys("first", "Enter")
-	if len(interests().Interests) != 1 {
-		t.Fatal("Cancel removed interest")
-	}
+	failIf(t, len(interests().Interests) != 1, "Cancel removed interest")
 	// Each frontend keeps its own description edit, with an explicit stale-edit conflict.
 	mode("first", 7)
 	mode("second", 7)
@@ -200,9 +190,7 @@ func TestCommunityTerminalDiscoveryAndProfiles(t *testing.T) {
 	h.command("set-buffer", "--", "q/?猫😀\nline")
 	h.command("paste-buffer", "-p", "-t", "first")
 	h.screen("first", "q/?猫😀↵line")
-	if self().Description != "" {
-		t.Fatal("description paste submitted")
-	}
+	failIf(t, self().Description != "", "description paste submitted")
 	for _, size := range [][2]int{{80, 24}, {40, 16}, {20, 6}, {120, 40}} {
 		h.command("resize-window", "-t", "first", "-x", fmt.Sprint(size[0]), "-y", fmt.Sprint(size[1]))
 		h.wait("resized description editor", func() bool {
@@ -287,9 +275,7 @@ func TestCommunityTerminalDiscoveryAndProfiles(t *testing.T) {
 	keys("first", "Enter", "Right", "Enter")
 	h.screen("first", "Saved profile picture")
 	data, err := os.ReadFile(path)
-	if err != nil || !bytes.HasPrefix(data, []byte("\x89PNG\r\n\x1a\n")) {
-		t.Fatal("picture export", err)
-	}
+	failIf(t, err != nil || !bytes.HasPrefix(data, []byte("\x89PNG\r\n\x1a\n")), "picture export", err)
 	// A failed explicit refresh retains useful description, picture and server metadata.
 	failProfile.Store(true)
 	before := profiles.Load()
@@ -310,9 +296,7 @@ func TestCommunityTerminalDiscoveryAndProfiles(t *testing.T) {
 	h.wait("interest replay after restart", func() bool { return count(117) == 2 })
 	h.screen("first", "unsaved")
 	h.screen("second", "猫😀")
-	if self().Description != "q/?猫😀\nline" || len(interests().Interests) != 1 || interests().Interests[0].Opinion != "dislike" {
-		t.Fatal("description/interest restart persistence")
-	}
+	failIf(t, self().Description != "q/?猫😀\nline" || len(interests().Interests) != 1 || interests().Interests[0].Opinion != "dislike", "description/interest restart persistence")
 	keys("first", "Escape")
 	h.screen("first", "Description:")
 	keys("first", "q")
@@ -325,20 +309,12 @@ func TestCommunityTerminalDiscoveryAndProfiles(t *testing.T) {
 	keys("second", "Right", "Enter")
 	h.wait("interest removal written", func() bool { return count(118) == 1 })
 	h.screen("second", "No interests saved.")
-	if len(interests().Interests) != 0 {
-		t.Fatal("confirmed removal retained interest")
-	}
+	failIf(t, len(interests().Interests) != 0, "confirmed removal retained interest")
 	// The other frontend's retained edit never entered daemon state or diagnostics.
-	if strings.Contains(self().Description, "unsaved") {
-		t.Fatal("unsaved draft persisted")
-	}
+	failIf(t, strings.Contains(self().Description, "unsaved"), "unsaved draft persisted")
 	logs, err := os.ReadFile(filepath.Join(h.root, "daemon.log"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	for _, private := range []string{"q/?猫", "other frontend", "hello 世界", " unsaved"} {
-		if bytes.Contains(logs, []byte(private)) {
-			t.Fatal("profile content leaked into diagnostics")
-		}
+		failIf(t, bytes.Contains(logs, []byte(private)), "profile content leaked into diagnostics")
 	}
 }
