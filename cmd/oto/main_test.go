@@ -13,9 +13,7 @@ func TestStartChildStopsWhenContextIsCancelled(t *testing.T) {
 	t.Setenv("XDG_RUNTIME_DIR", t.TempDir())
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	script := filepath.Join(t.TempDir(), "child")
-	if err := os.WriteFile(script, []byte("#!/bin/sh\nsleep 30\n"), 0700); err != nil {
-		t.Fatal(err)
-	}
+	must(t, os.WriteFile(script, []byte("#!/bin/sh\nsleep 30\n"), 0700))
 	old := executable
 	executable = func() (string, error) { return script, nil }
 	t.Cleanup(func() { executable = old })
@@ -24,9 +22,7 @@ func TestStartChildStopsWhenContextIsCancelled(t *testing.T) {
 	time.AfterFunc(50*time.Millisecond, cancel)
 	started := time.Now()
 	cmd, keepAlive, err := startChild(ctx, filepath.Join(t.TempDir(), "config.json"))
-	if cmd != nil || keepAlive != nil || !errors.Is(err, context.Canceled) {
-		t.Fatalf("startChild = (%v, %v, %v)", cmd, keepAlive, err)
-	}
+	failIfFmt(t, cmd != nil || keepAlive != nil || !errors.Is(err, context.Canceled), "startChild = (%v, %v, %v)", cmd, keepAlive, err)
 	if elapsed := time.Since(started); elapsed > time.Second {
 		t.Fatalf("cancel took %v", elapsed)
 	}
@@ -34,13 +30,9 @@ func TestStartChildStopsWhenContextIsCancelled(t *testing.T) {
 
 func TestParseDaemonShareRescanDelay(t *testing.T) {
 	options, err := parseDaemonOptions(nil)
-	if err != nil || options.shareScanDelay != 5*time.Minute {
-		t.Fatalf("default delay: %v %v", options.shareScanDelay, err)
-	}
+	failIfFmt(t, err != nil || options.shareScanDelay != 5*time.Minute, "default delay: %v %v", options.shareScanDelay, err)
 	options, err = parseDaemonOptions([]string{"--share-rescan-delay", "0"})
-	if err != nil || options.shareScanDelay != 0 {
-		t.Fatalf("disabled delay: %v %v", options.shareScanDelay, err)
-	}
+	failIfFmt(t, err != nil || options.shareScanDelay != 0, "disabled delay: %v %v", options.shareScanDelay, err)
 	for _, args := range [][]string{{"--share-rescan-delay", "-1s"}, {"--share-rescan-delay", "later"}} {
 		if _, err := parseDaemonOptions(args); err == nil {
 			t.Fatalf("accepted invalid delay %q", args[1])
@@ -50,13 +42,9 @@ func TestParseDaemonShareRescanDelay(t *testing.T) {
 
 func TestParseDaemonListenPortFile(t *testing.T) {
 	options, err := parseDaemonOptions([]string{"--listen-port-file", "/run/oto/port", "--listen-port-reconcile-interval", "7s"})
-	if err != nil || options.listenPortFile != "/run/oto/port" || options.listenPortReconcileInterval != 7*time.Second {
-		t.Fatalf("listen port options: %+v %v", options, err)
-	}
+	failIfFmt(t, err != nil || options.listenPortFile != "/run/oto/port" || options.listenPortReconcileInterval != 7*time.Second, "listen port options: %+v %v", options, err)
 	options, err = parseDaemonOptions([]string{"--listen-port-reconcile-interval", "0"})
-	if err != nil || options.listenPortReconcileInterval != 0 {
-		t.Fatalf("disabled reconciliation: %+v %v", options, err)
-	}
+	failIfFmt(t, err != nil || options.listenPortReconcileInterval != 0, "disabled reconciliation: %+v %v", options, err)
 	for _, args := range [][]string{{"--listen-port-reconcile-interval", "-1s"}, {"--listen-port-reconcile-interval", "later"}} {
 		if _, err := parseDaemonOptions(args); err == nil {
 			t.Fatalf("accepted invalid interval %q", args[1])
