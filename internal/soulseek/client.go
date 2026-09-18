@@ -1603,9 +1603,7 @@ func (c *Client) serveDistributed(peer net.Conn, username string) {
 	_ = WriteDistributed(peer, DistributedMessage{Command: DistributedBranchLevelCommand, Payload: level.MarshalBinary()})
 	rootPayload, _ := DistributedBranchRoot(root).MarshalBinary()
 	_ = WriteDistributed(peer, DistributedMessage{Command: DistributedBranchRootCommand, Payload: rootPayload})
-	writeDone := make(chan struct{})
 	go func() {
-		defer close(writeDone)
 		for message := range messages {
 			if WriteDistributed(peer, message) != nil {
 				return
