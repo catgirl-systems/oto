@@ -178,7 +178,12 @@ func (m model) mainView() string {
 		return m.compactView()
 	}
 
-	left := styled("oto", lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#CBA6F7"))) + muted("  Soulseek for your terminal")
+	left := styled("oto", lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#CBA6F7")))
+	if down, up := m.transferSpeeds(); down > 0 || up > 0 {
+		left += muted(fmt.Sprintf("  ↓ %s/s  ↑ %s/s", formatBytes(down), formatBytes(up)))
+	} else {
+		left += muted("  Soulseek for your terminal")
+	}
 	header := spread(left, m.statusView(), m.width-2)
 	hs := lipgloss.NewStyle().Width(m.width).Padding(0, 1)
 	if colorsEnabled() {
@@ -214,6 +219,21 @@ func (m model) mainView() string {
 
 	parts := []string{header, tabLine, panel, m.errorView(), m.footerView()}
 	return strings.Join(parts, "\n")
+}
+
+func (m model) transferSpeeds() (uint64, uint64) {
+	var down, up uint64
+	for _, t := range m.transfers {
+		if t.state != "running" {
+			continue
+		}
+		if t.direction == "upload" {
+			up += t.speed
+		} else {
+			down += t.speed
+		}
+	}
+	return down, up
 }
 
 func (m model) compactView() string {
@@ -359,14 +379,14 @@ func (m model) uploadConfirmView() string {
 }
 
 func (m model) helpView() string {
-	var b strings.Builder
-	b.WriteString(accent("Keyboard"))
+	rows := []string{accent("Keyboard")}
 	groups := []struct {
 		title string
 		rows  [][2]string
 	}{
 		{"Navigation", [][2]string{
 			{"tab / shift+tab", "switch workspace"},
+			{"1 2 … 8", "jump to a workspace"},
 			{"↑ ↓  or  j k", "move selection / edit history"},
 			{"page up/down", "move by a page"},
 			{"← →", "expand / collapse; change Settings section"},
@@ -446,13 +466,20 @@ func (m model) helpView() string {
 		}},
 	}
 	for _, group := range groups {
-		b.WriteString("\n\n" + muted(strings.ToUpper(group.title)) + "\n")
+		rows = append(rows, "", muted(strings.ToUpper(group.title)))
 		for _, row := range group.rows {
-			fmt.Fprintf(&b, "%-20s %s\n", strong(row[0]), row[1])
+			rows = append(rows, fmt.Sprintf("%-20s %s", strong(row[0]), row[1]))
 		}
 	}
+	visible := max(4, m.height-8)
+	scroll := max(0, min(m.helpScroll, len(rows)-visible))
+	window := []string{strong("oto controls") + muted("  ·  ↑↓ scroll  ·  ? / esc close")}
+	window = append(window, rows[scroll:min(len(rows), scroll+visible)]...)
+	if scroll+visible < len(rows) {
+		window = append(window, muted("↓ more"))
+	}
 	cardWidth := max(34, min(72, m.width-4))
-	card := panelStyle().Width(cardWidth).Padding(1, 2).Render(b.String())
+	card := panelStyle().Width(cardWidth).Padding(1, 2).Render(strings.Join(window, "\n"))
 	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, card)
 }
 
@@ -734,6 +761,9 @@ func (m model) footerHints() []string {
 	switch m.workspace {
 	case workspaceSearch:
 		hints := []string{"/ search", "U user actions", "f filter", "w wishlist"}
+		if len(m.searchTabs) > 1 {
+			hints = append(hints, "ctrl+pgup/pgdn tab")
+		}
 		_, node := m.searchTree.node(m.cursor)
 		if node == nil {
 			return hints
@@ -753,6 +783,9 @@ func (m model) footerHints() []string {
 			return []string{"enter open", "r refresh"}
 		}
 		hints := []string{"U user actions", "s save list", "r refresh"}
+		if len(m.browseTabs) > 1 {
+			hints = append(hints, "ctrl+pgup/pgdn tab")
+		}
 		if m.browseLoaded {
 			hints = append([]string{"f find"}, hints...)
 		}
@@ -768,7 +801,7 @@ func (m model) footerHints() []string {
 		}
 		return append([]string{"enter expand"}, hints...)
 	case workspaceTransfers:
-		hints := []string{"U user actions", "s search", "S folder search"}
+		hints := []string{"ctrl+pgup/pgdn ↓↑", "U user actions", "s search", "S folder search"}
 		if m.transferTab == transferDownloads {
 			return append(hints, "space mark files", "F download anyway", "p pause", "r resume/retry", "d cancel", "c clear")
 		}
@@ -822,6 +855,8 @@ func (m model) footerHints() []string {
 			hints = append(hints, "s sort", "d direction", "enter details", "n next", "p first")
 		case 3:
 			hints = append(hints, "d direction", "e outcome", "[ / ] dates", "enter details", "n next", "p first")
+		case 4:
+			hints = append(hints, "r refresh", "f level", "/ search", "esc clear filters")
 		}
 		return append(hints, "P prune")
 	case workspaceShares:
