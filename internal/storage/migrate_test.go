@@ -163,33 +163,21 @@ func TestCommunityMigrationPreservesV1AndWALBackup(t *testing.T) {
 		t.Fatalf("downgrade version guard: %v", err)
 	}
 	backups, _ := filepath.Glob(path + ".v1-backup-*.sqlite3")
-	if len(backups) != 1 {
-		t.Fatalf("backups: %v", backups)
-	}
+	failIfFmt(t, len(backups) != 1, "backups: %v", backups)
 	info, err := os.Stat(backups[0])
-	if err != nil || info.Mode().Perm() != 0600 {
-		t.Fatalf("backup permissions: %v %v", info, err)
-	}
+	failIfFmt(t, err != nil || info.Mode().Perm() != 0600, "backup permissions: %v %v", info, err)
 	backup, err := sql.Open("sqlite", "file:"+backups[0]+"?mode=ro")
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	defer backup.Close()
-	if err := verifySchema(context.Background(), backup, 1); err != nil {
-		t.Fatal(err)
-	}
+	must(t, verifySchema(context.Background(), backup, 1))
 	assertLegacyContents(t, backup, before)
 	if _, err := statement.Exec("after upgrade"); err != nil {
 		t.Fatalf("old TUI statement: %v", err)
 	}
-	if err := db.Close(); err != nil {
-		t.Fatal(err)
-	}
-	for _, open := range []func(string) (*DB, error){OpenDaemon, OpenTUI, Open} {
+	must(t, db.Close())
+	for _, open := range []func(string) (*DB, error){OpenDaemon, Open} {
 		reopened, err := open(path)
-		if err != nil {
-			t.Fatal(err)
-		}
+		must(t, err)
 		var count int
 		if err := reopened.SQL().QueryRow("SELECT count(*) FROM history WHERE value = 'after upgrade'").Scan(&count); err != nil || count != 1 {
 			t.Fatalf("old TUI write lost: %d %v", count, err)
@@ -197,19 +185,15 @@ func TestCommunityMigrationPreservesV1AndWALBackup(t *testing.T) {
 		_ = reopened.Close()
 	}
 	afterBackups, _ := filepath.Glob(path + ".v1-backup-*.sqlite3")
-	if !reflect.DeepEqual(backups, afterBackups) {
-		t.Fatal("repeated opens created new backups")
-	}
+	failIf(t, !reflect.DeepEqual(backups, afterBackups), "repeated opens created new backups")
 }
 
 func TestCommunityMigrationOnlyLockedDaemon(t *testing.T) {
 	legacy, path := legacyDatabase(t)
 	lock, err := AcquireDaemonLock(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	defer lock.Close()
-	for _, open := range []func(string) (*DB, error){Open, OpenTUI} {
+	for _, open := range []func(string) (*DB, error){Open} {
 		if db, err := open(path); !errors.Is(err, ErrUnsupportedSchema) || !strings.Contains(err.Error(), "restart the daemon") {
 			if db != nil {
 				_ = db.Close()

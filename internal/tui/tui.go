@@ -38,7 +38,7 @@ func RunWithTransient(ctx context.Context, client *ipc.Client, configPath string
 	if err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("load config: %w", err)
 	}
-	stateDB, err := storage.OpenTUI(config.StatePath())
+	stateDB, err := storage.Open(config.StatePath())
 	if err != nil {
 		return fmt.Errorf("open state database: %w", err)
 	}

@@ -3,7 +3,7 @@
 // wishlist state, local and saved remote inventories, statistics, and Community.
 // Configuration remains JSON-only. Schema 2 upgrades schema 1 only in OpenDaemon,
 // under the daemon lock, after validating a private SQLite snapshot backup.
-// OpenTUI never upgrades an existing database. Unknown schemas fail safely.
+// Open never upgrades an existing database. Unknown schemas fail safely.
 // SQLite WAL/SHM files and the daemon lock are private sidecars; never copy a live
 // database without its WAL state. Use SQLite backup or stop every reader/writer.
 //

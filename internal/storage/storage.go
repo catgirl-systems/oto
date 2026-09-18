@@ -52,9 +52,6 @@ type DB struct {
 // Open opens an ordinary, unlocked state database.
 func Open(path string) (*DB, error) { return open(path, false) }
 
-// OpenTUI is an explicit alias for ordinary opens. It never takes the daemon lock.
-func OpenTUI(path string) (*DB, error) { return Open(path) }
-
 // OpenDaemon takes the advisory lock before opening or validating the database.
 func OpenDaemon(path string) (*DB, error) { return open(path, true) }
 
