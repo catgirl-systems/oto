@@ -152,6 +152,12 @@ func TestSoulfindDaemonDownloadLifecycle(t *testing.T) {
 	}
 	transfer := integrationTransfer(service, firstID)
 	failIfFmt(t, transfer.State != "completed" || transfer.Done != uint64(len(firstContents)) || transfer.Total != uint64(len(firstContents)), "completed progress: %+v", transfer)
+	// Completion is published before the worker finishes cleanup; clear requires both.
+	waitForIntegration(t, func() bool {
+		service.mu.RLock()
+		defer service.mu.RUnlock()
+		return service.downloadCancels[firstID] == nil
+	})
 	must(t, service.TransferAction(firstID, "clear"))
 	if download := integrationDownload(service, firstID); download.ID != "" {
 		t.Fatalf("cleared download remains: %+v", download)

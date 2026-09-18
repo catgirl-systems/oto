@@ -41,7 +41,7 @@ func (c *Client) browseContext(ctx context.Context) (context.Context, string) {
 	return context.WithValue(ctx, browseIDKey{}, id), id
 }
 func (c *Client) browsePeer(ctx context.Context, peer net.Conn) (context.Context, net.Conn) {
-	if _, ok := peer.(*diagnosticConn); !ok {
+	if _, ok := peer.(*diagnosticConn); !ok && leasedPeer(peer) == nil {
 		peer = c.traceConn(ctx, peer, "", "P", "supplied")
 	}
 	return diagnostics.WithLogger(ctx, c.peerLogger(ctx, peer)), peer
@@ -102,6 +102,16 @@ func (c *Client) traceConn(ctx context.Context, peer net.Conn, username, kind, d
 	return &diagnosticConn{Conn: peer, logger: l, id: id, opened: time.Now()}
 }
 func (c *Client) peerLogger(ctx context.Context, peer net.Conn) *slog.Logger {
+	if lease := leasedPeer(peer); lease != nil {
+		lease.mu.Lock()
+		peer = lease.Conn
+		lease.mu.Unlock()
+		logger := c.logger(ctx).With("peer_username", lease.username, "type", "P")
+		if p, ok := peer.(*diagnosticConn); ok {
+			logger = logger.With("connection_id", p.id)
+		}
+		return logger.With("local_endpoint", diagnosticEndpoint(peer.LocalAddr()), "remote_endpoint", diagnosticEndpoint(peer.RemoteAddr()))
+	}
 	if p, ok := peer.(*diagnosticConn); ok {
 		return p.logger
 	}

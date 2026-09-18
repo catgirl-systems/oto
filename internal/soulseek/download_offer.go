@@ -17,6 +17,7 @@ import (
 type DownloadOffer struct {
 	client             *Client
 	peer               net.Conn
+	retained           *peerLease
 	username, filename string
 	request            TransferRequest
 	expires            time.Time
@@ -36,10 +37,30 @@ func (o *DownloadOffer) Reject() {
 	_ = o.peer.SetWriteDeadline(time.Now().Add(5 * time.Second))
 	_ = writeMessage(o.peer, TransferResponse{Token: o.request.Token, Reason: "Cancelled"})
 	_ = o.peer.SetWriteDeadline(time.Time{})
+	o.releaseLease()
+}
+
+// releaseLease drops the independent lease held for a deferred response. The
+// pending file itself arrives on its own connection, so the lease is only
+// needed until the accept or reject response has been written.
+func (o *DownloadOffer) releaseLease() {
+	if o.retained == nil {
+		return
+	}
+	lease := o.retained
+	o.retained = nil
+	_ = lease.Close()
 }
 
 func (c *Client) offerDownload(peer net.Conn, username, filename string, request TransferRequest) {
 	offer := &DownloadOffer{client: c, peer: peer, username: username, filename: filename, request: request, expires: time.Now().Add(downloadSetupTimeout)}
+	// The message handler's lease is closed as soon as it returns, so hold an
+	// independent one until the offer is accepted or rejected.
+	if lease, ok := peer.(*peerLease); ok {
+		if retained := lease.retain(); retained != nil {
+			offer.peer, offer.retained = retained, retained
+		}
+	}
 	if c.cfg.DownloadOffered == nil || username == "" || len(username) > 1024 || !utf8.ValidString(username) || len(filename) > 16<<10 || !utf8.ValidString(filename) || request.Size > math.MaxInt64 {
 		offer.Reject()
 		return
