@@ -18,31 +18,22 @@ func TestCommunityPrivateRoomCreationDirectoryAndLateJoin(t *testing.T) {
 	s := downloadService(t)
 	client, peer, id := communityTestConnection(t, s)
 	ctx := context.Background()
-	if _, err := s.CommunityRoomAction(ctx, CommunityRoomActionRequest{CommunityIdentity: id, Room: "oto test", Action: "join", Private: true, Remember: true, RequestID: "create"}); err != nil {
-		t.Fatal(err)
-	}
+	_, err := s.CommunityRoomAction(ctx, CommunityRoomActionRequest{CommunityIdentity: id, Room: "oto test", Action: "join", Private: true, Remember: true, RequestID: "create"})
+	must(t, err)
 	applyRoomEvent(t, s, id, soulseek.RoomDirectory{}) // Directory requested before the creation.
 	r := s.community.rooms["oto test"]
-	if !r.creating || !r.autojoin || !r.wanted || r.joined || r.role == "owner" {
-		t.Fatal("directory cancelled creation or invented authority", roomSnapshot(t, s, id, "oto test"))
-	}
+	failIf(t, !r.creating || !r.autojoin || !r.wanted || r.joined || r.role == "owner", "directory cancelled creation or invented authority", roomSnapshot(t, s, id, "oto test"))
 	history, err := s.CommunityMessages(ctx, CommunityMessagesRequest{CommunityIdentity: id, ConversationID: r.conversationID})
-	if err != nil || len(history.Messages) != 0 {
-		t.Fatal("creation inserted revocation history", err)
-	}
+	failIf(t, err != nil || len(history.Messages) != 0, "creation inserted revocation history", err)
 	syncTestRooms(t, s, client, peer, id, "room-join-private", "room-invitations-true-client")
 	joined := soulseek.RoomJoined{Room: "oto test", Private: true, Owner: s.cfg.Soulseek.Username}
 	applyRoomEvent(t, s, id, joined)
 	applyRoomFixture(t, s, id, "role-membership-revoked")
 	applyRoomEvent(t, s, id, joined) // Late confirmation must not undo revocation.
-	if r.joined || r.role != "none" || r.autojoin || !r.rejectJoin {
-		t.Fatal("late join restored authority", roomSnapshot(t, s, id, "oto test"))
-	}
+	failIf(t, r.joined || r.role != "none" || r.autojoin || !r.rejectJoin, "late join restored authority", roomSnapshot(t, s, id, "oto test"))
 	syncTestRooms(t, s, client, peer, id, "room-leave")
 	applyRoomFixture(t, s, id, "room-left")
-	if r.joined || r.wanted || r.pending != "" {
-		t.Fatal("late-join cleanup failed")
-	}
+	failIf(t, r.joined || r.wanted || r.pending != "", "late-join cleanup failed")
 }
 
 // Pause deadline construction after the initial service validation, before the
@@ -83,9 +74,7 @@ func TestCommunityPrivateRoomRevisionRecheckedBeforeWrite(t *testing.T) {
 	close(ctx.release)
 	select {
 	case err := <-done:
-		if !errors.Is(err, ErrCommunityMessageState) {
-			t.Fatal("stale mutation written", err)
-		}
+		failIf(t, !errors.Is(err, ErrCommunityMessageState), "stale mutation written", err)
 	case <-time.After(time.Second):
 		t.Fatal("stale mutation blocked on network write")
 	}
@@ -106,22 +95,16 @@ func TestCommunityPrivateRoomRemoteCachesReleasedAndBounded(t *testing.T) {
 		applyRoomEvent(t, s, id, soulseek.RoomJoined{Room: name, Private: true, Owner: s.cfg.Soulseek.Username, Users: []soulseek.RoomUser{{Username: "Bob"}}})
 		applyRoomEvent(t, s, id, soulseek.RoomRoleList{Room: name, Users: []string{"Bob"}})
 		applyRoomEvent(t, s, id, soulseek.RoomWallSnapshot{Room: name, Entries: []soulseek.RoomWallEntry{{Username: "Bob", Text: text}}})
-		if s.community.wallBytes == 0 {
-			t.Fatal("wall byte accounting missing")
-		}
+		failIf(t, s.community.wallBytes == 0, "wall byte accounting missing")
 		applyRoomEvent(t, s, id, soulseek.RoomLeft{Room: name})
 		r := s.community.rooms[name]
-		if s.community.wallBytes != 0 || r.wallBytes != 0 || len(r.wall)+len(r.members)+len(r.privateMembers)+len(r.operators) != 0 {
-			t.Fatal("remote room cache survived leave")
-		}
+		failIf(t, s.community.wallBytes != 0 || r.wallBytes != 0 || len(r.wall)+len(r.members)+len(r.privateMembers)+len(r.operators) != 0, "remote room cache survived leave")
 		// This is an observed leave, not a new autojoin request.
 		r.wanted = false
 	}
 	for i := range 30 {
 		applyRoomEvent(t, s, id, soulseek.RoomDirectory{Member: []soulseek.RoomPopulation{{Room: fmt.Sprintf("directory %d", i)}}})
-		if len(s.community.rooms) > 13 {
-			t.Fatal("directory-only rooms accumulated", len(s.community.rooms))
-		}
+		failIf(t, len(s.community.rooms) > 13, "directory-only rooms accumulated", len(s.community.rooms))
 	}
 	var entries []soulseek.RoomWallEntry
 	for i := range 63 {
@@ -132,23 +115,15 @@ func TestCommunityPrivateRoomRemoteCachesReleasedAndBounded(t *testing.T) {
 		s.community.rooms[name] = &communityRoomState{wanted: true, intent: 1, issued: 1}
 		applyRoomEvent(t, s, id, soulseek.RoomJoined{Room: name})
 		err := s.communityUpdate(context.Background(), id, soulseek.RoomWallSnapshot{Room: name, Entries: entries})
-		if i < 4 && err != nil || i == 4 && err == nil {
-			t.Fatal("aggregate wall budget", i, err)
-		}
-		if s.community.wallBytes > communityRoomWallsBytes {
-			t.Fatal("aggregate wall bytes exceeded")
-		}
+		failIf(t, i < 4 && err != nil || i == 4 && err == nil, "aggregate wall budget", i, err)
+		failIf(t, s.community.wallBytes > communityRoomWallsBytes, "aggregate wall bytes exceeded")
 	}
 	s.mu.Lock()
 	s.retireCommunityLocked()
 	s.mu.Unlock()
-	if s.community.wallBytes != 0 {
-		t.Fatal("disconnect retained wall cache")
-	}
+	failIf(t, s.community.wallBytes != 0, "disconnect retained wall cache")
 	for _, r := range s.community.rooms {
-		if len(r.wall)+len(r.members)+len(r.privateMembers)+len(r.operators) != 0 {
-			t.Fatal("disconnect retained remote cache")
-		}
+		failIf(t, len(r.wall)+len(r.members)+len(r.privateMembers)+len(r.operators) != 0, "disconnect retained remote cache")
 	}
 }
 
@@ -186,19 +161,13 @@ func TestCommunityPrivateRoomDirectoryPrunesDuringSync(t *testing.T) {
 	done := make(chan error, 1)
 	go func() { done <- s.syncCommunityRooms(context.Background(), client, id) }()
 	code, _, err := soulseek.ReadFrame(right)
-	if err != nil || code != 64 {
-		t.Fatal(code, err)
-	}
+	failIf(t, err != nil || code != 64, code, err)
 	applyRoomEvent(t, s, id, soulseek.RoomDirectory{})
-	if s.community.rooms["old directory"] != nil {
-		t.Fatal("obsolete directory room was not pruned")
-	}
+	failIf(t, s.community.rooms["old directory"] != nil, "obsolete directory room was not pruned")
 	once.Do(func() { close(release) })
 	select {
 	case err := <-done:
-		if err != nil {
-			t.Fatal(err)
-		}
+		must(t, err)
 	case <-time.After(time.Second):
 		t.Fatal("room sync did not finish after pruning")
 	}

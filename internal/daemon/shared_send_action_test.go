@@ -15,17 +15,11 @@ func TestSharedSendConfirmationPartialAdmissionAndDeduplication(t *testing.T) {
 	ctx := context.Background()
 	root := t.TempDir()
 	for _, name := range []string{"changed", "good"} {
-		if err := os.WriteFile(filepath.Join(root, name), []byte("data"), 0600); err != nil {
-			t.Fatal(err)
-		}
+		must(t, os.WriteFile(filepath.Join(root, name), []byte("data"), 0600))
 	}
 	index := soulseek.NewShareIndex()
-	if err := index.AddRoot("Music", root); err != nil {
-		t.Fatal(err)
-	}
-	if err := index.ScanContext(ctx); err != nil {
-		t.Fatal(err)
-	}
+	must(t, index.AddRoot("Music", root))
+	must(t, index.ScanContext(ctx))
 	var admissions atomic.Int32
 	client := soulseek.NewClient(soulseek.ClientConfig{Share: index, UploadAccepted: func(e soulseek.TransferEvent) error { admissions.Add(1); return s.uploadAccepted(1, e) }, UploadUpdate: func(e soulseek.TransferEvent) { s.uploadUpdate(1, e) }})
 	s.mu.Lock()
@@ -37,17 +31,11 @@ func TestSharedSendConfirmationPartialAdmissionAndDeduplication(t *testing.T) {
 	id := s.community.identity
 	s.mu.Unlock()
 	command, err := s.RunCommand(ctx, CommandRequest{CommunityIdentity: id, Name: "send-folder", RequestID: "send-folder", Args: []string{"Alice", "Music"}})
-	if err != nil || command.SharedSend == nil {
-		t.Fatal(command, err)
-	}
+	failIf(t, err != nil || command.SharedSend == nil, command, err)
 	preview := *command.SharedSend
 	checkpoint, err := loadSharedSend(ctx, s.stateDB.Queries(), id.Account, preview.RequestID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
+	must(t, err)
 	action := SharedSendAction{CommunityIdentity: id, RequestID: preview.RequestID, Token: preview.Token, Action: "send"}
 	if _, err := s.RunCommand(ctx, CommandRequest{CommunityIdentity: id, Name: "send-confirm", RequestID: "wrong", Confirm: true, Args: []string{preview.RequestID, preview.Token}}); err == nil {
 		t.Fatal("confirmation ID mismatch")
@@ -55,34 +43,24 @@ func TestSharedSendConfirmationPartialAdmissionAndDeduplication(t *testing.T) {
 	if out, err := s.ActSharedSend(ctx, action); err != nil || out.State != "preview" || admissions.Load() != 0 {
 		t.Fatal(out, err)
 	}
-	if err := os.WriteFile(filepath.Join(root, "changed"), []byte("different"), 0600); err != nil {
-		t.Fatal(err)
-	}
+	must(t, os.WriteFile(filepath.Join(root, "changed"), []byte("different"), 0600))
 	action.Confirm = true
 	if _, err := s.ActSharedSend(ctx, action); err != nil {
 		t.Fatal(err)
 	}
 	s.wg.Wait()
 	out, err := s.SharedSend(ctx, id, preview.RequestID, 0)
-	if err != nil || out.State != "completed" || out.Files[0].State != "failed" || out.Files[1].UploadID == "" || admissions.Load() != 1 {
-		t.Fatal(out, err, admissions.Load())
-	}
+	failIf(t, err != nil || out.State != "completed" || out.Files[0].State != "failed" || out.Files[1].UploadID == "" || admissions.Load() != 1, out, err, admissions.Load())
 	if _, err := s.ActSharedSend(ctx, action); err != nil {
 		t.Fatal(err)
 	}
-	if admissions.Load() != 1 {
-		t.Fatal("confirmation retry queued duplicates")
-	}
+	failIf(t, admissions.Load() != 1, "confirmation retry queued duplicates")
 	// Simulate a crash before the full batch checkpoint: child receipts must
 	// retain per-file outcomes, and an orphaned running batch must not restart.
 	checkpoint.State = "running"
-	if err := saveSharedSend(ctx, s.stateDB.Queries(), checkpoint); err != nil {
-		t.Fatal(err)
-	}
+	must(t, saveSharedSend(ctx, s.stateDB.Queries(), checkpoint))
 	recovered, err := s.SharedSend(ctx, id, preview.RequestID, 0)
-	if err != nil || recovered.State != "interrupted" || recovered.Files[0].State != "failed" || recovered.Files[1].UploadID == "" {
-		t.Fatal(recovered, err)
-	}
+	failIf(t, err != nil || recovered.State != "interrupted" || recovered.Files[0].State != "failed" || recovered.Files[1].UploadID == "", recovered, err)
 	if out, err := s.ActSharedSend(ctx, action); err != nil || out.State != "interrupted" || admissions.Load() != 1 {
 		t.Fatal(out, err)
 	}

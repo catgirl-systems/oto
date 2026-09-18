@@ -78,21 +78,15 @@ func TestCommunityDiscoveryCorrelationLateRepliesAndPaging(t *testing.T) {
 	start(userReq, "discovery-user-interests-request")
 	apply("discovery-user-interests")
 	interests, err := s.CommunityDiscovery(ctx, userReq)
-	if err != nil || interests.State != "ready" || interests.Total != 2 {
-		t.Fatal(interests, err)
-	}
+	failIf(t, err != nil || interests.State != "ready" || interests.Total != 2, interests, err)
 	userReq.Target = "alice"
 	empty, err := s.CommunityDiscovery(ctx, userReq)
-	if err != nil || empty.State != "idle" {
-		t.Fatal("case-folded username", empty, err)
-	}
+	failIf(t, err != nil || empty.State != "idle", "case-folded username", empty, err)
 	s.mu.Lock()
 	s.retireCommunityLocked()
 	s.mu.Unlock()
 	stale, err := s.CommunityDiscovery(ctx, req)
-	if err != nil || stale.State != "offline" || stale.Total == 0 {
-		t.Fatal("lost stale results", stale, err)
-	}
+	failIf(t, err != nil || stale.State != "offline" || stale.Total == 0, "lost stale results", stale, err)
 	if err := s.communityUpdate(ctx, id, soulseek.DiscoveryResponse{Kind: "global"}); !errors.Is(err, ErrCommunitySession) {
 		t.Fatal("retired session applied response", err)
 	}
@@ -113,23 +107,15 @@ func TestCommunityDiscoveryCacheBoundsAndWatchOwnership(t *testing.T) {
 	s.mu.Unlock()
 	req := CommunityDiscoveryRequest{CommunityIdentity: id, Kind: "similar", Frontend: "first", Limit: 200}
 	page, err := s.CommunityDiscovery(ctx, req)
-	if err != nil || len(page.Rows) != 200 || page.NextCursor == "" {
-		t.Fatal(page, err)
-	}
-	if err := s.WatchCommunityUsers(id, "profile", []string{"user-000"}); err != nil {
-		t.Fatal(err)
-	}
+	failIf(t, err != nil || len(page.Rows) != 200 || page.NextCursor == "", page, err)
+	must(t, s.WatchCommunityUsers(id, "profile", []string{"user-000"}))
 	req.Frontend, req.Cursor = "second", page.NextCursor
 	next, err := s.CommunityDiscovery(ctx, req)
-	if err != nil || len(next.Rows) != 100 {
-		t.Fatal(next, err)
-	}
+	failIf(t, err != nil || len(next.Rows) != 100, next, err)
 	s.mu.Lock()
 	watched := len(s.desiredUserWatchesLocked(time.Now()))
 	s.mu.Unlock()
-	if watched != 200 {
-		t.Fatal("watch limit", watched)
-	}
+	failIf(t, watched != 200, "watch limit", watched)
 	// Releasing first's discovery page cannot release the independent profile.
 	if _, err := s.CommunityDiscovery(ctx, CommunityDiscoveryRequest{CommunityIdentity: id, Kind: "global", Frontend: "first"}); err != nil {
 		t.Fatal(err)
@@ -141,31 +127,23 @@ func TestCommunityDiscoveryCacheBoundsAndWatchOwnership(t *testing.T) {
 	watched = len(s.desiredUserWatchesLocked(time.Now()))
 	_, profile := s.community.users["user-000"]
 	s.mu.Unlock()
-	if watched != 101 || !profile {
-		t.Fatal("shared ownership", watched, profile)
-	}
+	failIf(t, watched != 101 || !profile, "shared ownership", watched, profile)
 	s.mu.Lock()
 	s.desiredUserWatchesLocked(time.Now().Add(2 * time.Minute))
 	remaining := len(s.community.users)
 	s.mu.Unlock()
-	if remaining != 0 {
-		t.Fatal("unexpired detached frontend", remaining)
-	}
+	failIf(t, remaining != 0, "unexpired detached frontend", remaining)
 	// Completed resources are reclaimable; unanswered queries are not.
 	func() {
 		s.mu.Lock()
 		defer s.mu.Unlock()
 		for i := 0; i < 40; i++ {
 			k := communityDiscoveryKey{Kind: "item", Target: fmt.Sprint(i)}
-			if len(s.community.discovery.queries) >= 32 && !s.evictDiscoveryLocked(k) {
-				t.Fatal("could not evict completed query")
-			}
+			failIf(t, len(s.community.discovery.queries) >= 32 && !s.evictDiscoveryLocked(k), "could not evict completed query")
 			s.community.discovery.queries[k] = &communityDiscoveryQuery{awaiting: true, state: "pending"}
 			s.applyDiscoveryLocked(soulseek.DiscoveryResponse{Kind: k.Kind, Target: k.Target, Recommendations: []soulseek.ScoredInterest{{Item: "\x1b[2Jbad"}}})
 		}
-		if len(s.community.discovery.queries) != 32 {
-			t.Fatal("cache count")
-		}
+		failIf(t, len(s.community.discovery.queries) != 32, "cache count")
 		rows := make([]soulseek.ScoredInterest, 3500)
 		for i := range rows {
 			rows[i].Item = strings.Repeat("x", 1024)
@@ -178,21 +156,15 @@ func TestCommunityDiscoveryCacheBoundsAndWatchOwnership(t *testing.T) {
 			s.community.discovery.queries[k] = &communityDiscoveryQuery{awaiting: true, state: "pending"}
 			s.applyDiscoveryLocked(soulseek.DiscoveryResponse{Kind: k.Kind, Target: k.Target, Recommendations: rows})
 		}
-		if s.community.discovery.queryBytes > maxCommunityDiscoveryBytes {
-			t.Fatal("cache byte limit")
-		}
+		failIf(t, s.community.discovery.queryBytes > maxCommunityDiscoveryBytes, "cache byte limit")
 		var measured int
 		for _, q := range s.community.discovery.queries {
 			measured += q.bytes
 			for _, row := range q.rows {
-				if strings.ContainsRune(row.Item, '\x1b') {
-					t.Fatal("terminal control in discovery")
-				}
+				failIf(t, strings.ContainsRune(row.Item, '\x1b'), "terminal control in discovery")
 			}
 		}
-		if measured != s.community.discovery.queryBytes {
-			t.Fatal("cache accounting", measured, s.community.discovery.queryBytes)
-		}
+		failIf(t, measured != s.community.discovery.queryBytes, "cache accounting", measured, s.community.discovery.queryBytes)
 	}()
 }
 
@@ -224,9 +196,7 @@ func TestCommunityDiscoveryPendingLimitAndShutdown(t *testing.T) {
 	go func() { done <- s.Close() }()
 	select {
 	case err := <-done:
-		if err != nil {
-			t.Fatal(err)
-		}
+		must(t, err)
 	case <-time.After(2 * time.Second):
 		t.Fatal("shutdown blocked on discovery write")
 	}
@@ -239,17 +209,11 @@ func TestCommunityDiscoveryReviewRegressions(t *testing.T) {
 	defer cancel()
 	q := &communityDiscoveryQuery{state: "pending"}
 	attempted, err := client.SendDiscovery(ctx, soulseek.DiscoveryRequest{Kind: "global"}, func() error { q.awaiting = true; cancel(); return nil })
-	if !errors.Is(err, context.Canceled) || attempted {
-		t.Fatal("reservation cancellation", attempted, err)
-	}
+	failIf(t, !errors.Is(err, context.Canceled) || attempted, "reservation cancellation", attempted, err)
 	q.writeFailed(attempted)
-	if q.awaiting || q.state != "failed" {
-		t.Fatal("definitely unsent request retained tokenless reservation", q)
-	}
+	failIf(t, q.awaiting || q.state != "failed", "definitely unsent request retained tokenless reservation", q)
 	q.writeFailed(true)
-	if !q.awaiting || q.state != "unknown" {
-		t.Fatal("ambiguous request became retriable", q)
-	}
+	failIf(t, !q.awaiting || q.state != "unknown", "ambiguous request became retriable", q)
 	response := soulseek.DiscoveryResponse{Kind: "similar", Users: make([]soulseek.SimilarUser, soulseek.MaxDiscoveryEntries)}
 	for i := range response.Users {
 		response.Users[i].Username = "Alice"
@@ -260,10 +224,6 @@ func TestCommunityDiscoveryReviewRegressions(t *testing.T) {
 	s.community.discovery.queries[key] = &communityDiscoveryQuery{awaiting: true, state: "pending"}
 	s.applyDiscoveryLocked(response)
 	cached := s.community.discovery.queries[key]
-	if len(cached.rows) != 1 || cap(cached.rows) > 2 {
-		t.Fatal("dedup retained incoming backing capacity", len(cached.rows), cap(cached.rows))
-	}
-	if cached.bytes != 512+len("Alice") {
-		t.Fatal("dedup accounting", cached.bytes)
-	}
+	failIf(t, len(cached.rows) != 1 || cap(cached.rows) > 2, "dedup retained incoming backing capacity", len(cached.rows), cap(cached.rows))
+	failIf(t, cached.bytes != 512+len("Alice"), "dedup accounting", cached.bytes)
 }

@@ -44,17 +44,13 @@ func TestSearchFilterParsingAndMatching(t *testing.T) {
 	unknown := result
 	unknown.Bitrate, unknown.Duration = 0, 0
 	filter, _ := parseSearchFilter(`bitrate:!0 duration:>0`)
-	if filter.matches(unknown) {
-		t.Fatal("missing media attributes matched non-zero filters")
-	}
+	failIf(t, filter.matches(unknown), "missing media attributes matched non-zero filters")
 
 	unknownCountry := result
 	unknownCountry.CountryCode = ""
 	included, _ := parseSearchFilter(`country:US`)
 	excluded, _ := parseSearchFilter(`country:!GB`)
-	if included.matches(unknownCountry) || !excluded.matches(unknownCountry) {
-		t.Fatal("unknown country did not follow include/exclude semantics")
-	}
+	failIf(t, included.matches(unknownCountry) || !excluded.matches(unknownCountry), "unknown country did not follow include/exclude semantics")
 }
 
 func TestSearchFilterValuesAndErrors(t *testing.T) {
@@ -104,26 +100,16 @@ func TestFilteredSearchPagesUseFullCache(t *testing.T) {
 	}
 	search := Search{ID: "search", Query: "music", Results: results}
 	first, err := searchPage(search, 0, "type:flac")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(first.Results) != 100 || first.Total != 103 || first.FoundTotal != 205 || first.NextCursor != 100 {
-		t.Fatalf("first filtered page: %+v", first)
-	}
+	must(t, err)
+	failIfFmt(t, len(first.Results) != 100 || first.Total != 103 || first.FoundTotal != 205 || first.NextCursor != 100, "first filtered page: %+v", first)
 	second, err := searchPage(search, first.NextCursor, "type:flac")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(second.Results) != 3 || second.Results[0].Extension != "flac" || second.NextCursor != 0 {
-		t.Fatalf("second filtered page: %+v", second)
-	}
+	must(t, err)
+	failIfFmt(t, len(second.Results) != 3 || second.Results[0].Extension != "flac" || second.NextCursor != 0, "second filtered page: %+v", second)
 
 	service := &Service{searches: map[string]Search{"search": search}}
 	if _, err := service.SearchPage("search", 0, "size:nope"); !errors.Is(err, ErrInvalidFilter) {
 		t.Fatalf("invalid page filter: %v", err)
 	}
 	page, err := service.SearchPage("search", 0, "")
-	if err != nil || page.FoundTotal != 205 {
-		t.Fatalf("cache changed after invalid filter: %+v %v", page, err)
-	}
+	failIfFmt(t, err != nil || page.FoundTotal != 205, "cache changed after invalid filter: %+v %v", page, err)
 }

@@ -17,23 +17,14 @@ func TestBulkSettingsCannotOverwriteAccountScopedConsent(t *testing.T) {
 	enabled := config.Receiving{Mode: "users", Users: []string{"Alice"}}
 	s.cfg.Receiving = map[string]config.Receiving{account: enabled}
 	stale := s.cfg
-	if _, err := s.SetReceivingSettings(context.Background(), ReceivingSettingsRequest{CommunityIdentity: s.community.identity, Expected: enabled, Settings: config.Receiving{Mode: "off"}, Confirm: true}); err != nil {
-		t.Fatal(err)
-	}
+	_, err := s.SetReceivingSettings(context.Background(), ReceivingSettingsRequest{CommunityIdentity: s.community.identity, Expected: enabled, Settings: config.Receiving{Mode: "off"}, Confirm: true})
+	must(t, err)
 	stale.CommunityAway = nil
 	stale.CommunityText = nil
 	stale.Downloads.FileNotifications = !stale.Downloads.FileNotifications
-	if err := s.UpdateConfig(stale); err != nil {
-		t.Fatal(err)
-	}
-	if s.cfg.Receiving[account].Mode != "off" || s.cfg.CommunityAway[account].AutoReply != "unchanged" || len(s.cfg.CommunityText) != 1 {
-		t.Fatal("stale bulk snapshot overwrote account-scoped settings")
-	}
+	must(t, s.UpdateConfig(stale))
+	failIf(t, s.cfg.Receiving[account].Mode != "off" || s.cfg.CommunityAway[account].AutoReply != "unchanged" || len(s.cfg.CommunityText) != 1, "stale bulk snapshot overwrote account-scoped settings")
 	stale.Receiving = nil
-	if err := s.UpdateConfig(stale); err != nil {
-		t.Fatal(err)
-	}
-	if s.cfg.Receiving[account].Mode != "off" {
-		t.Fatal("omitted receiving policy overwrote consent")
-	}
+	must(t, s.UpdateConfig(stale))
+	failIf(t, s.cfg.Receiving[account].Mode != "off", "omitted receiving policy overwrote consent")
 }

@@ -17,16 +17,12 @@ import (
 func roomRevision(t *testing.T, s *Service, id CommunityIdentity) uint64 {
 	t.Helper()
 	page, err := s.CommunityRooms(context.Background(), CommunityRoomsRequest{CommunityIdentity: id})
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	return page.Revision
 }
 func applyRoomEvent(t *testing.T, s *Service, id CommunityIdentity, event soulseek.SocialMessage) {
 	t.Helper()
-	if err := s.communityUpdate(context.Background(), id, event); err != nil {
-		t.Fatal(err)
-	}
+	must(t, s.communityUpdate(context.Background(), id, event))
 }
 func changeTestRoomRole(t *testing.T, s *Service, peer net.Conn, id CommunityIdentity, action soulseek.RoomRoleAction, username, fixture string) CommunityRoomRoleRequest {
 	t.Helper()
@@ -50,13 +46,9 @@ func TestCommunityPrivateRoomRolesAndRevocation(t *testing.T) {
 	client, peer, id := communityTestConnection(t, s)
 	ctx := context.Background()
 	_, err := s.CommunityRoomAction(ctx, CommunityRoomActionRequest{CommunityIdentity: id, Room: "oto test", Action: "join", Private: true, Remember: true, RequestID: "create"})
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	syncTestRooms(t, s, client, peer, id, "room-join-private", "room-invitations-true-client")
-	if roomSnapshot(t, s, id, "oto test").RoleFresh {
-		t.Fatal("creation invented owner role")
-	}
+	failIf(t, roomSnapshot(t, s, id, "oto test").RoleFresh, "creation invented owner role")
 	applyRoomEvent(t, s, id, soulseek.RoomJoined{Room: "oto test", Private: true, Owner: s.cfg.Soulseek.Username})
 	applyRoomFixture(t, s, id, "role-members")
 	if room := roomSnapshot(t, s, id, "oto test"); room.Role != "owner" || !room.RoleFresh || !room.Joined {
@@ -73,27 +65,19 @@ func TestCommunityPrivateRoomRolesAndRevocation(t *testing.T) {
 	} {
 		req := changeTestRoomRole(t, s, peer, id, item.action, "Bob", item.request)
 		out, err := s.ChangeCommunityRoomRole(ctx, req)
-		if err != nil || !out.Duplicate || out.State != "pending" {
-			t.Fatal(out, err)
-		}
+		failIf(t, err != nil || !out.Duplicate || out.State != "pending", out, err)
 		applyRoomFixture(t, s, id, item.reply)
 		out, err = s.ChangeCommunityRoomRole(ctx, req)
-		if err != nil || !out.Duplicate || out.State != "confirmed" {
-			t.Fatal(out, err)
-		}
+		failIf(t, err != nil || !out.Duplicate || out.State != "confirmed", out, err)
 		stored, err := s.stateDB.Queries().GetCommunitySubmission(ctx, db.GetCommunitySubmissionParams{Account: id.Account, RequestID: req.RequestID})
-		if err != nil || !strings.Contains(stored.Result, `"state":"confirmed"`) {
-			t.Fatal(stored, err)
-		}
+		failIf(t, err != nil || !strings.Contains(stored.Result, `"state":"confirmed"`), stored, err)
 		req.Username = "Alice"
 		if _, err = s.ChangeCommunityRoomRole(ctx, req); err == nil {
 			t.Fatal("request identity reused")
 		}
 	}
 	members, err := s.CommunityRoomMembers(ctx, CommunityRoomMembersRequest{CommunityIdentity: id, Room: "oto test", Private: true, Limit: 1})
-	if err != nil || !members.MembersFresh || len(members.Members) != 1 || members.NextCursor == "" {
-		t.Fatal(members, err)
-	}
+	failIf(t, err != nil || !members.MembersFresh || len(members.Members) != 1 || members.NextCursor == "", members, err)
 	req := changeTestRoomRole(t, s, peer, id, soulseek.RoomCancelOwnership, "", "role-cancel-ownership-request")
 	// A fresh directory, not the write completion, removes ownership.
 	applyRoomEvent(t, s, id, soulseek.RoomDirectory{Member: []soulseek.RoomPopulation{{Room: "oto test"}}})
@@ -109,25 +93,17 @@ func TestCommunityPrivateRoomRolesAndRevocation(t *testing.T) {
 		t.Fatal("operator removed another operator")
 	}
 	applyRoomFixture(t, s, id, "role-operatorship-revoked")
-	if roomSnapshot(t, s, id, req.Room).Role != "member" {
-		t.Fatal("revoked operator retained authority")
-	}
+	failIf(t, roomSnapshot(t, s, id, req.Room).Role != "member", "revoked operator retained authority")
 	applyRoomFixture(t, s, id, "role-membership-revoked")
 	room := roomSnapshot(t, s, id, req.Room)
-	if room.Joined || room.Remembered || room.Role != "none" || !strings.Contains(room.Error, "revoked") {
-		t.Fatal(room)
-	}
+	failIf(t, room.Joined || room.Remembered || room.Role != "none" || !strings.Contains(room.Error, "revoked"), room)
 	stored, err := s.stateDB.Queries().GetCommunityRoom(ctx, db.GetCommunityRoomParams{Account: id.Account, Room: req.Room})
-	if err != nil || stored.Autojoin != 0 {
-		t.Fatal(stored, err)
-	}
+	failIf(t, err != nil || stored.Autojoin != 0, stored, err)
 	if _, err = s.CommunityRoomAction(ctx, CommunityRoomActionRequest{CommunityIdentity: id, Room: req.Room, Action: "join", RequestID: "unauthorized-rejoin"}); err == nil {
 		t.Fatal("revoked membership rejoined")
 	}
 	page, err := s.CommunityMessages(ctx, CommunityMessagesRequest{CommunityIdentity: id, ConversationID: room.ConversationID})
-	if err != nil || len(page.Messages) < 2 || !strings.Contains(page.Messages[0].Text, "revoked") {
-		t.Fatal(page, err)
-	}
+	failIf(t, err != nil || len(page.Messages) < 2 || !strings.Contains(page.Messages[0].Text, "revoked"), page, err)
 	applyRoomEvent(t, s, id, soulseek.RoomDirectory{}) // Clears any pending directory refresh safely.
 	s.mu.Lock()
 	s.community.directoryRefresh = false
@@ -139,17 +115,13 @@ func TestCommunityPrivateRoomInvitationAndWallRestart(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	cfg, path := testConfig(t), filepath.Join(t.TempDir(), "state.sqlite3")
 	s, err := New(cfg, path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	defer s.Close()
 	client, peer, id := communityTestConnection(t, s)
 	ctx := context.Background()
 	applyRoomFixture(t, s, id, "role-membership-granted")
 	page, err := s.CommunityRooms(ctx, CommunityRoomsRequest{CommunityIdentity: id, Mode: "invitations"})
-	if err != nil || len(page.Rooms) != 1 || page.Rooms[0].Joined {
-		t.Fatal(page, err)
-	}
+	failIf(t, err != nil || len(page.Rooms) != 1 || page.Rooms[0].Joined, page, err)
 	if err = s.SetCommunityRoomInvitations(ctx, CommunityRoomInvitationsRequest{CommunityIdentity: id, Revision: page.Revision, Enabled: false}); err != nil {
 		t.Fatal(err)
 	}
@@ -159,9 +131,7 @@ func TestCommunityPrivateRoomInvitationAndWallRestart(t *testing.T) {
 	syncTestRooms(t, s, client, peer, id, "room-invitations-false-client")
 	applyRoomFixture(t, s, id, "room-invitations-false-server")
 	page, _ = s.CommunityRooms(ctx, CommunityRoomsRequest{CommunityIdentity: id})
-	if page.InvitationsState != "confirmed" || page.InvitationsEnabled {
-		t.Fatal(page)
-	}
+	failIf(t, page.InvitationsState != "confirmed" || page.InvitationsEnabled, page)
 	if err = s.SetCommunityRoomWall(ctx, CommunityRoomWallRequest{CommunityIdentity: id, Room: "oto test", Text: "hello 世界", Revision: page.Revision}); err != nil {
 		t.Fatal(err)
 	}
@@ -175,27 +145,19 @@ func TestCommunityPrivateRoomInvitationAndWallRestart(t *testing.T) {
 	syncTestRooms(t, s, client, peer, id, "wall-set")
 	applyRoomEvent(t, s, id, soulseek.RoomWallUpdate{Room: "oto test", RoomWallEntry: soulseek.RoomWallEntry{Username: cfg.Soulseek.Username, Text: "hello 世界"}})
 	wall, err := s.CommunityRoomWall(ctx, CommunityRoomMembersRequest{CommunityIdentity: id, Room: "oto test", Limit: 1})
-	if err != nil || !wall.Fresh || wall.State != "confirmed" || len(wall.Entries) != 1 || wall.NextCursor == "" {
-		t.Fatal(wall, err)
-	}
+	failIf(t, err != nil || !wall.Fresh || wall.State != "confirmed" || len(wall.Entries) != 1 || wall.NextCursor == "", wall, err)
 	applyRoomFixture(t, s, id, "wall-removed")
 	wall, err = s.CommunityRoomWall(ctx, CommunityRoomMembersRequest{CommunityIdentity: id, Room: "oto test"})
-	if err != nil || len(wall.Entries) != 1 {
-		t.Fatal(wall, err)
-	}
+	failIf(t, err != nil || len(wall.Entries) != 1, wall, err)
 	if err = s.Close(); err != nil {
 		t.Fatal(err)
 	}
 	s, err = New(cfg, path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	defer s.Close()
 	client, peer, fresh := communityTestConnection(t, s)
 	wall, err = s.CommunityRoomWall(ctx, CommunityRoomMembersRequest{CommunityIdentity: fresh, Room: "oto test"})
-	if err != nil || wall.Fresh || wall.Room.RoleFresh || wall.OwnText != "hello 世界" || len(wall.Entries) != 0 {
-		t.Fatal(wall, err)
-	}
+	failIf(t, err != nil || wall.Fresh || wall.Room.RoleFresh || wall.OwnText != "hello 世界" || len(wall.Entries) != 0, wall, err)
 	syncTestRooms(t, s, client, peer, fresh, "room-invitations-false-client") // Wait for authoritative membership before autojoin.
 	applyRoomEvent(t, s, fresh, soulseek.RoomDirectory{Member: []soulseek.RoomPopulation{{Room: "oto test"}}})
 	syncTestRooms(t, s, client, peer, fresh, "room-join-private")
@@ -210,9 +172,7 @@ func TestCommunityPrivateRoomInvitationAndWallRestart(t *testing.T) {
 	syncTestRooms(t, s, client, peer, fresh, "wall-clear")
 	applyRoomEvent(t, s, fresh, soulseek.RoomWallUpdate{Room: "oto test", RoomWallEntry: soulseek.RoomWallEntry{Username: cfg.Soulseek.Username}, Remove: true})
 	wall, err = s.CommunityRoomWall(ctx, CommunityRoomMembersRequest{CommunityIdentity: fresh, Room: "oto test"})
-	if err != nil || wall.State != "confirmed" || wall.OwnText != "" {
-		t.Fatal(wall, err)
-	}
+	failIf(t, err != nil || wall.State != "confirmed" || wall.OwnText != "", wall, err)
 	if err = s.SetCommunityRoomWall(ctx, CommunityRoomWallRequest{CommunityIdentity: id, Room: "oto test", Text: "old", Revision: wall.Revision}); !errors.Is(err, ErrCommunitySession) {
 		t.Fatal("old daemon edited wall", err)
 	}
@@ -223,9 +183,7 @@ func TestCommunityPrivateRoomUnknownAndCreationErrors(t *testing.T) {
 	client, peer, id := communityTestConnection(t, s)
 	ctx := context.Background()
 	_, err := s.CommunityRoomAction(ctx, CommunityRoomActionRequest{CommunityIdentity: id, Room: "oto test", Private: true, Action: "join", RequestID: "create"})
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	syncTestRooms(t, s, client, peer, id, "room-join-private", "room-invitations-true-client")
 	applyRoomFixture(t, s, id, "role-creation-rejected")
 	if room := roomSnapshot(t, s, id, "oto test"); room.Joined || room.RoleFresh || !strings.Contains(room.Error, "rejected") {
@@ -240,13 +198,9 @@ func TestCommunityPrivateRoomUnknownAndCreationErrors(t *testing.T) {
 	s.mu.Unlock()
 	syncTestRooms(t, s, client, peer, id)
 	out, err := s.ChangeCommunityRoomRole(ctx, req)
-	if err != nil || out.State != "unknown" || !out.Duplicate {
-		t.Fatal(out, err)
-	}
+	failIf(t, err != nil || out.State != "unknown" || !out.Duplicate, out, err)
 	page, _ := s.CommunityRooms(ctx, CommunityRoomsRequest{CommunityIdentity: id})
-	if page.InvitationsState != "unknown" {
-		t.Fatal(page.InvitationsState)
-	}
+	failIf(t, page.InvitationsState != "unknown", page.InvitationsState)
 	stale := req
 	stale.RequestID = "stale"
 	if _, err = s.ChangeCommunityRoomRole(ctx, stale); !errors.Is(err, ErrCommunityMessageState) {
@@ -260,9 +214,7 @@ func TestCommunityPrivateRoomUnknownAndCreationErrors(t *testing.T) {
 	}
 	applyRoomFixture(t, s, id, "role-add-member") // A late authoritative acknowledgement can resolve Unknown.
 	out, err = s.ChangeCommunityRoomRole(ctx, req)
-	if err != nil || out.State != "confirmed" {
-		t.Fatal(out, err)
-	}
+	failIf(t, err != nil || out.State != "confirmed", out, err)
 	s.mu.Lock()
 	s.retireCommunityLocked()
 	s.mu.Unlock()

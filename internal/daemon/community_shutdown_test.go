@@ -34,9 +34,8 @@ func TestCommunityPrivateShutdownDrain(t *testing.T) {
 				return s.communityUpdate(ctx, identity, message)
 			}}, left)
 			s.client, s.community.online = client, true
-			if _, err := s.SendCommunityPrivate(context.Background(), CommunitySendRequest{CommunityIdentity: identity, Username: "Bob", Text: "wait until next session", RequestID: "before-drain"}); err != nil {
-				t.Fatal(err)
-			}
+			_, err := s.SendCommunityPrivate(context.Background(), CommunitySendRequest{CommunityIdentity: identity, Username: "Bob", Text: "wait until next session", RequestID: "before-drain"})
+			must(t, err)
 			ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
 			run, drained := make(chan error, 1), make(chan struct{})
 			go func() { run <- client.Run(ctx) }()
@@ -57,9 +56,7 @@ func TestCommunityPrivateShutdownDrain(t *testing.T) {
 				if draining, count := client.UploadDrainStatus(); draining && count == 1 {
 					break
 				}
-				if time.Now().After(deadline) {
-					t.Fatal("upload drain not entered")
-				}
+				failIf(t, time.Now().After(deadline), "upload drain not entered")
 				time.Sleep(time.Millisecond)
 			}
 			if worker {

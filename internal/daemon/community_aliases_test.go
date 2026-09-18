@@ -14,25 +14,19 @@ func TestCommunityAliasesPersistenceAndExpansion(t *testing.T) {
 	cfg := testConfig(t)
 	path := filepath.Join(t.TempDir(), "aliases.sqlite3")
 	s, err := New(cfg, path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	t.Cleanup(func() { s.Close() })
 	id := s.community.identity
 	create := func(name, expansion string) CommunityAlias {
 		t.Helper()
 		out, err := s.SetCommunityAlias(ctx, CommunityAliasRequest{CommunityIdentity: id, Name: name, Expansion: expansion})
-		if err != nil {
-			t.Fatal(err)
-		}
+		must(t, err)
 		return out
 	}
 	alias := create("donate", `gift "$1" "$2"`)
 	req := CommandRequest{CommunityIdentity: id, Name: "donate", Args: []string{"Alice Smith", "1"}, RequestID: "one"}
 	expanded, err := s.expandCommandAliases(ctx, req)
-	if err != nil || expanded.Name != "gift" || !reflect.DeepEqual(expanded.Args, req.Args) || expanded.RequestID != "one" {
-		t.Fatal(expanded, err)
-	}
+	failIf(t, err != nil || expanded.Name != "gift" || !reflect.DeepEqual(expanded.Args, req.Args) || expanded.RequestID != "one", expanded, err)
 	req.Confirm = true
 	if _, err := s.expandCommandAliases(ctx, req); err == nil {
 		t.Fatal("mutable alias accepted as confirmation")
@@ -72,16 +66,10 @@ func TestCommunityAliasesPersistenceAndExpansion(t *testing.T) {
 		t.Fatal("unconfirmed removal")
 	}
 	page, err := s.CommunityAliases(ctx, CommunityAliasesRequest{CommunityIdentity: id, Limit: 1})
-	if err != nil || len(page.Aliases) != 1 || page.NextCursor == "" {
-		t.Fatal(page, err)
-	}
-	if err := s.Close(); err != nil {
-		t.Fatal(err)
-	}
+	failIf(t, err != nil || len(page.Aliases) != 1 || page.NextCursor == "", page, err)
+	must(t, s.Close())
 	s, err = New(cfg, path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	if _, err := s.expandCommandAliases(ctx, req); !errors.Is(err, ErrCommunitySession) {
 		t.Fatal("old daemon accepted", err)
 	}
@@ -100,9 +88,7 @@ func TestCommunityAliasesPersistenceAndExpansion(t *testing.T) {
 func TestAliasArgumentsStayDataAndBounded(t *testing.T) {
 	args := []string{`Alice" ; gift Mallory 1`, "世界"}
 	out, err := expandAliasArgument("$1 / $* / $$", args)
-	if err != nil || out != args[0]+" / "+strings.Join(args, " ")+" / $" {
-		t.Fatal(out, err)
-	}
+	failIf(t, err != nil || out != args[0]+" / "+strings.Join(args, " ")+" / $", out, err)
 	for _, template := range []string{"$", "$0", "$3", "$HOME"} {
 		if _, err := expandAliasArgument(template, args); err == nil {
 			t.Fatal(template)

@@ -26,33 +26,23 @@ func TestBroadcastPreviewCapturesPagedAudienceWithoutSending(t *testing.T) {
 	var err error
 	s.community.text, err = compileCommunityTextTools(config.CommunityTextTools{Substitutions: []config.CommunitySubstitution{{From: "hello", To: "greetings"}}})
 	s.mu.Unlock()
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	req := CommunityBroadcastRequest{CommunityIdentity: id, RequestID: "broadcast-preview", Audience: "buddies", Text: "hello", Offline: []string{"Offline", "Offline"}}
 	out, err := s.PreviewCommunityBroadcast(ctx, req)
-	if err != nil || out.Total != 241 || len(out.Recipients) != 200 || out.NextCursor != 200 || out.Text != "greetings" || out.Recipients[0].Username != "Offline" || out.Token == "" {
-		t.Fatal(out, err)
-	}
+	failIf(t, err != nil || out.Total != 241 || len(out.Recipients) != 200 || out.NextCursor != 200 || out.Text != "greetings" || out.Recipients[0].Username != "Offline" || out.Token == "", out, err)
 	second, err := s.CommunityBroadcast(ctx, id, req.RequestID, out.NextCursor)
-	if err != nil || len(second.Recipients) != 41 || second.NextCursor != 0 {
-		t.Fatal(second, err)
-	}
+	failIf(t, err != nil || len(second.Recipients) != 41 || second.NextCursor != 0, second, err)
 	s.mu.Lock()
 	delete(s.community.buddies, "buddy-239")
 	s.mu.Unlock()
 	again, err := s.PreviewCommunityBroadcast(ctx, req)
-	if err != nil || again.Total != 241 || again.Token != out.Token {
-		t.Fatal("snapshot changed", again, err)
-	}
+	failIf(t, err != nil || again.Total != 241 || again.Token != out.Token, "snapshot changed", again, err)
 	req.Text = "different"
 	if _, err := s.PreviewCommunityBroadcast(ctx, req); err == nil {
 		t.Fatal("request ID reused")
 	}
 	conversations, err := s.CommunityConversations(ctx, CommunityConversationsRequest{CommunityIdentity: id})
-	if err != nil || len(conversations.Conversations) != 0 {
-		t.Fatal("preview enqueued messages", conversations, err)
-	}
+	failIf(t, err != nil || len(conversations.Conversations) != 0, "preview enqueued messages", conversations, err)
 	s.mu.Lock()
 	s.community.identity.Session++
 	current := s.community.identity
@@ -61,9 +51,7 @@ func TestBroadcastPreviewCapturesPagedAudienceWithoutSending(t *testing.T) {
 		t.Fatal("stale caller")
 	}
 	recovered, err := s.CommunityBroadcast(ctx, current, req.RequestID, 0)
-	if err != nil || recovered.State != "stale-preview" || recovered.Total != 241 {
-		t.Fatal(recovered, err)
-	}
+	failIf(t, err != nil || recovered.State != "stale-preview" || recovered.Total != 241, recovered, err)
 }
 func TestBroadcastUploadAudienceIsActiveExactAndDeduplicated(t *testing.T) {
 	s := downloadService(t)
@@ -82,9 +70,7 @@ func TestBroadcastUploadAudienceIsActiveExactAndDeduplicated(t *testing.T) {
 	s.mu.Unlock()
 	req := CommunityBroadcastRequest{CommunityIdentity: id, RequestID: "upload-audience", Audience: "uploaders", Text: "hello"}
 	out, err := s.PreviewCommunityBroadcast(ctx, req)
-	if err != nil || out.Total != 2 || out.Recipients[0].Username != "Alice" || out.Recipients[1].Username != "alice" {
-		t.Fatal(out, err)
-	}
+	failIf(t, err != nil || out.Total != 2 || out.Recipients[0].Username != "Alice" || out.Recipients[1].Username != "alice", out, err)
 	req.RequestID = "bad-audience"
 	req.Offline = []string{"Alice"}
 	if _, err := s.PreviewCommunityBroadcast(ctx, req); err == nil {

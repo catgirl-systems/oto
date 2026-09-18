@@ -11,9 +11,7 @@ import (
 
 func TestCommunityTextRules(t *testing.T) {
 	p, err := compileCommunityTextTools(CommunityTextTools{Keywords: []string{"世界"}, Censorship: []string{"alice*", "b?d", "[literal]"}, Substitutions: []CommunitySubstitution{{From: "foo", To: "bar"}, {From: "bar", To: "世界"}}})
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	if out, err := p.outgoing("foo\nfoo"); err != nil || out != "世界 世界" {
 		t.Fatal(out, err)
 	}
@@ -21,22 +19,14 @@ func TestCommunityTextRules(t *testing.T) {
 		t.Fatal(out, mention)
 	}
 	for _, text := range []string{"malice", "alice2", "alice_", "alice\u0301", "xalice alicey"} {
-		if containsCommunityMention(text, "alice") {
-			t.Fatal("false mention", text)
-		}
+		failIf(t, containsCommunityMention(text, "alice"), "false mention", text)
 	}
 	for _, text := range []string{"@Alice!", "ALICE", "xalice, alice.", "(alice)"} {
-		if !containsCommunityMention(text, "alice") {
-			t.Fatal("missing mention", text)
-		}
+		failIf(t, !containsCommunityMention(text, "alice"), "missing mention", text)
 	}
-	if !containsCommunityMention("İ!", "i") {
-		t.Fatal("Unicode mention")
-	}
+	failIf(t, !containsCommunityMention("İ!", "i"), "Unicode mention")
 	p, err = compileCommunityTextTools(CommunityTextTools{Censorship: []string{"*"}, Substitutions: []CommunitySubstitution{{From: "a", To: strings.Repeat("b", 1024)}}})
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	if out, _ := p.incoming("a  b\n", ""); out != "***  ***\n" {
 		t.Fatal("whitespace changed", out)
 	}
@@ -54,40 +44,24 @@ func TestCommunityTextPersistenceAndSubmissionIdentity(t *testing.T) {
 	ctx := context.Background()
 	_, _, id := communityTestConnection(t, s)
 	p, err := compileCommunityTextTools(CommunityTextTools{Keywords: []string{"secret"}, Censorship: []string{"secret"}, Substitutions: []CommunitySubstitution{{From: "hello", To: "goodbye"}}})
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	s.mu.Lock()
 	s.community.text = p
 	s.mu.Unlock()
-	if err := s.receiveCommunityPrivate(ctx, id, soulseek.PrivateMessage{Username: "Alice", ID: 7, Text: "secret"}); err != nil {
-		t.Fatal(err)
-	}
+	must(t, s.receiveCommunityPrivate(ctx, id, soulseek.PrivateMessage{Username: "Alice", ID: 7, Text: "secret"}))
 	conv, err := s.stateDB.Queries().FindCommunityConversation(ctx, db.FindCommunityConversationParams{Account: id.Account, Kind: "private", Target: "Alice"})
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	page, err := s.CommunityMessages(ctx, CommunityMessagesRequest{CommunityIdentity: id, ConversationID: conv.ID})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(page.Messages) != 1 || page.Messages[0].Text != "***" || !page.Messages[0].Mention {
-		t.Fatal(page)
-	}
+	must(t, err)
+	failIf(t, len(page.Messages) != 1 || page.Messages[0].Text != "***" || !page.Messages[0].Mention, page)
 	req := CommunitySendRequest{CommunityIdentity: id, Username: "Alice", Text: "hello", RequestID: "transform"}
 	sent, err := s.SendCommunityPrivate(ctx, req)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	row, err := s.stateDB.Queries().GetCommunityMessage(ctx, db.GetCommunityMessageParams{Account: id.Account, ID: sent.MessageID})
-	if err != nil || row.Body != "goodbye" {
-		t.Fatal(row, err)
-	}
+	failIf(t, err != nil || row.Body != "goodbye", row, err)
 	s.mu.Lock()
 	s.community.text = nil
 	s.mu.Unlock()
 	repeat, err := s.SendCommunityPrivate(ctx, req)
-	if err != nil || !repeat.Duplicate || repeat.MessageID != sent.MessageID {
-		t.Fatal(repeat, err)
-	}
+	failIf(t, err != nil || !repeat.Duplicate || repeat.MessageID != sent.MessageID, repeat, err)
 }

@@ -26,9 +26,8 @@ func TestAutoAwayActivityAndManualPrecedence(t *testing.T) {
 	s.presence = PresenceAway
 	s.community.away.automatic = true
 	s.mu.Unlock()
-	if _, err := s.CommunityActivity(ctx, id); err != nil {
-		t.Fatal(err)
-	}
+	_, err := s.CommunityActivity(ctx, id)
+	must(t, err)
 	s.mu.Lock()
 	if target, change := s.autoAwayTargetLocked(time.Now()); !change || target != PresenceOnline {
 		t.Fatal("activity did not clear automatic away")
@@ -50,9 +49,7 @@ func TestAutoAwayActivityAndManualPrecedence(t *testing.T) {
 	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	if s.community.away.lastActivity != before {
-		t.Fatal("stale activity changed clock")
-	}
+	failIf(t, s.community.away.lastActivity != before, "stale activity changed clock")
 }
 func TestAwayWorkerDoesNotBlockShutdownLifecycle(t *testing.T) {
 	s := downloadService(t)
@@ -74,8 +71,6 @@ func TestCommunityAwayConfigurationBounds(t *testing.T) {
 	cfg := testConfig(t)
 	for _, seconds := range []int{-1, 86401} {
 		cfg.CommunityAway = map[string]config.CommunityAway{"account": {AutoAwaySeconds: seconds}}
-		if cfg.Validate() == nil {
-			t.Fatal("invalid duration", seconds)
-		}
+		failIf(t, cfg.Validate() == nil, "invalid duration", seconds)
 	}
 }

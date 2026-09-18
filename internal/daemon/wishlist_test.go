@@ -13,9 +13,7 @@ import (
 func newWishlistService(t *testing.T) *Service {
 	t.Helper()
 	s, err := New(testConfig(t), filepath.Join(t.TempDir(), "state.sqlite3"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	t.Cleanup(func() { _ = s.Close() })
 	return s
 }
@@ -24,32 +22,20 @@ func TestWishlistStateRoundTripAndUpsert(t *testing.T) {
 	dir := t.TempDir()
 	journal := filepath.Join(dir, "state.sqlite3")
 	s, err := New(testConfig(t), journal)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	item, err := s.PutWishlist("rare album", "type:audio")
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	updated, err := s.PutWishlist("rare album", "type:flac")
-	if err != nil || updated.ID != item.ID || len(s.Wishlist()) != 1 {
-		t.Fatalf("upsert: %+v %v", updated, err)
-	}
+	failIfFmt(t, err != nil || updated.ID != item.ID || len(s.Wishlist()) != 1, "upsert: %+v %v", updated, err)
 	row, err := s.stateDB.Queries().GetWishlist(context.Background(), "w-1")
-	if err != nil || row.Query != "rare album" {
-		t.Fatalf("wishlist row: %+v %v", row, err)
-	}
+	failIfFmt(t, err != nil || row.Query != "rare album", "wishlist row: %+v %v", row, err)
 	_ = s.Close()
 
 	reloaded, err := New(testConfig(t), journal)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	defer reloaded.Close()
 	items := reloaded.Wishlist()
-	if len(items) != 1 || items[0].ID != item.ID || items[0].Filter != "type:flac" {
-		t.Fatalf("reloaded wishlist: %+v", items)
-	}
+	failIfFmt(t, len(items) != 1 || items[0].ID != item.ID || items[0].Filter != "type:flac", "reloaded wishlist: %+v", items)
 	if err := reloaded.RemoveWishlist("missing"); !errors.Is(err, ErrWishlistNotFound) {
 		t.Fatalf("unknown remove: %v", err)
 	}
@@ -62,9 +48,7 @@ func TestWishlistStateRoundTripAndUpsert(t *testing.T) {
 func TestWishlistRunsFilterNotifyAndReplace(t *testing.T) {
 	s := newWishlistService(t)
 	item, err := s.PutWishlist("rare", "type:flac")
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	s.client = &soulseek.Client{}
 	results := []soulseek.SearchResult{
 		{Username: "a", Path: "x.mp3", Size: 1, Extension: "mp3", Public: true},
@@ -77,17 +61,11 @@ func TestWishlistRunsFilterNotifyAndReplace(t *testing.T) {
 	s.wishlistNotify = func(context.Context, string, int) error { notifications++; return nil }
 
 	page, err := s.runWishlist(context.Background(), item.ID, true)
-	if err != nil || page.Total != 1 || len(page.Results) != 1 {
-		t.Fatalf("automatic page: %+v %v", page, err)
-	}
+	failIfFmt(t, err != nil || page.Total != 1 || len(page.Results) != 1, "automatic page: %+v %v", page, err)
 	got := s.Wishlist()[0]
-	if got.ResultCount != 1 || !got.Unread || got.NotificationSequence != 1 || notifications != 1 || page.ID != wishlistSearchID(item.ID) {
-		t.Fatalf("automatic state: %+v notifications=%d", got, notifications)
-	}
+	failIfFmt(t, got.ResultCount != 1 || !got.Unread || got.NotificationSequence != 1 || notifications != 1 || page.ID != wishlistSearchID(item.ID), "automatic state: %+v notifications=%d", got, notifications)
 	persisted, err := s.stateDB.Queries().GetWishlist(context.Background(), item.ID)
-	if err != nil || persisted.Unread != 1 || persisted.ResultSignature == "" {
-		t.Fatalf("result metadata was not persisted: %+v %v", persisted, err)
-	}
+	failIfFmt(t, err != nil || persisted.Unread != 1 || persisted.ResultSignature == "", "result metadata was not persisted: %+v %v", persisted, err)
 	if _, err := s.runWishlist(context.Background(), item.ID, true); err != nil || notifications != 1 {
 		t.Fatalf("unchanged results renotified: %v %d", err, notifications)
 	}
@@ -110,9 +88,7 @@ func TestWishlistRunsFilterNotifyAndReplace(t *testing.T) {
 	if _, err := s.RunWishlist(context.Background(), item.ID); err != nil || s.Wishlist()[0].Unread || notifications != 2 {
 		t.Fatalf("manual run notified: %v %+v", err, s.Wishlist()[0])
 	}
-	if len(s.searches) != 1 {
-		t.Fatalf("automatic searches leaked cache entries: %d", len(s.searches))
-	}
+	failIfFmt(t, len(s.searches) != 1, "automatic searches leaked cache entries: %d", len(s.searches))
 
 	s.wishlistSearch = func(context.Context, *soulseek.Client, string, bool) ([]soulseek.SearchResult, error) {
 		return nil, errors.New("network failed")
@@ -131,9 +107,7 @@ func TestWishlistIntervalRoundRobinAndStaleCompletion(t *testing.T) {
 	if delay, ok := s.wishlistIntervalLocked(); !ok || delay != 30*time.Minute {
 		t.Fatalf("server interval clamp: %v %v", delay, ok)
 	}
-	if s.nextWishlistID() != first.ID || s.nextWishlistID() != second.ID || s.nextWishlistID() != first.ID {
-		t.Fatal("wishlist did not rotate in insertion order")
-	}
+	failIf(t, s.nextWishlistID() != first.ID || s.nextWishlistID() != second.ID || s.nextWishlistID() != first.ID, "wishlist did not rotate in insertion order")
 	s.cfg.Search.WishlistIntervalMinutes = 0
 	if _, ok := s.wishlistIntervalLocked(); ok {
 		t.Fatal("disabled wishlist reported available")
@@ -161,9 +135,8 @@ func TestWishlistIntervalRoundRobinAndStaleCompletion(t *testing.T) {
 	if _, err := s.runWishlist(context.Background(), first.ID, true); err == nil {
 		t.Fatal("second wishlist run started while one was in flight")
 	}
-	if _, err := s.PutWishlist("one", "type:audio"); err != nil {
-		t.Fatal(err)
-	}
+	_, err := s.PutWishlist("one", "type:audio")
+	must(t, err)
 	close(release)
 	if err := <-done; !errors.Is(err, ErrWishlistNotFound) || s.Wishlist()[0].Running {
 		t.Fatalf("stale completion applied: %v %+v", err, s.Wishlist()[0])

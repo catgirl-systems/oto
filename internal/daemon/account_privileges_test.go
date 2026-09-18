@@ -24,9 +24,7 @@ func privilegeTestService(t *testing.T) (*Service, net.Conn, string) {
 	cfg.DownloadDir = t.TempDir()
 	path := filepath.Join(t.TempDir(), "state.db")
 	s, err := New(cfg, path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	left, right := net.Pipe()
 	_ = right.SetDeadline(time.Now().Add(5 * time.Second))
 	id := s.community.identity
@@ -67,9 +65,7 @@ func TestAccountPrivilegesGiftPreviewJournalAndRestart(t *testing.T) {
 	balance := loadTestPrivileges(t, s, peer)
 	req := AccountPrivilegeGiftRequest{CommunityIdentity: balance.CommunityIdentity, RequestID: "gift-one", Username: "Alice", Days: 1}
 	preview, err := s.GiftAccountPrivileges(ctx, req)
-	if err != nil || preview.State != "preview" || preview.Balance.Revision != balance.Revision {
-		t.Fatal(preview, err)
-	}
+	failIf(t, err != nil || preview.State != "preview" || preview.Balance.Revision != balance.Revision, preview, err)
 	if _, err := s.stateDB.Queries().GetCommunitySubmission(ctx, db.GetCommunitySubmissionParams{Account: req.Account, RequestID: req.RequestID}); !errors.Is(err, sql.ErrNoRows) {
 		t.Fatal("preview persisted a gift", err)
 	}
@@ -201,16 +197,11 @@ func TestAccountPrivilegePartialGiftWriteRemainsUnknown(t *testing.T) {
 		done <- out
 	}()
 	var prefix [1]byte
-	if _, err := peer.Read(prefix[:]); err != nil {
-		t.Fatal(err)
-	}
+	_, err := peer.Read(prefix[:])
+	must(t, err)
 	_ = peer.Close()
 	out := <-done
-	if out.State != "unknown" || out.Balance.Fresh {
-		t.Fatal(out)
-	}
+	failIf(t, out.State != "unknown" || out.Balance.Fresh, out)
 	again, err := s.GiftAccountPrivileges(context.Background(), req)
-	if err != nil || !again.Duplicate || again.State != "unknown" {
-		t.Fatal(again, err)
-	}
+	failIf(t, err != nil || !again.Duplicate || again.State != "unknown", again, err)
 }

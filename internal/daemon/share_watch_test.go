@@ -17,13 +17,9 @@ func watchingService(t *testing.T, shares []config.Share, quiet time.Duration, b
 	cfg := testConfig(t)
 	cfg.Shares = shares
 	service, err := New(cfg, filepath.Join(t.TempDir(), "state.sqlite3"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	service.SetConfigPath(filepath.Join(t.TempDir(), "config.json"))
-	if err := service.Rescan(); err != nil {
-		t.Fatal(err)
-	}
+	must(t, service.Rescan())
 	service.mu.Lock()
 	if builder != nil {
 		service.shareIndexBuilder = builder
@@ -53,9 +49,7 @@ func waitFor(t *testing.T, condition func() bool) {
 	t.Helper()
 	deadline := time.Now().Add(3 * time.Second)
 	for !condition() {
-		if time.Now().After(deadline) {
-			t.Fatal("condition was not satisfied")
-		}
+		failIf(t, time.Now().After(deadline), "condition was not satisfied")
 		time.Sleep(10 * time.Millisecond)
 	}
 }
@@ -63,16 +57,12 @@ func waitFor(t *testing.T, condition func() bool) {
 func shareStorageService(t *testing.T) (*Service, string, string) {
 	t.Helper()
 	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "song.flac"), []byte("audio"), 0600); err != nil {
-		t.Fatal(err)
-	}
+	must(t, os.WriteFile(filepath.Join(root, "song.flac"), []byte("audio"), 0600))
 	cfg := testConfig(t)
 	cfg.Shares = []config.Share{{Name: "Music", Path: root}}
 	path := filepath.Join(t.TempDir(), "state.sqlite3")
 	service, err := New(cfg, path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	t.Cleanup(func() { _ = service.Close() })
 	return service, root, path
 }
@@ -84,40 +74,28 @@ func TestShareIndexSQLiteRoundTripPreservesFields(t *testing.T) {
 		[]soulseek.ShareFile{{Root: "Music", Path: "song.flac", Size: ^uint64(0), AudioMetadata: soulseek.AudioMetadata{Bitrate: 320, Duration: 123, SampleRate: 96000, BitDepth: 24}, AudioFingerprint: soulseek.AudioFingerprint{Size: ^uint64(0), MTimeUnixNano: 11, CTimeUnixNano: 22, ExtractorVersion: "probe"}, AudioSource: "ffprobe"}},
 		[]string{"tmp/*", "*.bak"},
 	)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	service.mu.Lock()
 	service.shares = index
 	service.mu.Unlock()
 	service.persistShareIndex(index)
 	loaded, err := service.loadShareIndexCache(service.cfg.Shares, index.Exclusions())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !reflect.DeepEqual(loaded.Files(), index.Files()) || !reflect.DeepEqual(loaded.Exclusions(), index.Exclusions()) {
-		t.Fatalf("round trip changed index: %#v %#v", loaded.Files(), loaded.Exclusions())
-	}
+	must(t, err)
+	failIfFmt(t, !reflect.DeepEqual(loaded.Files(), index.Files()) || !reflect.DeepEqual(loaded.Exclusions(), index.Exclusions()), "round trip changed index: %#v %#v", loaded.Files(), loaded.Exclusions())
 }
 
 func TestShareSnapshotStagingIsInvisibleAndCancellationKeepsHead(t *testing.T) {
 	service, root, _ := shareStorageService(t)
 	old, err := buildShareIndex(context.Background(), service.cfg.Shares)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	service.mu.Lock()
 	service.shares = old
 	service.mu.Unlock()
 	service.persistShareIndex(old)
 	before, err := service.loadShareIndexCache(service.cfg.Shares, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	newIndex, err := soulseek.RestoreShareIndex([]soulseek.ShareRoot{{Name: "Music", Path: root}}, []soulseek.ShareFile{{Root: "Music", Path: "new.flac", Size: 1}})
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	service.shareStorageMu.Lock()
 	staged, err := stageShareSnapshot(context.Background(), service.stateDB, "local", "", newIndex.Roots(), nil, newIndex.Files(), nil)
 	if err != nil {
@@ -141,7 +119,5 @@ func TestShareSnapshotStagingIsInvisibleAndCancellationKeepsHead(t *testing.T) {
 		t.Fatal("canceled staging succeeded")
 	}
 	loaded, err = service.loadShareIndexCache(service.cfg.Shares, nil)
-	if err != nil || !reflect.DeepEqual(loaded.Files(), before.Files()) {
-		t.Fatalf("canceled staging changed head: %v", err)
-	}
+	failIfFmt(t, err != nil || !reflect.DeepEqual(loaded.Files(), before.Files()), "canceled staging changed head: %v", err)
 }

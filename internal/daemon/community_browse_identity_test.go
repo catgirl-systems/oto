@@ -30,13 +30,9 @@ func TestCommunityBrowseExactIdentityAndLegacyArchives(t *testing.T) {
 				return p.Revision, p.Cached, e
 			}
 			upper, cached, err := open("Alice")
-			if err != nil || cached {
-				t.Fatal(upper, cached, err)
-			}
+			failIf(t, err != nil || cached, upper, cached, err)
 			lower, cached, err := open("alice")
-			if err != nil || cached || lower == upper {
-				t.Fatal(lower, cached, err)
-			}
+			failIf(t, err != nil || cached || lower == upper, lower, cached, err)
 			if _, err := s.SaveBrowse("ALICE", upper); !errors.Is(err, ErrBrowseNotLoaded) {
 				t.Fatal("folded live identity", err)
 			}
@@ -52,9 +48,7 @@ func TestCommunityBrowseExactIdentityAndLegacyArchives(t *testing.T) {
 			if paged {
 				for user, revision := range map[string]uint64{"Alice": upper, "alice": lower} {
 					p, err := s.BrowsePage(context.Background(), BrowsePageRequest{Username: user, Revision: revision})
-					if err != nil || len(p.Entries) != 1 || p.Entries[0].Name != user {
-						t.Fatal("cross-user page", p, err)
-					}
+					failIf(t, err != nil || len(p.Entries) != 1 || p.Entries[0].Name != user, "cross-user page", p, err)
 				}
 			}
 			s.mu.Lock()
@@ -65,13 +59,9 @@ func TestCommunityBrowseExactIdentityAndLegacyArchives(t *testing.T) {
 				t.Fatal("retired live cache", err)
 			}
 			archives, err := s.SavedBrowses()
-			if err != nil || len(archives) != 1 || archives[0].Username != "alice" {
-				t.Fatal("legacy archive changed", archives, err)
-			}
+			failIf(t, err != nil || len(archives) != 1 || archives[0].Username != "alice", "legacy archive changed", archives, err)
 			_, cached, err = open("ALICE")
-			if err != nil || !cached {
-				t.Fatal("archive presented as live", cached, err)
-			}
+			failIf(t, err != nil || !cached, "archive presented as live", cached, err)
 		})
 	}
 }
@@ -129,12 +119,8 @@ func TestCommunityBrowseRetiresLateResults(t *testing.T) {
 						s.mu.Unlock()
 						other := original
 						other.Soulseek.Username = "other-account"
-						if err := s.UpdateConfig(other); err != nil {
-							t.Fatal(err)
-						}
-						if err := s.UpdateConfig(original); err != nil {
-							t.Fatal(err)
-						}
+						must(t, s.UpdateConfig(other))
+						must(t, s.UpdateConfig(original))
 					}
 					progress(100, 100)
 					if p := s.BrowseProgress("Alice"); p != nil {
@@ -144,18 +130,14 @@ func TestCommunityBrowseRetiresLateResults(t *testing.T) {
 				release <- struct{}{}
 				select {
 				case err := <-done:
-					if !errors.Is(err, want) {
-						t.Fatal("late response", err)
-					}
+					failIf(t, !errors.Is(err, want), "late response", err)
 				case <-time.After(3 * time.Second):
 					t.Fatal("late browse stalled")
 				}
 				s.mu.RLock()
 				loaded := s.browses["Alice"]
 				s.mu.RUnlock()
-				if loaded.result.Revision != 0 || loaded.snapshot != nil {
-					t.Fatal("late snapshot published", loaded)
-				}
+				failIf(t, loaded.result.Revision != 0 || loaded.snapshot != nil, "late snapshot published", loaded)
 			})
 		}
 	}
@@ -168,15 +150,11 @@ func TestCommunityBrowseAdmissionAndPublicationGuards(t *testing.T) {
 	if _, err := s.rememberBrowse(ctx, "Alice", nil, false, time.Time{}, 0); !errors.Is(err, context.Canceled) {
 		t.Fatal("cancelled publication", err)
 	}
-	if len(s.browses) != 0 {
-		t.Fatal("cancelled snapshot published")
-	}
+	failIf(t, len(s.browses) != 0, "cancelled snapshot published")
 	source := loadedBrowse{username: "Alice", result: BrowseResult{Revision: 1}, snapshot: &browseSnapshot{}}
 	s.browses["Alice"] = source
 	loaded, err := s.loadedBrowse("Alice", 1)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	s.mu.Lock()
 	s.retireCommunityLocked()
 	s.mu.Unlock()
@@ -188,7 +166,5 @@ func TestCommunityBrowseAdmissionAndPublicationGuards(t *testing.T) {
 	if _, err := s.queueDownloads(ctx, reqs, &source); !errors.Is(err, context.Canceled) {
 		t.Fatal("cancelled selection admitted", err)
 	}
-	if len(s.Downloads()) != 0 {
-		t.Fatal("rejected selection persisted")
-	}
+	failIf(t, len(s.Downloads()) != 0, "rejected selection persisted")
 }

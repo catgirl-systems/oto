@@ -21,15 +21,9 @@ func TestExclusionSettingsPublishAndRollback(t *testing.T) {
 	s.SetConfigPath(filepath.Join(t.TempDir(), "config.json"))
 	s.shareRescanDelay = 0
 	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "song.tmp"), []byte("x"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.AddShare(config.Share{Name: "Music", Path: root}); err != nil {
-		t.Fatal(err)
-	}
-	if hasLocalFile(s, "Music", "song.tmp", 1) {
-		t.Fatal("default not applied")
-	}
+	must(t, os.WriteFile(filepath.Join(root, "song.tmp"), []byte("x"), 0600))
+	must(t, s.AddShare(config.Share{Name: "Music", Path: root}))
+	failIf(t, hasLocalFile(s, "Music", "song.tmp", 1), "default not applied")
 	cfg := s.cfg
 	client := soulseek.NewClient(soulseek.ClientConfig{Uploads: newUploadManager(cfg)})
 	s.client = client
@@ -37,27 +31,17 @@ func TestExclusionSettingsPublishAndRollback(t *testing.T) {
 	cfg.ShareExclusions = []string{}
 	// An exclusion-only update must not tear down a running session.
 	s.cancel = func() { t.Error("exclusions reconnected Soulseek") }
-	if err := s.UpdateConfig(cfg); err != nil {
-		t.Fatal(err)
-	}
+	must(t, s.UpdateConfig(cfg))
 	s.cancel = nil
-	if client.DownloadLimit() != 11*1024 || client.UploadPolicy().BytesPerSecond != 7*1024 {
-		t.Fatal("share-scan publication lost bandwidth update")
-	}
-	if !hasLocalFile(s, "Music", "song.tmp", 1) || s.Snapshot().Config.ShareExclusions == nil {
-		t.Fatal("empty policy was not published")
-	}
+	failIf(t, client.DownloadLimit() != 11*1024 || client.UploadPolicy().BytesPerSecond != 7*1024, "share-scan publication lost bandwidth update")
+	failIf(t, !hasLocalFile(s, "Music", "song.tmp", 1) || s.Snapshot().Config.ShareExclusions == nil, "empty policy was not published")
 	loaded, err := config.Load(s.configPath)
-	if err != nil || loaded.ShareExclusions == nil || len(loaded.ShareExclusions) != 0 {
-		t.Fatalf("empty policy not persisted: %+v %v", loaded.ShareExclusions, err)
-	}
+	failIfFmt(t, err != nil || loaded.ShareExclusions == nil || len(loaded.ShareExclusions) != 0, "empty policy not persisted: %+v %v", loaded.ShareExclusions, err)
 	if _, err := s.loadShareIndexCache(cfg.Shares, nil); err == nil {
 		t.Fatal("differently filtered cache accepted")
 	}
 	cache, err := s.loadShareIndexCache(cfg.Shares, []string{})
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	index := s.shares
 	disk, _ := os.ReadFile(s.configPath)
 	for _, failure := range []string{"validation", "scan", "save", "cancel"} {
@@ -86,9 +70,7 @@ func TestExclusionSettingsPublishAndRollback(t *testing.T) {
 				done := make(chan error, 1)
 				go func() { done <- s.UpdateConfig(next) }()
 				<-entered
-				if err := s.CancelShareScan(s.Snapshot().ShareScan.ID); err != nil {
-					t.Fatal(err)
-				}
+				must(t, s.CancelShareScan(s.Snapshot().ShareScan.ID))
 				if err := <-done; !errors.Is(err, ErrScanCancelled) {
 					t.Fatalf("cancel: %v", err)
 				}
@@ -99,22 +81,16 @@ func TestExclusionSettingsPublishAndRollback(t *testing.T) {
 				}
 			}
 			gotDisk, _ := os.ReadFile(path)
-			if s.Config().Bandwidth.ActiveProfile != "Both" || client.DownloadLimit() != 11*1024 || client.UploadPolicy().BytesPerSecond != 7*1024 {
-				t.Fatal("failed staged scan changed bandwidth")
-			}
+			failIf(t, s.Config().Bandwidth.ActiveProfile != "Both" || client.DownloadLimit() != 11*1024 || client.UploadPolicy().BytesPerSecond != 7*1024, "failed staged scan changed bandwidth")
 			gotCache, err := s.loadShareIndexCache(s.cfg.Shares, s.cfg.ShareExclusions)
-			if err != nil || s.shares != index || !slices.Equal(s.cfg.ShareExclusions, cfg.ShareExclusions) || !bytes.Equal(disk, gotDisk) || !reflect.DeepEqual(cache.Files(), gotCache.Files()) {
-				t.Fatal("failed edit changed active or persisted configuration/index")
-			}
+			failIf(t, err != nil || s.shares != index || !slices.Equal(s.cfg.ShareExclusions, cfg.ShareExclusions) || !bytes.Equal(disk, gotDisk) || !reflect.DeepEqual(cache.Files(), gotCache.Files()), "failed edit changed active or persisted configuration/index")
 		})
 	}
 }
 
 func TestExclusionWatcherPrunesAndIgnoresEvents(t *testing.T) {
 	root := t.TempDir()
-	if err := os.Mkdir(filepath.Join(root, "@eaDir"), 0700); err != nil {
-		t.Fatal(err)
-	}
+	must(t, os.Mkdir(filepath.Join(root, "@eaDir"), 0700))
 	var scans atomic.Int32
 	s := watchingService(t, []config.Share{{Name: "Music", Path: root}}, 20*time.Millisecond, func(ctx context.Context, roots []config.Share) (*soulseek.ShareIndex, error) {
 		scans.Add(1)
@@ -122,26 +98,14 @@ func TestExclusionWatcherPrunesAndIgnoresEvents(t *testing.T) {
 	})
 	waitFor(t, func() bool { return s.Snapshot().ShareScan.State == "completed" && scans.Load() == 1 })
 	for _, file := range []string{"@eaDir/metadata", "song.tmp"} {
-		if err := os.WriteFile(filepath.Join(root, file), []byte("x"), 0600); err != nil {
-			t.Fatal(err)
-		}
+		must(t, os.WriteFile(filepath.Join(root, file), []byte("x"), 0600))
 	}
 	time.Sleep(80 * time.Millisecond)
-	if scans.Load() != 1 {
-		t.Fatal("excluded paths caused a scan")
-	}
-	if err := os.Mkdir(filepath.Join(root, "lost+found"), 0700); err != nil {
-		t.Fatal(err)
-	}
+	failIf(t, scans.Load() != 1, "excluded paths caused a scan")
+	must(t, os.Mkdir(filepath.Join(root, "lost+found"), 0700))
 	time.Sleep(60 * time.Millisecond)
-	if scans.Load() != 1 {
-		t.Fatal("excluded directory installed watches")
-	}
-	if err := os.WriteFile(filepath.Join(root, "song.flac"), []byte("x"), 0600); err != nil {
-		t.Fatal(err)
-	}
+	failIf(t, scans.Load() != 1, "excluded directory installed watches")
+	must(t, os.WriteFile(filepath.Join(root, "song.flac"), []byte("x"), 0600))
 	waitFor(t, func() bool { return hasLocalFile(s, "Music", "song.flac", 1) })
-	if hasLocalFile(s, "Music", "song.tmp", 1) {
-		t.Fatal("watcher ignored policy")
-	}
+	failIf(t, hasLocalFile(s, "Music", "song.tmp", 1), "watcher ignored policy")
 }

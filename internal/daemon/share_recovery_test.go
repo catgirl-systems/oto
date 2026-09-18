@@ -48,55 +48,33 @@ func TestSharePolicyRecoveryReadsAddressBeforeAdmission(t *testing.T) {
 	cfg := testConfig(t)
 	cfg.Soulseek.Server, cfg.Soulseek.ListenAddr = server.Listener.Addr().String(), closedAddress(t)
 	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "song"), []byte("test"), 0600); err != nil {
-		t.Fatal(err)
-	}
+	must(t, os.WriteFile(filepath.Join(root, "song"), []byte("test"), 0600))
 	cfg.Shares = []config.Share{{Name: "Music", Path: root}}
 	path := filepath.Join(t.TempDir(), "state.sqlite3")
 	seed, err := New(cfg, path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	t.Cleanup(func() { _ = seed.Close() })
 	seed.uploadEpoch = 1
-	if err := seed.uploadAccepted(1, soulseek.TransferEvent{Username: "Alice", Filename: `Music\song`, Attempt: 1, Total: 4}); err != nil {
-		t.Fatal(err)
-	}
+	must(t, seed.uploadAccepted(1, soulseek.TransferEvent{Username: "Alice", Filename: `Music\song`, Attempt: 1, Total: 4}))
 	summary, err := seed.CommunitySummary(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	_, err = seed.SetCommunityRule(context.Background(), CommunityRuleRequest{CommunityIdentity: summary.CommunityIdentity, Revision: 0, Confirm: true, Rule: CommunityRule{Action: "ban", Kind: "ip", Value: "127.0.0.1", Message: "Recovery policy denial"}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := seed.Close(); err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
+	must(t, seed.Close())
 	s, err := New(cfg, path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	t.Cleanup(func() { _ = s.Close() })
-	if err := s.shares.AddRoot("Music", root); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.shares.ScanContext(context.Background()); err != nil {
-		t.Fatal(err)
-	}
+	must(t, s.shares.AddRoot("Music", root))
+	must(t, s.shares.ScanContext(context.Background()))
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	if err := s.Start(ctx); err != nil {
-		t.Fatal(err)
-	}
+	must(t, s.Start(ctx))
 	for {
 		s.mu.RLock()
 		u := s.journal.Uploads[0]
 		s.mu.RUnlock()
 		if u.State == "failed" {
-			if u.Recoverable || u.Error != "Recovery policy denial" {
-				t.Fatal("wrong recovery outcome", u)
-			}
+			failIf(t, u.Recoverable || u.Error != "Recovery policy denial", "wrong recovery outcome", u)
 			break
 		}
 		select {

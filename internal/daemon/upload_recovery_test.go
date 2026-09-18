@@ -16,23 +16,15 @@ func TestUploadJournalRecoveryAndAccounts(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(t.TempDir(), "state.sqlite3")
 	for _, name := range []string{"a", "b"} {
-		if err := os.WriteFile(filepath.Join(root, name), []byte(name), 0600); err != nil {
-			t.Fatal(err)
-		}
+		must(t, os.WriteFile(filepath.Join(root, name), []byte(name), 0600))
 	}
 	index := soulseek.NewShareIndex()
-	if err := index.AddRoot("Music", root); err != nil {
-		t.Fatal(err)
-	}
-	if err := index.ScanContext(context.Background()); err != nil {
-		t.Fatal(err)
-	}
+	must(t, index.AddRoot("Music", root))
+	must(t, index.ScanContext(context.Background()))
 	newService := func(c config.Config, manager *soulseek.UploadManager, ready <-chan struct{}, accepted *[]string) *Service {
 		t.Helper()
 		s, err := New(c, path)
-		if err != nil {
-			t.Fatal(err)
-		}
+		must(t, err)
 		s.shares = index
 		s.uploadEpoch = 1
 		s.status = StatusConnected
@@ -50,20 +42,15 @@ func TestUploadJournalRecoveryAndAccounts(t *testing.T) {
 	}
 	manager := soulseek.NewUploadManager(1)
 	hold := manager.Enqueue("hold", soulseek.TransferRequest{Filename: "hold", Size: 1})
-	if err := manager.Wait(context.Background(), hold); err != nil {
-		t.Fatal(err)
-	}
+	must(t, manager.Wait(context.Background(), hold))
 	defer manager.Done(hold)
 	first := newService(cfg, manager, nil, nil)
 	for _, name := range []string{`Music\a`, `Music\b`} {
-		if _, err := first.client.QueueUpload("peer", name); err != nil {
-			t.Fatal(err)
-		}
+		_, err := first.client.QueueUpload("peer", name)
+		must(t, err)
 	}
 	first.Close()
-	if len(first.journal.Uploads) != 2 || !first.journal.Uploads[0].Recoverable || first.journal.UploadSequence != 2 {
-		t.Fatalf("lost interrupted queue: %+v", first.journal)
-	}
+	failIfFmt(t, len(first.journal.Uploads) != 2 || !first.journal.Uploads[0].Recoverable || first.journal.UploadSequence != 2, "lost interrupted queue: %+v", first.journal)
 	// SQLite persists queue order explicitly; recovery must use it rather than row order.
 	limited := soulseek.NewUploadManager(1)
 	limited.Configure(soulseek.UploadPolicy{MaxQueuedFilesPerUser: 1, MaxQueuedBytesPerUser: 1})
@@ -75,9 +62,7 @@ func TestUploadJournalRecoveryAndAccounts(t *testing.T) {
 		t.Fatalf("recovery FIFO/grandfathering: %v", accepted)
 	}
 	for _, u := range restored.journal.Uploads {
-		if u.State != "queued" || u.ID != "upload:1" && u.ID != "upload:2" {
-			t.Fatalf("restored identity: %+v", u)
-		}
+		failIfFmt(t, u.State != "queued" || u.ID != "upload:1" && u.ID != "upload:2", "restored identity: %+v", u)
 	}
 	restored.Close()
 	other := cfg
@@ -85,19 +70,13 @@ func TestUploadJournalRecoveryAndAccounts(t *testing.T) {
 	accepted = nil
 	offline := newService(other, soulseek.NewUploadManager(1), make(chan struct{}), &accepted)
 	offline.recoverUploads(offline.client, 1)
-	if len(accepted) != 0 {
-		t.Fatal("recovered another account's queue")
-	}
+	failIf(t, len(accepted) != 0, "recovered another account's queue")
 	offline.Close()
-	if err := os.WriteFile(filepath.Join(root, "a"), []byte("changed"), 0600); err != nil {
-		t.Fatal(err)
-	}
+	must(t, os.WriteFile(filepath.Join(root, "a"), []byte("changed"), 0600))
 	accepted = nil
 	changed := newService(cfg, soulseek.NewUploadManager(1), make(chan struct{}), &accepted)
 	changed.recoverUploads(changed.client, 1)
 	for _, u := range changed.journal.Uploads {
-		if u.Filename == `Music\a` && (u.State != "failed" || u.Recoverable) {
-			t.Fatalf("changed upload resumed: %+v", u)
-		}
+		failIfFmt(t, u.Filename == `Music\a` && (u.State != "failed" || u.Recoverable), "changed upload resumed: %+v", u)
 	}
 }

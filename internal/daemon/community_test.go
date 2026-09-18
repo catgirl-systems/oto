@@ -45,18 +45,12 @@ func syncCommunityTestWatches(t *testing.T, s *Service, client *soulseek.Client,
 	go func() { result <- s.syncUserWatches(ctx, client, identity, sent) }()
 	for _, want := range expected {
 		command, payload, err := soulseek.ReadFrame(peer)
-		if err != nil {
-			t.Fatal(err)
-		}
+		must(t, err)
 		d := soulseek.NewDecoder(payload)
 		username, err := d.String()
-		if err != nil || d.Done() != nil || command != want.command || username != want.username {
-			t.Fatalf("watch %d %q, want %+v: %v", command, username, want, err)
-		}
+		failIfFmt(t, err != nil || d.Done() != nil || command != want.command || username != want.username, "watch %d %q, want %+v: %v", command, username, want, err)
 	}
-	if err := <-result; err != nil {
-		t.Fatal(err)
-	}
+	must(t, <-result)
 }
 
 func TestCommunityWatchesSharedIdentityAndExpiry(t *testing.T) {
@@ -67,19 +61,13 @@ func TestCommunityWatchesSharedIdentityAndExpiry(t *testing.T) {
 	s.setUserWatchesLocked("conversations", []string{"Alice"}, time.Time{})
 	s.mu.Unlock()
 	users := []string{"Alice", "alice", "alice"}
-	if err := s.WatchCommunityUsers(identity, "one", users); err != nil {
-		t.Fatal(err)
-	}
+	must(t, s.WatchCommunityUsers(identity, "one", users))
 	users[0] = "unrelated" // Caller does not own the stored slice.
-	if err := s.WatchCommunityUsers(identity, "two", []string{"alice"}); err != nil {
-		t.Fatal(err)
-	}
+	must(t, s.WatchCommunityUsers(identity, "two", []string{"alice"}))
 	sent := map[string]uint64{}
 	syncCommunityTestWatches(t, s, client, peer, identity, sent,
 		communityWatchPacket{soulseek.ServerWatchUser, "Alice"}, communityWatchPacket{soulseek.ServerWatchUser, "alice"})
-	if err := s.WatchCommunityUsers(identity, "one", nil); err != nil {
-		t.Fatal(err)
-	}
+	must(t, s.WatchCommunityUsers(identity, "one", nil))
 	s.mu.Lock()
 	s.setUserWatchesLocked("buddies", nil, time.Time{})
 	s.mu.Unlock()
@@ -97,16 +85,12 @@ func TestCommunityWatchesSharedIdentityAndExpiry(t *testing.T) {
 	s.setUserWatchesLocked("conversations", nil, time.Time{})
 	s.mu.Unlock()
 	syncCommunityTestWatches(t, s, client, peer, identity, sent, communityWatchPacket{soulseek.ServerUnwatchUser, "Alice"})
-	if len(s.community.users) != 0 {
-		t.Fatal("last consumer did not release cache")
-	}
+	failIf(t, len(s.community.users) != 0, "last consumer did not release cache")
 	if err := s.WatchCommunityUsers(identity, "too-many", make([]string, 201)); err == nil {
 		t.Fatal("discovery/frontend watch bound not enforced")
 	}
 	for n := range 64 {
-		if err := s.WatchCommunityUsers(identity, fmt.Sprint(n), []string{"Alice"}); err != nil {
-			t.Fatal(err)
-		}
+		must(t, s.WatchCommunityUsers(identity, fmt.Sprint(n), []string{"Alice"}))
 	}
 	if err := s.WatchCommunityUsers(identity, "overflow", []string{"Alice"}); err == nil {
 		t.Fatal("unbounded frontend leases")
@@ -120,22 +104,16 @@ func TestCommunityPresenceFreshnessAndEpoch(t *testing.T) {
 	s := downloadService(t)
 	_, _, identity := communityTestConnection(t, s)
 	ctx := context.Background()
-	if err := s.stateDB.Queries().PutCommunityBuddy(ctx, db.PutCommunityBuddyParams{Account: identity.Account, Username: "Alice"}); err != nil {
-		t.Fatal(err)
-	}
+	must(t, s.stateDB.Queries().PutCommunityBuddy(ctx, db.PutCommunityBuddyParams{Account: identity.Account, Username: "Alice"}))
 	s.mu.Lock()
 	s.setUserWatchesLocked("buddies", []string{"Alice"}, time.Time{})
 	s.mu.Unlock()
 	apply := func(m soulseek.SocialMessage) {
 		t.Helper()
-		if err := s.communityUpdate(ctx, identity, m); err != nil {
-			t.Fatal(err)
-		}
+		must(t, s.communityUpdate(ctx, identity, m))
 	}
 	apply(soulseek.WatchUserResponse{Username: "Alice", Exists: true, Status: soulseek.UserStatusOffline})
-	if !s.community.users["Alice"].LastSeen.IsZero() {
-		t.Fatal("initial hydration invented last seen")
-	}
+	failIf(t, !s.community.users["Alice"].LastSeen.IsZero(), "initial hydration invented last seen")
 	if u := s.community.users["Alice"]; u.PrivilegeFresh || !u.PrivilegeUpdatedAt.IsZero() {
 		t.Fatal("watch hydration invented privilege information")
 	}
@@ -168,20 +146,14 @@ func TestCommunityPresenceFreshnessAndEpoch(t *testing.T) {
 	if err := s.communityUpdate(ctx, identity, soulseek.UserPresence{Username: "Alice", Status: soulseek.UserStatusOffline}); err == nil {
 		t.Fatal("failed last-seen persistence accepted")
 	}
-	if s.community.users["Alice"] != before {
-		t.Fatal("failed update published volatile state")
-	}
+	failIf(t, s.community.users["Alice"] != before, "failed update published volatile state")
 	dropStorageTrigger(t, s, "reject_seen")
 	apply(soulseek.UserPresence{Username: "Alice", Status: soulseek.UserStatusOffline})
 	row, err := s.stateDB.Queries().GetCommunityBuddy(ctx, db.GetCommunityBuddyParams{Account: identity.Account, Username: "Alice"})
-	if err != nil || row.LastSeen == nil || *row.LastSeen != s.community.users["Alice"].LastSeen.UnixMilli() {
-		t.Fatalf("last seen not durable: %+v %v", row, err)
-	}
+	failIfFmt(t, err != nil || row.LastSeen == nil || *row.LastSeen != s.community.users["Alice"].LastSeen.UnixMilli(), "last seen not durable: %+v %v", row, err)
 	before = s.community.users["Alice"]
 	apply(soulseek.UserPresence{Username: "Alice", Status: soulseek.UserStatusOffline})
-	if !s.community.users["Alice"].LastSeen.Equal(before.LastSeen) {
-		t.Fatal("duplicate offline transition changed last seen")
-	}
+	failIf(t, !s.community.users["Alice"].LastSeen.Equal(before.LastSeen), "duplicate offline transition changed last seen")
 	apply(soulseek.UserPresence{Username: "alice", Status: soulseek.UserStatusOnline})
 	if _, exists := s.community.users["alice"]; exists {
 		t.Fatal("unsolicited case-variant cache created")
@@ -200,9 +172,7 @@ func TestCommunityPresenceFreshnessAndEpoch(t *testing.T) {
 	s.mu.Lock()
 	err = s.loadCommunityLocked(ctx)
 	s.mu.Unlock()
-	if err != nil || len(s.community.users) != 0 || len(s.community.watches["buddies"].users) != 0 {
-		t.Fatalf("account switch retained users: %v", err)
-	}
+	failIfFmt(t, err != nil || len(s.community.users) != 0 || len(s.community.watches["buddies"].users) != 0, "account switch retained users: %v", err)
 }
 
 func TestCommunityWatchesRestoreStorage(t *testing.T) {
@@ -232,20 +202,12 @@ func TestCommunityWatchesRestoreStorage(t *testing.T) {
 		}
 		return nil
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := s.Close(); err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
+	must(t, s.Close())
 	restored, err := New(s.cfg, s.journalPath)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	defer restored.Close()
-	if len(restored.community.users) != 207 {
-		t.Fatalf("paged watch restoration: %d", len(restored.community.users))
-	}
+	failIfFmt(t, len(restored.community.users) != 207, "paged watch restoration: %d", len(restored.community.users))
 	if got := restored.community.users["buddy000"]; got.LastSeen.UnixMilli() != 123456 || got.StatusFresh || got.StatsFresh || got.AddressFresh {
 		t.Fatalf("restored presence: %+v", got)
 	}
@@ -295,9 +257,7 @@ func TestCommunityWatchesReconnect(t *testing.T) {
 	cfg := testConfig(t)
 	cfg.Soulseek.Server, cfg.Soulseek.ListenAddr = server.Listener.Addr().String(), closedAddress(t)
 	s, err := New(cfg, filepath.Join(t.TempDir(), "state.sqlite3"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	defer s.Close()
 	s.mu.Lock()
 	s.setUserWatchesLocked("buddies", []string{"Alice"}, time.Time{})
@@ -305,17 +265,13 @@ func TestCommunityWatchesReconnect(t *testing.T) {
 	s.mu.Unlock()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	if err := s.Start(ctx); err != nil {
-		t.Fatal(err)
-	}
+	must(t, s.Start(ctx))
 	readWatches := func(session int) {
 		t.Helper()
 		for _, username := range []string{"Alice", "Bob"} {
 			select {
 			case got := <-watches:
-				if got != fmt.Sprintf("%d:%s", session, username) {
-					t.Fatal(got)
-				}
+				failIf(t, got != fmt.Sprintf("%d:%s", session, username), got)
 			case <-time.After(3 * time.Second):
 				t.Fatal("watch not restored")
 			}
@@ -332,44 +288,32 @@ func TestCommunityWatchesReconnect(t *testing.T) {
 	s.mu.RLock()
 	stale := s.community.users["Alice"]
 	s.mu.RUnlock()
-	if stale.StatusFresh || stale.StatsFresh || stale.AddressFresh || !stale.LastSeen.IsZero() {
-		t.Fatalf("disconnect manufactured presence: %+v", stale)
-	}
+	failIfFmt(t, stale.StatusFresh || stale.StatsFresh || stale.AddressFresh || !stale.LastSeen.IsZero(), "disconnect manufactured presence: %+v", stale)
 	readWatches(2)
 	waitFor(t, func() bool { s.mu.RLock(); defer s.mu.RUnlock(); return s.community.users["Alice"].StatusFresh })
 	if err := s.communityUpdate(ctx, old, soulseek.UserPresence{Username: "Alice", Status: soulseek.UserStatusOffline}); !errors.Is(err, ErrCommunitySession) {
 		t.Fatalf("old session accepted: %v", err)
 	}
-	if err := s.SetPresence(PresenceOffline); err != nil {
-		t.Fatal(err)
-	}
+	must(t, s.SetPresence(PresenceOffline))
 	s.mu.RLock()
 	stale = s.community.users["Alice"]
 	s.mu.RUnlock()
-	if stale.StatusFresh || !stale.LastSeen.IsZero() {
-		t.Fatalf("manual offline: %+v", stale)
-	}
+	failIfFmt(t, stale.StatusFresh || !stale.LastSeen.IsZero(), "manual offline: %+v", stale)
 }
 
 func TestCommunityWatchWriteCancellation(t *testing.T) {
 	s := downloadService(t)
 	client, _, identity := communityTestConnection(t, s)
-	if err := s.WatchCommunityUsers(identity, "one", []string{"Alice"}); err != nil {
-		t.Fatal(err)
-	}
+	must(t, s.WatchCommunityUsers(identity, "one", []string{"Alice"}))
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
 	defer cancel()
 	result := make(chan error, 1)
 	go func() { result <- s.syncUserWatches(ctx, client, identity, map[string]uint64{}) }()
 	// The stalled server writer must not hold the daemon lock or block updates.
-	if err := s.communityUpdate(context.Background(), identity, soulseek.UserPresence{Username: "Alice", Status: soulseek.UserStatusOnline}); err != nil {
-		t.Fatal(err)
-	}
+	must(t, s.communityUpdate(context.Background(), identity, soulseek.UserPresence{Username: "Alice", Status: soulseek.UserStatusOnline}))
 	select {
 	case err := <-result:
-		if err == nil {
-			t.Fatal("blocked watch write succeeded")
-		}
+		failIf(t, err == nil, "blocked watch write succeeded")
 	case <-time.After(time.Second):
 		t.Fatal("watch write ignored cancellation")
 	}
@@ -380,9 +324,7 @@ func TestCommunityWatchReacquireBeforeFlush(t *testing.T) {
 	client, peer, identity := communityTestConnection(t, s)
 	set := func(users []string) {
 		t.Helper()
-		if err := s.WatchCommunityUsers(identity, "one", users); err != nil {
-			t.Fatal(err)
-		}
+		must(t, s.WatchCommunityUsers(identity, "one", users))
 	}
 	set([]string{"Alice"})
 	sent := map[string]uint64{}
@@ -391,12 +333,8 @@ func TestCommunityWatchReacquireBeforeFlush(t *testing.T) {
 	set(nil)
 	set([]string{"Alice"}) // Neither change has reached the wire yet.
 	syncCommunityTestWatches(t, s, client, peer, identity, sent, watch)
-	if err := s.communityUpdate(context.Background(), identity, soulseek.WatchUserResponse{Username: "Alice", Exists: true, Status: soulseek.UserStatusOnline}); err != nil {
-		t.Fatal(err)
-	}
-	if !s.community.users["Alice"].StatusFresh {
-		t.Fatal("reacquired user never hydrated")
-	}
+	must(t, s.communityUpdate(context.Background(), identity, soulseek.WatchUserResponse{Username: "Alice", Exists: true, Status: soulseek.UserStatusOnline}))
+	failIf(t, !s.community.users["Alice"].StatusFresh, "reacquired user never hydrated")
 	syncCommunityTestWatches(t, s, client, peer, identity, sent)
 }
 
@@ -404,9 +342,7 @@ func TestCommunityExpiredWatchAdmissionOffline(t *testing.T) {
 	s := downloadService(t)
 	identity := s.community.identity
 	for n := range 64 {
-		if err := s.WatchCommunityUsers(identity, fmt.Sprint(n), []string{"Alice"}); err != nil {
-			t.Fatal(err)
-		}
+		must(t, s.WatchCommunityUsers(identity, fmt.Sprint(n), []string{"Alice"}))
 	}
 	s.mu.Lock()
 	for key, lease := range s.community.watches {
@@ -416,35 +352,23 @@ func TestCommunityExpiredWatchAdmissionOffline(t *testing.T) {
 		}
 	}
 	s.mu.Unlock()
-	if err := s.WatchCommunityUsers(identity, "new", []string{"Bob"}); err != nil {
-		t.Fatal(err)
-	}
-	if len(s.community.users) != 1 || s.community.users["Bob"].Username != "Bob" {
-		t.Fatal("expired offline cache not reclaimed")
-	}
+	must(t, s.WatchCommunityUsers(identity, "new", []string{"Bob"}))
+	failIf(t, len(s.community.users) != 1 || s.community.users["Bob"].Username != "Bob", "expired offline cache not reclaimed")
 }
 
 func TestCommunityOfflineAccountCycleFencesRequests(t *testing.T) {
 	s := downloadService(t)
 	ctx := context.Background()
 	before, err := s.CommunitySummary(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := s.WatchCommunityUsers(before.CommunityIdentity, "old", []string{"Alice"}); err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
+	must(t, s.WatchCommunityUsers(before.CommunityIdentity, "old", []string{"Alice"}))
 	s.mu.RLock()
 	original := s.cfg
 	s.mu.RUnlock()
 	other := original
 	other.Soulseek.Username = "other"
-	if err := s.UpdateConfig(other); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.UpdateConfig(original); err != nil {
-		t.Fatal(err)
-	}
+	must(t, s.UpdateConfig(other))
+	must(t, s.UpdateConfig(original))
 	// No summary or connection between A -> B -> A: polling must not be
 	// responsible for invalidating mutations or clearing frontend leases.
 	if err := s.WatchCommunityUsers(before.CommunityIdentity, "old", []string{"Alice"}); !errors.Is(err, ErrCommunitySession) {
@@ -454,14 +378,8 @@ func TestCommunityOfflineAccountCycleFencesRequests(t *testing.T) {
 		t.Fatalf("old read survived offline account cycle: %v", err)
 	}
 	after, err := s.CommunitySummary(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if before.Account != after.Account || before.Daemon != after.Daemon || after.Session <= before.Session {
-		t.Fatalf("reused identity: %+v %+v", before, after)
-	}
+	must(t, err)
+	failIfFmt(t, before.Account != after.Account || before.Daemon != after.Daemon || after.Session <= before.Session, "reused identity: %+v %+v", before, after)
 	users, err := s.CommunityUsers(ctx, CommunityUsersRequest{CommunityIdentity: after.CommunityIdentity})
-	if err != nil || len(users.Users) != 0 {
-		t.Fatalf("old leases restored: %+v %v", users, err)
-	}
+	failIfFmt(t, err != nil || len(users.Users) != 0, "old leases restored: %+v %v", users, err)
 }

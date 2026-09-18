@@ -21,9 +21,7 @@ func TestSoulfindDaemonUploadControls(t *testing.T) {
 	receiver := startIntegrationUploader(t, address, "recv"+stamp, nil, 0)
 	root := t.TempDir()
 	contents := bytes.Repeat([]byte("upload"), 4096)
-	if err := os.WriteFile(filepath.Join(root, "song"), contents, 0600); err != nil {
-		t.Fatal(err)
-	}
+	must(t, os.WriteFile(filepath.Join(root, "song"), contents, 0600))
 	cfg := config.Default()
 	cfg.Soulseek.Server = address
 	cfg.Soulseek.Username = "send" + stamp
@@ -34,18 +32,12 @@ func TestSoulfindDaemonUploadControls(t *testing.T) {
 	cfg.UploadSlots = 1
 	cfg.Bandwidth.Profiles[0].UploadSpeedLimitKiB = 1
 	svc, err := New(cfg, filepath.Join(t.TempDir(), "state.sqlite3"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	defer svc.Close()
-	if err := svc.Start(context.Background()); err != nil {
-		t.Fatal(err)
-	}
+	must(t, svc.Start(context.Background()))
 	waitForIntegration(t, func() bool { return svc.Snapshot().Status == StatusConnected })
 	file, err := os.CreateTemp(t.TempDir(), "received")
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	defer file.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -56,25 +48,17 @@ func TestSoulfindDaemonUploadControls(t *testing.T) {
 	id := "upload:1"
 	waitForIntegration(t, func() bool { tr := integrationTransfer(svc, id); return tr.State == "running" && tr.Done > 0 })
 	result, err := svc.UploadAction(UploadActionRequest{Action: "cancel", Usernames: []string{receiver.username}})
-	if err != nil || result.Changed != 1 {
-		t.Fatalf("abort user %+v %v", result, err)
-	}
+	failIfFmt(t, err != nil || result.Changed != 1, "abort user %+v %v", result, err)
 	select {
 	case err := <-done:
-		if err == nil {
-			t.Fatal("download not aborted")
-		}
+		failIf(t, err == nil, "download not aborted")
 	case <-ctx.Done():
 		t.Fatal("abort did not close file connection")
 	}
 	result, err = svc.UploadAction(UploadActionRequest{Action: "retry", IDs: []string{id}})
-	if err != nil || result.Changed != 1 {
-		t.Fatalf("retry %+v %v", result, err)
-	}
+	failIfFmt(t, err != nil || result.Changed != 1, "retry %+v %v", result, err)
 	// The receiver has cancelled its request; the retry must record its rejection.
 	waitForIntegration(t, func() bool { return integrationTransfer(svc, id).State == "failed" })
 	result, err = svc.UploadAction(UploadActionRequest{Action: "clear", States: []string{"failed"}})
-	if err != nil || result.Changed != 1 || len(svc.Transfers()) != 0 {
-		t.Fatalf("clear failed %+v %v", result, err)
-	}
+	failIfFmt(t, err != nil || result.Changed != 1 || len(svc.Transfers()) != 0, "clear failed %+v %v", result, err)
 }

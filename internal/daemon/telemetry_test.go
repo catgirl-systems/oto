@@ -14,9 +14,7 @@ func TestAccountingOffsetsRetriesReplayAndAccounts(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		cfg := testConfig(t)
 		s, err := New(cfg, filepath.Join(t.TempDir(), "state.sqlite3"))
-		if err != nil {
-			t.Fatal(err)
-		}
+		must(t, err)
 		defer s.Close()
 		s.transfers["d-1"] = Transfer{ID: "d-1", Username: "peer", Direction: "download", Filename: "song.flac", State: "running", Total: 200}
 		first := accountKey(cfg)
@@ -44,13 +42,9 @@ func TestAccountingOffsetsRetriesReplayAndAccounts(t *testing.T) {
 			t.Fatal(err)
 		}
 		a, err := s.telemetry.store.Totals(stats.Filter{Account: first})
-		if err != nil || a.Bytes != 50 || a.CompletedFiles != 0 || a.AttemptsFailed != 1 || a.ActiveMillis != 2000 {
-			t.Fatalf("first account: %+v %v", a, err)
-		}
+		failIfFmt(t, err != nil || a.Bytes != 50 || a.CompletedFiles != 0 || a.AttemptsFailed != 1 || a.ActiveMillis != 2000, "first account: %+v %v", a, err)
 		b, err := s.telemetry.store.Totals(stats.Filter{Account: "server/other"})
-		if err != nil || b.Bytes != 70 || b.CompletedFiles != 1 || b.CompletedBytes != 200 || b.AttemptsCompleted != 1 || b.ActiveMillis != 1000 {
-			t.Fatalf("second account: %+v %v", b, err)
-		}
+		failIfFmt(t, err != nil || b.Bytes != 70 || b.CompletedFiles != 1 || b.CompletedBytes != 200 || b.AttemptsCompleted != 1 || b.ActiveMillis != 1000, "second account: %+v %v", b, err)
 		s.mu.Lock()
 		s.telemetry.pending = append(s.telemetry.pending, pending...)
 		s.mu.Unlock()
@@ -58,16 +52,12 @@ func TestAccountingOffsetsRetriesReplayAndAccounts(t *testing.T) {
 			t.Fatal(err)
 		}
 		all, err := s.telemetry.store.Totals(stats.Filter{})
-		if err != nil || all.Bytes != 120 || all.CompletedFiles != 1 {
-			t.Fatalf("replay double counted: %+v %v", all, err)
-		}
+		failIfFmt(t, err != nil || all.Bytes != 120 || all.CompletedFiles != 1, "replay double counted: %+v %v", all, err)
 	})
 }
 func TestActiveTimeSplitsUTCMidnight(t *testing.T) {
 	before := time.Date(2024, 12, 31, 23, 59, 59, 0, time.UTC)
 	a := attemptStats{event: stats.Event{Account: "a", Session: "s", Direction: "upload"}, activeAt: before, days: map[string]stats.Event{}}
 	a.checkpoint(before.Add(2 * time.Second))
-	if len(a.days) != 2 || a.days["2024-12-31"].ActiveMillis != 1000 || a.days["2025-01-01"].ActiveMillis != 1000 {
-		t.Fatalf("UTC split: %+v", a.days)
-	}
+	failIfFmt(t, len(a.days) != 2 || a.days["2024-12-31"].ActiveMillis != 1000 || a.days["2025-01-01"].ActiveMillis != 1000, "UTC split: %+v", a.days)
 }
