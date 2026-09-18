@@ -92,7 +92,7 @@ func (c *Client) SetCommunityInterest(ctx context.Context, req daemon.CommunityI
 	return out, err
 }
 func (c *Client) CommunitySelfProfile(ctx context.Context, identity daemon.CommunityIdentity) (daemon.CommunitySelfProfile, error) {
-	q := url.Values{"account": {identity.Account}, "daemon": {identity.Daemon}, "session": {strconv.FormatUint(identity.Session, 10)}}
+	q := communityRoomValues(identity)
 	var out daemon.CommunitySelfProfile
 	err := c.Do(ctx, http.MethodGet, "/v1/community/profile/self?"+q.Encode(), nil, &out)
 	return out, err
