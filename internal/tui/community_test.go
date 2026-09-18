@@ -199,24 +199,18 @@ func TestCommunityContextualUserActions(t *testing.T) {
 		m.searchTree, m.transferTrees[transferDownloads] = tree, tree
 		m.cursor, m.selected = 0, map[int]bool{5: true}
 		m.key(tea.KeyPressMsg(tea.Key{Code: 'U', Text: "U"}))
-		if m.userActions == nil || m.userActions.username != username || !strings.Contains(m.userActionsView(), username) {
-			t.Fatalf("missing context in workspace %v", workspace)
-		}
+		failIfFmt(t, m.userActions == nil || m.userActions.username != username || !strings.Contains(m.userActionsView(), username), "missing context in workspace %v", workspace)
 		// Async data and global shortcuts must not change the captured target.
 		m.community.target, m.browseUser = "unrelated", "unrelated"
 		m.key(tea.KeyPressMsg(tea.Key{Code: tea.KeyTab}))
 		m.key(tea.KeyPressMsg(tea.Key{Code: 'q', Text: "q"}))
-		if m.workspace != workspace || !m.selected[5] || m.userActions.username != username {
-			t.Fatal("modal navigation changed its source")
-		}
+		failIf(t, m.workspace != workspace || !m.selected[5] || m.userActions.username != username, "modal navigation changed its source")
 		m.key(tea.KeyPressMsg(tea.Key{Code: tea.KeyEnter}))
-		if m.workspace != workspaceCommunity || m.community.target != username || m.community.pane != 2 || m.userActions != nil {
-			t.Fatal("inspector action failed")
-		}
+		failIf(t, m.workspace != workspaceCommunity || m.community.target != username || m.community.pane != 2 || m.userActions != nil, "inspector action failed")
 		m.openUserActions()
 		m.userActions.row = 2
 		m.key(tea.KeyPressMsg(tea.Key{Code: tea.KeyEnter}))
-		if m.searchScope == nil || m.searchScope.global || !reflect.DeepEqual(m.searchScope.users, []string{username}) {
+		if m.searchScope == nil || m.searchScope.mode() == "global" || !reflect.DeepEqual(m.searchScope.users, []string{username}) {
 			t.Fatal("search context lost or went global")
 		}
 	}
