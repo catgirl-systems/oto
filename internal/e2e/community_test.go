@@ -17,15 +17,7 @@ import (
 )
 
 func TestCommunityTerminalShellAndUserActions(t *testing.T) {
-	fixtures := map[string]testutil.WireFixture{}
-	for _, f := range testutil.SocialFixtures(t) {
-		fixtures[f.Name] = f
-	}
-	for _, name := range []string{"login-ok", "WatchUser-request", "watch-online", "user-stats"} {
-		if fixtures[name].Name == "" {
-			t.Fatalf("missing required fixture %q", name)
-		}
-	}
+	fixtures := testutil.SocialFixtureMap(t, "login-ok", "WatchUser-request", "watch-online", "user-stats")
 	login, watch, stats := fixtures["login-ok"].Payload(t), fixtures["watch-online"].Payload(t), fixtures["user-stats"].Payload(t)
 	request := fixtures["WatchUser-request"].Payload(t)
 	var watches atomic.Int32

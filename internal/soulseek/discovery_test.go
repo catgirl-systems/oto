@@ -27,42 +27,30 @@ func TestCommunityDiscoveryReferenceProtocol(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			f := communityFixture(t, test.name)
 			frame, err := EncodeMessage(test.message)
-			if err != nil || binary.LittleEndian.Uint32(frame[4:]) != f.Code || !bytes.Equal(frame[8:], f.Payload(t)) {
-				t.Fatal("request differs from independent reference", err)
-			}
+			failIf(t, err != nil || binary.LittleEndian.Uint32(frame[4:]) != f.Code || !bytes.Equal(frame[8:], f.Payload(t)), "request differs from independent reference", err)
 		})
 	}
 	for _, kind := range []string{"personal", "global", "item", "similar", "item-users", "user-interests"} {
 		t.Run(kind, func(t *testing.T) {
 			f := communityFixture(t, "discovery-"+kind)
 			value, err := DecodeServerMessage(f.Code, f.Payload(t))
-			if err != nil {
-				t.Fatal(err)
-			}
+			must(t, err)
 			m, ok := value.(DiscoveryResponse)
-			if !ok || m.Kind != kind {
-				t.Fatal("response not authoritative discovery", value)
-			}
+			failIf(t, !ok || m.Kind != kind, "response not authoritative discovery", value)
 			switch kind {
 			case "personal", "global", "item":
 				if !reflect.DeepEqual(m.Recommendations, []ScoredInterest{{"techno", 42}, {"noise", -7}}) {
 					t.Fatal("signed recommendation ratings", m)
 				}
 			case "similar", "item-users":
-				if len(m.Users) != 2 || m.Users[0].Username != "Alice" || m.Users[1].Username != "alice" {
-					t.Fatal("folded discovery identities", m)
-				}
-				if kind == "similar" && m.Users[0].Rating != 9 {
-					t.Fatal("missing rating")
-				}
+				failIf(t, len(m.Users) != 2 || m.Users[0].Username != "Alice" || m.Users[1].Username != "alice", "folded discovery identities", m)
+				failIf(t, kind == "similar" && m.Users[0].Rating != 9, "missing rating")
 			case "user-interests":
 				if m.Target != "Alice" || !reflect.DeepEqual(m.Likes, []string{"techno"}) || !reflect.DeepEqual(m.Dislikes, []string{"noise"}) {
 					t.Fatal("user interests", m)
 				}
 			}
-			if (kind == "item" || kind == "item-users") && m.Target != "techno" {
-				t.Fatal("item correlation missing")
-			}
+			failIf(t, (kind == "item" || kind == "item-users") && m.Target != "techno", "item correlation missing")
 			if _, err := DecodeDiscoveryResponse(f.Code, append(f.Payload(t), 1)); err == nil {
 				t.Fatal("accepted trailing data")
 			}

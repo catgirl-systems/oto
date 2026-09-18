@@ -20,24 +20,14 @@ import (
 
 func roomFixture(t testing.TB, name string) testutil.WireFixture {
 	t.Helper()
-	for _, f := range testutil.SocialFixtures(t) {
-		if f.Name == name {
-			return f
-		}
-	}
-	t.Fatalf("missing room fixture %s", name)
-	return testutil.WireFixture{}
+	return testutil.SocialFixture(t, name)
 }
 func applyRoomFixture(t *testing.T, s *Service, identity CommunityIdentity, name string) {
 	t.Helper()
 	f := roomFixture(t, name)
 	msg, err := soulseek.DecodeServerMessage(f.Code, f.Payload(t))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := s.communityUpdate(context.Background(), identity, msg.(soulseek.SocialMessage)); err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
+	must(t, s.communityUpdate(context.Background(), identity, msg.(soulseek.SocialMessage)))
 }
 func syncTestRooms(t *testing.T, s *Service, c *soulseek.Client, peer net.Conn, identity CommunityIdentity, names ...string) {
 	t.Helper()
@@ -48,15 +38,11 @@ func syncTestRooms(t *testing.T, s *Service, c *soulseek.Client, peer net.Conn, 
 	for _, name := range names {
 		f := roomFixture(t, name)
 		code, p, err := soulseek.ReadFrame(peer)
-		if err != nil || code != f.Code || !bytes.Equal(p, f.Payload(t)) {
-			t.Fatalf("%s: %d %x %v", name, code, p, err)
-		}
+		failIfFmt(t, err != nil || code != f.Code || !bytes.Equal(p, f.Payload(t)), "%s: %d %x %v", name, code, p, err)
 	}
 	select {
 	case err := <-done:
-		if err != nil {
-			t.Fatal(err)
-		}
+		must(t, err)
 	case <-ctx.Done():
 		t.Fatal("room worker did not finish", ctx.Err())
 	}
@@ -191,15 +177,11 @@ func TestCommunityRoomFailuresAndReadOnlyOpen(t *testing.T) {
 	}
 	f := roomFixture(t, "room-joined")
 	msg, err := soulseek.DecodeServerMessage(f.Code, f.Payload(t))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	if err := s.communityUpdate(ctx, identity, msg.(soulseek.SocialMessage)); err == nil {
 		t.Fatal("failed history commit published membership")
 	}
-	if len(s.community.users) != 0 || roomSnapshot(t, s, identity, "oto test").Joined {
-		t.Fatal("rolled back join leaked authority")
-	}
+	failIf(t, len(s.community.users) != 0 || roomSnapshot(t, s, identity, "oto test").Joined, "rolled back join leaked authority")
 	if _, err := s.stateDB.SQL().Exec("DROP TRIGGER fail_room"); err != nil {
 		t.Fatal(err)
 	}

@@ -14,13 +14,9 @@ import (
 func TestCommunityProfileReferenceAndBounds(t *testing.T) {
 	f := communityFixture(t, "profile")
 	m, err := DecodePeerProfile(f.Payload(t))
-	if err != nil || m.Description != "hello 世界" || m.UploadSlots != 3 || m.QueueLength != 7 || !m.SlotsAvailable || !m.UploadAllowedKnown || m.UploadAllowed != 0 {
-		t.Fatal("reference profile", err, m)
-	}
+	failIf(t, err != nil || m.Description != "hello 世界" || m.UploadSlots != 3 || m.QueueLength != 7 || !m.SlotsAvailable || !m.UploadAllowedKnown || m.UploadAllowed != 0, "reference profile", err, m)
 	frame, err := EncodeMessage(m)
-	if err != nil || binary.LittleEndian.Uint32(frame[4:]) != f.Code || !bytes.Equal(frame[8:], f.Payload(t)) {
-		t.Fatal("profile encoder differs from independent fixture", err)
-	}
+	failIf(t, err != nil || binary.LittleEndian.Uint32(frame[4:]) != f.Code || !bytes.Equal(frame[8:], f.Payload(t)), "profile encoder differs from independent fixture", err)
 	request, err := EncodeMessage(UserInfoRequest{})
 	if err != nil || !bytes.Equal(request, []byte{4, 0, 0, 0, 15, 0, 0, 0}) {
 		t.Fatal("nonempty profile request", err)
@@ -131,8 +127,6 @@ func FuzzCommunityProfileDecode(f *testing.F) {
 	f.Add(communityFixture(f, "profile").Payload(f))
 	f.Fuzz(func(t *testing.T, payload []byte) {
 		m, err := DecodePeerProfile(payload)
-		if err == nil && (len(m.Picture) > MaxProfilePictureBytes || len(m.Description) > MaxProfileDescriptionBytes) {
-			t.Fatal("profile bounds")
-		}
+		failIf(t, err == nil && (len(m.Picture) > MaxProfilePictureBytes || len(m.Description) > MaxProfileDescriptionBytes), "profile bounds")
 	})
 }

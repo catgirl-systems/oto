@@ -20,10 +20,7 @@ import (
 )
 
 func TestCommunityPrivilegeGiftTerminalConfirmation(t *testing.T) {
-	fixtures := map[string]testutil.WireFixture{}
-	for _, f := range testutil.SocialFixtures(t) {
-		fixtures[f.Name] = f
-	}
+	fixtures := testutil.SocialFixtureMap(t)
 	var gifts atomic.Int32
 	server := testutil.ListenScript(t, func(_ context.Context, conn net.Conn) error {
 		if _, err := testutil.WaitForPacket(conn, 1); err != nil {

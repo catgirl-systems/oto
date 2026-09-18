@@ -74,19 +74,10 @@ func TestCommunityPrivateShutdownDrain(t *testing.T) {
 					t.Fatal(ctx.Err())
 				}
 			}
-			for _, fixture := range testutil.SocialFixtures(t) {
-				if fixture.Name != "pm-online" {
-					continue
-				}
-				if err := soulseek.WriteFrame(right, fixture.Code, fixture.Payload(t)); err != nil {
-					t.Fatal(err)
-				}
-				break
-			}
+			fixture := testutil.SocialFixture(t, "pm-online")
+			must(t, soulseek.WriteFrame(right, fixture.Code, fixture.Payload(t)))
 			code, _, err := soulseek.ReadFrame(right)
-			if err != nil || code != soulseek.ServerPrivateAck {
-				t.Fatalf("incoming PM stopped drain or sent queued work: %d %v", code, err)
-			}
+			failIfFmt(t, err != nil || code != soulseek.ServerPrivateAck, "incoming PM stopped drain or sent queued work: %d %v", code, err)
 			if draining, count := client.UploadDrainStatus(); !draining || count != 1 {
 				t.Fatal("active upload was cancelled")
 			}

@@ -16,44 +16,30 @@ func TestClientReconnectRenewsLifecycle(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	log, err := os.Create(filepath.Join(t.TempDir(), "reconnect-debug.log"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	defer log.Close()
 	c, uploads, _ := uploadClient(t, PeerAddress{}, []byte("hello"), slog.New(slog.NewTextHandler(log, &slog.HandlerOptions{Level: slog.LevelDebug})))
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	defer ln.Close()
 	_ = ln.(*net.TCPListener).SetDeadline(time.Now().Add(5 * time.Second))
 	c.cfg.Address = ln.Addr().String()
 	seen := make(chan SocialMessage, 8)
 	c.cfg.SocialUpdate = func(_ context.Context, message SocialMessage) error { seen <- message; return nil }
-	if err := c.Close(); err != nil {
-		t.Fatal(err)
-	}
+	must(t, c.Close())
 	for range 3 {
 		oldRoot := c.uploadRoot
-		if err := c.Connect(ctx); err != nil {
-			t.Fatal(err)
-		}
-		if c.uploadRoot == oldRoot || c.uploadRoot.Err() != nil || c.closing {
-			t.Fatal("reconnect retained retired lifecycle")
-		}
+		must(t, c.Connect(ctx))
+		failIf(t, c.uploadRoot == oldRoot || c.uploadRoot.Err() != nil || c.closing, "reconnect retained retired lifecycle")
 		server, err := ln.Accept()
-		if err != nil {
-			t.Fatal(err)
-		}
+		must(t, err)
 		t.Cleanup(func() { _ = server.Close() })
 		_ = server.SetDeadline(time.Now().Add(5 * time.Second))
 		runDone := make(chan struct{})
 		go func() { defer close(runDone); _ = c.Run(ctx) }()
 		t.Cleanup(func() { _ = c.Close(); <-runDone })
 		fixture := communityFixture(t, "status-online")
-		if err := WriteFrame(server, fixture.Code, fixture.Payload(t)); err != nil {
-			t.Fatal(err)
-		}
+		must(t, WriteFrame(server, fixture.Code, fixture.Payload(t)))
 		select {
 		case <-seen:
 		case <-runDone:

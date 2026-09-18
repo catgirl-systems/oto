@@ -31,9 +31,7 @@ func TestCommunityRoomProtocol(t *testing.T) {
 			f := communityFixture(t, name)
 			p := f.Payload(t)
 			got, err := DecodeServerMessage(f.Code, p)
-			if err != nil || !reflect.DeepEqual(got, want) {
-				t.Fatalf("reference fields: %#v %v", got, err)
-			}
+			failIfFmt(t, err != nil || !reflect.DeepEqual(got, want), "reference fields: %#v %v", got, err)
 			if _, ok := got.(SocialMessage); !ok {
 				t.Fatal("not authoritative")
 			}
@@ -63,9 +61,7 @@ func TestCommunityRoomProtocol(t *testing.T) {
 		encoded, err := EncodeMessage(msg)
 		code, p, decodeErr := ReadFrame(bytes.NewReader(encoded))
 		f := communityFixture(t, name)
-		if err != nil || decodeErr != nil || code != f.Code || !bytes.Equal(p, f.Payload(t)) {
-			t.Fatal("reference request differs", name, err, decodeErr)
-		}
+		failIf(t, err != nil || decodeErr != nil || code != f.Code || !bytes.Equal(p, f.Payload(t)), "reference request differs", name, err, decodeErr)
 	}
 	// Peer 16 is a profile response, never a room user arrival.
 	f := communityFixture(t, "profile")
@@ -158,14 +154,10 @@ func TestCommunityRoomAuthoritativeDispatchAndPrivacy(t *testing.T) {
 	go func() { run <- client.Run(ctx) }()
 	f := communityFixture(t, "room-echo")
 	_ = right.SetWriteDeadline(time.Now().Add(time.Second))
-	if err := WriteFrame(right, f.Code, f.Payload(t)); err != nil {
-		t.Fatal(err)
-	}
+	must(t, WriteFrame(right, f.Code, f.Payload(t)))
 	select {
 	case err := <-run:
-		if !errors.Is(err, stop) {
-			t.Fatal(err)
-		}
+		failIf(t, !errors.Is(err, stop), err)
 	case <-ctx.Done():
 		t.Fatal("dropped authoritative room message")
 	}

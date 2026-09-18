@@ -141,32 +141,20 @@ func TestCommunityInterestsWireSyncPagingAndRemoval(t *testing.T) {
 		for _, name := range names {
 			f := roomFixture(t, name)
 			code, p, err := soulseek.ReadFrame(peer)
-			if err != nil || code != f.Code || !bytes.Equal(p, f.Payload(t)) {
-				t.Fatal(name, code, p, err)
-			}
+			failIf(t, err != nil || code != f.Code || !bytes.Equal(p, f.Payload(t)), name, code, p, err)
 		}
-		if err := <-done; err != nil {
-			t.Fatal(err)
-		}
+		must(t, <-done)
 	}
 	first, err := s.SetCommunityInterest(ctx, CommunityInterestRequest{CommunityIdentity: id, Item: "techno", Opinion: "like"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if first.Interest.State != "pending" {
-		t.Fatal(first)
-	}
+	must(t, err)
+	failIf(t, first.Interest.State != "pending", first)
 	sync("interest-add-like")
 	sync()
 	changed, err := s.SetCommunityInterest(ctx, CommunityInterestRequest{CommunityIdentity: id, Item: "techno", Opinion: "dislike", Revision: &first.Interest.Revision})
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	sync("interest-remove-like", "interest-add-dislike")
 	page, err := s.CommunityInterests(ctx, CommunityInterestsRequest{CommunityIdentity: id, Query: "TECH"})
-	if err != nil || page.Total != 1 || page.Interests[0].State != "sent" {
-		t.Fatal(page, err)
-	}
+	failIf(t, err != nil || page.Total != 1 || page.Interests[0].State != "sent", page, err)
 	req := CommunityInterestRequest{CommunityIdentity: id, Item: "techno", Remove: true, Revision: &changed.Interest.Revision}
 	if _, err := s.SetCommunityInterest(ctx, req); err == nil {
 		t.Fatal("unconfirmed delete")

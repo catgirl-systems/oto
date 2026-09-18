@@ -14,12 +14,7 @@ import (
 )
 
 func TestCommunityUploadPolicyTerminalPersistence(t *testing.T) {
-	var login testutil.WireFixture
-	for _, f := range testutil.SocialFixtures(t) {
-		if f.Name == "login-ok" {
-			login = f
-		}
-	}
+	login := testutil.SocialFixture(t, "login-ok")
 	payload := login.Payload(t)
 	server := testutil.ListenScript(t, func(_ context.Context, conn net.Conn) error {
 		if _, err := testutil.WaitForPacket(conn, 1); err != nil {

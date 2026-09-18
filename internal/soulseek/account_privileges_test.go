@@ -9,13 +9,9 @@ func TestAccountPrivilegeWireFixtures(t *testing.T) {
 	for name, request := range map[string]Message{"check-privileges-request": CheckPrivilegesRequest{}, "give-privileges-request": GivePrivilegesRequest{Username: "Alice", Days: 1}} {
 		fixture := communityFixture(t, name)
 		encoded, err := EncodeMessage(request)
-		if err != nil {
-			t.Fatal(err)
-		}
+		must(t, err)
 		code, payload, err := ReadFrame(bytes.NewReader(encoded))
-		if err != nil || code != fixture.Code || !bytes.Equal(payload, fixture.Payload(t)) {
-			t.Fatal(name, code, payload, err)
-		}
+		failIf(t, err != nil || code != fixture.Code || !bytes.Equal(payload, fixture.Payload(t)), name, code, payload, err)
 	}
 	for name, want := range map[string]uint32{"privilege-balance": 259260, "privilege-balance-empty": 0} {
 		fixture := communityFixture(t, name)

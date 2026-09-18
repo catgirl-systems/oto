@@ -14,10 +14,7 @@ import (
 )
 
 func TestCommunityComposerCommands(t *testing.T) {
-	fixtures := map[string][]byte{}
-	for _, f := range testutil.SocialFixtures(t) {
-		fixtures[f.Name] = f.Payload(t)
-	}
+	fixtures := testutil.SocialPayloadMap(t)
 	sent := make(chan string, 10)
 	server := testutil.ListenScript(t, func(_ context.Context, conn net.Conn) error {
 		if _, err := testutil.WaitForPacket(conn, 1); err != nil {

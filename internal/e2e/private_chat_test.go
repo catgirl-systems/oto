@@ -18,15 +18,7 @@ import (
 )
 
 func TestCommunityTerminalPrivateChatLifecycle(t *testing.T) {
-	fixtures := map[string][]byte{}
-	for _, f := range testutil.SocialFixtures(t) {
-		fixtures[f.Name] = f.Payload(t)
-	}
-	for _, name := range []string{"login-ok", "watch-online", "user-stats", "pm-online", "pm-offline", "pm-send", "pm-ack"} {
-		if fixtures[name] == nil {
-			t.Fatalf("missing required fixture %s", name)
-		}
-	}
+	fixtures := testutil.SocialPayloadMap(t, "login-ok", "watch-online", "user-stats", "pm-online", "pm-offline", "pm-send", "pm-ack")
 	incoming := make(chan []byte, 100)
 	sent := make(chan []byte, 10)
 	var acknowledged atomic.Int32

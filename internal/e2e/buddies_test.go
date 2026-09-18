@@ -18,15 +18,7 @@ import (
 )
 
 func TestCommunityTerminalBuddies(t *testing.T) {
-	fixtures := map[string]testutil.WireFixture{}
-	for _, f := range testutil.SocialFixtures(t) {
-		fixtures[f.Name] = f
-	}
-	for _, name := range []string{"login-ok", "WatchUser-request", "UnwatchUser-request", "watch-online", "status-offline", "status-online", "status-away"} {
-		if _, ok := fixtures[name]; !ok {
-			t.Fatalf("missing mandatory fixture %s", name)
-		}
-	}
+	fixtures := testutil.SocialFixtureMap(t, "login-ok", "WatchUser-request", "UnwatchUser-request", "watch-online", "status-offline", "status-online", "status-away")
 	var mu sync.Mutex
 	var active net.Conn
 	var watches, unwatches atomic.Int32

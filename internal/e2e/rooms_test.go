@@ -19,15 +19,7 @@ import (
 // Real binary/PTY/daemon/IPC, with a deliberately scripted, reference-checked
 // local server. Real-server room interoperability is a separate Soulfind test.
 func TestCommunityTerminalPublicRooms(t *testing.T) {
-	fixtures := map[string]testutil.WireFixture{}
-	for _, f := range testutil.SocialFixtures(t) {
-		fixtures[f.Name] = f
-	}
-	for _, name := range []string{"login-ok", "room-directory", "room-joined", "room-leave", "room-echo", "room-send", "public-feed-message", "public-feed-subscribe"} {
-		if _, ok := fixtures[name]; !ok {
-			t.Fatalf("missing mandatory fixture %s", name)
-		}
-	}
+	fixtures := testutil.SocialFixtureMap(t, "login-ok", "room-directory", "room-joined", "room-leave", "room-echo", "room-send", "public-feed-message", "public-feed-subscribe")
 	var joins, leaves, sends, feeds atomic.Int32
 	server := testutil.ListenScript(t, func(ctx context.Context, conn net.Conn) error {
 		if _, err := testutil.WaitForPacket(conn, 1); err != nil {

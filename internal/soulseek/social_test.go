@@ -18,13 +18,7 @@ import (
 
 func communityFixture(t testing.TB, name string) testutil.WireFixture {
 	t.Helper()
-	for _, fixture := range testutil.SocialFixtures(t) {
-		if fixture.Name == name {
-			return fixture
-		}
-	}
-	t.Fatalf("missing Community fixture %s", name)
-	return testutil.WireFixture{}
+	return testutil.SocialFixture(t, name)
 }
 
 func TestCommunityUserProtocol(t *testing.T) {
@@ -44,9 +38,7 @@ func TestCommunityUserProtocol(t *testing.T) {
 			fixture := communityFixture(t, name)
 			payload := fixture.Payload(t)
 			got, err := DecodeServerMessage(fixture.Code, payload)
-			if err != nil || !reflect.DeepEqual(got, expected) {
-				t.Fatalf("decode: %#v %v", got, err)
-			}
+			failIfFmt(t, err != nil || !reflect.DeepEqual(got, expected), "decode: %#v %v", got, err)
 			for n := range len(payload) {
 				// Country and obfuscation are optional complete suffixes.
 				if name == "watch-online" && n == len(payload)-6 || name == "peer-address" && n == len(payload)-6 || name == "supporter-connection" && n == len(payload)-8 {
@@ -71,21 +63,15 @@ func TestCommunityUserProtocol(t *testing.T) {
 	for name, request := range requests {
 		fixture := communityFixture(t, name)
 		encoded, err := EncodeMessage(request)
-		if err != nil {
-			t.Fatal(err)
-		}
+		must(t, err)
 		command, payload, err := ReadFrame(bytes.NewReader(encoded))
-		if err != nil || command != fixture.Code || !bytes.Equal(payload, fixture.Payload(t)) {
-			t.Fatalf("%s: %x %v", name, encoded, err)
-		}
+		failIfFmt(t, err != nil || command != fixture.Code || !bytes.Equal(payload, fixture.Payload(t)), "%s: %x %v", name, encoded, err)
 	}
 	fixture := communityFixture(t, "watch-online")
 	offline := fixture.Payload(t)
 	offline[10] = 0
 	m, err := DecodeWatchUser(offline[:len(offline)-6])
-	if err != nil || m.Status != UserStatusOffline || m.Country != "" {
-		t.Fatalf("legacy offline: %+v %v", m, err)
-	}
+	failIfFmt(t, err != nil || m.Status != UserStatusOffline || m.Country != "", "legacy offline: %+v %v", m, err)
 	invalid := communityFixture(t, "status-away").Payload(t)
 	invalid[9] = 3
 	if _, err := DecodeUserPresence(invalid); err == nil {

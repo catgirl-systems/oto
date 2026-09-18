@@ -18,10 +18,7 @@ import (
 func TestCommunityIgnoreHeldWorkerSurvivesRestart(t *testing.T) {
 	for _, blocked := range []bool{false, true} {
 		t.Run(map[bool]string{false: "release", true: "discard"}[blocked], func(t *testing.T) {
-			fixtures := map[string]testutil.WireFixture{}
-			for _, fixture := range testutil.SocialFixtures(t) {
-				fixtures[fixture.Name] = fixture
-			}
+			fixtures := testutil.SocialFixtureMap(t)
 			var connections atomic.Int32
 			ack := make(chan struct{}, 1)
 			server := testutil.ListenScript(t, func(_ context.Context, conn net.Conn) error {

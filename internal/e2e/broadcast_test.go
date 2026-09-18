@@ -21,12 +21,7 @@ import (
 )
 
 func TestCommunityBroadcastCommandsAndPacedOutcomes(t *testing.T) {
-	var login []byte
-	for _, f := range testutil.SocialFixtures(t) {
-		if f.Name == "login-ok" {
-			login = f.Payload(t)
-		}
-	}
+	login := testutil.SocialFixture(t, "login-ok").Payload(t)
 	var sent atomic.Int32
 	arrivals := make(chan time.Time, 4)
 	server := testutil.ListenScript(t, func(_ context.Context, conn net.Conn) error {

@@ -31,19 +31,13 @@ func TestUploadQueuePositionRequestsFollowCurrentPriority(t *testing.T) {
 	fixture := communityFixture(t, "queue-position-request")
 	check := func(want uint32) {
 		t.Helper()
-		if err := WriteFrame(right, fixture.Code, fixture.Payload(t)); err != nil {
-			t.Fatal(err)
-		}
+		must(t, WriteFrame(right, fixture.Code, fixture.Payload(t)))
 		code, payload, err := ReadFrame(right)
-		if err != nil {
-			t.Fatal(err)
-		}
+		must(t, err)
 		d := NewDecoder(payload)
 		name, e := d.String()
 		position, pe := d.U32()
-		if code != PeerPlaceInQueue || e != nil || pe != nil || d.Done() != nil || name != "Public\\song.mp3" || position != want {
-			t.Fatal(code, name, position, want, e, pe)
-		}
+		failIf(t, code != PeerPlaceInQueue || e != nil || pe != nil || d.Done() != nil || name != "Public\\song.mp3" || position != want, code, name, position, want, e, pe)
 	}
 	check(2)
 	c.SetUploadUserPolicies(map[string]UploadUserPolicy{"Alice": {Preferred: true}})
@@ -58,9 +52,7 @@ func TestUploadQueuePositionRequestsFollowCurrentPriority(t *testing.T) {
 
 func TestCommunityPrivilegeCallbackPrecedesPeerRouting(t *testing.T) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	defer listener.Close()
 	fixture := communityFixture(t, "supporter-connection")
 	payload := fixture.Payload(t)

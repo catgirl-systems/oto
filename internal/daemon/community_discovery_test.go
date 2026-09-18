@@ -20,74 +20,50 @@ func TestCommunityDiscoveryCorrelationLateRepliesAndPaging(t *testing.T) {
 	start := func(req CommunityDiscoveryRequest, fixture string) CommunityDiscoveryPage {
 		t.Helper()
 		out, err := s.StartCommunityDiscovery(ctx, req)
-		if err != nil || out.State != "pending" {
-			t.Fatal(out, err)
-		}
+		failIf(t, err != nil || out.State != "pending", out, err)
 		f := roomFixture(t, fixture)
 		code, p, err := soulseek.ReadFrame(peer)
-		if err != nil || code != f.Code || !bytes.Equal(p, f.Payload(t)) {
-			t.Fatal(fixture, code, p, err)
-		}
+		failIf(t, err != nil || code != f.Code || !bytes.Equal(p, f.Payload(t)), fixture, code, p, err)
 		return out
 	}
 	apply := func(fixture string) {
 		t.Helper()
 		f := roomFixture(t, fixture)
 		m, err := soulseek.DecodeDiscoveryResponse(f.Code, f.Payload(t))
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := s.communityUpdate(ctx, id, m); err != nil {
-			t.Fatal(err)
-		}
+		must(t, err)
+		must(t, s.communityUpdate(ctx, id, m))
 	}
 	global := start(req, "discovery-global-request")
 	duplicate, err := s.StartCommunityDiscovery(ctx, req)
-	if err != nil || duplicate.Generation != global.Generation {
-		t.Fatal("duplicate query", duplicate, err)
-	}
+	failIf(t, err != nil || duplicate.Generation != global.Generation, "duplicate query", duplicate, err)
 	personalReq := req
 	personalReq.Kind = "personal"
 	start(personalReq, "discovery-personal-request") // Also detects accidental global retransmission.
 	apply("discovery-personal")
 	page, err := s.CommunityDiscovery(ctx, personalReq)
-	if err != nil || page.State != "ready" || page.Total != 2 || len(page.Rows) != 1 || page.Rows[0].Item != "techno" || page.Rows[0].Score != 42 || page.NextCursor == "" {
-		t.Fatal(page, err)
-	}
+	failIf(t, err != nil || page.State != "ready" || page.Total != 2 || len(page.Rows) != 1 || page.Rows[0].Item != "techno" || page.Rows[0].Score != 42 || page.NextCursor == "", page, err)
 	oldCursor := page.NextCursor
 	personalReq.Cursor = oldCursor
 	next, err := s.CommunityDiscovery(ctx, personalReq)
-	if err != nil || len(next.Rows) != 1 || next.Rows[0].Score != -7 {
-		t.Fatal(next, err)
-	}
+	failIf(t, err != nil || len(next.Rows) != 1 || next.Rows[0].Score != -7, next, err)
 	s.mu.Lock()
 	s.community.discovery.queries[communityDiscoveryKey{Kind: "global"}].deadline = time.Now().Add(-time.Second)
 	s.mu.Unlock()
 	pending, err := s.CommunityDiscovery(ctx, req)
-	if err != nil || pending.State != "unknown" {
-		t.Fatal(pending, err)
-	}
+	failIf(t, err != nil || pending.State != "unknown", pending, err)
 	req.Refresh = true
 	pending, err = s.StartCommunityDiscovery(ctx, req)
-	if err != nil || pending.State != "unknown" || pending.Generation != global.Generation {
-		t.Fatal("reissued uncertain tokenless query", pending, err)
-	}
+	failIf(t, err != nil || pending.State != "unknown" || pending.Generation != global.Generation, "reissued uncertain tokenless query", pending, err)
 	itemReq := req
 	itemReq.Kind, itemReq.Target = "item", "  TECHno  "
 	start(itemReq, "discovery-item-request")
-	if err := s.communityUpdate(ctx, id, soulseek.DiscoveryResponse{Kind: "item", Target: "TECHNO"}); err != nil {
-		t.Fatal(err)
-	}
+	must(t, s.communityUpdate(ctx, id, soulseek.DiscoveryResponse{Kind: "item", Target: "TECHNO"}))
 	item, err := s.CommunityDiscovery(ctx, itemReq)
-	if err != nil || item.State != "pending" {
-		t.Fatal("normalized reply identity", item, err)
-	}
+	failIf(t, err != nil || item.State != "pending", "normalized reply identity", item, err)
 	apply("discovery-item")
 	apply("discovery-global")
 	globalReady, err := s.CommunityDiscovery(ctx, req)
-	if err != nil || globalReady.State != "ready" || globalReady.Generation != global.Generation {
-		t.Fatal("late original reply", globalReady, err)
-	}
+	failIf(t, err != nil || globalReady.State != "ready" || globalReady.Generation != global.Generation, "late original reply", globalReady, err)
 	personalReq.Cursor = ""
 	personalReq.Refresh = true
 	start(personalReq, "discovery-personal-request")

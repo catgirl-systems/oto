@@ -26,15 +26,7 @@ type privateRoomProgress struct {
 // does not implement it. Every fixed frame is independently reference-checked.
 func privateRoomScript(t *testing.T) (*testutil.ScriptSocket, *privateRoomProgress) {
 	t.Helper()
-	fixtures := map[string]testutil.WireFixture{}
-	for _, f := range testutil.SocialFixtures(t) {
-		fixtures[f.Name] = f
-	}
-	for _, name := range []string{"login-ok", "private-directory-empty", "private-directory-owner", "private-directory-member", "private-joined-owner", "room-join-private", "room-left", "role-members", "wall-snapshot", "wall-set", "wall-clear", "role-add-member-request", "role-remove-member-request", "role-add-operator-request", "role-remove-operator-request", "role-cancel-membership-request", "role-cancel-ownership-request", "role-membership-revoked"} {
-		if _, ok := fixtures[name]; !ok {
-			t.Fatalf("missing mandatory fixture %s", name)
-		}
-	}
+	fixtures := testutil.SocialFixtureMap(t, "login-ok", "private-directory-empty", "private-directory-owner", "private-directory-member", "private-joined-owner", "room-join-private", "room-left", "role-members", "wall-snapshot", "wall-set", "wall-clear", "role-add-member-request", "role-remove-member-request", "role-add-operator-request", "role-remove-operator-request", "role-cancel-membership-request", "role-cancel-ownership-request", "role-membership-revoked")
 	progress := &privateRoomProgress{}
 	progress.role.Store(-1)
 	server := testutil.ListenScript(t, func(ctx context.Context, conn net.Conn) error {
