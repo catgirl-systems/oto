@@ -547,34 +547,8 @@ func (m model) renderCommunity(width, height int) string {
 	panes := [][]string{list, content, c.inspectorLines()}
 	if m.width < 80 || m.width < 110 && c.pane == 2 {
 		breadcrumb := communityViews[c.view] + " / " + communityPanes[c.pane] + " · Esc back"
-		if c.view == 0 && c.supports("private-chat") {
-			panes[c.pane] = m.chatPane(c.pane, width, max(0, remaining-1))
-		} else if c.view == 1 {
-			switch c.pane {
-			case 0:
-				panes[c.pane] = m.roomListPane(width, max(0, remaining-1))
-			case 1:
-				panes[c.pane] = m.roomContentPane(width, max(0, remaining-1))
-			case 2:
-				panes[c.pane] = m.roomRosterPane(width, max(0, remaining-1))
-			}
-		}
-		if c.view == 2 && c.supports("buddies") && c.pane < 2 {
-			if c.pane == 0 {
-				panes[0] = m.buddyListPane(width, max(0, remaining-1))
-			} else {
-				panes[1] = m.buddyDetailPane(width, max(0, remaining-1))
-			}
-		}
-		if c.view == 3 {
-			switch c.pane {
-			case 0:
-				panes[0] = m.discoverSidebar(width, max(0, remaining-1))
-			case 1:
-				panes[1] = m.discoverRowsPane(width, max(0, remaining-1))
-			case 2:
-				panes[2] = c.inspectorLines()
-			}
+		if content := m.communityPaneContent(c.pane, width, max(0, remaining-1)); content != nil {
+			panes[c.pane] = content
 		}
 		body := append([]string{accent(breadcrumb)}, communityPane(panes[c.pane], width, max(0, remaining-1), c.paneScroll())...)
 		return strings.Join(append(lines, communityPane(body, width, remaining, 0)...), "\n")
@@ -590,34 +564,8 @@ func (m model) renderCommunity(width, height int) string {
 		if i == 2 && c.view != 1 {
 			scroll = c.inspectorScroll
 		}
-		if c.view == 0 && c.supports("private-chat") && i < 2 {
-			panes[i] = m.chatPane(i, size, max(0, remaining-1))
-		} else if c.view == 1 {
-			switch i {
-			case 0:
-				panes[i] = m.roomListPane(size, max(0, remaining-1))
-			case 1:
-				panes[i] = m.roomContentPane(size, max(0, remaining-1))
-			case 2:
-				panes[i] = m.roomRosterPane(size, max(0, remaining-1))
-			}
-		}
-		if c.view == 2 && c.supports("buddies") && i < 2 {
-			if i == 0 {
-				panes[0] = m.buddyListPane(size, max(0, remaining-1))
-			} else {
-				panes[1] = m.buddyDetailPane(size, max(0, remaining-1))
-			}
-		}
-		if c.view == 3 {
-			switch i {
-			case 0:
-				panes[0] = m.discoverSidebar(size, max(0, remaining-1))
-			case 1:
-				panes[1] = m.discoverRowsPane(size, max(0, remaining-1))
-			case 2:
-				panes[2] = c.inspectorLines()
-			}
+		if content := m.communityPaneContent(i, size, max(0, remaining-1)); content != nil {
+			panes[i] = content
 		}
 		styledHeader := accent(label)
 		if i != c.pane {
@@ -642,6 +590,40 @@ func (m model) renderCommunity(width, height int) string {
 		lines = append(lines, strings.Join(cells, sep))
 	}
 	return strings.Join(lines[:min(len(lines), height)], "\n")
+}
+
+// communityPaneContent renders one Community column for the active view, or nil
+// to keep the shared fallback pane.
+func (m model) communityPaneContent(i, size, height int) []string {
+	c := m.community
+	switch {
+	case c.view == 0 && c.supports("private-chat") && i < 2:
+		return m.chatPane(i, size, height)
+	case c.view == 1:
+		switch i {
+		case 0:
+			return m.roomListPane(size, height)
+		case 1:
+			return m.roomContentPane(size, height)
+		case 2:
+			return m.roomRosterPane(size, height)
+		}
+	case c.view == 2 && c.supports("buddies") && i < 2:
+		if i == 0 {
+			return m.buddyListPane(size, height)
+		}
+		return m.buddyDetailPane(size, height)
+	case c.view == 3:
+		switch i {
+		case 0:
+			return m.discoverSidebar(size, height)
+		case 1:
+			return m.discoverRowsPane(size, height)
+		case 2:
+			return c.inspectorLines()
+		}
+	}
+	return nil
 }
 
 func (c communityModel) paneScroll() int {
