@@ -283,9 +283,6 @@ func (m model) browseShare(nodeID, path string, generation, request uint64) tea.
 		return shareBrowseMsg{nodeID: nodeID, generation: generation, request: request, entries: toEntries(entries), err: err}
 	}
 }
-func (m model) search(query, filter string, request, operation uint64, users ...string) tea.Cmd {
-	return m.searchScoped(query, filter, request, operation, "", nil, users)
-}
 func (m model) searchScoped(query, filter string, request, operation uint64, scope string, rooms, users []string) tea.Cmd {
 	identity := m.community.summary.CommunityIdentity
 	return func() tea.Msg {
