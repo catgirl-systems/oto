@@ -205,8 +205,10 @@ func TestSharedFolderSendTerminalPartialOutcomes(t *testing.T) {
 	screen := h.command("capture-pane", "-p", "-t", "shared-send")
 	requestID := ""
 	for _, line := range strings.Split(screen, "\n") {
-		if strings.HasPrefix(line, "Request: ") {
-			requestID = strings.TrimSpace(strings.TrimPrefix(line, "Request: "))
+		if i := strings.Index(line, "Request: "); i >= 0 {
+			if fields := strings.Fields(line[i+len("Request: "):]); len(fields) > 0 {
+				requestID = fields[0]
+			}
 		}
 	}
 	failIf(t, requestID == "", "missing request ID", screen)
