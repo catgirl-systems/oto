@@ -20,23 +20,6 @@ func (q *Queries) BumpCommunityRevision(ctx context.Context, account string) (in
 	return revision, err
 }
 
-const clearCommunityHistory = `-- name: ClearCommunityHistory :execrows
-DELETE FROM community_messages WHERE account = ? AND conversation_id = ? AND state IN ('received', 'sent', 'failed', 'cancelled')
-`
-
-type ClearCommunityHistoryParams struct {
-	Account        string `json:"account"`
-	ConversationID int64  `json:"conversation_id"`
-}
-
-func (q *Queries) ClearCommunityHistory(ctx context.Context, arg ClearCommunityHistoryParams) (int64, error) {
-	result, err := q.db.ExecContext(ctx, clearCommunityHistory, arg.Account, arg.ConversationID)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected()
-}
-
 const clearCommunityHistoryThrough = `-- name: ClearCommunityHistoryThrough :execrows
 DELETE FROM community_messages WHERE account = ? AND conversation_id = ? AND id <= ?3
 AND state IN ('received', 'sent', 'failed', 'cancelled')
@@ -78,43 +61,6 @@ func (q *Queries) CommunityHistoryInfo(ctx context.Context, arg CommunityHistory
 	var i CommunityHistoryInfoRow
 	err := row.Scan(&i.LatestID, &i.NewerCount)
 	return i, err
-}
-
-const communityUnread = `-- name: CommunityUnread :many
-SELECT c.id, count(m.id) AS unread, CAST(coalesce(sum(m.mention), 0) AS INTEGER) AS mentions
-FROM community_conversations c
-JOIN community_messages m ON m.account = c.account AND m.conversation_id = c.id
-WHERE c.account = ? AND m.id > c.read_through AND m.direction = 'incoming' AND m.state = 'received'
-GROUP BY c.id
-`
-
-type CommunityUnreadRow struct {
-	ID       int64 `json:"id"`
-	Unread   int64 `json:"unread"`
-	Mentions int64 `json:"mentions"`
-}
-
-func (q *Queries) CommunityUnread(ctx context.Context, account string) ([]CommunityUnreadRow, error) {
-	rows, err := q.db.QueryContext(ctx, communityUnread, account)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []CommunityUnreadRow
-	for rows.Next() {
-		var i CommunityUnreadRow
-		if err := rows.Scan(&i.ID, &i.Unread, &i.Mentions); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
 }
 
 const communityUnreadTotals = `-- name: CommunityUnreadTotals :one
@@ -181,23 +127,6 @@ type DeleteCommunityInterestParams struct {
 
 func (q *Queries) DeleteCommunityInterest(ctx context.Context, arg DeleteCommunityInterestParams) (int64, error) {
 	result, err := q.db.ExecContext(ctx, deleteCommunityInterest, arg.Account, arg.Item)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected()
-}
-
-const deleteCommunityRoom = `-- name: DeleteCommunityRoom :execrows
-DELETE FROM community_rooms WHERE account = ? AND room = ?
-`
-
-type DeleteCommunityRoomParams struct {
-	Account string `json:"account"`
-	Room    string `json:"room"`
-}
-
-func (q *Queries) DeleteCommunityRoom(ctx context.Context, arg DeleteCommunityRoomParams) (int64, error) {
-	result, err := q.db.ExecContext(ctx, deleteCommunityRoom, arg.Account, arg.Room)
 	if err != nil {
 		return 0, err
 	}
@@ -490,39 +419,6 @@ func (q *Queries) GetCommunityMessage(ctx context.Context, arg GetCommunityMessa
 		&i.State,
 		&i.Mention,
 		&i.Error,
-	)
-	return i, err
-}
-
-const getCommunityReceipt = `-- name: GetCommunityReceipt :one
-SELECT account, sender, server_id, server_time, fingerprint, disposition, created_at FROM community_receipts WHERE account = ? AND sender = ? AND server_id = ? AND server_time = ? AND fingerprint = ?
-`
-
-type GetCommunityReceiptParams struct {
-	Account     string `json:"account"`
-	Sender      string `json:"sender"`
-	ServerID    int64  `json:"server_id"`
-	ServerTime  int64  `json:"server_time"`
-	Fingerprint []byte `json:"fingerprint"`
-}
-
-func (q *Queries) GetCommunityReceipt(ctx context.Context, arg GetCommunityReceiptParams) (CommunityReceipt, error) {
-	row := q.db.QueryRowContext(ctx, getCommunityReceipt,
-		arg.Account,
-		arg.Sender,
-		arg.ServerID,
-		arg.ServerTime,
-		arg.Fingerprint,
-	)
-	var i CommunityReceipt
-	err := row.Scan(
-		&i.Account,
-		&i.Sender,
-		&i.ServerID,
-		&i.ServerTime,
-		&i.Fingerprint,
-		&i.Disposition,
-		&i.CreatedAt,
 	)
 	return i, err
 }
@@ -1174,23 +1070,6 @@ func (q *Queries) PageCommunityConversations(ctx context.Context, arg PageCommun
 		return nil, err
 	}
 	return items, nil
-}
-
-const pruneCommunityHistory = `-- name: PruneCommunityHistory :execrows
-DELETE FROM community_messages WHERE account = ? AND created_at < ?2 AND state IN ('received', 'sent', 'failed', 'cancelled')
-`
-
-type PruneCommunityHistoryParams struct {
-	Account    string `json:"account"`
-	BeforeTime int64  `json:"before_time"`
-}
-
-func (q *Queries) PruneCommunityHistory(ctx context.Context, arg PruneCommunityHistoryParams) (int64, error) {
-	result, err := q.db.ExecContext(ctx, pruneCommunityHistory, arg.Account, arg.BeforeTime)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected()
 }
 
 const putCommunityAlias = `-- name: PutCommunityAlias :exec

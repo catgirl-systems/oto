@@ -141,13 +141,9 @@ func TestCommunityStorageMessagesReceiptsAndOutbox(t *testing.T) {
 		t.Fatal("cross-account message accepted")
 	}
 	page, err := q.ListCommunityMessages(ctx, db.ListCommunityMessagesParams{Account: account, ConversationID: conversation.ID, SearchText: "世界", PageSize: 999})
-	if err != nil || len(page) != 7 || page[0].ID != messages[7].ID || page[6].ID != messages[0].ID {
-		t.Fatalf("history order/filter/held visibility: %+v %v", page, err)
-	}
-	unread, err := q.CommunityUnread(ctx, account)
-	if err != nil || len(unread) != 1 || unread[0].Unread != 1 || unread[0].Mentions != 1 {
-		t.Fatalf("held/outgoing content counted unread: %+v %v", unread, err)
-	}
+	failIfFmt(t, err != nil || len(page) != 7 || page[0].ID != messages[7].ID || page[6].ID != messages[0].ID, "history order/filter/held visibility: %+v %v", page, err)
+	unread, err := q.CommunityUnreadTotals(ctx, account)
+	failIfFmt(t, err != nil || unread.Unread != 1 || unread.Mentions != 1, "held/outgoing content counted unread: %+v %v", unread, err)
 	if n, err := q.MarkCommunityRead(ctx, db.MarkCommunityReadParams{Account: account, ConversationID: conversation.ID, ThroughID: messages[1].ID}); err != nil || n != 0 {
 		t.Fatalf("hidden message marked read: %d %v", n, err)
 	}
@@ -176,7 +172,7 @@ func TestCommunityStorageMessagesReceiptsAndOutbox(t *testing.T) {
 	if n, err := q.InsertCommunitySubmission(ctx, submission); err != nil || n != 1 {
 		t.Fatalf("submission: %d %v", n, err)
 	}
-	if n, err := q.ClearCommunityHistory(ctx, db.ClearCommunityHistoryParams{Account: account, ConversationID: conversation.ID}); err != nil || n != 4 {
+	if n, err := q.ClearCommunityHistoryThrough(ctx, db.ClearCommunityHistoryThroughParams{Account: account, ConversationID: conversation.ID, ThroughID: messages[7].ID}); err != nil || n != 4 {
 		t.Fatalf("clear: %d %v", n, err)
 	}
 	if n, err := q.InsertCommunityReceipt(ctx, receipt); err != nil || n != 0 {
@@ -186,14 +182,9 @@ func TestCommunityStorageMessagesReceiptsAndOutbox(t *testing.T) {
 		t.Fatalf("cleared content lost idempotency: %d %v", n, err)
 	}
 	got, err := q.GetCommunitySubmission(ctx, db.GetCommunitySubmissionParams{Account: account, RequestID: submission.RequestID})
-	if err != nil || !bytes.Equal(got.Fingerprint, fingerprint[:]) || got.Result != submission.Result {
-		t.Fatalf("submission result: %+v %v", got, err)
-	}
+	failIfFmt(t, err != nil || !bytes.Equal(got.Fingerprint, fingerprint[:]) || got.Result != submission.Result, "submission result: %+v %v", got, err)
 	if _, err := q.GetCommunityMessage(ctx, db.GetCommunityMessageParams{Account: account, ID: messages[0].ID}); !errors.Is(err, sql.ErrNoRows) {
 		t.Fatalf("clear retained transcript content: %v", err)
-	}
-	if n, err := q.PruneCommunityHistory(ctx, db.PruneCommunityHistoryParams{Account: account, BeforeTime: 100}); err != nil || n != 0 {
-		t.Fatalf("pruning removed unresolved/outbox content: %d %v", n, err)
 	}
 }
 
