@@ -398,7 +398,12 @@ func (c Config) Save(path string) error {
 	return SaveJSON(path, c)
 }
 
-// SaveJSON writes a private JSON file atomically.
+// ponytail: seam so tests can simulate a path that cannot be replaced by rename.
+var renamePath = os.Rename
+
+// SaveJSON writes a private JSON file atomically. When the destination cannot be
+// replaced by rename (for example a Docker bind-mounted config file) the content
+// is rewritten in place instead.
 func SaveJSON(path string, v any) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		return err
@@ -430,14 +435,15 @@ func SaveJSON(path string, v any) error {
 	if err == nil {
 		err = f.Close()
 	}
-	if err == nil {
-		err = os.Rename(tmp, path)
+	if err = renamePath(tmp, path); err != nil {
+		// ponytail: rename cannot replace a mount point, so Docker bind-mounted
+		// config files fall back to an in-place write; those paths lose atomic swap.
+		_ = os.Remove(tmp)
+		return os.WriteFile(path, b, 0600)
 	}
-	if err == nil {
-		ok = true
-		_ = os.Chmod(path, 0600)
-	}
-	return err
+	ok = true
+	_ = os.Chmod(path, 0600)
+	return nil
 }
 
 func xdg(env, suffix string) string {

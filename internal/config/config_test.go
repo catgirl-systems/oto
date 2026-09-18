@@ -2,6 +2,7 @@ package config
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -38,6 +39,26 @@ func TestSaveLoadModesEnvAndRedaction(t *testing.T) {
 	raw, err := os.ReadFile(q)
 	failIfFmt(t, err != nil || strings.Contains(string(raw), "override"), "environment password persisted: %v %s", err, raw)
 	if _, err := os.Stat(filepath.Join(filepath.Dir(p), ".config.json.tmp-")); !os.IsNotExist(err) { /* random temp names are allowed; no fixed temp remains */
+	}
+}
+
+func TestSaveJSONFallsBackWhenRenameFails(t *testing.T) {
+	d := t.TempDir()
+	p := filepath.Join(d, "config.json")
+	must(t, SaveJSON(p, map[string]string{"a": "1"}))
+	renamePath = func(string, string) error { return errors.New("device or resource busy") }
+	defer func() { renamePath = os.Rename }()
+	must(t, SaveJSON(p, map[string]string{"a": "2"}))
+	raw, err := os.ReadFile(p)
+	if err != nil || !strings.Contains(string(raw), `"a": "2"`) {
+		t.Fatalf("in-place write: %v %s", err, raw)
+	}
+	if st, err := os.Stat(p); err != nil || st.Mode().Perm() != 0600 {
+		t.Fatalf("fallback file mode: %v %v", st, err)
+	}
+	entries, err := os.ReadDir(d)
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("temp file left behind: %v %v", err, entries)
 	}
 }
 
