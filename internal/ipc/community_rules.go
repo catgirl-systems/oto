@@ -26,17 +26,12 @@ func (s *Server) communityRules(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	out, err := s.service.CommunityRules(r.Context(), daemon.CommunityRulesRequest{CommunityIdentity: identity, Cursor: q.Get("cursor"), Limit: limit})
-	if err != nil {
-		communityError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, out)
+	communityResult(w, out, err)
 }
 
 func (s *Server) communityRuleSet(w http.ResponseWriter, r *http.Request) {
 	var req daemon.CommunityRuleRequest
-	if err := decode(w, r, &req); err != nil {
-		communityError(w, err)
+	if !decodeCommunity(w, r, &req) {
 		return
 	}
 	if r.Method != http.MethodDelete && req.Remove {
@@ -45,11 +40,7 @@ func (s *Server) communityRuleSet(w http.ResponseWriter, r *http.Request) {
 	}
 	req.Remove = r.Method == http.MethodDelete
 	out, err := s.service.SetCommunityRule(r.Context(), req)
-	if err != nil {
-		communityError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, out)
+	communityResult(w, out, err)
 }
 
 func (c *Client) CommunityRules(ctx context.Context, req daemon.CommunityRulesRequest) (daemon.CommunityRulesPage, error) {

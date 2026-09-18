@@ -25,9 +25,7 @@ func validateChatDraft(text string, editing bool) error {
 	if !utf8.ValidString(text) || len(text) > soulseek.MaxChatBytes {
 		return fmt.Errorf("Chat text must be valid UTF-8 within %d bytes; nothing was truncated", soulseek.MaxChatBytes)
 	}
-	if strings.IndexFunc(text, func(r rune) bool {
-		return r != '\n' && r != '\t' && (unicode.IsControl(r) || unicode.Is(unicode.Bidi_Control, r))
-	}) >= 0 {
+	if !multilineText(text, 0) {
 		return errors.New("Chat text contains terminal controls; nothing was pasted")
 	}
 	if !editing {

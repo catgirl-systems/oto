@@ -470,19 +470,14 @@ func (m *model) buddyDialogKey(k tea.KeyPressMsg) tea.Cmd {
 	if d == nil {
 		return nil
 	}
+	if dialogScrollKey(k.String(), &d.scroll, max(1, m.height/2), len(d.label)) {
+		return nil
+	}
 	switch k.String() {
 	case "esc":
 		b.dialog = nil
 	case "left", "right", "tab", "shift+tab":
 		d.confirm = !d.confirm
-	case "up", "pgup":
-		d.scroll = max(0, d.scroll-max(1, m.height/2))
-	case "down", "pgdown":
-		d.scroll += max(1, m.height/2)
-	case "home":
-		d.scroll = 0
-	case "end":
-		d.scroll = len(d.label)
 	case "enter":
 		b.dialog = nil
 		if !d.confirm {
@@ -528,6 +523,13 @@ func (m *model) buddyKey(k tea.KeyPressMsg) tea.Cmd {
 	if b.busy || b.opening {
 		return nil
 	}
+	if m.community.pane == 0 {
+		if navKey(k.String(), &b.row, max(0, len(b.buddies)-1), m.pageRows()) {
+			return nil
+		}
+	} else if scrollKey(k.String(), &b.scroll, m.pageRows()) {
+		return nil
+	}
 	switch k.String() {
 	case "esc", "left":
 		m.community.pane = max(0, m.community.pane-1)
@@ -552,42 +554,6 @@ func (m *model) buddyKey(k tea.KeyPressMsg) tea.Cmd {
 			}
 		} else if b.selected != "" {
 			return m.openUserInspector(b.selected)
-		}
-	case "up", "k":
-		if m.community.pane == 0 {
-			b.row = max(0, b.row-1)
-		} else {
-			b.scroll = max(0, b.scroll-1)
-		}
-	case "down", "j":
-		if m.community.pane == 0 {
-			b.row = min(max(0, len(b.buddies)-1), b.row+1)
-		} else {
-			b.scroll++
-		}
-	case "pgup":
-		if m.community.pane == 0 {
-			b.row = max(0, b.row-m.pageRows())
-		} else {
-			b.scroll = max(0, b.scroll-m.pageRows())
-		}
-	case "pgdown":
-		if m.community.pane == 0 {
-			b.row = min(max(0, len(b.buddies)-1), b.row+m.pageRows())
-		} else {
-			b.scroll += m.pageRows()
-		}
-	case "home":
-		if m.community.pane == 0 {
-			b.row = 0
-		} else {
-			b.scroll = 0
-		}
-	case "end":
-		if m.community.pane == 0 {
-			b.row = max(0, len(b.buddies)-1)
-		} else {
-			b.scroll = daemon.MaxCommunityBuddyNoteBytes
 		}
 	case "r":
 		return tea.Batch(m.loadCommunitySummary(), m.loadCommunityBuddies(true))

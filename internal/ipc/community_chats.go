@@ -56,31 +56,21 @@ func (s *Server) communityConversations(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	out, err := s.service.CommunityConversations(r.Context(), req)
-	if err != nil {
-		communityError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, out)
+	communityResult(w, out, err)
 }
 
 func (s *Server) communityOpenConversation(w http.ResponseWriter, r *http.Request) {
 	var req daemon.CommunityOpenConversationRequest
-	if err := decode(w, r, &req); err != nil {
-		communityError(w, err)
+	if !decodeCommunity(w, r, &req) {
 		return
 	}
 	out, err := s.service.OpenCommunityConversation(r.Context(), req)
-	if err != nil {
-		communityError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, out)
+	communityResult(w, out, err)
 }
 
 func (s *Server) communityConversationAction(w http.ResponseWriter, r *http.Request) {
 	var req daemon.CommunityConversationActionRequest
-	if err := decode(w, r, &req); err != nil {
-		communityError(w, err)
+	if !decodeCommunity(w, r, &req) {
 		return
 	}
 	if err := s.service.CommunityConversationAction(r.Context(), req); err != nil {
@@ -108,11 +98,7 @@ func (s *Server) communityMessages(w http.ResponseWriter, r *http.Request) {
 	}
 	out, err := s.service.CommunityMessages(r.Context(), daemon.CommunityMessagesRequest{CommunityIdentity: base.CommunityIdentity,
 		ConversationID: id, Cursor: base.Cursor, Limit: base.Limit, Query: base.Query, NewerThan: newer})
-	if err != nil {
-		communityError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, out)
+	communityResult(w, out, err)
 }
 
 func (s *Server) communityExport(w http.ResponseWriter, r *http.Request) {
@@ -133,31 +119,21 @@ func (s *Server) communityExport(w http.ResponseWriter, r *http.Request) {
 	}
 	out, err := s.service.ExportCommunityHistory(r.Context(), daemon.CommunityExportRequest{CommunityIdentity: base.CommunityIdentity,
 		ConversationID: id, Cursor: base.Cursor, Limit: base.Limit, Query: base.Query, ThroughID: through, Format: r.URL.Query().Get("format")})
-	if err != nil {
-		communityError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, out)
+	communityResult(w, out, err)
 }
 
 func (s *Server) communitySendPrivate(w http.ResponseWriter, r *http.Request) {
 	var req daemon.CommunitySendRequest
-	if err := decode(w, r, &req); err != nil {
-		communityError(w, err)
+	if !decodeCommunity(w, r, &req) {
 		return
 	}
 	out, err := s.service.SendCommunityPrivate(r.Context(), req)
-	if err != nil {
-		communityError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, out)
+	communityResult(w, out, err)
 }
 
 func (s *Server) communityMessageAction(w http.ResponseWriter, r *http.Request) {
 	var req daemon.CommunityMessageActionRequest
-	if err := decode(w, r, &req); err != nil {
-		communityError(w, err)
+	if !decodeCommunity(w, r, &req) {
 		return
 	}
 	if err := s.service.CommunityMessageAction(r.Context(), req); err != nil {

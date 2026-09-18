@@ -10,16 +10,11 @@ func (s *Server) forceDownloads(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		IDs []string `json:"ids"`
 	}
-	if err := decode(w, r, &req); err != nil {
-		writeErr(w, 400, err)
+	if !decodeBody(w, r, &req) {
 		return
 	}
 	result, err := s.service.ForceDownloads(req.IDs)
-	if err != nil {
-		writeErr(w, 400, err)
-		return
-	}
-	writeJSON(w, 200, result)
+	badRequestResult(w, result, err)
 }
 func (c *Client) ForceDownloads(ctx context.Context, ids []string) (daemon.UploadActionResult, error) {
 	var result daemon.UploadActionResult

@@ -61,19 +61,10 @@ func (m *model) shareExclusionsKey(k tea.KeyPressMsg) tea.Cmd {
 		return nil
 	}
 	last := max(0, len(m.cfg.ShareExclusions)-1)
+	if navKey(k.String(), &v.cursor, last, m.pageRows()) {
+		return nil
+	}
 	switch k.String() {
-	case "up", "k":
-		v.cursor = max(0, v.cursor-1)
-	case "down", "j":
-		v.cursor = min(last, v.cursor+1)
-	case "pgup":
-		v.cursor = max(0, v.cursor-m.pageRows())
-	case "pgdown":
-		v.cursor = min(last, v.cursor+m.pageRows())
-	case "home":
-		v.cursor = 0
-	case "end":
-		v.cursor = last
 	case "a", "enter":
 		v.editIndex, v.value = len(m.cfg.ShareExclusions), ""
 		if k.String() == "enter" {

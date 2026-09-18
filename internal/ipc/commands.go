@@ -9,16 +9,11 @@ import (
 
 func (s *Server) commands(w http.ResponseWriter, r *http.Request) {
 	var req daemon.CommandRequest
-	if err := decode(w, r, &req); err != nil {
-		communityError(w, err)
+	if !decodeCommunity(w, r, &req) {
 		return
 	}
 	out, err := s.service.RunCommand(r.Context(), req)
-	if err != nil {
-		communityError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, out)
+	communityResult(w, out, err)
 }
 func (c *Client) RunCommand(ctx context.Context, req daemon.CommandRequest) (daemon.CommandResult, error) {
 	var out daemon.CommandResult

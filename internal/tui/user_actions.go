@@ -73,13 +73,12 @@ func (m *model) openUserActions() {
 
 func (m *model) userActionsKey(k tea.KeyPressMsg) tea.Cmd {
 	d := m.userActions
+	if selectKey(k.String(), &d.row, len(userActionNames)-1) {
+		return nil
+	}
 	switch k.String() {
 	case "esc", "U":
 		m.userActions = nil
-	case "up", "k":
-		d.row = max(0, d.row-1)
-	case "down", "j":
-		d.row = min(len(userActionNames)-1, d.row+1)
 	case "enter":
 		if d.identity != m.community.summary.CommunityIdentity {
 			d.err = "Account/session changed. Esc, then reopen User actions."

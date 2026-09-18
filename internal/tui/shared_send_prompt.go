@@ -4,9 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"strconv"
-	"strings"
 	"time"
-	"unicode"
 	"unicode/utf8"
 
 	tea "charm.land/bubbletea/v2"
@@ -73,7 +71,7 @@ func (m *model) renderSharedSendPrompt() {
 }
 func (m *model) editSharedSendRecipient(text string, cursor int) {
 	p := m.commandOutput.sharedPrompt
-	if len(text) > 1024 || !utf8.ValidString(text) || strings.IndexFunc(text, func(r rune) bool { return unicode.IsControl(r) || unicode.Is(unicode.Bidi_Control, r) }) >= 0 {
+	if !singleLineText(text, 1024) {
 		p.err = "Recipient must be single-line UTF-8 within 1024 bytes"
 	} else {
 		if text != p.input {

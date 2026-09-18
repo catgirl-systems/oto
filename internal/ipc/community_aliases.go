@@ -26,16 +26,11 @@ func (s *Server) communityAliases(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	out, err := s.service.CommunityAliases(r.Context(), daemon.CommunityAliasesRequest{CommunityIdentity: identity, Cursor: q.Get("cursor"), Limit: limit})
-	if err != nil {
-		communityError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, out)
+	communityResult(w, out, err)
 }
 func (s *Server) communityAliasSet(w http.ResponseWriter, r *http.Request) {
 	var req daemon.CommunityAliasRequest
-	if err := decode(w, r, &req); err != nil {
-		communityError(w, err)
+	if !decodeCommunity(w, r, &req) {
 		return
 	}
 	if r.Method != http.MethodDelete && req.Remove {
@@ -44,11 +39,7 @@ func (s *Server) communityAliasSet(w http.ResponseWriter, r *http.Request) {
 	}
 	req.Remove = r.Method == http.MethodDelete
 	out, err := s.service.SetCommunityAlias(r.Context(), req)
-	if err != nil {
-		communityError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, out)
+	communityResult(w, out, err)
 }
 func (c *Client) CommunityAliases(ctx context.Context, req daemon.CommunityAliasesRequest) (daemon.CommunityAliasesPage, error) {
 	q := url.Values{"account": {req.Account}, "daemon": {req.Daemon}, "session": {strconv.FormatUint(req.Session, 10)}, "cursor": {req.Cursor}, "limit": {strconv.Itoa(req.Limit)}}

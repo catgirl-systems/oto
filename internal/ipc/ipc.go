@@ -146,6 +146,44 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 func writeErr(w http.ResponseWriter, status int, err error) {
 	writeJSON(w, status, map[string]string{"error": err.Error()})
 }
+
+// communityResult writes a session-scoped result, mapping failures through
+// communityError.
+func communityResult(w http.ResponseWriter, out any, err error) {
+	if err != nil {
+		communityError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// badRequestResult writes a result, mapping failures to 400.
+func badRequestResult(w http.ResponseWriter, out any, err error) {
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// decodeBody decodes a request body, mapping failures to 400.
+func decodeBody(w http.ResponseWriter, r *http.Request, v any) bool {
+	if err := decode(w, r, v); err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return false
+	}
+	return true
+}
+
+// decodeCommunity decodes a request body, mapping failures through
+// communityError.
+func decodeCommunity(w http.ResponseWriter, r *http.Request, v any) bool {
+	if err := decode(w, r, v); err != nil {
+		communityError(w, err)
+		return false
+	}
+	return true
+}
 func decode(w http.ResponseWriter, r *http.Request, v any) error {
 	r.Body = http.MaxBytesReader(w, r.Body, MaxBodySize)
 	d := json.NewDecoder(r.Body)
@@ -249,8 +287,7 @@ func (s *Server) searches(w http.ResponseWriter, r *http.Request) {
 }
 func (s *Server) search(w http.ResponseWriter, r *http.Request) {
 	var req daemon.ScopedSearchRequest
-	if err := decode(w, r, &req); err != nil {
-		writeErr(w, 400, err)
+	if !decodeBody(w, r, &req) {
 		return
 	}
 	out, err := s.service.SearchScoped(r.Context(), req)
@@ -319,11 +356,7 @@ func (s *Server) wishlist(w http.ResponseWriter, r *http.Request) {
 }
 func (s *Server) browse(w http.ResponseWriter, r *http.Request) {
 	out, err := s.service.OpenBrowse(r.Context(), r.URL.Query().Get("user"), r.URL.Query().Get("folder"), r.URL.Query().Get("query"))
-	if err != nil {
-		writeErr(w, 400, err)
-		return
-	}
-	writeJSON(w, 200, out)
+	badRequestResult(w, out, err)
 }
 
 func (s *Server) browseProgress(w http.ResponseWriter, r *http.Request) {
@@ -332,46 +365,31 @@ func (s *Server) browseProgress(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) savedBrowses(w http.ResponseWriter, _ *http.Request) {
 	out, err := s.service.SavedBrowses()
-	if err != nil {
-		writeErr(w, 400, err)
-		return
-	}
-	writeJSON(w, 200, out)
+	badRequestResult(w, out, err)
 }
 
 func (s *Server) saveBrowse(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Revision uint64 `json:"revision"`
 	}
-	if err := decode(w, r, &req); err != nil {
-		writeErr(w, 400, err)
+	if !decodeBody(w, r, &req) {
 		return
 	}
 	out, err := s.service.SaveBrowse(r.URL.Query().Get("user"), req.Revision)
-	if err != nil {
-		writeErr(w, 400, err)
-		return
-	}
-	writeJSON(w, 200, out)
+	badRequestResult(w, out, err)
 }
 func (s *Server) downloads(w http.ResponseWriter, r *http.Request) {
 	var req []daemon.DownloadRequest
-	if err := decode(w, r, &req); err != nil {
-		writeErr(w, 400, err)
+	if !decodeBody(w, r, &req) {
 		return
 	}
 	out, err := s.service.QueueDownloads(req)
-	if err != nil {
-		writeErr(w, 400, err)
-		return
-	}
-	writeJSON(w, 200, out)
+	badRequestResult(w, out, err)
 }
 
 func (s *Server) folderDownloads(w http.ResponseWriter, r *http.Request) {
 	var req daemon.FolderDownloadRequest
-	if err := decode(w, r, &req); err != nil {
-		writeErr(w, 400, err)
+	if !decodeBody(w, r, &req) {
 		return
 	}
 	if r.URL.Path == "/v1/folder-downloads/as" && req.Destination == "" {
@@ -387,8 +405,7 @@ func (s *Server) folderDownloads(w http.ResponseWriter, r *http.Request) {
 }
 func (s *Server) uploadAction(w http.ResponseWriter, r *http.Request) {
 	var req daemon.UploadActionRequest
-	if err := decode(w, r, &req); err != nil {
-		writeErr(w, 400, err)
+	if !decodeBody(w, r, &req) {
 		return
 	}
 	result, err := s.service.UploadAction(req)
@@ -408,8 +425,7 @@ func (s *Server) transfers(w http.ResponseWriter, r *http.Request) {
 		var req struct {
 			Action string `json:"action"`
 		}
-		if err := decode(w, r, &req); err != nil {
-			writeErr(w, 400, err)
+		if !decodeBody(w, r, &req) {
 			return
 		}
 		if err := s.service.TransferAction(id, req.Action); err != nil {

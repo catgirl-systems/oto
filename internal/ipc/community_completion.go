@@ -9,16 +9,11 @@ import (
 
 func (s *Server) communityCompletion(w http.ResponseWriter, r *http.Request) {
 	var req daemon.CommunityCompletionRequest
-	if err := decode(w, r, &req); err != nil {
-		communityError(w, err)
+	if !decodeCommunity(w, r, &req) {
 		return
 	}
 	out, err := s.service.CompleteCommunity(r.Context(), req)
-	if err != nil {
-		communityError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, out)
+	communityResult(w, out, err)
 }
 func (c *Client) CompleteCommunity(ctx context.Context, req daemon.CommunityCompletionRequest) (daemon.CommunityCompletion, error) {
 	var out daemon.CommunityCompletion

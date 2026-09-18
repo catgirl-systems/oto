@@ -24,16 +24,11 @@ func (s *Server) browsePage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	out, err := s.service.BrowsePage(r.Context(), daemon.BrowsePageRequest{Username: q.Get("user"), Revision: revision, Folder: q.Get("folder"), Query: q.Get("query"), Cursor: cursor})
-	if err != nil {
-		writeErr(w, 400, err)
-		return
-	}
-	writeJSON(w, 200, out)
+	badRequestResult(w, out, err)
 }
 func (s *Server) browseDownload(w http.ResponseWriter, r *http.Request) {
 	var req daemon.BrowseDownloadRequest
-	if err := decode(w, r, &req); err != nil {
-		writeErr(w, 400, err)
+	if !decodeBody(w, r, &req) {
 		return
 	}
 	if r.URL.Path == "/v1/browse/download-as" && req.Destination == "" {
@@ -41,11 +36,7 @@ func (s *Server) browseDownload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	out, err := s.service.QueueBrowse(r.Context(), req)
-	if err != nil {
-		writeErr(w, 400, err)
-		return
-	}
-	writeJSON(w, 200, out)
+	badRequestResult(w, out, err)
 }
 
 func (c *Client) OpenBrowse(ctx context.Context, username, folder, query string) (daemon.BrowsePage, error) {

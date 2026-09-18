@@ -32,11 +32,7 @@ func (s *Server) communityProfile(w http.ResponseWriter, r *http.Request) {
 	} else {
 		out, err = s.service.CommunityProfile(r.Context(), req)
 	}
-	if err != nil {
-		communityError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, out)
+	communityResult(w, out, err)
 }
 func (s *Server) communityProfilePicture(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
@@ -51,11 +47,7 @@ func (s *Server) communityProfilePicture(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	out, err := s.service.CommunityProfilePicture(r.Context(), daemon.CommunityProfilePictureRequest{CommunityIdentity: id, Username: q.Get("username"), Revision: revision})
-	if err != nil {
-		communityError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, out)
+	communityResult(w, out, err)
 }
 func (c *Client) CommunityProfile(ctx context.Context, req daemon.CommunityProfileRequest) (daemon.CommunityProfile, error) {
 	q := communityRoomValues(req.CommunityIdentity)

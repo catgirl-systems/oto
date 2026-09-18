@@ -296,6 +296,9 @@ func (m *model) communityKey(k tea.KeyPressMsg) tea.Cmd {
 	if handled, cmd := m.chatKeyPress(k); handled {
 		return cmd
 	}
+	if c.pane == 2 && navKey(k.String(), &c.inspectorScroll, m.communityInspectorEnd(), m.pageRows()) {
+		return nil
+	}
 	switch k.String() {
 	case "esc", "left":
 		c.pane = max(0, c.pane-1)
@@ -307,30 +310,6 @@ func (m *model) communityKey(k tea.KeyPressMsg) tea.Cmd {
 		return tea.Batch(m.loadCommunitySummary(), m.loadCommunityUser(), m.loadCommunityPeer(true))
 	case "U":
 		m.openUserActions()
-	case "up", "k":
-		if c.pane == 2 {
-			c.inspectorScroll = max(0, c.inspectorScroll-1)
-		}
-	case "down", "j":
-		if c.pane == 2 {
-			c.inspectorScroll = min(m.communityInspectorEnd(), c.inspectorScroll+1)
-		}
-	case "pgup":
-		if c.pane == 2 {
-			c.inspectorScroll = max(0, c.inspectorScroll-m.pageRows())
-		}
-	case "pgdown":
-		if c.pane == 2 {
-			c.inspectorScroll = min(m.communityInspectorEnd(), c.inspectorScroll+m.pageRows())
-		}
-	case "home":
-		if c.pane == 2 {
-			c.inspectorScroll = 0
-		}
-	case "end":
-		if c.pane == 2 {
-			c.inspectorScroll = m.communityInspectorEnd()
-		}
 	case "ctrl+n":
 		m.setNotice("Private messaging unavailable in this daemon")
 	}

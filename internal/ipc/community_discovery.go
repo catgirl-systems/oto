@@ -38,11 +38,7 @@ func (s *Server) communityDiscovery(w http.ResponseWriter, r *http.Request) {
 	} else {
 		out, err = s.service.CommunityDiscovery(r.Context(), req)
 	}
-	if err != nil {
-		communityError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, out)
+	communityResult(w, out, err)
 }
 func (c *Client) CommunityDiscovery(ctx context.Context, req daemon.CommunityDiscoveryRequest) (daemon.CommunityDiscoveryPage, error) {
 	q := communityRoomValues(req.CommunityIdentity)

@@ -109,23 +109,15 @@ func (m *model) commandOutputKey(k tea.KeyPressMsg) tea.Cmd {
 			return cmd
 		}
 	}
-	switch k.String() {
-	case "esc", "q":
+	if m.commandOutput == nil {
+		return nil
+	}
+	if key := k.String(); key == "esc" || key == "q" {
 		m.commandOutput = nil
-	case "up", "k":
-		m.commandOutput.scroll = max(0, m.commandOutput.scroll-1)
-	case "down", "j":
-		m.commandOutput.scroll++
-	case "pgup":
-		m.commandOutput.scroll = max(0, m.commandOutput.scroll-max(1, m.height-3))
-	case "pgdown":
-		m.commandOutput.scroll += max(1, m.height-3)
-	case "home":
-		m.commandOutput.scroll = 0
+		return nil
 	}
-	if m.commandOutput != nil {
-		m.commandOutput.scroll = min(m.commandOutput.scroll, len(m.commandOutput.text))
-	}
+	scrollKey(k.String(), &m.commandOutput.scroll, max(1, m.height-3))
+	m.commandOutput.scroll = min(m.commandOutput.scroll, len(m.commandOutput.text))
 	return nil
 }
 func (m model) commandOutputView() string {

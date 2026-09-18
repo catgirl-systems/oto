@@ -6,7 +6,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"unicode"
 	"unicode/utf8"
 
 	tea "charm.land/bubbletea/v2"
@@ -98,7 +97,7 @@ func (m *model) applyAwaySettings(x awaySettingsMsg) tea.Cmd {
 	return nil
 }
 func (e *awayEditor) setText(text string, cursor int) {
-	if len(text) > 1024 || !utf8.ValidString(text) || strings.IndexFunc(text, func(r rune) bool { return unicode.IsControl(r) || unicode.Is(unicode.Bidi_Control, r) }) >= 0 {
+	if !singleLineText(text, 1024) {
 		e.err = "Single-line UTF-8 within 1024 bytes; nothing inserted"
 		return
 	}

@@ -196,11 +196,10 @@ func (m *model) searchScopeKey(k tea.KeyPressMsg) tea.Cmd {
 		return nil
 	}
 	maxRow := 1 + len(d.users) + len(d.rooms)
+	if selectKey(k.String(), &d.row, maxRow) {
+		return nil
+	}
 	switch k.String() {
-	case "up", "k":
-		d.row = max(0, d.row-1)
-	case "down", "j":
-		d.row = min(maxRow, d.row+1)
 	case "g", "b", "r":
 		if k.String() == "b" {
 			d.setMode("buddies")

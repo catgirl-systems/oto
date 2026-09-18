@@ -9,16 +9,11 @@ import (
 
 func (s *Server) shareAccess(w http.ResponseWriter, r *http.Request) {
 	var req daemon.ShareAccessRequest
-	if err := decode(w, r, &req); err != nil {
-		communityError(w, err)
+	if !decodeCommunity(w, r, &req) {
 		return
 	}
 	out, err := s.service.SetShareAccess(r.Context(), req)
-	if err != nil {
-		communityError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, out)
+	communityResult(w, out, err)
 }
 
 func (c *Client) SetShareAccess(ctx context.Context, req daemon.ShareAccessRequest) (daemon.ShareAccessResult, error) {

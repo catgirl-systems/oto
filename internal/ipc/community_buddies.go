@@ -26,16 +26,11 @@ func (s *Server) communityBuddies(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	out, err := s.service.CommunityBuddies(r.Context(), daemon.CommunityBuddiesRequest{CommunityIdentity: identity, Username: q.Get("username"), Query: q.Get("query"), Cursor: q.Get("cursor"), Sort: q.Get("sort"), Limit: limit})
-	if err != nil {
-		communityError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, out)
+	communityResult(w, out, err)
 }
 func (s *Server) communityBuddySet(w http.ResponseWriter, r *http.Request) {
 	var req daemon.CommunityBuddyRequest
-	if err := decode(w, r, &req); err != nil {
-		communityError(w, err)
+	if !decodeCommunity(w, r, &req) {
 		return
 	}
 	if r.Method != http.MethodDelete && req.Remove {
@@ -44,11 +39,7 @@ func (s *Server) communityBuddySet(w http.ResponseWriter, r *http.Request) {
 	}
 	req.Remove = r.Method == http.MethodDelete
 	out, err := s.service.SetCommunityBuddy(r.Context(), req)
-	if err != nil {
-		communityError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, out)
+	communityResult(w, out, err)
 }
 func (c *Client) CommunityBuddies(ctx context.Context, req daemon.CommunityBuddiesRequest) (daemon.CommunityBuddiesPage, error) {
 	q := url.Values{"account": {req.Account}, "daemon": {req.Daemon}, "session": {strconv.FormatUint(req.Session, 10)}, "username": {req.Username}, "query": {req.Query}, "sort": {req.Sort}, "cursor": {req.Cursor}, "limit": {strconv.Itoa(req.Limit)}}

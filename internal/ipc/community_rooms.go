@@ -54,11 +54,7 @@ func (s *Server) communityRooms(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	out, err := s.service.CommunityRooms(r.Context(), req)
-	if err != nil {
-		communityError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, out)
+	communityResult(w, out, err)
 }
 
 func (s *Server) communityRoomsRefresh(w http.ResponseWriter, r *http.Request) {
@@ -76,30 +72,20 @@ func (s *Server) communityRoomsRefresh(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) communityRoomAction(w http.ResponseWriter, r *http.Request) {
 	var req daemon.CommunityRoomActionRequest
-	if err := decode(w, r, &req); err != nil {
-		communityError(w, err)
+	if !decodeCommunity(w, r, &req) {
 		return
 	}
 	out, err := s.service.CommunityRoomAction(r.Context(), req)
-	if err != nil {
-		communityError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, out)
+	communityResult(w, out, err)
 }
 
 func (s *Server) communityRoomSend(w http.ResponseWriter, r *http.Request) {
 	var req daemon.CommunityRoomSendRequest
-	if err := decode(w, r, &req); err != nil {
-		communityError(w, err)
+	if !decodeCommunity(w, r, &req) {
 		return
 	}
 	out, err := s.service.SendCommunityRoom(r.Context(), req)
-	if err != nil {
-		communityError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, out)
+	communityResult(w, out, err)
 }
 
 func (s *Server) communityRoomMembers(w http.ResponseWriter, r *http.Request) {
@@ -126,11 +112,7 @@ func (s *Server) communityRoomMembers(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	out, err := s.service.CommunityRoomMembers(r.Context(), daemon.CommunityRoomMembersRequest{CommunityIdentity: identity, Room: q.Get("room"), Cursor: q.Get("cursor"), Query: q.Get("query"), Limit: limit, Private: private})
-	if err != nil {
-		communityError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, out)
+	communityResult(w, out, err)
 }
 
 func (s *Server) communityFeed(w http.ResponseWriter, r *http.Request) {
@@ -154,17 +136,12 @@ func (s *Server) communityFeed(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	out, err := s.service.CommunityFeed(r.Context(), daemon.CommunityFeedRequest{CommunityIdentity: identity, Cursor: cursor, Limit: limit})
-	if err != nil {
-		communityError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, out)
+	communityResult(w, out, err)
 }
 
 func (s *Server) communityFeedSubscription(w http.ResponseWriter, r *http.Request) {
 	var req daemon.CommunityFeedSubscription
-	if err := decode(w, r, &req); err != nil {
-		communityError(w, err)
+	if !decodeCommunity(w, r, &req) {
 		return
 	}
 	if err := s.service.SetCommunityFeed(r.Context(), req); err != nil {

@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
-	"unicode"
 	"unicode/utf8"
 
 	tea "charm.land/bubbletea/v2"
@@ -193,23 +192,14 @@ func (m *model) peerKey(k tea.KeyPressMsg) (bool, tea.Cmd) {
 		return true, nil
 	}
 	if p.dialog {
+		if scrollKey(k.String(), &p.dialogScroll, m.pageRows()) {
+			return true, nil
+		}
 		switch k.String() {
 		case "esc":
 			p.dialog = false
 		case "left", "right", "tab", "shift+tab":
 			p.confirm = !p.confirm
-		case "up", "k":
-			p.dialogScroll = max(0, p.dialogScroll-1)
-		case "down", "j":
-			p.dialogScroll++
-		case "pgup":
-			p.dialogScroll = max(0, p.dialogScroll-m.pageRows())
-		case "pgdown":
-			p.dialogScroll += m.pageRows()
-		case "home":
-			p.dialogScroll = 0
-		case "end":
-			p.dialogScroll = 1 << 20
 		case "enter":
 			p.dialog = false
 			if p.confirm {
@@ -231,7 +221,7 @@ func (m *model) peerKey(k tea.KeyPressMsg) (bool, tea.Cmd) {
 			}
 		default:
 			value, cursor, _ := editText(p.path, p.pathCursor, k)
-			if len(value) <= 4096 && utf8.ValidString(value) && strings.IndexFunc(value, func(r rune) bool { return unicode.IsControl(r) || unicode.Is(unicode.Bidi_Control, r) }) < 0 {
+			if singleLineText(value, 4096) {
 				p.path, p.pathCursor = value, cursor
 			}
 		}
@@ -337,7 +327,7 @@ func (m *model) pastePeerPath(text string) {
 		return
 	}
 	value, cursor := insertText(p.path, text, p.pathCursor)
-	if len(value) > 4096 || !utf8.ValidString(value) || strings.IndexFunc(value, func(r rune) bool { return unicode.IsControl(r) || unicode.Is(unicode.Bidi_Control, r) }) >= 0 {
+	if !singleLineText(value, 4096) {
 		p.err = "Invalid path paste; nothing pasted"
 		return
 	}

@@ -14,11 +14,7 @@ func (s *Server) communityActivity(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	out, err := s.service.CommunityActivity(r.Context(), id)
-	if err != nil {
-		communityError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, out)
+	communityResult(w, out, err)
 }
 func (c *Client) CommunityActivity(ctx context.Context, id daemon.CommunityIdentity) (daemon.CommunityActivity, error) {
 	var out daemon.CommunityActivity

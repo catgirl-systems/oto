@@ -105,8 +105,7 @@ func (s *Server) registerStats(mux *http.ServeMux) {
 	for _, path := range []string{"/v1/stats/prune/preview", "/v1/stats/prune"} {
 		mux.HandleFunc("POST "+path, func(w http.ResponseWriter, r *http.Request) {
 			var req PruneRequest
-			if err := decode(w, r, &req); err != nil {
-				writeErr(w, 400, err)
+			if !decodeBody(w, r, &req) {
 				return
 			}
 			result, err := s.service.PruneStatistics(req.Cutoff, req.Logs, req.Daily, r.URL.Path == "/v1/stats/prune")

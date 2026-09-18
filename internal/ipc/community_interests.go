@@ -26,16 +26,11 @@ func (s *Server) communityInterests(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	out, err := s.service.CommunityInterests(r.Context(), daemon.CommunityInterestsRequest{CommunityIdentity: identity, Cursor: q.Get("cursor"), Query: q.Get("query"), Limit: limit})
-	if err != nil {
-		communityError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, out)
+	communityResult(w, out, err)
 }
 func (s *Server) communityInterestSet(w http.ResponseWriter, r *http.Request) {
 	var req daemon.CommunityInterestRequest
-	if err := decode(w, r, &req); err != nil {
-		communityError(w, err)
+	if !decodeCommunity(w, r, &req) {
 		return
 	}
 	if r.Method != http.MethodDelete && req.Remove {
@@ -44,11 +39,7 @@ func (s *Server) communityInterestSet(w http.ResponseWriter, r *http.Request) {
 	}
 	req.Remove = r.Method == http.MethodDelete
 	out, err := s.service.SetCommunityInterest(r.Context(), req)
-	if err != nil {
-		communityError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, out)
+	communityResult(w, out, err)
 }
 func (s *Server) communitySelfProfile(w http.ResponseWriter, r *http.Request) {
 	identity, err := communityRoomIdentityQuery(r.URL.Query())
@@ -57,24 +48,15 @@ func (s *Server) communitySelfProfile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	out, err := s.service.CommunitySelfProfile(r.Context(), identity)
-	if err != nil {
-		communityError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, out)
+	communityResult(w, out, err)
 }
 func (s *Server) communitySelfProfileSet(w http.ResponseWriter, r *http.Request) {
 	var req daemon.CommunitySelfProfile
-	if err := decode(w, r, &req); err != nil {
-		communityError(w, err)
+	if !decodeCommunity(w, r, &req) {
 		return
 	}
 	out, err := s.service.SetCommunitySelfProfile(r.Context(), req)
-	if err != nil {
-		communityError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, out)
+	communityResult(w, out, err)
 }
 func (c *Client) CommunityInterests(ctx context.Context, req daemon.CommunityInterestsRequest) (daemon.CommunityInterestsPage, error) {
 	q := url.Values{"account": {req.Account}, "daemon": {req.Daemon}, "session": {strconv.FormatUint(req.Session, 10)}, "cursor": {req.Cursor}, "query": {req.Query}, "limit": {strconv.Itoa(req.Limit)}}

@@ -10,21 +10,15 @@ import (
 
 func (s *Server) communityRoomRole(w http.ResponseWriter, r *http.Request) {
 	var req daemon.CommunityRoomRoleRequest
-	if err := decode(w, r, &req); err != nil {
-		communityError(w, err)
+	if !decodeCommunity(w, r, &req) {
 		return
 	}
 	out, err := s.service.ChangeCommunityRoomRole(r.Context(), req)
-	if err != nil {
-		communityError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, out)
+	communityResult(w, out, err)
 }
 func (s *Server) communityRoomInvitations(w http.ResponseWriter, r *http.Request) {
 	var req daemon.CommunityRoomInvitationsRequest
-	if err := decode(w, r, &req); err != nil {
-		communityError(w, err)
+	if !decodeCommunity(w, r, &req) {
 		return
 	}
 	if err := s.service.SetCommunityRoomInvitations(r.Context(), req); err != nil {
@@ -35,8 +29,7 @@ func (s *Server) communityRoomInvitations(w http.ResponseWriter, r *http.Request
 }
 func (s *Server) communityRoomWallSet(w http.ResponseWriter, r *http.Request) {
 	var req daemon.CommunityRoomWallRequest
-	if err := decode(w, r, &req); err != nil {
-		communityError(w, err)
+	if !decodeCommunity(w, r, &req) {
 		return
 	}
 	if err := s.service.SetCommunityRoomWall(r.Context(), req); err != nil {
@@ -52,11 +45,7 @@ func (s *Server) communityRoomWall(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	out, err := s.service.CommunityRoomWall(r.Context(), daemon.CommunityRoomMembersRequest{CommunityIdentity: page.CommunityIdentity, Room: page.Room, Cursor: page.Cursor, Query: page.Query, Limit: page.Limit})
-	if err != nil {
-		communityError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, out)
+	communityResult(w, out, err)
 }
 func (c *Client) ChangeCommunityRoomRole(ctx context.Context, req daemon.CommunityRoomRoleRequest) (daemon.CommunityRoomRoleResult, error) {
 	var out daemon.CommunityRoomRoleResult

@@ -24,24 +24,15 @@ func (s *Server) accountPrivileges(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	out, err := s.service.AccountPrivileges(r.Context(), daemon.AccountPrivilegesRequest{CommunityIdentity: id, Refresh: refresh})
-	if err != nil {
-		communityError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, out)
+	communityResult(w, out, err)
 }
 func (s *Server) accountPrivilegeGift(w http.ResponseWriter, r *http.Request) {
 	var req daemon.AccountPrivilegeGiftRequest
-	if err := decode(w, r, &req); err != nil {
-		communityError(w, err)
+	if !decodeCommunity(w, r, &req) {
 		return
 	}
 	out, err := s.service.GiftAccountPrivileges(r.Context(), req)
-	if err != nil {
-		communityError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, out)
+	communityResult(w, out, err)
 }
 func (c *Client) AccountPrivileges(ctx context.Context, req daemon.AccountPrivilegesRequest) (daemon.AccountPrivileges, error) {
 	q := communityRoomValues(req.CommunityIdentity)

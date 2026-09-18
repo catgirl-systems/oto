@@ -113,7 +113,7 @@ func (e *textToolsEditor) items() []string {
 	}
 }
 func (e *textToolsEditor) setFormText(value string, cursor int) {
-	if len(value) > 1024 || !utf8.ValidString(value) || strings.IndexFunc(value, func(r rune) bool { return unicode.IsControl(r) || unicode.Is(unicode.Bidi_Control, r) }) >= 0 {
+	if !singleLineText(value, 1024) {
 		e.err = "Single-line UTF-8 within 1024 bytes; nothing inserted"
 		return
 	}
@@ -252,6 +252,9 @@ func (m *model) textToolsKey(k tea.KeyPressMsg) tea.Cmd {
 		return nil
 	}
 	items := e.items()
+	if selectKey(key, &e.row, max(0, len(items)-1)) {
+		return nil
+	}
 	switch key {
 	case "tab", "shift+tab":
 		delta := 1
@@ -261,10 +264,6 @@ func (m *model) textToolsKey(k tea.KeyPressMsg) tea.Cmd {
 		e.group = (e.group + delta + 4) % 4
 		e.row = 0
 		e.err = ""
-	case "up", "k":
-		e.row = max(0, e.row-1)
-	case "down", "j":
-		e.row = min(max(0, len(items)-1), e.row+1)
 	case "ctrl+up", "ctrl+down":
 		if e.group == 1 {
 			delta := 1

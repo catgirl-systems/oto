@@ -25,11 +25,7 @@ func (s *Server) communityAway(w http.ResponseWriter, r *http.Request) {
 		}
 		out, err = s.service.SetCommunityAwaySettings(r.Context(), req)
 	}
-	if err != nil {
-		communityError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, out)
+	communityResult(w, out, err)
 }
 func (c *Client) CommunityAwaySettings(ctx context.Context, id daemon.CommunityIdentity) (daemon.CommunityAwaySettings, error) {
 	q := communityRoomValues(id)

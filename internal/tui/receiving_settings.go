@@ -7,7 +7,6 @@ import (
 	"slices"
 	"strings"
 	"time"
-	"unicode"
 	"unicode/utf8"
 
 	tea "charm.land/bubbletea/v2"
@@ -129,7 +128,7 @@ func (e *receivingEditor) setText(text string, cursor int) {
 	if e.field == 1 {
 		limit = 128 << 10
 	}
-	if len(text) > limit || !utf8.ValidString(text) || strings.ContainsFunc(text, func(r rune) bool { return unicode.IsControl(r) || unicode.Is(unicode.Bidi_Control, r) }) {
+	if !singleLineText(text, limit) {
 		e.err = "Invalid or oversized single-line text; nothing inserted"
 		return
 	}

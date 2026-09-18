@@ -208,14 +208,8 @@ func (m *model) privacyRulesKey(k tea.KeyPressMsg) tea.Cmd {
 		if len(e.back) > 0 {
 			return m.loadPrivacyRulesPage(e.back[len(e.back)-1])
 		}
-	case "up", "k":
-		e.row = max(0, e.row-1)
-	case "down", "j":
-		e.row = min(max(0, len(e.rules)-1), e.row+1)
-	case "home":
-		e.row = 0
-	case "end":
-		e.row = max(0, len(e.rules)-1)
+	case "up", "k", "down", "j", "home", "end":
+		navKey(s, &e.row, max(0, len(e.rules)-1), m.pageRows())
 	case "a":
 		e.form = &privacyRuleForm{rule: daemon.CommunityRule{Action: "ignore", Kind: "username"}}
 	case "e", "enter":

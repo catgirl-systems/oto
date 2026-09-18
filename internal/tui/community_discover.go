@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"strings"
 	"time"
-	"unicode"
 	"unicode/utf8"
 
 	tea "charm.land/bubbletea/v2"
@@ -547,19 +546,10 @@ func (m *model) discoverInterestListKey(k tea.KeyPressMsg) tea.Cmd {
 	if handled, cmd := m.discoverItemAction(k.String()); handled {
 		return cmd
 	}
+	if navKey(k.String(), &d.row, max(0, len(d.interests)-1), m.pageRows()) {
+		return nil
+	}
 	switch k.String() {
-	case "up", "k":
-		d.row = max(0, d.row-1)
-	case "down", "j":
-		d.row = min(max(0, len(d.interests)-1), d.row+1)
-	case "pgup":
-		d.row = max(0, d.row-m.pageRows())
-	case "pgdown":
-		d.row = min(max(0, len(d.interests)-1), d.row+m.pageRows())
-	case "home":
-		d.row = 0
-	case "end":
-		d.row = max(0, len(d.interests)-1)
 	case "n":
 		if d.next != "" {
 			d.cursor, d.next, d.row = d.next, "", 0
@@ -607,19 +597,10 @@ func (m *model) discoverResultKey(k tea.KeyPressMsg) tea.Cmd {
 		return cmd
 	}
 	visible := m.discoverVisibleRows()
+	if navKey(k.String(), &d.row, max(0, len(visible)-1), m.pageRows()) {
+		return nil
+	}
 	switch k.String() {
-	case "up", "k":
-		d.row = max(0, d.row-1)
-	case "down", "j":
-		d.row = min(max(0, len(visible)-1), d.row+1)
-	case "pgup":
-		d.row = max(0, d.row-m.pageRows())
-	case "pgdown":
-		d.row = min(max(0, len(visible)-1), d.row+m.pageRows())
-	case "home":
-		d.row = 0
-	case "end":
-		d.row = max(0, len(visible)-1)
 	case "n":
 		if d.next != "" {
 			d.cursor, d.next, d.row = d.next, "", 0
@@ -737,7 +718,7 @@ func (m *model) discoverFormKey(k tea.KeyPressMsg) tea.Cmd {
 		}
 	default:
 		value, cursor, _ := editText(d.input, d.inputCursor, k)
-		if len(value) > 1024 || !utf8.ValidString(value) || strings.IndexFunc(value, func(r rune) bool { return unicode.IsControl(r) || unicode.Is(unicode.Bidi_Control, r) }) >= 0 {
+		if !singleLineText(value, 1024) {
 			d.inputErr = "Text must fit 1024 bytes without terminal controls"
 			return nil
 		}
@@ -748,6 +729,9 @@ func (m *model) discoverFormKey(k tea.KeyPressMsg) tea.Cmd {
 }
 func (m *model) discoverProfileKey(k tea.KeyPressMsg) tea.Cmd {
 	d := &m.community.discover
+	if scrollKey(k.String(), &d.profileScroll, m.pageRows()) {
+		return nil
+	}
 	switch k.String() {
 	case "e", "enter":
 		if !m.community.supports("self-profile") || d.profileLoading || d.profile.CommunityIdentity != m.community.summary.CommunityIdentity {
@@ -762,18 +746,6 @@ func (m *model) discoverProfileKey(k tea.KeyPressMsg) tea.Cmd {
 		return tea.Batch(m.loadCommunitySummary(), m.loadCommunityDiscover(true))
 	case "esc", "left":
 		m.community.pane = max(0, m.community.pane-1)
-	case "up", "k":
-		d.profileScroll = max(0, d.profileScroll-1)
-	case "down", "j":
-		d.profileScroll++
-	case "pgup":
-		d.profileScroll = max(0, d.profileScroll-m.pageRows())
-	case "pgdown":
-		d.profileScroll += m.pageRows()
-	case "home":
-		d.profileScroll = 0
-	case "end":
-		d.profileScroll = 1 << 20
 	}
 	return nil
 }
@@ -805,23 +777,14 @@ func (m *model) discoverProfileFormKey(k tea.KeyPressMsg) tea.Cmd {
 }
 func (m *model) discoverDialogKey(k tea.KeyPressMsg) tea.Cmd {
 	d, dialog := &m.community.discover, m.community.discover.dialog
+	if scrollKey(k.String(), &dialog.scroll, m.pageRows()) {
+		return nil
+	}
 	switch k.String() {
 	case "esc":
 		d.dialog = nil
 	case "left", "right", "tab", "shift+tab":
 		dialog.confirm = !dialog.confirm
-	case "up", "k":
-		dialog.scroll = max(0, dialog.scroll-1)
-	case "down", "j":
-		dialog.scroll++
-	case "pgup":
-		dialog.scroll = max(0, dialog.scroll-m.pageRows())
-	case "pgdown":
-		dialog.scroll += m.pageRows()
-	case "home":
-		dialog.scroll = 0
-	case "end":
-		dialog.scroll = 1 << 20
 	case "enter":
 		d.dialog = nil
 		if !dialog.confirm || dialog.identity != m.community.summary.CommunityIdentity {
@@ -982,9 +945,7 @@ func (m *model) pasteCommunityDiscover(text string) {
 	}
 	if d.form == "profile" {
 		value, cursor := insertText(d.profileDraft, strings.ReplaceAll(strings.ReplaceAll(text, "\r\n", "\n"), "\r", "\n"), d.profileCursor)
-		if len(value) <= soulseek.MaxProfileDescriptionBytes && strings.IndexFunc(value, func(r rune) bool {
-			return unicode.Is(unicode.Bidi_Control, r) || unicode.IsControl(r) && r != '\n' && r != '\t'
-		}) < 0 {
+		if multilineText(value, soulseek.MaxProfileDescriptionBytes) {
 			d.profileDraft, d.profileCursor, d.inputErr, d.profileDirty = value, cursor, "", true
 			m.saveDiscoverDraft()
 		} else {
@@ -993,7 +954,7 @@ func (m *model) pasteCommunityDiscover(text string) {
 		return
 	}
 	value, cursor := insertText(d.input, strings.ReplaceAll(text, "\r\n", "\n"), d.inputCursor)
-	if len(value) <= 1024 && strings.IndexFunc(value, func(r rune) bool { return unicode.IsControl(r) || unicode.Is(unicode.Bidi_Control, r) }) < 0 {
+	if singleLineText(value, 1024) {
 		d.input, d.inputCursor, d.inputErr = value, cursor, ""
 		m.saveDiscoverDraft()
 	} else {

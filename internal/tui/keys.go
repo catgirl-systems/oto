@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 
 	"charm.land/bubbletea/v2"
 	"github.com/catgirl-systems/oto/internal/config"
@@ -90,18 +91,7 @@ func (m *model) key(k tea.KeyPressMsg) tea.Cmd {
 			m.help, m.helpScroll = false, 0
 			return nil
 		}
-		switch s {
-		case "up", "k":
-			m.helpScroll = max(0, m.helpScroll-1)
-		case "down", "j":
-			m.helpScroll++
-		case "pgup":
-			m.helpScroll = max(0, m.helpScroll-m.pageRows())
-		case "pgdown":
-			m.helpScroll += m.pageRows()
-		case "home":
-			m.helpScroll = 0
-		}
+		scrollKey(s, &m.helpScroll, m.pageRows())
 		return nil
 	}
 	if m.details {
@@ -584,13 +574,12 @@ func (m *model) openStatusMenu() {
 }
 
 func (m *model) statusMenuKey(k tea.KeyPressMsg) tea.Cmd {
+	if selectKey(k.String(), &m.statusMenuChoice, len(presenceChoices)-1) {
+		return nil
+	}
 	switch k.String() {
 	case "esc", "o":
 		m.statusMenu = false
-	case "up", "k":
-		m.statusMenuChoice = max(0, m.statusMenuChoice-1)
-	case "down", "j":
-		m.statusMenuChoice = min(len(presenceChoices)-1, m.statusMenuChoice+1)
 	case "enter":
 		presence := presenceChoices[m.statusMenuChoice]
 		m.statusMenu = false
@@ -775,13 +764,12 @@ func (m *model) folderMenuKey(k tea.KeyPressMsg) tea.Cmd {
 		m.folderMenuError = ""
 		return nil
 	}
+	if selectKey(k.String(), &m.folderMenuChoice, 1) {
+		return nil
+	}
 	switch k.String() {
 	case "esc":
 		m.folderMenu = false
-	case "up", "k":
-		m.folderMenuChoice = max(0, m.folderMenuChoice-1)
-	case "down", "j":
-		m.folderMenuChoice = min(1, m.folderMenuChoice+1)
 	case "/", "n":
 		m.folderMenuEditing, m.folderMenuRename = true, k.String() == "n"
 		m.inputCursor = len([]rune(*m.folderMenuInput()))
@@ -1443,13 +1431,12 @@ func (m *model) openUploadStatusMenu() {
 }
 
 func (m *model) uploadStatusMenuKey(k tea.KeyPressMsg) tea.Cmd {
+	if selectKey(k.String(), &m.uploadStatusChoice, len(uploadClearScopes)-1) {
+		return nil
+	}
 	switch k.String() {
 	case "esc", "C":
 		m.uploadStatusMenu = false
-	case "up", "k":
-		m.uploadStatusChoice = max(0, m.uploadStatusChoice-1)
-	case "down", "j":
-		m.uploadStatusChoice = min(len(uploadClearScopes)-1, m.uploadStatusChoice+1)
 	case "enter":
 		scope := uploadClearScopes[m.uploadStatusChoice]
 		m.uploadStatusMenu = false
@@ -1637,6 +1624,28 @@ func editText(value string, cursor int, k tea.KeyPressMsg) (string, int, bool) {
 		return value, cursor, false
 	}
 	return value, cursor, true
+}
+
+// terminalControl reports whether r can move the cursor or reorder rendered
+// text, so it must never reach the screen or a remote peer.
+func terminalControl(r rune) bool {
+	return unicode.IsControl(r) || unicode.Is(unicode.Bidi_Control, r)
+}
+
+// singleLineText reports whether text fits limit bytes (0 for no limit), is
+// valid UTF-8, and carries no terminal controls: the rule for one-line fields.
+func singleLineText(text string, limit int) bool {
+	return (limit <= 0 || len(text) <= limit) && utf8.ValidString(text) && !strings.ContainsFunc(text, terminalControl)
+}
+
+// multilineText is singleLineText for text that may keep newlines and tabs.
+func multilineText(text string, limit int) bool {
+	if limit > 0 && len(text) > limit {
+		return false
+	}
+	return utf8.ValidString(text) && !strings.ContainsFunc(text, func(r rune) bool {
+		return unicode.Is(unicode.Bidi_Control, r) || unicode.IsControl(r) && r != '\n' && r != '\t'
+	})
 }
 
 func (m *model) selectSetupField(field int) {

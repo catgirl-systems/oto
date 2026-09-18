@@ -25,11 +25,7 @@ func (s *Server) receivingSettings(w http.ResponseWriter, r *http.Request) {
 		}
 		out, err = s.service.SetReceivingSettings(r.Context(), req)
 	}
-	if err != nil {
-		communityError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, out)
+	communityResult(w, out, err)
 }
 func (c *Client) ReceivingSettings(ctx context.Context, id daemon.CommunityIdentity) (daemon.ReceivingSettings, error) {
 	q := communityRoomValues(id)

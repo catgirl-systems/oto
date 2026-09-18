@@ -36,11 +36,7 @@ func (s *Server) communityBroadcast(w http.ResponseWriter, r *http.Request) {
 		}
 		out, err = s.service.PreviewCommunityBroadcast(r.Context(), req)
 	}
-	if err != nil {
-		communityError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, out)
+	communityResult(w, out, err)
 }
 func (c *Client) PreviewCommunityBroadcast(ctx context.Context, req daemon.CommunityBroadcastRequest) (daemon.CommunityBroadcastPage, error) {
 	var out daemon.CommunityBroadcastPage
@@ -56,16 +52,11 @@ func (c *Client) CommunityBroadcast(ctx context.Context, id daemon.CommunityIden
 
 func (s *Server) communityBroadcastAction(w http.ResponseWriter, r *http.Request) {
 	var req daemon.CommunityBroadcastAction
-	if err := decode(w, r, &req); err != nil {
-		communityError(w, err)
+	if !decodeCommunity(w, r, &req) {
 		return
 	}
 	out, err := s.service.ActCommunityBroadcast(r.Context(), req)
-	if err != nil {
-		communityError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, out)
+	communityResult(w, out, err)
 }
 func (c *Client) ActCommunityBroadcast(ctx context.Context, req daemon.CommunityBroadcastAction) (daemon.CommunityBroadcastPage, error) {
 	var out daemon.CommunityBroadcastPage

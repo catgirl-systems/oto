@@ -36,24 +36,15 @@ func (s *Server) sharedSend(w http.ResponseWriter, r *http.Request) {
 		}
 		out, err = s.service.PreviewSharedSend(r.Context(), req)
 	}
-	if err != nil {
-		communityError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, out)
+	communityResult(w, out, err)
 }
 func (s *Server) sharedSendAction(w http.ResponseWriter, r *http.Request) {
 	var req daemon.SharedSendAction
-	if err := decode(w, r, &req); err != nil {
-		communityError(w, err)
+	if !decodeCommunity(w, r, &req) {
 		return
 	}
 	out, err := s.service.ActSharedSend(r.Context(), req)
-	if err != nil {
-		communityError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, out)
+	communityResult(w, out, err)
 }
 func (c *Client) PreviewSharedSend(ctx context.Context, req daemon.SharedSendRequest) (daemon.SharedSendPage, error) {
 	var out daemon.SharedSendPage

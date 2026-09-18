@@ -73,11 +73,7 @@ func communityError(w http.ResponseWriter, err error) {
 
 func (s *Server) communitySummary(w http.ResponseWriter, r *http.Request) {
 	out, err := s.service.CommunitySummary(r.Context())
-	if err != nil {
-		communityError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, out)
+	communityResult(w, out, err)
 }
 
 func (s *Server) communityUsers(w http.ResponseWriter, r *http.Request) {
@@ -99,17 +95,12 @@ func (s *Server) communityUsers(w http.ResponseWriter, r *http.Request) {
 		CommunityIdentity: daemon.CommunityIdentity{Account: q.Get("account"), Daemon: q.Get("daemon"), Session: session},
 		Cursor:            q.Get("cursor"), Query: q.Get("query"), Username: q.Get("username"), Limit: limit,
 	})
-	if err != nil {
-		communityError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, out)
+	communityResult(w, out, err)
 }
 
 func (s *Server) communityWatches(w http.ResponseWriter, r *http.Request) {
 	var req daemon.CommunityWatchRequest
-	if err := decode(w, r, &req); err != nil {
-		communityError(w, err)
+	if !decodeCommunity(w, r, &req) {
 		return
 	}
 	if err := s.service.WatchCommunityUsers(req.CommunityIdentity, req.Frontend, req.Users); err != nil {

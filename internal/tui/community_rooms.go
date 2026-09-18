@@ -509,14 +509,8 @@ func (m *model) roomKey(k tea.KeyPressMsg) tea.Cmd {
 			r.feedView = false
 		case "g":
 			return m.setCommunityFeed(!r.feedWanted)
-		case "up", "k":
-			r.feedScroll = max(0, r.feedScroll-1)
-		case "down", "j":
-			r.feedScroll++
-		case "pgup":
-			r.feedScroll = max(0, r.feedScroll-m.pageRows())
-		case "pgdown":
-			r.feedScroll += m.pageRows()
+		case "up", "k", "down", "j", "pgup", "pgdown":
+			scrollKey(k.String(), &r.feedScroll, m.pageRows())
 		case "p":
 			if len(r.feedBack) > 0 {
 				r.feedCursor = r.feedBack[len(r.feedBack)-1]
@@ -559,36 +553,26 @@ func (m *model) roomKey(k tea.KeyPressMsg) tea.Cmd {
 	}
 	if m.community.pane == 2 {
 		if m.community.target != "" {
+			if selectKey(k.String(), &m.community.inspectorScroll, m.communityInspectorEnd()) {
+				return nil
+			}
 			switch k.String() {
 			case "esc", "left":
 				m.community.target = ""
 				m.community.resetUser()
 			case "U":
 				m.openUserActions()
-			case "up", "k":
-				m.community.inspectorScroll = max(0, m.community.inspectorScroll-1)
-			case "down", "j":
-				m.community.inspectorScroll = min(m.communityInspectorEnd(), m.community.inspectorScroll+1)
 			case "r":
 				return m.loadCommunityUser()
 			}
 			return nil
 		}
+		if navKey(k.String(), &r.memberRow, max(0, len(r.members)-1), m.pageRows()) {
+			return nil
+		}
 		switch k.String() {
 		case "esc", "left":
 			m.community.pane = 1
-		case "up", "k":
-			r.memberRow = max(0, r.memberRow-1)
-		case "down", "j":
-			r.memberRow = min(max(0, len(r.members)-1), r.memberRow+1)
-		case "pgup":
-			r.memberRow = max(0, r.memberRow-m.pageRows())
-		case "pgdown":
-			r.memberRow = min(max(0, len(r.members)-1), r.memberRow+m.pageRows())
-		case "home":
-			r.memberRow = 0
-		case "end":
-			r.memberRow = max(0, len(r.members)-1)
 		case "p":
 			if len(r.memberBack) > 0 {
 				r.memberCursor = r.memberBack[len(r.memberBack)-1]
@@ -636,6 +620,9 @@ func (m *model) roomKey(k tea.KeyPressMsg) tea.Cmd {
 		_, cmd := m.chatKeyPress(k)
 		return cmd
 	}
+	if navKey(k.String(), &r.row, max(0, len(r.rooms)-1), m.pageRows()) {
+		return nil
+	}
 	switch k.String() {
 	case "N":
 		r.createPrivate = false
@@ -661,18 +648,6 @@ func (m *model) roomKey(k tea.KeyPressMsg) tea.Cmd {
 		if r.row < len(r.rooms) {
 			return m.openCommunityRoom(r.rooms[r.row].Name)
 		}
-	case "up", "k":
-		r.row = max(0, r.row-1)
-	case "down", "j":
-		r.row = min(max(0, len(r.rooms)-1), r.row+1)
-	case "pgup":
-		r.row = max(0, r.row-m.pageRows())
-	case "pgdown":
-		r.row = min(max(0, len(r.rooms)-1), r.row+m.pageRows())
-	case "home":
-		r.row = 0
-	case "end":
-		r.row = max(0, len(r.rooms)-1)
 	case "p":
 		if len(r.back) > 0 {
 			r.cursor = r.back[len(r.back)-1]

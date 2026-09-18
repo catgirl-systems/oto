@@ -25,11 +25,7 @@ func (s *Server) communityText(w http.ResponseWriter, r *http.Request) {
 	} else {
 		out, err = s.service.SetCommunityTextSettings(r.Context(), req)
 	}
-	if err != nil {
-		communityError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, out)
+	communityResult(w, out, err)
 }
 func (c *Client) CommunityTextSettings(ctx context.Context, id daemon.CommunityIdentity) (daemon.CommunityTextSettings, error) {
 	q := communityRoomValues(id)

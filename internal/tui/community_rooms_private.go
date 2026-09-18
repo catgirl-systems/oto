@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"strings"
 	"time"
-	"unicode"
 	"unicode/utf8"
 
 	tea "charm.land/bubbletea/v2"
@@ -151,9 +150,10 @@ func (m *model) roomWallDraftSave() {
 	p.wallDrafts[m.wallDraftKey()] = chatDraft{text: p.wallInput, cursor: p.wallInputCursor}
 }
 func privateRoomTextOK(text string, multiline bool) bool {
-	return utf8.ValidString(text) && strings.IndexFunc(text, func(r rune) bool {
-		return unicode.Is(unicode.Bidi_Control, r) || unicode.IsControl(r) && !(multiline && (r == '\n' || r == '\t'))
-	}) < 0
+	if multiline {
+		return multilineText(text, 0)
+	}
+	return singleLineText(text, 0)
 }
 func (m *model) roleActionAllowed(action soulseek.RoomRoleAction) bool {
 	r := m.community.rooms
@@ -259,15 +259,10 @@ func (m *model) privateRoomDialogKey(k tea.KeyPressMsg) tea.Cmd {
 	if d == nil {
 		return nil
 	}
+	if dialogScrollKey(k.String(), &d.scroll, max(1, m.height/2), len(d.label)) {
+		return nil
+	}
 	switch k.String() {
-	case "up", "pgup":
-		d.scroll = max(0, d.scroll-max(1, m.height/2))
-	case "down", "pgdown":
-		d.scroll += max(1, m.height/2)
-	case "home":
-		d.scroll = 0
-	case "end":
-		d.scroll = len(d.label)
 	case "esc":
 		p.dialog = nil
 	case "left", "right", "tab", "shift+tab":
@@ -377,6 +372,9 @@ func (m *model) privateRoomKey(k tea.KeyPressMsg) tea.Cmd {
 		return tea.Batch(m.refreshCommunityDirectory(), m.loadCommunityMembers(true))
 	}
 	if p.view == "wall" {
+		if scrollKey(k.String(), &p.wallScroll, m.pageRows()) {
+			return nil
+		}
 		switch k.String() {
 		case "i", "enter":
 			if !p.wallReady {
@@ -391,16 +389,6 @@ func (m *model) privateRoomKey(k tea.KeyPressMsg) tea.Cmd {
 			m.roomWallDraftSave()
 		case "C":
 			p.dialog = &privateRoomDialog{kind: "wall", room: r.selected, identity: m.community.summary.CommunityIdentity, revision: m.privateRoomRevision(), label: fmt.Sprintf("Clear only your wall in %q? Other users' tickers and history remain.", r.selected)}
-		case "up", "k":
-			p.wallScroll = max(0, p.wallScroll-1)
-		case "down", "j":
-			p.wallScroll++
-		case "pgup":
-			p.wallScroll = max(0, p.wallScroll-m.pageRows())
-		case "pgdown":
-			p.wallScroll += m.pageRows()
-		case "home":
-			p.wallScroll = 0
 		case "p":
 			if len(p.wallBack) > 0 {
 				p.wallCursor = p.wallBack[len(p.wallBack)-1]
@@ -418,19 +406,10 @@ func (m *model) privateRoomKey(k tea.KeyPressMsg) tea.Cmd {
 		}
 		return nil
 	}
+	if navKey(k.String(), &r.memberRow, max(0, len(r.members)-1), m.pageRows()) {
+		return nil
+	}
 	switch k.String() {
-	case "up", "k":
-		r.memberRow = max(0, r.memberRow-1)
-	case "down", "j":
-		r.memberRow = min(max(0, len(r.members)-1), r.memberRow+1)
-	case "pgup":
-		r.memberRow = max(0, r.memberRow-m.pageRows())
-	case "pgdown":
-		r.memberRow = min(max(0, len(r.members)-1), r.memberRow+m.pageRows())
-	case "home":
-		r.memberRow = 0
-	case "end":
-		r.memberRow = max(0, len(r.members)-1)
 	case "p":
 		if len(r.memberBack) > 0 {
 			r.memberCursor = r.memberBack[len(r.memberBack)-1]
