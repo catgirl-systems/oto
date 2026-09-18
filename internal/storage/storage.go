@@ -232,16 +232,9 @@ func (d *DB) Queries() *db.Queries {
 	return db.New(d.sql)
 }
 
-// BeginWrite begins the driver's immediate transaction. The DSN's txlock is
-// deliberate: all database/sql write transactions acquire RESERVED up front.
-func (d *DB) BeginWrite(ctx context.Context) (*sql.Tx, error) {
-	if d == nil || d.sql == nil {
-		return nil, errors.New("storage: nil database")
-	}
-	return d.sql.BeginTx(ctx, nil)
-}
-
 // WriteTx runs fn in an immediate transaction and rolls it back on any error.
+// The DSN's txlock is deliberate: all database/sql write transactions acquire
+// RESERVED up front.
 func (d *DB) WriteTx(ctx context.Context, fn func(*sql.Tx) error) (err error) {
 	if d == nil || d.sql == nil {
 		return errors.New("storage: nil database")
@@ -254,7 +247,7 @@ func (d *DB) WriteTx(ctx context.Context, fn func(*sql.Tx) error) (err error) {
 	case <-ctx.Done():
 		return ctx.Err()
 	}
-	tx, err := d.BeginWrite(ctx)
+	tx, err := d.sql.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
