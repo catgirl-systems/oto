@@ -140,6 +140,11 @@ SELECT * FROM community_aliases WHERE account = ? AND name = ?;
 SELECT * FROM community_aliases WHERE account = ? AND name > sqlc.arg(after_name)
 ORDER BY name LIMIT min(max(CAST(sqlc.arg(page_size) AS INTEGER), 1), 200);
 
+-- name: CountCommunitySettings :one
+SELECT
+    (SELECT COUNT(*) FROM community_rules WHERE community_rules.account = sqlc.arg(account)) AS rules,
+    (SELECT COUNT(*) FROM community_aliases WHERE community_aliases.account = sqlc.arg(account)) AS aliases;
+
 -- name: DeleteCommunityAlias :execrows
 DELETE FROM community_aliases WHERE account = ? AND name = ?;
 

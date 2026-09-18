@@ -82,6 +82,24 @@ func (q *Queries) CommunityUnreadTotals(ctx context.Context, account string) (Co
 	return i, err
 }
 
+const countCommunitySettings = `-- name: CountCommunitySettings :one
+SELECT
+    (SELECT COUNT(*) FROM community_rules WHERE community_rules.account = ?1) AS rules,
+    (SELECT COUNT(*) FROM community_aliases WHERE community_aliases.account = ?1) AS aliases
+`
+
+type CountCommunitySettingsRow struct {
+	Rules   int64 `json:"rules"`
+	Aliases int64 `json:"aliases"`
+}
+
+func (q *Queries) CountCommunitySettings(ctx context.Context, account string) (CountCommunitySettingsRow, error) {
+	row := q.db.QueryRowContext(ctx, countCommunitySettings, account)
+	var i CountCommunitySettingsRow
+	err := row.Scan(&i.Rules, &i.Aliases)
+	return i, err
+}
+
 const deleteCommunityAlias = `-- name: DeleteCommunityAlias :execrows
 DELETE FROM community_aliases WHERE account = ? AND name = ?
 `

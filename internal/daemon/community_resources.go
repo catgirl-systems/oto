@@ -17,14 +17,27 @@ func communityCapabilities() []string {
 
 type CommunitySummary struct {
 	CommunityIdentity
-	Revision          uint64               `json:"revision"`
-	Connected         bool                 `json:"connected"`
-	Unread            int64                `json:"unread"`
-	Mentions          int64                `json:"mentions"`
-	Capabilities      []string             `json:"capabilities"`
-	AutomaticAway     bool                 `json:"automatic_away"`
-	LastActivity      time.Time            `json:"last_activity"`
-	BuddyNotification DownloadNotification `json:"buddy_notification"`
+	Revision          uint64                   `json:"revision"`
+	Connected         bool                     `json:"connected"`
+	Unread            int64                    `json:"unread"`
+	Mentions          int64                    `json:"mentions"`
+	Capabilities      []string                 `json:"capabilities"`
+	AutomaticAway     bool                     `json:"automatic_away"`
+	LastActivity      time.Time                `json:"last_activity"`
+	BuddyNotification DownloadNotification     `json:"buddy_notification"`
+	Settings          CommunitySettingsSummary `json:"settings"`
+}
+
+// CommunitySettingsSummary is presentation state for the Settings -> Community rows.
+type CommunitySettingsSummary struct {
+	PrivacyRules  int  `json:"privacy_rules"`
+	Aliases       int  `json:"aliases"`
+	Keywords      int  `json:"keywords"`
+	Substitutions int  `json:"substitutions"`
+	Censorship    int  `json:"censorship"`
+	CTCPVersion   bool `json:"ctcp_version"`
+	AwaySeconds   int  `json:"away_seconds"`
+	AwayReply     bool `json:"away_reply"`
 }
 
 func (s *Service) CommunitySummary(ctx context.Context) (CommunitySummary, error) {
@@ -44,6 +57,14 @@ func (s *Service) CommunitySummary(ctx context.Context) (CommunitySummary, error
 	out.AutomaticAway = s.community.away.automatic
 	out.LastActivity = s.community.away.lastActivity
 	out.BuddyNotification = s.community.buddyNotification
+	if p := s.community.text; p != nil {
+		out.Settings.Keywords = len(p.settings.Keywords)
+		out.Settings.Substitutions = len(p.settings.Substitutions)
+		out.Settings.Censorship = len(p.settings.Censorship)
+		out.Settings.CTCPVersion = p.settings.CTCPVersion
+	}
+	away := s.cfg.CommunityAway[out.Account]
+	out.Settings.AwaySeconds, out.Settings.AwayReply = away.AutoAwaySeconds, away.AutoReply != ""
 	err := s.stateDB.ReadSnapshot(ctx, func(tx *storage.ReadTx) error {
 		account, err := tx.Queries().GetCommunityAccount(ctx, out.Account)
 		if err != nil {
@@ -55,6 +76,11 @@ func (s *Service) CommunitySummary(ctx context.Context) (CommunitySummary, error
 		}
 		out.Revision += uint64(account.Revision)
 		out.Unread, out.Mentions = totals.Unread, totals.Mentions
+		counts, err := tx.Queries().CountCommunitySettings(ctx, out.Account)
+		if err != nil {
+			return err
+		}
+		out.Settings.PrivacyRules, out.Settings.Aliases = int(counts.Rules), int(counts.Aliases)
 		return nil
 	})
 	return out, err
