@@ -16,7 +16,6 @@ type searchScope struct {
 	users, rooms []string
 	identity     daemon.CommunityIdentity
 	query, scope string
-	global       bool // kept for legacy explicit-user callers/tests
 	row          int
 	editing      bool
 	value        string
@@ -28,14 +27,10 @@ func (d *searchScope) mode() string {
 	if d.scope != "" {
 		return d.scope
 	}
-	if d.global {
-		return "global"
-	}
 	return "users"
 }
 func (d *searchScope) setMode(mode string) {
 	d.scope = mode
-	d.global = mode == "global"
 }
 func (d *searchScope) cycleMode() {
 	modes := []string{"global", "users", "buddies", "rooms"}
