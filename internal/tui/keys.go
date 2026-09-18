@@ -14,6 +14,25 @@ import (
 
 func (m *model) key(k tea.KeyPressMsg) tea.Cmd {
 	s := k.String()
+	m.community.chats.navigation++
+	if !(m.workspace == workspaceCommunity && m.community.chats.composing && (s == "tab" || s == "shift+tab")) {
+		m.community.chats.cancelCompletion()
+	}
+	if m.commandOutput != nil {
+		return m.commandOutputKey(k)
+	}
+	if m.community.chats.dialog != nil {
+		return m.chatDialogKey(k)
+	}
+	if m.community.rooms.dialog != nil {
+		return m.roomDialogKey(k)
+	}
+	if m.community.rooms.private.dialog != nil {
+		return m.privateRoomDialogKey(k)
+	}
+	if m.community.buddies.dialog != nil {
+		return m.buddyDialogKey(k)
+	}
 	if m.downloadAs != nil {
 		return m.downloadAsKey(k)
 	}
@@ -22,6 +41,27 @@ func (m *model) key(k tea.KeyPressMsg) tea.Cmd {
 	}
 	if m.searchScope != nil {
 		return m.searchScopeKey(k)
+	}
+	if m.privileges != nil && !m.confirm {
+		return m.privilegesKey(k)
+	}
+	if m.receivingEditor != nil && !m.confirm {
+		return m.receivingSettingsKey(k)
+	}
+	if m.awayEditor != nil && !m.confirm {
+		return m.awaySettingsKey(k)
+	}
+	if m.textTools != nil && !m.confirm {
+		return m.textToolsKey(k)
+	}
+	if m.privacyRules != nil && !m.confirm {
+		return m.privacyRulesKey(k)
+	}
+	if m.shareAccess != nil && !m.confirm {
+		return m.shareAccessKey(k)
+	}
+	if m.userActions != nil {
+		return m.userActionsKey(k)
 	}
 	if m.passwordForm {
 		return m.passwordFormKey(k)
@@ -71,11 +111,17 @@ func (m *model) key(k tea.KeyPressMsg) tea.Cmd {
 	if m.editing {
 		return m.editKey(k)
 	}
+	if m.workspace == workspaceCommunity && (m.community.inspectEditing || m.community.peer.form || m.community.peer.dialog || m.community.view == 2 && (m.community.buddies.editor != nil || m.community.buddies.form != "") || m.community.view == 3 && (m.community.discover.form != "" || m.community.discover.dialog != nil) || m.community.chats.composing || m.community.chats.form != "" || m.community.rooms.form != "" || m.community.rooms.private.editing() || m.community.view == 1 && m.community.pane == 1 && m.community.rooms.private.view == "roles" && s == "o" || s != "tab" && s != "shift+tab" && s != "q" && s != "ctrl+c" && s != "?" && s != "o") {
+		return m.communityKey(k)
+	}
 	if m.workspace == workspaceStats && s != "tab" && s != "shift+tab" && s != "q" && s != "ctrl+c" && s != "?" && s != "o" {
 		return m.statsKey(k)
 	}
 	switch s {
 	case "q", "ctrl+c":
+		if m.confirmChatDraftQuit() {
+			return nil
+		}
 		if m.transient && m.active() {
 			m.confirm = true
 			return nil
@@ -87,6 +133,8 @@ func (m *model) key(k tea.KeyPressMsg) tea.Cmd {
 		m.openStatusMenu()
 	case "u":
 		m.openSearchScope()
+	case "U":
+		m.openUserActions()
 	case "F":
 		m.confirmForceDownloads()
 	case "ctrl+pgup":
@@ -168,6 +216,9 @@ func (m *model) key(k tea.KeyPressMsg) tea.Cmd {
 	case "space":
 		m.toggle()
 	case "enter":
+		if m.workspace == workspaceShares {
+			return m.openShareAccess()
+		}
 		if m.workspace == workspaceWishlist {
 			if m.cursor >= 0 && m.cursor < len(m.wishlist) {
 				m.wishlistCursor = m.cursor
@@ -249,8 +300,27 @@ func (m *model) key(k tea.KeyPressMsg) tea.Cmd {
 				m.cfg.Uploads.AutoClearCancelled = !m.cfg.Uploads.AutoClearCancelled
 			case settingWaitForActiveUploadsOnQuit:
 				m.cfg.Uploads.WaitForActiveUploadsOnQuit = !m.cfg.Uploads.WaitForActiveUploadsOnQuit
+			case settingPrioritizeBuddies:
+				m.cfg.Uploads.PrioritizeBuddies = !m.cfg.Uploads.PrioritizeBuddies
+			case settingPrioritizePrivileged:
+				m.cfg.Uploads.PrioritizePrivileged = !m.cfg.Uploads.PrioritizePrivileged
+			case settingExemptBuddiesFromQueueLimits:
+				m.cfg.Uploads.ExemptBuddiesFromQueueLimits = !m.cfg.Uploads.ExemptBuddiesFromQueueLimits
 			case settingChangePassword:
 				m.openPasswordForm()
+			case settingReceiving:
+				return m.openReceivingSettings()
+			case settingAway:
+				return m.openAwaySettings()
+			case settingChatCommands:
+				m.showChatCommandHelp()
+				return nil
+			case settingTextTools:
+				return m.openTextTools()
+			case settingPrivacyRules:
+				return m.openPrivacyRules("", "")
+			case settingAccountPrivileges:
+				return m.openPrivileges("")
 			case settingClearSearchHistory:
 				m.clearHistory(false)
 			case settingClearFilterHistory:
@@ -379,6 +449,9 @@ func (m *model) key(k tea.KeyPressMsg) tea.Cmd {
 			return m.prepareTransferSearch(true)
 		}
 	case "s":
+		if m.workspace == workspaceShares {
+			return m.openSharedSendPrompt()
+		}
 		if m.workspace == workspaceTransfers {
 			return m.prepareTransferSearch(false)
 		}
@@ -410,7 +483,7 @@ func (m *model) key(k tea.KeyPressMsg) tea.Cmd {
 		}
 	case "w":
 		if m.workspace == workspaceSearch && strings.TrimSpace(m.query) != "" {
-			if len(m.searchUsers()) > 0 {
+			if len(m.searchUsers()) > 0 || m.searchTabIndex >= 0 && m.searchTabIndex < len(m.searchTabs) && m.searchTabs[m.searchTabIndex].scope != "" && m.searchTabs[m.searchTabIndex].scope != "global" {
 				m.setNotice("Wishlist searches are global; targeted searches cannot be saved")
 				return nil
 			}

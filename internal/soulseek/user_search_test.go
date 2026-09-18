@@ -11,9 +11,7 @@ import (
 
 func TestUserSearchEncodingAndValidation(t *testing.T) {
 	frame, err := EncodeMessage(UserSearchRequest{Username: "alice", Token: 0x01020304, Query: "song"})
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	if got := hex.EncodeToString(frame); got != "190000002a00000005000000616c6963650403020104000000736f6e67" {
 		t.Fatal(got)
 	}
@@ -71,14 +69,10 @@ func TestTargetedSearchIsolation(t *testing.T) {
 			response <- SearchResponse{Username: "Bob Smith", Results: []SearchResult{{Username: "Bob Smith", Path: "song.flac"}}}
 		}()
 		results, err := c.Search(context.Background(), "song", "alice", "Bob Smith", "alice")
-		if err != nil || len(results) != 2 || results[0].Username != "alice" || results[1].Username != "Bob Smith" {
-			t.Fatalf("%+v %v", results, err)
-		}
+		failIfFmt(t, err != nil || len(results) != 2 || results[0].Username != "alice" || results[1].Username != "Bob Smith", "%+v %v", results, err)
 		c.mu.Lock()
 		remaining := len(c.pending)
 		c.mu.Unlock()
-		if remaining != 0 {
-			t.Fatal("late result subscription retained")
-		}
+		failIf(t, remaining != 0, "late result subscription retained")
 	})
 }

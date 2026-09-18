@@ -12,9 +12,7 @@ func TestCheckpointCrashAndLateCancellationAccounting(t *testing.T) {
 	cfg := testConfig(t)
 	path := filepath.Join(t.TempDir(), "state.sqlite3")
 	s, err := New(cfg, path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	defer s.Close()
 	s.transfers["d-1"] = Transfer{ID: "d-1", Username: "peer", Direction: "download", Filename: "song", State: "running", Total: 200}
 	s.mu.Lock()
@@ -32,29 +30,21 @@ func TestCheckpointCrashAndLateCancellationAccounting(t *testing.T) {
 	s.stateDB = nil
 	s.telemetry = nil
 	restored, err := New(cfg, path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	if err = restored.flushStats(); err != nil {
 		t.Fatal(err)
 	}
 	totals, err := restored.telemetry.store.Totals(stats.Filter{})
-	if err != nil || totals.Bytes != 50 || totals.AttemptsStarted != 1 || totals.AttemptsInterrupted != 1 {
-		t.Fatalf("crash checkpoint: %+v %v", totals, err)
-	}
+	failIfFmt(t, err != nil || totals.Bytes != 50 || totals.AttemptsStarted != 1 || totals.AttemptsInterrupted != 1, "crash checkpoint: %+v %v", totals, err)
 	restored.Close()
 	again, err := New(cfg, path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	defer again.Close()
 	if err = again.flushStats(); err != nil {
 		t.Fatal(err)
 	}
 	totals, err = again.telemetry.store.Totals(stats.Filter{})
-	if err != nil || totals.AttemptsInterrupted != 1 {
-		t.Fatalf("interruption replay: %+v %v", totals, err)
-	}
+	failIfFmt(t, err != nil || totals.AttemptsInterrupted != 1, "interruption replay: %+v %v", totals, err)
 	again.transfers["d-2"] = Transfer{ID: "d-2", Username: "peer", Direction: "download", Filename: "other", State: "running", Total: 200}
 	again.mu.Lock()
 	again.statsBeginLocked("d-2", accountKey(cfg))
@@ -72,7 +62,5 @@ func TestCheckpointCrashAndLateCancellationAccounting(t *testing.T) {
 		t.Fatal(err)
 	}
 	totals, err = again.telemetry.store.Totals(stats.Filter{})
-	if err != nil || totals.Bytes != 60 || totals.AttemptsCancelled != 1 {
-		t.Fatalf("last cancellation payload: %+v %v", totals, err)
-	}
+	failIfFmt(t, err != nil || totals.Bytes != 60 || totals.AttemptsCancelled != 1, "last cancellation payload: %+v %v", totals, err)
 }

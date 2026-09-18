@@ -19,9 +19,7 @@ func TestIncomingSearchPolicyAndServerExclusions(t *testing.T) {
 	for i := 0; i < 600; i++ {
 		index.files = append(index.files, ShareFile{Root: "Music", Path: fmt.Sprintf("song-%02d.mp3", i)})
 	}
-	if err := index.setFiles(context.Background(), index.files); err != nil {
-		t.Fatal(err)
-	}
+	must(t, index.setFiles(context.Background(), index.files))
 	policy := IncomingSearchPolicy{Respond: true, MinimumLength: 3, MaximumResults: 50}
 	client := NewClient(ClientConfig{Share: index, IncomingSearch: &policy})
 
@@ -75,9 +73,7 @@ func TestExcludedSearchPhrasesProtocolAndSearchResponseLimit(t *testing.T) {
 	_ = payload.String("second")
 	message, err := DecodeMessage(ServerExcludedSearchPhrases, payload.Payload())
 	phrases, ok := message.(ExcludedSearchPhrases)
-	if err != nil || !ok || fmt.Sprint(phrases.Phrases) != "[first phrase second]" {
-		t.Fatalf("excluded phrases: %#v %v", message, err)
-	}
+	failIfFmt(t, err != nil || !ok || fmt.Sprint(phrases.Phrases) != "[first phrase second]", "excluded phrases: %#v %v", message, err)
 
 	var oversized Encoder
 	oversized.U32(maxExcludedSearchPhrases + 1)
@@ -101,26 +97,18 @@ func TestExcludedSearchPhrasesProtocolAndSearchResponseLimit(t *testing.T) {
 	remaining := len(stateClient.excludedSearchPhrases)
 	stateClient.mu.Unlock()
 	_ = stateClient.Close()
-	if remaining != 0 {
-		t.Fatal("server exclusions survived connection end")
-	}
+	failIf(t, remaining != 0, "server exclusions survived connection end")
 
 	results := make([]SearchResult, 501)
 	for i := range results {
 		results[i] = SearchResult{Path: fmt.Sprintf("Music\\song-%d.mp3", i), Public: true}
 	}
 	encoded, err := EncodeMessage(SearchResponse{Username: "peer", Results: results})
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	command, responsePayload, err := ReadFrame(bytes.NewReader(encoded))
-	if err != nil || command != PeerSearch {
-		t.Fatalf("search response frame: %d %v", command, err)
-	}
+	failIfFmt(t, err != nil || command != PeerSearch, "search response frame: %d %v", command, err)
 	response, err := DecodeSearchResponse(responsePayload)
-	if err != nil || len(response.Results) != len(results) {
-		t.Fatalf("large search response: %d %v", len(response.Results), err)
-	}
+	failIfFmt(t, err != nil || len(response.Results) != len(results), "large search response: %d %v", len(response.Results), err)
 	if _, err := EncodeMessage(SearchResponse{Results: make([]SearchResult, maxSearchResults+1)}); !errors.Is(err, ErrTooLarge) {
 		t.Fatalf("oversized search response: %v", err)
 	}
@@ -130,16 +118,10 @@ func TestDisabledIncomingSearchStillForwardsDistributedRequest(t *testing.T) {
 	policy := IncomingSearchPolicy{MaximumResults: 50}
 	client := NewClient(ClientConfig{IncomingSearch: &policy})
 	messages, err := client.distributed.AddChild("child")
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	payload, err := (DistributedSearchQuery{Username: "peer", Token: 7, Query: "song"}).MarshalBinary()
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	client.handleDistributedSearch(payload)
 	message := <-messages
-	if message.Command != DistributedSearchCommand || !bytes.Equal(message.Payload, payload) {
-		t.Fatalf("forwarded message: %#v", message)
-	}
+	failIfFmt(t, message.Command != DistributedSearchCommand || !bytes.Equal(message.Payload, payload), "forwarded message: %#v", message)
 }

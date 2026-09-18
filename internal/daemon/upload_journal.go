@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -188,12 +189,15 @@ func (s *Service) recoverUploads(client *soulseek.Client, epoch uint64) {
 			continue
 		}
 		s.mu.Lock()
-		if s.shuttingDown {
+		if s.closed || s.shuttingDown || s.client != client || s.uploadEpoch != epoch {
 			s.mu.Unlock()
 			return // Keep not-yet-restored uploads recoverable.
 		}
 		tr := s.transfers[u.ID]
 		tr.State, tr.Error = "failed", err.Error()
+		if errors.Is(err, soulseek.ErrShareAddressPending) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			tr.State, tr.Error = "interrupted", "Address verification pending; retry or reconnect"
+		}
 		s.transfers[u.ID] = tr
 		if err := s.persistUploadLocked(u.ID); err != nil {
 			s.event(slog.LevelError, "upload_recovery_persist_failed", err)

@@ -41,9 +41,7 @@ func TestCheckListeningPortResponses(t *testing.T) {
 			open, err := checkListeningPort(context.Background(), client, server.URL+"?port=%d", 50300)
 			if open != test.open || (test.wantErr == "") != (err == nil) || err != nil && !strings.Contains(err.Error(), test.wantErr) {
 				t.Fatalf("open=%v err=%v", open, err)
-				if test.name == "unknown" && err != nil && strings.Contains(err.Error(), test.body) {
-					t.Fatalf("error echoed response body: %v", err)
-				}
+				failIfFmt(t, test.name == "unknown" && err != nil && strings.Contains(err.Error(), test.body), "error echoed response body: %v", err)
 			}
 		})
 	}
@@ -57,9 +55,7 @@ func TestCheckListeningPortCancellation(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
 	defer cancel()
 	_, err := checkListeningPort(ctx, soulseek.NewClient(soulseek.ClientConfig{}), server.URL+"?port=%d", 50300)
-	if !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("cancellation error = %v", err)
-	}
+	failIfFmt(t, !errors.Is(err, context.DeadlineExceeded), "cancellation error = %v", err)
 }
 
 func TestServiceCheckListeningPortUsesAdvertisedPort(t *testing.T) {
@@ -67,9 +63,7 @@ func TestServiceCheckListeningPortUsesAdvertisedPort(t *testing.T) {
 	client := soulseek.NewClientOnConn(soulseek.ClientConfig{}, clientConn)
 	defer client.Close()
 	defer serverConn.Close()
-	if err := client.SetAdvertisedPort(61000); err != nil {
-		t.Fatal(err)
-	}
+	must(t, client.SetAdvertisedPort(61000))
 
 	service := &Service{status: StatusConnected, client: client}
 	service.portCheck = func(_ context.Context, gotClient *soulseek.Client, port uint16) (bool, error) {
@@ -79,9 +73,7 @@ func TestServiceCheckListeningPortUsesAdvertisedPort(t *testing.T) {
 		return true, nil
 	}
 	result, err := service.CheckListeningPort(context.Background())
-	if err != nil || result.Port != 61000 || !result.Open {
-		t.Fatalf("result=%+v err=%v", result, err)
-	}
+	failIfFmt(t, err != nil || result.Port != 61000 || !result.Open, "result=%+v err=%v", result, err)
 	if snapshot := service.Snapshot(); snapshot.PublicPort != 61000 {
 		t.Fatalf("snapshot public port = %d", snapshot.PublicPort)
 	}

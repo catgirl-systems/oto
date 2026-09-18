@@ -52,3 +52,45 @@ func (s *Service) notifyDownloadLocked(user, target string, folderFinished bool)
 		}
 	}()
 }
+
+// Presence hydration never calls this: only a fresh offline -> connected change.
+func (s *Service) notifyBuddyOnlineLocked(username string) {
+	if !s.community.buddies[username].NotifyOnline {
+		return
+	}
+	s.community.buddyNotification.SessionID = fmt.Sprintf("%s/%s/%d", s.community.identity.Daemon, s.community.identity.Account, s.community.identity.Session)
+	s.community.buddyNotification.Sequence++
+	s.community.buddyNotification.Message = fmt.Sprintf("Buddy %q is online", username)
+	if s.buddyNotifyActive {
+		return
+	}
+	s.buddyNotifyActive = true
+	ctx, notify := s.scanCtx, s.desktopNotify
+	s.wg.Add(1)
+	go func() {
+		defer s.wg.Done()
+		var sent DownloadNotification
+		for {
+			s.mu.Lock()
+			next := s.community.buddyNotification
+			if s.closed || ctx.Err() != nil || next.Sequence == 0 || next.SessionID == sent.SessionID && next.Sequence == sent.Sequence {
+				s.buddyNotifyActive = false
+				s.mu.Unlock()
+				return
+			}
+			s.mu.Unlock()
+			if err := notify(ctx, "Buddy online", next.Message); err != nil {
+				s.event(slog.LevelWarn, "buddy_notification_failed", err)
+			}
+			sent = next
+			// ponytail: coalesce desktop alerts to 1/s; the summary sequence retains
+			// the transition count without a second notification event store.
+			timer := time.NewTimer(time.Second)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+			case <-timer.C:
+			}
+		}
+	}()
+}

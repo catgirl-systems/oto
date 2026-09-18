@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"strings"
@@ -38,14 +39,17 @@ type uploadAttempt struct {
 	fingerprint    string
 	job            *UploadJob
 	ctx            context.Context
+	root           context.Context
 	cancel         context.CancelFunc
 	done           chan struct{}
 	mu             sync.Mutex
 	state          string
 	progress       uint64
 	manual, notify bool
+	policyReason   string
 	fileStarted    bool
 	observation    *transferObservation
+	address        netip.Addr
 }
 
 func (c *Client) emitUpload(a *uploadAttempt, state string, done uint64, message string) {
@@ -83,6 +87,9 @@ func fileFingerprint(path string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	return fileInfoFingerprint(info)
+}
+func fileInfoFingerprint(info os.FileInfo) (string, error) {
 	stat, ok := info.Sys().(*syscall.Stat_t)
 	if !ok {
 		return "", errors.New("soulseek: file fingerprint unavailable")
@@ -91,15 +98,35 @@ func fileFingerprint(path string) (string, error) {
 }
 
 func (c *Client) registerUpload(username, filename string, peerRequeue bool) (*uploadAttempt, bool, error) {
-	return c.registerUploadWithOptions(username, filename, peerRequeue, false, "")
+	return c.registerUploadWithAddress(username, filename, peerRequeue, c.cachedPeerIP(username), false, "")
 }
 
 func (c *Client) registerUploadWithOptions(username, filename string, peerRequeue, restored bool, expectedFingerprint string) (*uploadAttempt, bool, error) {
+	return c.registerUploadWithAddress(username, filename, peerRequeue, c.cachedPeerIP(username), restored, expectedFingerprint)
+}
+
+func (c *Client) registerUploadWithAddress(username, filename string, peerRequeue bool, address netip.Addr, restored bool, expectedFingerprint string) (*uploadAttempt, bool, error) {
+	c.mu.Lock()
+	root := c.uploadRoot
+	c.mu.Unlock()
+	if !address.IsValid() && c.sharePermission(username, address).NeedsAddress {
+		ctx, cancel := context.WithTimeout(root, 5*time.Second)
+		resolved, err := c.ResolveUserAddress(ctx, username)
+		cancel()
+		if err != nil {
+			return nil, false, errors.Join(ErrShareAddressPending, err)
+		}
+		address, err = netip.ParseAddr(resolved.IP)
+		if err != nil {
+			return nil, false, err
+		}
+		address = address.Unmap()
+	}
 	if !restored && c.cfg.UploadsReady != nil {
 		select {
 		case <-c.cfg.UploadsReady:
-		case <-c.uploadRoot.Done():
-			return nil, false, c.uploadRoot.Err()
+		case <-root.Done():
+			return nil, false, root.Err()
 		}
 	}
 	c.uploadAdmissionMu.Lock()
@@ -116,12 +143,15 @@ func (c *Client) registerUploadWithOptions(username, filename string, peerRequeu
 		if err != nil {
 			return nil, false, err
 		}
+		if err := c.checkUploadPermission(username, wire, address); err != nil {
+			return nil, false, err
+		}
 		if expectedFingerprint != "" && fingerprint != expectedFingerprint {
 			return nil, false, errors.New("soulseek: shared file changed")
 		}
 		key := downloadKey(username, wire)
 		c.mu.Lock()
-		if c.closing {
+		if c.closing || c.uploadRoot != root {
 			c.mu.Unlock()
 			return nil, false, errors.New("soulseek: client closed")
 		}
@@ -145,12 +175,12 @@ func (c *Client) registerUploadWithOptions(username, filename string, peerRequeu
 			continue
 		}
 		c.uploadSeq++
-		ctx, cancel := context.WithCancel(c.uploadRoot)
-		a := &uploadAttempt{target: UploadTarget{Username: username, Filename: wire, Attempt: c.uploadSeq}, key: key, localPath: localPath, ctx: ctx, cancel: cancel, done: make(chan struct{}), state: "queued"}
+		ctx, cancel := context.WithCancel(root)
+		a := &uploadAttempt{target: UploadTarget{Username: username, Filename: wire, Attempt: c.uploadSeq}, key: key, localPath: localPath, root: root, ctx: ctx, cancel: cancel, done: make(chan struct{}), state: "queued", address: address}
 		a.fingerprint = fingerprint
 		request := TransferRequest{Direction: 1, Token: randomToken(), Filename: wire, Size: size}
 		if restored {
-			a.job = c.cfg.Uploads.EnqueueRestored(username, request)
+			a.job, err = c.cfg.Uploads.TryEnqueueRestored(username, request)
 		} else {
 			a.job, err = c.cfg.Uploads.TryEnqueue(username, request)
 		}
@@ -168,17 +198,21 @@ func (c *Client) registerUploadWithOptions(username, filename string, peerRequeu
 		c.uploads[key] = a
 		c.uploadWG.Add(1)
 		c.mu.Unlock()
-		if accept := c.cfg.UploadAccepted; accept != nil {
-			if err := accept(TransferEvent{Restored: restored, Direction: "upload", Username: username, Filename: wire, Attempt: a.target.Attempt, State: "queued", Total: size, Fingerprint: fingerprint}); err != nil {
-				cancel()
-				c.cfg.Uploads.Done(a.job)
-				c.mu.Lock()
-				delete(c.uploads, key)
-				close(a.done)
-				c.mu.Unlock()
-				c.uploadWG.Done()
-				return nil, false, err
-			}
+		// Publication may race the initial check; the inserted attempt is now
+		// visible to every subsequent policy revocation.
+		err = c.checkUploadPermission(username, wire, address)
+		if err == nil && c.cfg.UploadAccepted != nil {
+			err = c.cfg.UploadAccepted(TransferEvent{Restored: restored, Direction: "upload", Username: username, Filename: wire, Attempt: a.target.Attempt, State: "queued", Total: size, Fingerprint: fingerprint})
+		}
+		if err != nil {
+			cancel()
+			c.cfg.Uploads.Done(a.job)
+			c.mu.Lock()
+			delete(c.uploads, key)
+			close(a.done)
+			c.mu.Unlock()
+			c.uploadWG.Done()
+			return nil, false, err
 		}
 		c.emitUpload(a, "queued", 0, "")
 		c.observationStage(a.ctx, a.observation, "queued", slog.LevelDebug, nil)
@@ -196,6 +230,12 @@ func (c *Client) RestoreUpload(username, filename, fingerprint string) (bool, er
 func uploadDenial(err error) string {
 	if errors.Is(err, ErrTooManyUploadFiles) || errors.Is(err, ErrTooManyUploadBytes) || errors.Is(err, ErrUploadsDraining) {
 		return err.Error()
+	}
+	var denied *sharePermissionDenied
+	if errors.As(err, &denied) {
+		if denied.reason != "" {
+			return denied.reason
+		}
 	}
 	return "File not shared"
 }
@@ -260,13 +300,17 @@ func (c *Client) executeUpload(a *uploadAttempt) {
 		progress = a.job.Request.Size
 	}
 	a.state, a.progress = state, progress
-	notify, fileStarted := a.notify, a.fileStarted
+	notify, fileStarted, policyReason := a.notify, a.fileStarted, a.policyReason
 	a.mu.Unlock()
 	c.mu.Unlock()
 	c.emitUpload(a, state, progress, message)
 	// Cancellation delivery is bounded and independent of the stopped attempt.
 	if notify {
-		c.notifyUpload(a, QueueDenied{Filename: a.target.Filename, Reason: "Cancelled"})
+		reason := "Cancelled"
+		if policyReason != "" {
+			reason = policyReason
+		}
+		c.notifyUpload(a, QueueDenied{Filename: a.target.Filename, Reason: reason})
 	}
 	// F closure already reports a token-bound failure. A filename-only message
 	// on a new P connection could abort a replacement download instead.
@@ -300,6 +344,9 @@ func (c *Client) performUpload(a *uploadAttempt, setupCtx context.Context, setup
 		}
 		c.log(operationCtx, level, event, uploadErr)
 	}()
+	if err := c.checkUploadPermission(a.target.Username, a.target.Filename, a.address); err != nil {
+		return err
+	}
 	peer, err := c.connectUser(setupCtx, a.target.Username)
 	if err != nil {
 		return err
@@ -369,6 +416,12 @@ func (c *Client) performUpload(a *uploadAttempt, setupCtx context.Context, setup
 		a.observation.mu.Unlock()
 	}
 	// A queued/setup attempt may outlive a share-policy publication.
+	a.mu.Lock()
+	a.address = peerIP(filePeer.RemoteAddr())
+	a.mu.Unlock()
+	if err := c.checkUploadPermission(a.target.Username, a.target.Filename, a.address); err != nil {
+		return err
+	}
 	_, local, size, err := c.validateUpload(a.target.Username, a.target.Filename)
 	if err != nil {
 		return err
@@ -401,6 +454,13 @@ type uploadProgressWriter struct {
 }
 
 func (w uploadProgressWriter) Write(p []byte) (int, error) {
+	if err := w.attempt.ctx.Err(); err != nil {
+		return 0, err
+	}
+	if err := w.client.checkUploadPermission(w.attempt.target.Username, w.attempt.target.Filename, w.attempt.address); err != nil {
+		w.attempt.cancel()
+		return 0, err
+	}
 	n, err := w.Writer.Write(p)
 	w.attempt.observation.observe(false, n, err)
 	if n > 0 {
@@ -415,8 +475,62 @@ func (w uploadProgressWriter) Write(p []byte) (int, error) {
 	return n, err
 }
 
+func (c *Client) checkUploadPermission(username, filename string, address netip.Addr) error {
+	permission := c.sharePermission(username, address)
+	if permission.Banned || c.shareVisibility(permission, shareRoot(filename)) != ShareAllowed {
+		reason := permission.Reason
+		if reason == "" {
+			reason = "File not shared"
+		}
+		denied := &sharePermissionDenied{reason: reason}
+		if permission.NeedsAddress {
+			return errors.Join(ErrShareAddressPending, denied)
+		}
+		return denied
+	}
+	return nil
+}
+
+// RevalidateSharePolicy revokes queued and running uploads without waiting on them.
+func (c *Client) RevalidateSharePolicy() {
+	c.mu.Lock()
+	c.shareResponseCancel()
+	c.shareResponseRoot, c.shareResponseCancel = context.WithCancel(c.uploadRoot)
+	attempts := make([]*uploadAttempt, 0, len(c.uploads))
+	for _, attempt := range c.uploads {
+		attempts = append(attempts, attempt)
+	}
+	c.mu.Unlock()
+	denied := make(map[*uploadAttempt]string)
+	for _, attempt := range attempts {
+		attempt.mu.Lock()
+		address := attempt.address
+		attempt.mu.Unlock()
+		if err := c.checkUploadPermission(attempt.target.Username, attempt.target.Filename, address); err != nil {
+			denied[attempt] = uploadDenial(err)
+		}
+	}
+	// Fence finalization and mark the whole batch before releasing scheduler slots.
+	c.mu.Lock()
+	var jobs []*UploadJob
+	for attempt, reason := range denied {
+		attempt.mu.Lock()
+		if attempt.state == "queued" || attempt.state == "running" {
+			attempt.manual, attempt.notify = true, !attempt.fileStarted
+			attempt.policyReason = reason
+			jobs = append(jobs, attempt.job)
+		}
+		attempt.mu.Unlock()
+	}
+	c.cfg.Uploads.CancelJobs(jobs)
+	for attempt := range denied {
+		attempt.cancel()
+	}
+	c.mu.Unlock()
+}
+
 func (c *Client) notifyUpload(a *uploadAttempt, message Message) {
-	ctx, cancel := context.WithTimeout(c.uploadRoot, 2*time.Second)
+	ctx, cancel := context.WithTimeout(a.root, 2*time.Second)
 	defer cancel()
 	peer, err := c.connectUser(ctx, a.target.Username)
 	if err != nil {

@@ -19,9 +19,7 @@ func TestTransferTimingRows(t *testing.T) {
 	m.transferTrees[transferDownloads], m.cursor = buildTransferTree(m.transfers, "download", treeState{}, 0)
 	group := treeNode{kind: treeUser, leaves: []int{0, 1}}
 	elapsed, eta := m.transferTimes(group)
-	if elapsed == nil || *elapsed != 1000 || eta == nil || *eta != 3 {
-		t.Fatalf("group elapsed/eta = %v/%v", elapsed, eta)
-	}
+	failIfFmt(t, elapsed == nil || *elapsed != 1000 || eta == nil || *eta != 3, "group elapsed/eta = %v/%v", elapsed, eta)
 	m.transfers[1].state = "paused"
 	if _, eta := m.transferTimes(group); eta != nil {
 		t.Fatal("paused child has aggregate ETA")
@@ -29,18 +27,12 @@ func TestTransferTimingRows(t *testing.T) {
 	m.transfers[1].state = "queued"
 	for _, width := range []int{60, 109, 110, 140} {
 		view := m.renderTransfers(width, 12)
-		if !strings.Contains(view, "Elapsed") || !strings.Contains(view, "ETA") || strings.Contains(view, "\x1b[") {
-			t.Fatalf("missing/unreadable timing at %d: %q", width, view)
-		}
+		failIfFmt(t, !strings.Contains(view, "Elapsed") || !strings.Contains(view, "ETA") || strings.Contains(view, "\x1b["), "missing/unreadable timing at %d: %q", width, view)
 		for _, line := range strings.Split(view, "\n") {
-			if lipgloss.Width(line) > width {
-				t.Fatalf("line overflow at %d: %q", width, line)
-			}
+			failIfFmt(t, lipgloss.Width(line) > width, "line overflow at %d: %q", width, line)
 		}
 	}
-	if addSaturated(^uint64(0), 1) != ^uint64(0) || optionalDuration(nil, false) != "—" {
-		t.Fatal("overflow/unknown formatting")
-	}
+	failIf(t, addSaturated(^uint64(0), 1) != ^uint64(0) || optionalDuration(nil, false) != "—", "overflow/unknown formatting")
 }
 
 func TestTransferWaitingAndRetryStatus(t *testing.T) {
@@ -85,17 +77,11 @@ func TestTransferWaitingAndRetryStatus(t *testing.T) {
 		m.cursor = m.transferTrees[transferDownloads].cursorForSource(0)
 		for _, width := range []int{40, 60, 90, 109, 110, 140} {
 			view := m.renderTransfers(width, 12)
-			if !strings.Contains(view, tc.want) {
-				t.Fatalf("missing %q at width %d: %q", tc.want, width, view)
-			}
+			failIfFmt(t, !strings.Contains(view, tc.want), "missing %q at width %d: %q", tc.want, width, view)
 			for _, line := range strings.Split(view, "\n") {
-				if lipgloss.Width(line) > width {
-					t.Fatalf("overflow at %d: %q", width, line)
-				}
+				failIfFmt(t, lipgloss.Width(line) > width, "overflow at %d: %q", width, line)
 			}
 		}
-		if tc.row.State == "running" && *tc.row.WaitingForPeerSeconds == 0 && strings.Contains(m.renderTransfers(140, 12), "Waiting") {
-			t.Fatal("recovery retained waiting status")
-		}
+		failIf(t, tc.row.State == "running" && *tc.row.WaitingForPeerSeconds == 0 && strings.Contains(m.renderTransfers(140, 12), "Waiting"), "recovery retained waiting status")
 	}
 }

@@ -21,9 +21,7 @@ func downloadService(t *testing.T) *Service {
 	t.Helper()
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	s, err := New(testConfig(t), filepath.Join(t.TempDir(), "state.sqlite3"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	t.Cleanup(func() { _ = s.Close() })
 	return s
 }
@@ -31,12 +29,8 @@ func downloadService(t *testing.T) *Service {
 func putPartial(t *testing.T, id, data string) string {
 	t.Helper()
 	part := incompletePath(id)
-	if err := os.MkdirAll(filepath.Dir(part), 0700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(part, []byte(data), 0600); err != nil {
-		t.Fatal(err)
-	}
+	must(t, os.MkdirAll(filepath.Dir(part), 0700))
+	must(t, os.WriteFile(part, []byte(data), 0600))
 	return part
 }
 
@@ -45,9 +39,7 @@ func TestDownloadPauseResumeLifecycle(t *testing.T) {
 	downloads, err := s.QueueDownloads([]DownloadRequest{{Username: "peer", Files: []DownloadItem{
 		{Filename: "Album/one", Size: 20}, {Filename: "Album/two", Size: 20},
 	}}})
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	id, waiting := downloads[0].ID, downloads[1].ID
 	part := putPartial(t, id, "partial")
 	// A session without a client exercises cancellation while waiting to connect.
@@ -55,13 +47,9 @@ func TestDownloadPauseResumeLifecycle(t *testing.T) {
 	s.startDownload(id)
 	waitFor(t, func() bool { return s.Downloads()[0].State == "running" })
 	s.startDownload(waiting)
-	if err := s.TransferAction(waiting, "pause"); err != nil {
-		t.Fatal(err)
-	}
+	must(t, s.TransferAction(waiting, "pause"))
 	for range 10 {
-		if err := s.TransferAction(id, "pause"); err != nil {
-			t.Fatal(err)
-		}
+		must(t, s.TransferAction(id, "pause"))
 		s.updateTransferProgress(id, soulseek.Progress{State: "running", Done: 19, Total: 20})
 		if d := s.Downloads()[0]; d.State != "paused" || d.Offset != 7 || d.Error != "" {
 			t.Fatalf("pause lost partial/state: %+v", d)
@@ -69,27 +57,17 @@ func TestDownloadPauseResumeLifecycle(t *testing.T) {
 		if tr := s.Transfers()[0]; tr.State != "paused" || tr.Done != 7 {
 			t.Fatalf("late progress overwrote paused transfer: %+v", tr)
 		}
-		if err := s.TransferAction(id, "resume"); err != nil {
-			t.Fatal(err)
-		}
+		must(t, s.TransferAction(id, "resume"))
 	}
-	if err := s.TransferAction(id, "pause"); err != nil {
-		t.Fatal(err)
-	}
+	must(t, s.TransferAction(id, "pause"))
 	s.resumeDownloads()
 	s.mu.RLock()
 	active := len(s.downloadCancels)
 	s.mu.RUnlock()
-	if active != 0 {
-		t.Fatal("automatic resume started paused workers")
-	}
-	if err := s.Close(); err != nil {
-		t.Fatal(err)
-	}
+	failIf(t, active != 0, "automatic resume started paused workers")
+	must(t, s.Close())
 	restored, err := New(s.cfg, s.journalPath)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	defer restored.Close()
 	s = restored
 	if d := restored.Downloads()[0]; d.State != "paused" || d.Offset != 7 {
@@ -98,20 +76,14 @@ func TestDownloadPauseResumeLifecycle(t *testing.T) {
 	if got, err := os.ReadFile(part); err != nil || string(got) != "partial" {
 		t.Fatalf("partial changed: %q %v", got, err)
 	}
-	if err := s.TransferAction(id, "cancel"); err != nil {
-		t.Fatal(err)
-	}
+	must(t, s.TransferAction(id, "cancel"))
 	s.resumeDownloads()
-	if s.Downloads()[0].State != "cancelled" {
-		t.Fatal("automatic resume restarted a cancelled transfer")
-	}
+	failIf(t, s.Downloads()[0].State != "cancelled", "automatic resume restarted a cancelled transfer")
 }
 
 func TestDownloadRetryClassification(t *testing.T) {
 	var wire bytes.Buffer
-	if err := soulseek.WriteFrame(&wire, soulseek.PeerTransferRequest, []byte("abc")); err != nil {
-		t.Fatal(err)
-	}
+	must(t, soulseek.WriteFrame(&wire, soulseek.PeerTransferRequest, []byte("abc")))
 	_, _, closed := soulseek.ReadFrame(bytes.NewReader(nil))
 	_, _, interrupted := soulseek.ReadFrame(bytes.NewReader(wire.Bytes()[:wire.Len()-1]))
 	for _, tc := range []struct {
@@ -145,23 +117,15 @@ func TestDownloadRetryClassification(t *testing.T) {
 func TestDownloadRetryPersistsAndCompletes(t *testing.T) {
 	s := downloadService(t)
 	downloads, err := s.QueueDownloads([]DownloadRequest{{Username: "peer", Files: []DownloadItem{{Filename: "Album/song", Size: 4}}}})
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	id := downloads[0].ID
 	putPartial(t, id, "data")
 	s.finishDownload(id, "failed", 4, io.EOF)
 	d := s.Downloads()[0]
-	if d.State != "retrying" || d.RetryAt.Sub(d.UpdatedAt) != 3*time.Minute {
-		t.Fatalf("missing retry deadline: %+v", d)
-	}
-	if err := s.Close(); err != nil {
-		t.Fatal(err)
-	}
+	failIfFmt(t, d.State != "retrying" || d.RetryAt.Sub(d.UpdatedAt) != 3*time.Minute, "missing retry deadline: %+v", d)
+	must(t, s.Close())
 	restored, err := New(s.cfg, s.journalPath)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	defer restored.Close()
 	s = restored
 	if got := restored.Downloads()[0]; got.State != "retrying" || !got.RetryAt.Equal(d.RetryAt) {
@@ -170,20 +134,14 @@ func TestDownloadRetryPersistsAndCompletes(t *testing.T) {
 	s.ctx, s.cancel = context.WithCancel(context.Background())
 	s.client = soulseek.NewClient(soulseek.ClientConfig{})
 	s.retryDownloads(time.Now())
-	if s.Downloads()[0].State != "retrying" {
-		t.Fatal("retried before deadline")
-	}
+	failIf(t, s.Downloads()[0].State != "retrying", "retried before deadline")
 	s.mu.Lock()
 	s.journal.Downloads[0].RetryAt = time.Now().Add(-time.Second)
 	s.mu.Unlock()
 	s.retryDownloads(time.Now())
 	waitFor(t, func() bool { return s.Downloads()[0].State == "completed" })
-	if err := s.TransferAction(id, "resume"); err != nil {
-		t.Fatal(err)
-	}
-	if s.Downloads()[0].State != "completed" {
-		t.Fatal("resume restarted completed download")
-	}
+	must(t, s.TransferAction(id, "resume"))
+	failIf(t, s.Downloads()[0].State != "completed", "resume restarted completed download")
 }
 
 func TestDownloadCompletionHooks(t *testing.T) {
@@ -195,13 +153,9 @@ func TestDownloadCompletionHooks(t *testing.T) {
 	downloads, err := s.QueueDownloads([]DownloadRequest{{Username: "peer", Files: []DownloadItem{
 		{Filename: "Album/song's $mix.flac", Size: 4}, {Filename: "Album/two.flac", Size: 4},
 	}}})
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	first, second := downloads[0], downloads[1]
-	if err := s.TransferAction(second.ID, "pause"); err != nil {
-		t.Fatal(err)
-	}
+	must(t, s.TransferAction(second.ID, "pause"))
 	pausedPart := putPartial(t, second.ID, "data")
 	s.completeDownload(second.ID, second.DownloadDir, pausedPart)
 	if _, err := os.Stat(pausedPart); err != nil {
@@ -211,34 +165,22 @@ func TestDownloadCompletionHooks(t *testing.T) {
 		t.Fatal("paused file invoked a completion command")
 	}
 	original := filepath.Join(first.DownloadDir, first.Destination)
-	if err := os.MkdirAll(filepath.Dir(original), 0700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(original, []byte("old"), 0600); err != nil {
-		t.Fatal(err)
-	}
+	must(t, os.MkdirAll(filepath.Dir(original), 0700))
+	must(t, os.WriteFile(original, []byte("old"), 0600))
 	s.updateDownload(first.ID, "running", 4, nil)
 	s.completeDownload(first.ID, first.DownloadDir, putPartial(t, first.ID, "data"))
 	firstPath := filepath.Join(first.DownloadDir, s.Downloads()[0].Destination)
-	if firstPath == original {
-		t.Fatal("completion overwrote an existing file")
-	}
+	failIf(t, firstPath == original, "completion overwrote an existing file")
 	waitFor(t, func() bool { b, _ := os.ReadFile(logPath); return string(b) == "file:"+firstPath+"\n" })
-	if err := s.TransferAction(second.ID, "resume"); err != nil {
-		t.Fatal(err)
-	}
+	must(t, s.TransferAction(second.ID, "resume"))
 	s.updateDownload(second.ID, "running", 4, nil)
 	s.completeDownload(second.ID, second.DownloadDir, putPartial(t, second.ID, "data"))
 	waitFor(t, func() bool { b, _ := os.ReadFile(logPath); return strings.Count(string(b), "\n") == 3 })
 	b, _ := os.ReadFile(logPath)
-	if strings.Count(string(b), "folder:"+filepath.Dir(firstPath)+"\n") != 1 {
-		t.Fatalf("folder hook: %s", b)
-	}
+	failIfFmt(t, strings.Count(string(b), "folder:"+filepath.Dir(firstPath)+"\n") != 1, "folder hook: %s", b)
 	// Calling completion twice, or resuming a completed file, must not replay hooks.
 	s.completeDownload(second.ID, second.DownloadDir, incompletePath(second.ID))
-	if err := s.TransferAction(second.ID, "resume"); err != nil {
-		t.Fatal(err)
-	}
+	must(t, s.TransferAction(second.ID, "resume"))
 	if got, _ := os.ReadFile(logPath); string(got) != string(b) {
 		t.Fatal("completion commands repeated")
 	}
@@ -259,9 +201,7 @@ func TestFolderCompletionGrouping(t *testing.T) {
 		{Username: "other", Destination: "peer/Album/song", State: "paused"},
 		{Username: "peer", DownloadDir: t.TempDir(), Destination: "peer/Album/song", State: "paused"},
 	}
-	if !s.folderCompleteLocked("peer", folder) {
-		t.Fatal("another folder, user or root blocked completion")
-	}
+	failIf(t, !s.folderCompleteLocked("peer", folder), "another folder, user or root blocked completion")
 }
 
 func TestFailedFinalMoveCanResumeWithoutRedownloading(t *testing.T) {
@@ -271,14 +211,10 @@ func TestFailedFinalMoveCanResumeWithoutRedownloading(t *testing.T) {
 	s.cfg.Downloads.AfterFileCommand = `printf 'file\n' >> "$OTO_TEST_HOOK_LOG"`
 	s.cfg.Downloads.AfterFolderCommand = `printf 'folder\n' >> "$OTO_TEST_HOOK_LOG"`
 	downloads, err := s.QueueDownloads([]DownloadRequest{{Username: "peer", Files: []DownloadItem{{Filename: "Album/song", Size: 4}}}})
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	d := downloads[0]
 	blocker := filepath.Join(d.DownloadDir, "peer")
-	if err := os.WriteFile(blocker, []byte("not a directory"), 0600); err != nil {
-		t.Fatal(err)
-	}
+	must(t, os.WriteFile(blocker, []byte("not a directory"), 0600))
 	part := putPartial(t, d.ID, "data")
 	s.updateDownload(d.ID, "running", 4, nil)
 	s.completeDownload(d.ID, d.DownloadDir, part)
@@ -288,13 +224,9 @@ func TestFailedFinalMoveCanResumeWithoutRedownloading(t *testing.T) {
 	if _, err := os.Stat(logPath); !errors.Is(err, os.ErrNotExist) {
 		t.Fatal("failed final move invoked a completion command")
 	}
-	if err := os.Remove(blocker); err != nil {
-		t.Fatal(err)
-	}
+	must(t, os.Remove(blocker))
 	s.ctx, s.cancel = context.WithCancel(context.Background())
-	if err := s.TransferAction(d.ID, "resume"); err != nil {
-		t.Fatal(err)
-	}
+	must(t, s.TransferAction(d.ID, "resume"))
 	waitFor(t, func() bool { return s.Downloads()[0].State == "completed" })
 	if b, err := os.ReadFile(filepath.Join(d.DownloadDir, d.Destination)); err != nil || string(b) != "data" {
 		t.Fatalf("final file: %q %v", b, err)
@@ -305,9 +237,7 @@ func TestFailedFinalMoveCanResumeWithoutRedownloading(t *testing.T) {
 func TestFinalizingDownloadControlsAndRestart(t *testing.T) {
 	s := downloadService(t)
 	downloads, err := s.QueueDownloads([]DownloadRequest{{Username: "peer", Files: []DownloadItem{{Filename: "Album/song", Size: 4}}}})
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	id := downloads[0].ID
 	putPartial(t, id, "data")
 	s.updateDownload(id, "finalizing", 4, nil)
@@ -316,13 +246,9 @@ func TestFinalizingDownloadControlsAndRestart(t *testing.T) {
 			t.Fatalf("%s interrupted a finalizing download", action)
 		}
 	}
-	if err := s.Close(); err != nil {
-		t.Fatal(err)
-	}
+	must(t, s.Close())
 	restored, err := New(s.cfg, s.journalPath)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	defer restored.Close()
 	restored.ctx, restored.cancel = context.WithCancel(context.Background())
 	restored.resumeDownloads()
@@ -336,9 +262,7 @@ func TestDefaultDirectorySkipsFolderHook(t *testing.T) {
 	s.cfg.Downloads.AfterFileCommand = `printf 'file\n' >> "$OTO_TEST_HOOK_LOG"`
 	s.cfg.Downloads.AfterFolderCommand = `printf 'folder\n' >> "$OTO_TEST_HOOK_LOG"`
 	downloads, err := s.QueueDownloads([]DownloadRequest{{Username: "peer", Files: []DownloadItem{{Filename: "song", Destination: "song", Size: 4}}}})
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	d := downloads[0]
 	s.updateDownload(d.ID, "running", 4, nil)
 	s.completeDownload(d.ID, d.DownloadDir, putPartial(t, d.ID, "data"))

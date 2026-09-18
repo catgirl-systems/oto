@@ -27,29 +27,19 @@ func TestSoulfindShareWatcherPublishesWithoutReconnect(t *testing.T) {
 	cfg.Soulseek.Server = address
 	cfg.Soulseek.Username, cfg.Soulseek.Password = targetUser, "pw"
 	listener, err := net.Listen("tcp", "0.0.0.0:0")
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	initialPort := listener.Addr().(*net.TCPAddr).Port
 	_ = listener.Close()
 	cfg.Soulseek.ListenAddr = "0.0.0.0:50300"
 	portFile := filepath.Join(t.TempDir(), "forwarded-port")
-	if err := os.WriteFile(portFile, []byte(fmt.Sprint(initialPort)), 0600); err != nil {
-		t.Fatal(err)
-	}
+	must(t, os.WriteFile(portFile, []byte(fmt.Sprint(initialPort)), 0600))
 	cfg.DownloadDir = t.TempDir()
 	cfg.Shares = []config.Share{{Name: "Music", Path: root}}
 
 	service, err := New(cfg, filepath.Join(t.TempDir(), "state.sqlite3"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := service.SetShareRescanDelay(50 * time.Millisecond); err != nil {
-		t.Fatal(err)
-	}
-	if err := service.SetListenPortFile(portFile, 20*time.Millisecond); err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
+	must(t, service.SetShareRescanDelay(50*time.Millisecond))
+	must(t, service.SetListenPortFile(portFile, 20*time.Millisecond))
 	serviceCtx, stopService := context.WithCancel(context.Background())
 	_ = service.Start(serviceCtx)
 	t.Cleanup(func() {
@@ -70,14 +60,10 @@ func TestSoulfindShareWatcherPublishesWithoutReconnect(t *testing.T) {
 	go func() { observerDone <- observer.Run(observerCtx) }()
 
 	replacementListener, err := net.Listen("tcp", "0.0.0.0:0")
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	replacementPort := replacementListener.Addr().(*net.TCPAddr).Port
 	_ = replacementListener.Close()
-	if err := os.WriteFile(portFile, []byte(fmt.Sprint(replacementPort)), 0600); err != nil {
-		t.Fatal(err)
-	}
+	must(t, os.WriteFile(portFile, []byte(fmt.Sprint(replacementPort)), 0600))
 	waitFor(t, func() bool {
 		service.mu.RLock()
 		defer service.mu.RUnlock()
@@ -86,26 +72,18 @@ func TestSoulfindShareWatcherPublishesWithoutReconnect(t *testing.T) {
 	service.mu.RLock()
 	reboundWithoutReconnect := service.client == connectedClient
 	service.mu.RUnlock()
-	if !reboundWithoutReconnect {
-		t.Fatal("listen port update reconnected the Soulseek client")
-	}
+	failIf(t, !reboundWithoutReconnect, "listen port update reconnected the Soulseek client")
 
 	contents := []byte("published after fsnotify reindex")
 	directory := filepath.Join(root, "Dynamic")
-	if err := os.Mkdir(directory, 0700); err != nil {
-		t.Fatal(err)
-	}
+	must(t, os.Mkdir(directory, 0700))
 	filename := "watch-" + stamp + ".flac"
-	if err := os.WriteFile(filepath.Join(directory, filename), contents, 0600); err != nil {
-		t.Fatal(err)
-	}
+	must(t, os.WriteFile(filepath.Join(directory, filename), contents, 0600))
 	waitFor(t, func() bool { return hasLocalFile(service, "Music/Dynamic", filename, int64(len(contents))) })
 	service.mu.RLock()
 	stillConnected := service.client == connectedClient
 	service.mu.RUnlock()
-	if !stillConnected {
-		t.Fatal("share reindex reconnected the Soulseek client")
-	}
+	failIf(t, !stillConnected, "share reindex reconnected the Soulseek client")
 	// Share counts and distributed-search routing use separate server connections.
 	time.Sleep(250 * time.Millisecond)
 
@@ -113,9 +91,7 @@ func TestSoulfindShareWatcherPublishesWithoutReconnect(t *testing.T) {
 	browseCtx, cancelBrowse := context.WithTimeout(context.Background(), 10*time.Second)
 	entries, err := observer.BrowseUser(browseCtx, targetUser, "Music/Dynamic")
 	cancelBrowse()
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	found := false
 	for _, entry := range entries {
 		if entry.Name == remotePath && entry.Size == uint64(len(contents)) {
@@ -123,16 +99,12 @@ func TestSoulfindShareWatcherPublishesWithoutReconnect(t *testing.T) {
 			break
 		}
 	}
-	if !found {
-		t.Fatalf("updated file absent from remote browse: %+v", entries)
-	}
+	failIfFmt(t, !found, "updated file absent from remote browse: %+v", entries)
 
 	searchCtx, cancelSearch := context.WithTimeout(context.Background(), 8*time.Second)
 	results, err := observer.Search(searchCtx, filename)
 	cancelSearch()
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	found = false
 	for _, result := range results {
 		if result.Path == remotePath && result.Size == uint64(len(contents)) {
@@ -140,25 +112,17 @@ func TestSoulfindShareWatcherPublishesWithoutReconnect(t *testing.T) {
 			break
 		}
 	}
-	if !found {
-		t.Fatalf("updated file absent from remote search: %+v", results)
-	}
+	failIfFmt(t, !found, "updated file absent from remote search: %+v", results)
 
 	destination, err := os.CreateTemp(t.TempDir(), "watch-download-")
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	defer destination.Close()
 	downloadCtx, cancelDownload := context.WithTimeout(context.Background(), 15*time.Second)
 	err = observer.Download(downloadCtx, targetUser, remotePath, uint64(len(contents)), 0, destination, nil)
 	cancelDownload()
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	got, err := os.ReadFile(destination.Name())
-	if err != nil || !bytes.Equal(got, contents) {
-		t.Fatalf("downloaded reindexed file: %q %v", got, err)
-	}
+	failIfFmt(t, err != nil || !bytes.Equal(got, contents), "downloaded reindexed file: %q %v", got, err)
 
 	stopObserver()
 	_ = observer.Close()
@@ -179,9 +143,7 @@ func connectIntegrationClient(t *testing.T, client *soulseek.Client) {
 		if err == nil {
 			break
 		}
-		if time.Now().After(deadline) {
-			t.Fatalf("connect to Soulfind: %v", err)
-		}
+		failIfFmt(t, time.Now().After(deadline), "connect to Soulfind: %v", err)
 		time.Sleep(100 * time.Millisecond)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)

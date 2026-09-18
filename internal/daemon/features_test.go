@@ -22,15 +22,11 @@ func TestDefaultFilterValidationAndPersistence(t *testing.T) {
 	}
 	cfg.Search.DefaultFilter = "type:audio"
 	s, err := New(cfg, filepath.Join(t.TempDir(), "journal"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	defer s.Close()
 	path := filepath.Join(t.TempDir(), "config.json")
 	s.SetConfigPath(path)
-	if err := s.UpdateConfig(cfg); err != nil {
-		t.Fatal(err)
-	}
+	must(t, s.UpdateConfig(cfg))
 	before, _ := os.ReadFile(path)
 	invalid := cfg
 	invalid.Search.DefaultFilter = "duration:no"
@@ -38,24 +34,16 @@ func TestDefaultFilterValidationAndPersistence(t *testing.T) {
 		t.Fatalf("update validation: %v", err)
 	}
 	after, _ := os.ReadFile(path)
-	if string(before) != string(after) || s.Config().Search.DefaultFilter != cfg.Search.DefaultFilter {
-		t.Fatal("invalid update saved")
-	}
+	failIf(t, string(before) != string(after) || s.Config().Search.DefaultFilter != cfg.Search.DefaultFilter, "invalid update saved")
 	loaded, err := config.Load(path)
-	if err != nil || loaded.Search.DefaultFilter != "type:audio" {
-		t.Fatalf("roundtrip: %v", err)
-	}
+	failIfFmt(t, err != nil || loaded.Search.DefaultFilter != "type:audio", "roundtrip: %v", err)
 	s.searches["cached"] = Search{ID: "cached", Results: []SearchResult{{Path: "song.mp3", Extension: "mp3"}, {Path: "note.txt", Extension: "txt"}}}
 	page, err := s.SearchPage("cached", 0, "")
-	if err != nil || len(page.Results) != 2 {
-		t.Fatalf("empty explicit API filter inherited default: %+v %v", page, err)
-	}
+	failIfFmt(t, err != nil || len(page.Results) != 2, "empty explicit API filter inherited default: %+v %v", page, err)
 	if _, err := s.PutWishlist("wish", ""); err != nil {
 		t.Fatal(err)
 	}
-	if s.Wishlist()[0].Filter != "" {
-		t.Fatal("wishlist inherited default")
-	}
+	failIf(t, s.Wishlist()[0].Filter != "", "wishlist inherited default")
 }
 
 func TestScanProgressCountsAndBusyStartup(t *testing.T) {
@@ -64,23 +52,13 @@ func TestScanProgressCountsAndBusyStartup(t *testing.T) {
 	a, b := t.TempDir(), t.TempDir()
 	cfg.Shares = []config.Share{{Name: "A", Path: a}, {Name: "B", Path: b}}
 	for i := 0; i < 30; i++ {
-		if err := os.WriteFile(filepath.Join(a, fmt.Sprint(i)), []byte("x"), 0600); err != nil {
-			t.Fatal(err)
-		}
+		must(t, os.WriteFile(filepath.Join(a, fmt.Sprint(i)), []byte("x"), 0600))
 	}
-	if err := os.WriteFile(filepath.Join(a, ".hidden"), nil, 0600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(a, filepath.Join(b, "link")); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(b, "last"), nil, 0600); err != nil {
-		t.Fatal(err)
-	}
+	must(t, os.WriteFile(filepath.Join(a, ".hidden"), nil, 0600))
+	must(t, os.Symlink(a, filepath.Join(b, "link")))
+	must(t, os.WriteFile(filepath.Join(b, "last"), nil, 0600))
 	s, err := New(cfg, filepath.Join(t.TempDir(), "journal"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	defer s.Close()
 	s.shareRescanDelay = 0
 	entered, release := make(chan struct{}), make(chan struct{})
@@ -119,20 +97,14 @@ func TestScanProgressCountsAndBusyStartup(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("startup held state lock")
 	}
-	if snap.ShareScan.State != "scanning" || snap.ShareScan.Root != "B" || snap.ShareScan.Files != 30 || snap.ShareScan.Directories != 2 || snap.ShareIndexRevision != 0 {
-		t.Fatalf("throttled root update lost counts: %+v", snap.ShareScan)
-	}
+	failIfFmt(t, snap.ShareScan.State != "scanning" || snap.ShareScan.Root != "B" || snap.ShareScan.Files != 30 || snap.ShareScan.Directories != 2 || snap.ShareIndexRevision != 0, "throttled root update lost counts: %+v", snap.ShareScan)
 	if err := s.Rescan(); !errors.Is(err, ErrScanBusy) {
 		t.Fatalf("manual busy: %v", err)
 	}
 	close(release)
-	if err := <-done; err != nil {
-		t.Fatal(err)
-	}
+	must(t, <-done)
 	snap = s.Snapshot()
-	if snap.ShareScan.State != "completed" || snap.ShareScan.Files != 31 || snap.ShareScan.Directories != 2 || snap.ShareIndexRevision != 1 {
-		t.Fatalf("final scan: %+v", snap)
-	}
+	failIfFmt(t, snap.ShareScan.State != "completed" || snap.ShareScan.Files != 31 || snap.ShareScan.Directories != 2 || snap.ShareIndexRevision != 1, "final scan: %+v", snap)
 	before := *snap.ShareScan
 	// A callback retained by a finished builder cannot modify the published status.
 	if _, err := buildShareIndex(context.WithoutCancel(savedCtx), cfg.Shares); err != nil {
@@ -150,15 +122,11 @@ func TestScanFailureMutationAndShutdown(t *testing.T) {
 			cfg.Soulseek.ConnectOnStartup = false
 			cfg.Shares = []config.Share{{Name: "Music", Path: t.TempDir()}}
 			s, err := New(cfg, filepath.Join(t.TempDir(), "journal"))
-			if err != nil {
-				t.Fatal(err)
-			}
+			must(t, err)
 			defer s.Close()
 			s.SetConfigPath(filepath.Join(t.TempDir(), "config.json"))
 			s.shareRescanDelay = 0
-			if err := s.Start(context.Background()); err != nil {
-				t.Fatal(err)
-			}
+			must(t, s.Start(context.Background()))
 			old := s.Snapshot()
 			entered := make(chan struct{})
 			s.shareIndexBuilder = func(ctx context.Context, _ []config.Share) (*soulseek.ShareIndex, error) {
@@ -195,9 +163,7 @@ func TestScanFailureMutationAndShutdown(t *testing.T) {
 				t.Fatalf("cancel: %v", err)
 			}
 			after := s.Snapshot()
-			if after.ShareScan.State != "cancelled" || after.ShareIndexRevision != old.ShareIndexRevision || len(after.Shares) != len(old.Shares) || after.Config.DownloadSlots != cfg.DownloadSlots {
-				t.Fatalf("cancel changed index/config: %+v", after)
-			}
+			failIfFmt(t, after.ShareScan.State != "cancelled" || after.ShareIndexRevision != old.ShareIndexRevision || len(after.Shares) != len(old.Shares) || after.Config.DownloadSlots != cfg.DownloadSlots, "cancel changed index/config: %+v", after)
 		})
 	}
 	s := downloadService(t)
@@ -239,9 +205,7 @@ func TestCompletionNotifications(t *testing.T) {
 				return errors.New("desktop unavailable") // Must not fail or retry the transfer.
 			}
 			ds, err := s.QueueDownloads([]DownloadRequest{{Username: "peer", Files: []DownloadItem{{Filename: "Album/a.flac", Size: 4}, {Filename: "Album/b.flac", Size: 4}}}})
-			if err != nil {
-				t.Fatal(err)
-			}
+			must(t, err)
 			var wg sync.WaitGroup
 			for _, d := range ds {
 				part := putPartial(t, d.ID, "data")
@@ -252,46 +216,30 @@ func TestCompletionNotifications(t *testing.T) {
 			wg.Wait()
 			s.wg.Wait()
 			snap := s.Snapshot()
-			if len(delivered) != tc.messages || int(snap.DownloadNotification.Sequence) != tc.sequence {
-				t.Fatalf("delivery count %d signal %+v", len(delivered), snap.DownloadNotification)
-			}
+			failIfFmt(t, len(delivered) != tc.messages || int(snap.DownloadNotification.Sequence) != tc.sequence, "delivery count %d signal %+v", len(delivered), snap.DownloadNotification)
 			for _, d := range s.Downloads() {
-				if d.State != "completed" {
-					t.Fatalf("notifier failure changed download: %+v", d)
-				}
+				failIfFmt(t, d.State != "completed", "notifier failure changed download: %+v", d)
 			}
 			for _, d := range ds {
 				s.completeDownload(d.ID, d.DownloadDir, incompletePath(d.ID))
 			}
-			if s.Snapshot().DownloadNotification.Sequence != snap.DownloadNotification.Sequence {
-				t.Fatal("duplicate completion notified")
-			}
+			failIf(t, s.Snapshot().DownloadNotification.Sequence != snap.DownloadNotification.Sequence, "duplicate completion notified")
 			oldSession := s.downloadNotification.SessionID
-			if err := s.Close(); err != nil {
-				t.Fatal(err)
-			}
+			must(t, s.Close())
 			restored, err := New(s.cfg, s.journalPath)
-			if err != nil {
-				t.Fatal(err)
-			}
+			must(t, err)
 			defer restored.Close()
 			s = restored
-			if restored.Snapshot().DownloadNotification.Sequence != 0 || restored.downloadNotification.SessionID == oldSession {
-				t.Fatal("restore replayed notifications")
-			}
+			failIf(t, restored.Snapshot().DownloadNotification.Sequence != 0 || restored.downloadNotification.SessionID == oldSession, "restore replayed notifications")
 			// A later file is a new completion, not suppressed forever by folder name.
 			if tc.folders {
 				more, err := s.QueueDownloads([]DownloadRequest{{Username: "peer", Files: []DownloadItem{{Filename: "Album/c.flac", Size: 4}}}})
-				if err != nil {
-					t.Fatal(err)
-				}
+				must(t, err)
 				d := more[0]
 				s.updateDownload(d.ID, "running", 4, nil)
 				s.completeDownload(d.ID, d.DownloadDir, putPartial(t, d.ID, "data"))
 				s.wg.Wait()
-				if s.Snapshot().DownloadNotification.Sequence != 1 {
-					t.Fatal("later folder completion lost")
-				}
+				failIf(t, s.Snapshot().DownloadNotification.Sequence != 1, "later folder completion lost")
 			}
 		})
 	}
@@ -304,9 +252,7 @@ func TestNotificationFailureBoundaries(t *testing.T) {
 			s.cfg.Downloads.FolderNotifications = true
 			s.desktopNotify = func(context.Context, string, string) error { t.Error("unexpected notification"); return nil }
 			ds, err := s.QueueDownloads([]DownloadRequest{{Username: "peer", Files: []DownloadItem{{Filename: "Album/a", Size: 4}}}})
-			if err != nil {
-				t.Fatal(err)
-			}
+			must(t, err)
 			d := ds[0]
 			s.updateDownload(d.ID, "running", 4, nil)
 			if mode == "root" {
@@ -320,20 +266,16 @@ func TestNotificationFailureBoundaries(t *testing.T) {
 				part = filepath.Join(t.TempDir(), "absent")
 			}
 			if mode == "save" {
-				if _, err := s.stateDB.SQL().Exec("CREATE TRIGGER fail_download_update BEFORE UPDATE OF state ON downloads BEGIN SELECT RAISE(ABORT, 'injected update failure'); END"); err != nil {
-					t.Fatal(err)
-				}
+				_, err := s.stateDB.SQL().Exec("CREATE TRIGGER fail_download_update BEFORE UPDATE OF state ON downloads BEGIN SELECT RAISE(ABORT, 'injected update failure'); END")
+				must(t, err)
 			}
 			s.completeDownload(d.ID, d.DownloadDir, part)
 			if mode == "save" {
-				if _, err := s.stateDB.SQL().Exec("DROP TRIGGER fail_download_update"); err != nil {
-					t.Fatal(err)
-				}
+				_, err := s.stateDB.SQL().Exec("DROP TRIGGER fail_download_update")
+				must(t, err)
 			}
 			s.wg.Wait()
-			if s.Snapshot().DownloadNotification.Sequence != 0 {
-				t.Fatal("failure advanced notification signal")
-			}
+			failIf(t, s.Snapshot().DownloadNotification.Sequence != 0, "failure advanced notification signal")
 		})
 	}
 }
@@ -346,12 +288,8 @@ func TestDesktopNotificationArguments(t *testing.T) {
 	if err := notifyDesktop(context.Background(), "title", "body"); err == nil {
 		t.Fatal("missing notify-send should fail")
 	}
-	if err := os.WriteFile(filepath.Join(dir, "notify-send"), []byte("#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$OTO_TEST_NOTIFICATION_ARGS\"\n"), 0700); err != nil {
-		t.Fatal(err)
-	}
-	if err := notifyDesktop(context.Background(), "File downloaded", `<b>literal $HOME</b>`); err != nil {
-		t.Fatal(err)
-	}
+	must(t, os.WriteFile(filepath.Join(dir, "notify-send"), []byte("#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$OTO_TEST_NOTIFICATION_ARGS\"\n"), 0700))
+	must(t, notifyDesktop(context.Background(), "File downloaded", `<b>literal $HOME</b>`))
 	args, _ := os.ReadFile(out)
 	if string(args) != "--\nFile downloaded\n&lt;b&gt;literal $HOME&lt;/b&gt;\n" {
 		t.Fatalf("unsafe args: %s", args)

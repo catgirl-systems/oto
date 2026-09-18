@@ -1,0 +1,377 @@
+{
+  "nicotine_revision": "0e2a467269255572906f8360e89f70ddc40f7076",
+  "fixtures": [
+    {
+      "name": "login-ok",
+      "class": "Login",
+      "direction": "server",
+      "code": 1,
+      "payload_hex": "01080000006c6f6f706261636b0100007f0000000000",
+      "expected": {
+        "success": true,
+        "banner": "loopback",
+        "ip_address": "127.0.0.1",
+        "is_supporter": false
+      }
+    },
+    {
+      "name": "WatchUser-request",
+      "class": "WatchUser",
+      "direction": "client",
+      "code": 5,
+      "payload_hex": "05000000416c696365",
+      "arguments": {
+        "user": "Alice"
+      }
+    },
+    {
+      "name": "UnwatchUser-request",
+      "class": "UnwatchUser",
+      "direction": "client",
+      "code": 6,
+      "payload_hex": "05000000416c696365",
+      "arguments": {
+        "user": "Alice"
+      }
+    },
+    {
+      "name": "GetUserStatus-request",
+      "class": "GetUserStatus",
+      "direction": "client",
+      "code": 7,
+      "payload_hex": "05000000416c696365",
+      "arguments": {
+        "user": "Alice"
+      }
+    },
+    {
+      "name": "GetUserStats-request",
+      "class": "GetUserStats",
+      "direction": "client",
+      "code": 36,
+      "payload_hex": "05000000416c696365",
+      "arguments": {
+        "user": "Alice"
+      }
+    },
+    {
+      "name": "watch-online",
+      "class": "WatchUser",
+      "direction": "server",
+      "code": 5,
+      "payload_hex": "05000000416c6963650102000000e80300000c000000000000006300000004000000020000004652",
+      "expected": {
+        "user": "Alice",
+        "userexists": true,
+        "status": 2,
+        "avgspeed": 1000,
+        "uploadnum": 12,
+        "unknown": 0,
+        "files": 99,
+        "dirs": 4,
+        "country": "FR"
+      }
+    },
+    {
+      "name": "watch-missing",
+      "class": "WatchUser",
+      "direction": "server",
+      "code": 5,
+      "payload_hex": "05000000616c69636500",
+      "expected": {
+        "user": "alice",
+        "userexists": false
+      }
+    },
+    {
+      "name": "status-away",
+      "class": "GetUserStatus",
+      "direction": "server",
+      "code": 7,
+      "payload_hex": "05000000416c6963650100000001",
+      "expected": {
+        "user": "Alice",
+        "status": 1,
+        "privileged": true
+      }
+    },
+    {"name":"status-offline","class":"GetUserStatus","direction":"server","code":7,"payload_hex":"05000000416c6963650000000001","expected":{"user":"Alice","status":0,"privileged":true}},
+    {"name":"status-online","class":"GetUserStatus","direction":"server","code":7,"payload_hex":"05000000416c6963650200000001","expected":{"user":"Alice","status":2,"privileged":true}},
+    {
+      "name": "user-stats",
+      "class": "GetUserStats",
+      "direction": "server",
+      "code": 36,
+      "payload_hex": "05000000416c696365e80300000c000000000000006300000004000000",
+      "expected": {
+        "user": "Alice",
+        "avgspeed": 1000,
+        "uploadnum": 12,
+        "unknown": 0,
+        "files": 99,
+        "dirs": 4
+      }
+    },
+    {
+      "name": "pm-send",
+      "class": "MessageUser",
+      "direction": "client",
+      "code": 22,
+      "payload_hex": "05000000416c6963650c00000068656c6c6f20e4b896e7958c",
+      "arguments": {
+        "user": "Alice",
+        "message": "hello 世界"
+      }
+    },
+    {
+      "name": "pm-online",
+      "class": "MessageUser",
+      "direction": "server",
+      "code": 22,
+      "payload_hex": "2a00000000f1536505000000416c6963650c00000068656c6c6f20e4b896e7958c01",
+      "expected": {
+        "user": "Alice",
+        "message": "hello 世界",
+        "message_id": 42,
+        "timestamp": 1700000000,
+        "is_new_message": true
+      }
+    },
+    {
+      "name": "pm-offline",
+      "class": "MessageUser",
+      "direction": "server",
+      "code": 22,
+      "payload_hex": "2a00000000f1536505000000416c6963650c00000068656c6c6f20e4b896e7958c00",
+      "expected": {
+        "user": "Alice",
+        "message": "hello 世界",
+        "message_id": 42,
+        "timestamp": 1700000000,
+        "is_new_message": false
+      }
+    },
+    {
+      "name": "pm-ack",
+      "class": "MessageAcked",
+      "direction": "client",
+      "code": 23,
+      "payload_hex": "2a000000",
+      "arguments": {
+        "msgid": 42
+      }
+    },
+    {
+      "name": "room-join-public",
+      "class": "JoinRoom",
+      "direction": "client",
+      "code": 14,
+      "payload_hex": "080000006f746f207465737400000000",
+      "arguments": {
+        "room": "oto test",
+        "private": false
+      }
+    },
+    {
+      "name": "room-join-private",
+      "class": "JoinRoom",
+      "direction": "client",
+      "code": 14,
+      "payload_hex": "080000006f746f207465737401000000",
+      "arguments": {
+        "room": "oto test",
+        "private": true
+      }
+    },
+    {
+      "name": "room-leave",
+      "class": "LeaveRoom",
+      "direction": "client",
+      "code": 15,
+      "payload_hex": "080000006f746f2074657374",
+      "arguments": {
+        "room": "oto test"
+      }
+    },
+    {
+      "name": "room-send",
+      "class": "SayChatroom",
+      "direction": "client",
+      "code": 13,
+      "payload_hex": "080000006f746f20746573740c00000068656c6c6f20e4b896e7958c",
+      "arguments": {
+        "room": "oto test",
+        "message": "hello 世界"
+      }
+    },
+    {
+      "name": "room-echo",
+      "class": "SayChatroom",
+      "direction": "server",
+      "code": 13,
+      "payload_hex": "080000006f746f207465737405000000416c6963650c00000068656c6c6f20e4b896e7958c",
+      "expected": {
+        "room": "oto test",
+        "user": "Alice",
+        "message": "hello 世界"
+      }
+    },
+    {
+      "name": "privilege-check",
+      "class": "CheckPrivileges",
+      "direction": "client",
+      "code": 92,
+      "payload_hex": "",
+      "arguments": {}
+    },
+    {
+      "name": "privilege-gift",
+      "class": "GivePrivileges",
+      "direction": "client",
+      "code": 123,
+      "payload_hex": "05000000416c69636501000000",
+      "arguments": {
+        "user": "Alice",
+        "days": 1
+      }
+    },
+    {
+      "name": "profile",
+      "class": "UserInfoResponse",
+      "direction": "peer",
+      "code": 16,
+      "payload_hex": "0c00000068656c6c6f20e4b896e7958c0003000000070000000100000000",
+      "arguments": {
+        "descr": "hello 世界",
+        "pic": null,
+        "totalupl": 3,
+        "queuesize": 7,
+        "slotsavail": true,
+        "uploadallowed": 0
+      },
+      "expected": {
+        "descr": "hello 世界",
+        "pic": null,
+        "totalupl": 3,
+        "queuesize": 7,
+        "slotsavail": true,
+        "uploadallowed": 0
+      }
+    },
+    {
+      "name": "GetPeerAddress-request",
+      "class": "GetPeerAddress",
+      "direction": "client",
+      "code": 3,
+      "payload_hex": "05000000416c696365",
+      "arguments": {"user": "Alice"}
+    },
+    {
+      "name": "peer-address",
+      "class": "GetPeerAddress",
+      "direction": "server",
+      "code": 3,
+      "payload_hex": "05000000416c6963650100007fba080000000000000000",
+      "expected": {"user": "Alice", "ip_address": "127.0.0.1", "port": 2234, "obfuscation_type": 0, "obfuscated_port": 0}
+    },
+    {"name":"room-directory-request","class":"RoomList","direction":"client","code":64,"payload_hex":"","arguments":{}},
+    {"name":"public-feed-subscribe","class":"JoinGlobalRoom","direction":"client","code":150,"payload_hex":"","arguments":{}},
+    {"name":"public-feed-unsubscribe","class":"LeaveGlobalRoom","direction":"client","code":151,"payload_hex":"","arguments":{}},
+    {
+      "name":"room-directory","class":"RoomList","direction":"server","code":64,
+      "payload_hex":"02000000080000006f746f2074657374050000004d7573696302000000020000002a00000001000000050000007175696574010000000300000001000000070000006d656d62657273010000000500000001000000050000007175696574",
+      "expected":{"rooms":[["oto test",2],["Music",42]],"rooms_owner":[["quiet",3]],"rooms_member":[["members",5]],"rooms_operator":["quiet"]}
+    },
+    {
+      "name":"room-joined","class":"JoinRoom","direction":"server","code":14,
+      "payload_hex":"080000006f746f20746573740200000005000000416c69636503000000426f62020000000200000001000000020000000010000003000000000000000c000000020000000004000002000000630000000a0000000100000002000000000000000100000002000000020000004e4c020000004445",
+      "expected":{"room":"oto test","private":false,"owner":null,"operators":[],"users":[
+        {"username":"Alice","status":2,"avgspeed":4096,"uploadnum":3,"unknown":0,"files":12,"dirs":2,"slotsfull":0,"country":"NL"},
+        {"username":"Bob","status":1,"avgspeed":1024,"uploadnum":2,"unknown":99,"files":10,"dirs":1,"slotsfull":1,"country":"DE"}
+      ]}
+    },
+    {
+      "name":"room-partial-joined","class":"JoinRoom","direction":"server","code":14,
+      "payload_hex":"080000006f746f20746573740200000005000000416c69636503000000426f620100000002000000000000000000000000000000",
+      "expected":{"room":"oto test","private":false,"users":[
+        {"username":"Alice","status":2,"avgspeed":null,"uploadnum":null,"unknown":null,"files":null,"dirs":null,"slotsfull":null,"country":null},
+        {"username":"Bob","status":null,"avgspeed":null,"uploadnum":null,"unknown":null,"files":null,"dirs":null,"slotsfull":null,"country":null}
+      ]}
+    },
+    {
+      "name":"room-private-joined","class":"JoinRoom","direction":"server","code":14,
+      "payload_hex":"0500000071756965740200000005000000416c69636503000000426f62020000000200000001000000020000000010000003000000000000000c000000020000000004000002000000630000000a0000000100000002000000000000000100000002000000020000004e4c020000004445050000004f776e65720200000005000000416c696365020000004f70",
+      "expected":{"room":"quiet","private":true,"owner":"Owner","operators":["Alice","Op"],"users":[
+        {"username":"Alice","status":2,"avgspeed":4096,"uploadnum":3,"unknown":0,"files":12,"dirs":2,"slotsfull":0,"country":"NL"},
+        {"username":"Bob","status":1,"avgspeed":1024,"uploadnum":2,"unknown":99,"files":10,"dirs":1,"slotsfull":1,"country":"DE"}
+      ]}
+    },
+    {
+      "name":"room-user-joined","class":"UserJoinedRoom","direction":"server","code":16,
+      "payload_hex":"080000006f746f207465737403000000426f62010000000004000002000000630000000a0000000100000001000000020000004445",
+      "expected":{"room":"oto test","userdata":{"username":"Bob","status":1,"avgspeed":1024,"uploadnum":2,"unknown":99,"files":10,"dirs":1,"slotsfull":1,"country":"DE"}}
+    },
+    {"name":"room-user-left","class":"UserLeftRoom","direction":"server","code":17,"payload_hex":"080000006f746f207465737403000000426f62","expected":{"room":"oto test","username":"Bob"}},
+    {"name":"room-left","class":"LeaveRoom","direction":"server","code":15,"payload_hex":"080000006f746f2074657374","expected":{"room":"oto test"}},
+    {"name":"public-feed-message","class":"GlobalRoomMessage","direction":"server","code":152,"payload_hex":"080000006f746f207465737403000000426f6204000000636166e9","expected":{"room":"oto test","user":"Bob","message":"café"}},
+    {"name":"room-partial-directory","class":"RoomList","direction":"server","code":64,"payload_hex":"02000000030000006f6e650300000074776f01000000070000000000000000000000000000000000000000000000","expected":{"rooms":[["one",7],["two",null]],"rooms_owner":[],"rooms_member":[],"rooms_operator":[]}}
+,
+    {"name":"role-add-member-request","class":"AddRoomMember","direction":"client","code":134,"payload_hex":"080000006f746f207465737403000000426f62","arguments":{"room":"oto test","user":"Bob"}},
+    {"name":"role-add-member","class":"AddRoomMember","direction":"server","code":134,"payload_hex":"080000006f746f207465737403000000426f62","expected":{"room":"oto test","user":"Bob"}},
+    {"name":"role-remove-member-request","class":"RemoveRoomMember","direction":"client","code":135,"payload_hex":"080000006f746f207465737403000000426f62","arguments":{"room":"oto test","user":"Bob"}},
+    {"name":"role-remove-member","class":"RemoveRoomMember","direction":"server","code":135,"payload_hex":"080000006f746f207465737403000000426f62","expected":{"room":"oto test","user":"Bob"}},
+    {"name":"role-add-operator-request","class":"AddRoomOperator","direction":"client","code":143,"payload_hex":"080000006f746f207465737403000000426f62","arguments":{"room":"oto test","user":"Bob"}},
+    {"name":"role-add-operator","class":"AddRoomOperator","direction":"server","code":143,"payload_hex":"080000006f746f207465737403000000426f62","expected":{"room":"oto test","user":"Bob"}},
+    {"name":"role-remove-operator-request","class":"RemoveRoomOperator","direction":"client","code":144,"payload_hex":"080000006f746f207465737403000000426f62","arguments":{"room":"oto test","user":"Bob"}},
+    {"name":"role-remove-operator","class":"RemoveRoomOperator","direction":"server","code":144,"payload_hex":"080000006f746f207465737403000000426f62","expected":{"room":"oto test","user":"Bob"}},
+    {"name":"role-cancel-membership-request","class":"CancelRoomMembership","direction":"client","code":136,"payload_hex":"080000006f746f2074657374","arguments":{"room":"oto test"}},
+    {"name":"role-cancel-ownership-request","class":"CancelRoomOwnership","direction":"client","code":137,"payload_hex":"080000006f746f2074657374","arguments":{"room":"oto test"}},
+    {"name":"role-membership-granted","class":"RoomMembershipGranted","direction":"server","code":139,"payload_hex":"080000006f746f2074657374","expected":{"room":"oto test"}},
+    {"name":"role-membership-revoked","class":"RoomMembershipRevoked","direction":"server","code":140,"payload_hex":"080000006f746f2074657374","expected":{"room":"oto test"}},
+    {"name":"role-operatorship-granted","class":"RoomOperatorshipGranted","direction":"server","code":145,"payload_hex":"080000006f746f2074657374","expected":{"room":"oto test"}},
+    {"name":"role-operatorship-revoked","class":"RoomOperatorshipRevoked","direction":"server","code":146,"payload_hex":"080000006f746f2074657374","expected":{"room":"oto test"}},
+    {"name":"role-creation-rejected","class":"CantCreateRoom","direction":"server","code":1003,"payload_hex":"080000006f746f2074657374","expected":{"room":"oto test"}},
+    {"name":"role-members","class":"RoomMembers","direction":"server","code":133,"payload_hex":"080000006f746f20746573740200000005000000416c69636503000000426f62","expected":{"room":"oto test","members":["Alice","Bob"]}},
+    {"name":"role-operators","class":"RoomOperators","direction":"server","code":148,"payload_hex":"080000006f746f20746573740200000005000000416c69636503000000426f62","expected":{"room":"oto test","operators":["Alice","Bob"]}},
+    {"name":"room-invitations-true-client","class":"EnableRoomInvitations","direction":"client","code":141,"payload_hex":"01","arguments":{"enabled":true}},
+    {"name":"room-invitations-true-server","class":"EnableRoomInvitations","direction":"server","code":141,"payload_hex":"01","expected":{"enabled":true}},
+    {"name":"room-invitations-false-client","class":"EnableRoomInvitations","direction":"client","code":141,"payload_hex":"00","arguments":{"enabled":false}},
+    {"name":"room-invitations-false-server","class":"EnableRoomInvitations","direction":"server","code":141,"payload_hex":"00","expected":{"enabled":false}},
+    {"name":"wall-set","class":"SetRoomTicker","direction":"client","code":116,"payload_hex":"080000006f746f20746573740c00000068656c6c6f20e4b896e7958c","arguments":{"room":"oto test","msg":"hello 世界"}},
+    {"name":"wall-clear","class":"SetRoomTicker","direction":"client","code":116,"payload_hex":"080000006f746f207465737400000000","arguments":{"room":"oto test","msg":""}},
+    {"name":"wall-snapshot","class":"RoomTickers","direction":"server","code":113,"payload_hex":"080000006f746f20746573740100000003000000426f620c00000068656c6c6f20e4b896e7958c","expected":{"room":"oto test","msgs":[["Bob","hello 世界"]]}},
+    {"name":"wall-added","class":"RoomTickerAdded","direction":"server","code":114,"payload_hex":"080000006f746f207465737403000000426f620c00000068656c6c6f20e4b896e7958c","expected":{"room":"oto test","user":"Bob","msg":"hello 世界"}},
+    {"name":"wall-removed","class":"RoomTickerRemoved","direction":"server","code":115,"payload_hex":"080000006f746f207465737403000000426f62","expected":{"room":"oto test","user":"Bob"}},
+    {"name":"private-directory-empty","class":"RoomList","direction":"server","code":64,"payload_hex":"00000000000000000000000000000000000000000000000000000000","expected":{"rooms":[],"rooms_owner":[],"rooms_member":[],"rooms_operator":[]}},
+    {"name":"private-directory-owner","class":"RoomList","direction":"server","code":64,"payload_hex":"000000000000000001000000080000006f746f20746573740100000002000000000000000000000000000000","expected":{"rooms":[],"rooms_owner":[["oto test",2]],"rooms_member":[],"rooms_operator":[]}},
+    {"name":"private-directory-member","class":"RoomList","direction":"server","code":64,"payload_hex":"0000000000000000000000000000000001000000080000006f746f2074657374010000000200000000000000","expected":{"rooms":[],"rooms_owner":[],"rooms_member":[["oto test",2]],"rooms_operator":[]}},
+    {"name":"private-joined-owner","class":"JoinRoom","direction":"server","code":14,"payload_hex":"080000006f746f20746573740000000000000000000000000000000000000000080000007465726d696e616c00000000","expected":{"room":"oto test","owner":"terminal","operators":[],"users":[]}}
+,
+    {"name":"interest-add-like","class":"AddThingILike","direction":"client","code":51,"payload_hex":"06000000746563686e6f","arguments":{"thing":"techno"}},
+    {"name":"interest-remove-like","class":"RemoveThingILike","direction":"client","code":52,"payload_hex":"06000000746563686e6f","arguments":{"thing":"techno"}},
+    {"name":"interest-add-dislike","class":"AddThingIHate","direction":"client","code":117,"payload_hex":"06000000746563686e6f","arguments":{"thing":"techno"}},
+    {"name":"interest-remove-dislike","class":"RemoveThingIHate","direction":"client","code":118,"payload_hex":"06000000746563686e6f","arguments":{"thing":"techno"}},
+    {"name":"discovery-personal-request","class":"Recommendations","direction":"client","code":54,"payload_hex":""},
+    {"name":"discovery-global-request","class":"GlobalRecommendations","direction":"client","code":56,"payload_hex":""},
+    {"name":"discovery-item-request","class":"ItemRecommendations","direction":"client","code":111,"payload_hex":"06000000746563686e6f","arguments":{"thing":"techno"}},
+    {"name":"discovery-similar-request","class":"SimilarUsers","direction":"client","code":110,"payload_hex":""},
+    {"name":"discovery-item-users-request","class":"ItemSimilarUsers","direction":"client","code":112,"payload_hex":"06000000746563686e6f","arguments":{"thing":"techno"}},
+    {"name":"discovery-user-interests-request","class":"UserInterests","direction":"client","code":57,"payload_hex":"05000000416c696365","arguments":{"user":"Alice"}},
+    {"name":"discovery-personal","class":"Recommendations","direction":"server","code":54,"payload_hex":"0100000006000000746563686e6f2a00000001000000050000006e6f697365f9ffffff","expected":{"recommendations":[["techno",42]],"unrecommendations":[["noise",-7]]}},
+    {"name":"discovery-global","class":"GlobalRecommendations","direction":"server","code":56,"payload_hex":"0100000006000000746563686e6f2a00000001000000050000006e6f697365f9ffffff","expected":{"recommendations":[["techno",42]],"unrecommendations":[["noise",-7]]}},
+    {"name":"discovery-item","class":"ItemRecommendations","direction":"server","code":111,"payload_hex":"06000000746563686e6f0100000006000000746563686e6f2a00000001000000050000006e6f697365f9ffffff","expected":{"thing":"techno","recommendations":[["techno",42]],"unrecommendations":[["noise",-7]]}},
+    {"name":"discovery-similar","class":"SimilarUsers","direction":"server","code":110,"payload_hex":"0200000005000000416c6963650900000005000000616c69636502000000","expected":{"users":[{"username":"Alice","rating":9},{"username":"alice","rating":2}]}},
+    {"name":"discovery-item-users","class":"ItemSimilarUsers","direction":"server","code":112,"payload_hex":"06000000746563686e6f0200000005000000416c69636505000000616c696365","expected":{"thing":"techno","users":[{"username":"Alice","rating":null},{"username":"alice","rating":null}]}},
+    {"name":"discovery-user-interests","class":"UserInterests","direction":"server","code":57,"payload_hex":"05000000416c6963650100000006000000746563686e6f01000000050000006e6f697365","expected":{"user":"Alice","likes":["techno"],"hates":["noise"]}},
+    {"name":"privileged-users","class":"PrivilegedUsers","direction":"server","code":69,"payload_hex":"0200000009000000537570706f7274657207000000416e6f74686572","expected":{"users":["Supporter","Another"]}},
+    {"name":"supporter-connection","class":"ConnectToPeer","direction":"server","code":18,"payload_hex":"09000000537570706f7274657201000000500100007f1309000029000000010000000000000000","expected":{"user":"Supporter","conn_type":"P","ip_address":"127.0.0.1","port":2323,"token":41,"privileged":true}},
+    {"name":"supporter-expired","class":"GetUserStatus","direction":"server","code":7,"payload_hex":"09000000537570706f727465720200000000","expected":{"user":"Supporter","status":2,"privileged":false}},
+    {"name":"queue-position-request","class":"PlaceInQueueRequest","direction":"peer","code":51,"arguments":{"file":"Public\\song.mp3"},"payload_hex":"0f0000005075626c69635c736f6e672e6d7033","expected":{"file":"Public\\song.mp3"}},
+    {"name":"check-privileges-request","class":"CheckPrivileges","direction":"client","code":92,"payload_hex":"","arguments":{}},
+    {"name":"privilege-balance","class":"CheckPrivileges","direction":"server","code":92,"payload_hex":"bcf40300","expected":{"seconds":259260}},
+    {"name":"privilege-balance-empty","class":"CheckPrivileges","direction":"server","code":92,"payload_hex":"00000000","expected":{"seconds":0}},
+    {"name":"give-privileges-request","class":"GivePrivileges","direction":"client","code":123,"payload_hex":"05000000416c69636501000000","arguments":{"user":"Alice","days":1}},
+    {"name":"room-search-request","class":"RoomSearch","direction":"client","code":120,"payload_hex":"060000006c6f756e67652900000004000000736f6e67","arguments":{"room":"lounge","token":41,"text":"song"}},
+    {"name":"profile-picture","class":"UserInfoResponse","direction":"peer","code":16,"payload_hex":"0c00000068656c6c6f20e4b896e7958c014600000089504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000d49444154789c63f8cfc0f01f00050001ff89993d1d0000000049454e44ae42608203000000070000000100000000","arguments":{"descr":"hello 世界","pic":{"hex":"89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000d49444154789c63f8cfc0f01f00050001ff89993d1d0000000049454e44ae426082"},"totalupl":3,"queuesize":7,"slotsavail":true,"uploadallowed":0},"expected":{"descr":"hello 世界","pic":{"hex":"89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000d49444154789c63f8cfc0f01f00050001ff89993d1d0000000049454e44ae426082"},"totalupl":3,"queuesize":7,"slotsavail":true,"uploadallowed":0}}
+  ]
+}

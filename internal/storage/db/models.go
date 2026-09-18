@@ -15,6 +15,96 @@ type ActiveAttempt struct {
 	Payload    []byte `json:"payload"`
 }
 
+type CommunityAccount struct {
+	Account           string `json:"account"`
+	Revision          int64  `json:"revision"`
+	Description       string `json:"description"`
+	AcceptInvitations int64  `json:"accept_invitations"`
+	RetentionDays     int64  `json:"retention_days"`
+	PublicFeedLogging int64  `json:"public_feed_logging"`
+}
+
+type CommunityAlias struct {
+	Account   string `json:"account"`
+	Name      string `json:"name"`
+	Expansion string `json:"expansion"`
+}
+
+type CommunityBuddy struct {
+	Account      string `json:"account"`
+	Username     string `json:"username"`
+	Note         string `json:"note"`
+	NotifyOnline int64  `json:"notify_online"`
+	Priority     int64  `json:"priority"`
+	Trusted      int64  `json:"trusted"`
+	LastSeen     *int64 `json:"last_seen"`
+}
+
+type CommunityConversation struct {
+	ID          int64  `json:"id"`
+	Account     string `json:"account"`
+	Kind        string `json:"kind"`
+	Target      string `json:"target"`
+	ReadThrough int64  `json:"read_through"`
+	Closed      int64  `json:"closed"`
+}
+
+type CommunityInterest struct {
+	Account string `json:"account"`
+	Item    string `json:"item"`
+	Opinion int64  `json:"opinion"`
+}
+
+type CommunityMessage struct {
+	ID             int64  `json:"id"`
+	Account        string `json:"account"`
+	ConversationID int64  `json:"conversation_id"`
+	Sender         string `json:"sender"`
+	Direction      string `json:"direction"`
+	Body           string `json:"body"`
+	CreatedAt      int64  `json:"created_at"`
+	ServerTime     *int64 `json:"server_time"`
+	State          string `json:"state"`
+	Mention        int64  `json:"mention"`
+	Error          string `json:"error"`
+}
+
+type CommunityReceipt struct {
+	Account     string `json:"account"`
+	Sender      string `json:"sender"`
+	ServerID    int64  `json:"server_id"`
+	ServerTime  int64  `json:"server_time"`
+	Fingerprint []byte `json:"fingerprint"`
+	Disposition string `json:"disposition"`
+	CreatedAt   int64  `json:"created_at"`
+}
+
+type CommunityRoom struct {
+	Account     string `json:"account"`
+	Room        string `json:"room"`
+	Autojoin    int64  `json:"autojoin"`
+	PrivateRoom int64  `json:"private_room"`
+	OwnWall     string `json:"own_wall"`
+}
+
+type CommunityRule struct {
+	ID      int64  `json:"id"`
+	Account string `json:"account"`
+	Action  string `json:"action"`
+	Kind    string `json:"kind"`
+	Value   string `json:"value"`
+	Message string `json:"message"`
+}
+
+type CommunitySubmission struct {
+	Account     string `json:"account"`
+	RequestID   string `json:"request_id"`
+	Kind        string `json:"kind"`
+	Fingerprint []byte `json:"fingerprint"`
+	Result      string `json:"result"`
+	CreatedAt   int64  `json:"created_at"`
+}
+
 type Download struct {
 	ID           string `json:"id"`
 	StatsAccount string `json:"stats_account"`
@@ -94,6 +184,7 @@ type ShareRoot struct {
 	Ordinal    int64  `json:"ordinal"`
 	Name       string `json:"name"`
 	Path       string `json:"path"`
+	Access     string `json:"access"`
 }
 
 type ShareSnapshot struct {

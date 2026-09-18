@@ -20,9 +20,7 @@ func TestSoulfindResumeTransfer(t *testing.T) {
 	observer := startSoulfindClient(t, addr, "s"+stamp, nil, nil)
 
 	destination, err := os.CreateTemp(t.TempDir(), "download-")
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	defer destination.Close()
 	offset := uint64(len(contents) / 3)
 	if _, err := destination.WriteAt(contents[:offset], 0); err != nil {
@@ -30,13 +28,9 @@ func TestSoulfindResumeTransfer(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	if err := observer.Download(ctx, target.cfg.Username, "Music\\"+filename, uint64(len(contents)), offset, destination, nil); err != nil {
-		t.Fatal(err)
-	}
+	must(t, observer.Download(ctx, target.cfg.Username, "Music\\"+filename, uint64(len(contents)), offset, destination, nil))
 	got, err := os.ReadFile(destination.Name())
-	if err != nil || !bytes.Equal(got, contents) {
-		t.Fatalf("resumed download: bytes=%d err=%v", len(got), err)
-	}
+	failIfFmt(t, err != nil || !bytes.Equal(got, contents), "resumed download: bytes=%d err=%v", len(got), err)
 }
 
 func TestSoulfindRejectsUnsharedFile(t *testing.T) {
@@ -45,16 +39,12 @@ func TestSoulfindRejectsUnsharedFile(t *testing.T) {
 	target := startSoulfindClient(t, addr, "m"+stamp, nil, nil)
 	observer := startSoulfindClient(t, addr, "n"+stamp, nil, nil)
 	destination, err := os.CreateTemp(t.TempDir(), "download-")
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	defer destination.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	err = observer.Download(ctx, target.cfg.Username, "Music\\missing.flac", 1, 0, destination, nil)
-	if err == nil || !strings.Contains(strings.ToLower(err.Error()), "not shared") {
-		t.Fatalf("unshared download error = %v", err)
-	}
+	failIfFmt(t, err == nil || !strings.Contains(strings.ToLower(err.Error()), "not shared"), "unshared download error = %v", err)
 }
 
 type blockingWriterAt struct {
@@ -79,9 +69,7 @@ func TestSoulfindUploadQueue(t *testing.T) {
 	observer := startSoulfindClient(t, addr, "v"+stamp, nil, nil)
 
 	firstFile, err := os.CreateTemp(t.TempDir(), "first-")
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	defer firstFile.Close()
 	blocked := &blockingWriterAt{file: firstFile, entered: make(chan struct{}), release: make(chan struct{})}
 	released := false
@@ -103,9 +91,7 @@ func TestSoulfindUploadQueue(t *testing.T) {
 	}
 
 	secondFile, err := os.CreateTemp(t.TempDir(), "second-")
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	defer secondFile.Close()
 	queued := make(chan Progress, 1)
 	secondDone := make(chan error, 1)
@@ -121,9 +107,7 @@ func TestSoulfindUploadQueue(t *testing.T) {
 	}()
 	select {
 	case progress := <-queued:
-		if progress.Queue != 1 {
-			t.Fatalf("queue place = %d", progress.Queue)
-		}
+		failIfFmt(t, progress.Queue != 1, "queue place = %d", progress.Queue)
 	case <-ctx.Done():
 		t.Fatal("second upload was not queued")
 	}
@@ -134,14 +118,8 @@ func TestSoulfindUploadQueue(t *testing.T) {
 	}
 	close(blocked.release)
 	released = true
-	if err := <-firstDone; err != nil {
-		t.Fatal(err)
-	}
-	if err := <-secondDone; err != nil {
-		t.Fatal(err)
-	}
+	must(t, <-firstDone)
+	must(t, <-secondDone)
 	got, err := os.ReadFile(secondFile.Name())
-	if err != nil || !bytes.Equal(got, secondContents) {
-		t.Fatalf("queued download: %q %v", got, err)
-	}
+	failIfFmt(t, err != nil || !bytes.Equal(got, secondContents), "queued download: %q %v", got, err)
 }

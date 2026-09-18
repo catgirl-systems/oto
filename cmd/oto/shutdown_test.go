@@ -41,13 +41,9 @@ func TestShutdownProcessHelper(t *testing.T) {
 func shutdownNetwork(t *testing.T) (string, <-chan struct{}, func(), <-chan []byte) {
 	t.Helper()
 	server, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	peer, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	release, reached := make(chan struct{}), make(chan struct{}, 4)
 	data := make(chan []byte, 4)
 	var once sync.Once
@@ -169,9 +165,7 @@ func TestChildShutdownUploads(t *testing.T) {
 			cfg := config.Default()
 			cfg.Soulseek.Username, cfg.Soulseek.Password = "local-test", "local-test"
 			port, err := net.Listen("tcp", "127.0.0.1:0")
-			if err != nil {
-				t.Fatal(err)
-			}
+			must(t, err)
 			cfg.Soulseek.Server, cfg.Soulseek.ListenAddr = address, port.Addr().String()
 			port.Close()
 			cfg.Soulseek.NATPMPPortMapping, cfg.Soulseek.UPnPPortMapping = false, false
@@ -183,31 +177,21 @@ func TestChildShutdownUploads(t *testing.T) {
 			cfg.DownloadDir = t.TempDir()
 			content := bytes.Repeat([]byte("local fixture\n"), 100)
 			for _, name := range []string{"one", "two"} {
-				if err := os.WriteFile(filepath.Join(root, name), content, 0600); err != nil {
-					t.Fatal(err)
-				}
+				must(t, os.WriteFile(filepath.Join(root, name), content, 0600))
 			}
 			path := filepath.Join(t.TempDir(), "config.json")
-			if err := cfg.Save(path); err != nil {
-				t.Fatal(err)
-			}
+			must(t, cfg.Save(path))
 			binary, err := os.Executable()
-			if err != nil {
-				t.Fatal(err)
-			}
+			must(t, err)
 			script := filepath.Join(t.TempDir(), "oto-test")
-			if err := os.WriteFile(script, []byte("#!/bin/sh\nexec '"+strings.ReplaceAll(binary, "'", "'\\''")+"' -test.run=^TestShutdownProcessHelper$ -- \"$@\"\n"), 0700); err != nil {
-				t.Fatal(err)
-			}
+			must(t, os.WriteFile(script, []byte("#!/bin/sh\nexec '"+strings.ReplaceAll(binary, "'", "'\\''")+"' -test.run=^TestShutdownProcessHelper$ -- \"$@\"\n"), 0700))
 			old := executable
 			executable = func() (string, error) { return script, nil }
 			defer func() { executable = old }()
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 			child, keepAlive, err := startChild(ctx, path)
-			if err != nil {
-				t.Fatal(err)
-			}
+			must(t, err)
 			var done chan struct{}
 			defer func() {
 				_ = keepAlive.Close()
@@ -221,17 +205,13 @@ func TestChildShutdownUploads(t *testing.T) {
 			client := ipc.NewClient(config.SocketPath())
 			st := shutdownStatus(t, client, func(s daemon.Snapshot) bool { return s.Status == daemon.StatusConnected && s.PublicPort != 0 })
 			p, err := net.Dial("tcp", fmt.Sprintf("127.0.0.1:%d", st.PublicPort))
-			if err != nil {
-				t.Fatal(err)
-			}
+			must(t, err)
 			defer p.Close()
 			var init soulseek.Encoder
 			_ = init.String("peer")
 			_ = init.String("P")
 			init.U32(1)
-			if err := soulseek.WriteInitFrame(p, byte(soulseek.PeerInit), init.Payload()); err != nil {
-				t.Fatal(err)
-			}
+			must(t, soulseek.WriteInitFrame(p, byte(soulseek.PeerInit), init.Payload()))
 			// A bidirectional P connection also carries the subsequent upload offers.
 			readerDone := make(chan struct{})
 			defer func() { _ = p.Close(); <-readerDone }()
@@ -260,9 +240,7 @@ func TestChildShutdownUploads(t *testing.T) {
 			}()
 			for _, name := range []string{`Music\one`, `Music\two`} {
 				msg, err := soulseek.EncodeMessage(soulseek.QueueRequest{Filename: name})
-				if err != nil {
-					t.Fatal(err)
-				}
+				must(t, err)
 				if _, err := p.Write(msg); err != nil {
 					t.Fatal(err)
 				}
@@ -274,9 +252,7 @@ func TestChildShutdownUploads(t *testing.T) {
 			}
 			shutdownStatus(t, client, func(s daemon.Snapshot) bool { return len(s.Transfers) == 2 })
 			if mode == "signal" || mode == "force" {
-				if err := child.Process.Signal(syscall.SIGTERM); err != nil {
-					t.Fatal(err)
-				}
+				must(t, child.Process.Signal(syscall.SIGTERM))
 				shutdownStatus(t, client, func(s daemon.Snapshot) bool { return s.Shutdown != nil && s.Shutdown.Draining })
 			}
 			// Cancellation of the owning frontend must not SIGKILL its ready child.
@@ -286,9 +262,7 @@ func TestChildShutdownUploads(t *testing.T) {
 			go func() { waitForChild(child, keepAlive, client, &output); close(done) }()
 			if mode != "default" {
 				st = shutdownStatus(t, client, func(s daemon.Snapshot) bool { return s.Shutdown != nil && s.Shutdown.Draining })
-				if st.Shutdown.ActiveUploads != 1 {
-					t.Fatal(st.Shutdown)
-				}
+				failIf(t, st.Shutdown.ActiveUploads != 1, st.Shutdown)
 				if mode == "force" || mode == "eof-force" {
 					if mode == "eof-force" {
 						// Exercise the frontend supervisor's force-signal forwarding.
@@ -314,9 +288,7 @@ func TestChildShutdownUploads(t *testing.T) {
 			if mode == "signal" || mode == "eof" {
 				select {
 				case got := <-data:
-					if !bytes.Equal(got, content) {
-						t.Fatal("incomplete upload", len(got))
-					}
+					failIf(t, !bytes.Equal(got, content), "incomplete upload", len(got))
 				case <-time.After(time.Second):
 					t.Fatal("no bytes")
 				}
@@ -327,37 +299,25 @@ func TestChildShutdownUploads(t *testing.T) {
 			// Reopen SQLite after process exit; queued work survives every shutdown mode.
 			if mode != "default" {
 				log, err := os.ReadFile(filepath.Join(config.DataDir(), "logs", "daemon.log"))
-				if err != nil {
-					t.Fatal(err)
-				}
+				must(t, err)
 				finish := "upload_drain_completed"
 				if mode == "force" || mode == "eof-force" {
 					finish = "upload_drain_forced"
 				}
-				if !bytes.Contains(log, []byte("upload_drain_started")) || !bytes.Contains(log, []byte(finish)) {
-					t.Fatal("missing drain diagnostics", string(log))
-				}
-				if mode == "eof-force" && !strings.Contains(output.String(), "Forcing shutdown") {
-					t.Fatal("force not forwarded", output.String())
-				}
+				failIf(t, !bytes.Contains(log, []byte("upload_drain_started")) || !bytes.Contains(log, []byte(finish)), "missing drain diagnostics", string(log))
+				failIf(t, mode == "eof-force" && !strings.Contains(output.String(), "Forcing shutdown"), "force not forwarded", output.String())
 			}
 			svc, err := daemon.New(cfg, filepath.Join(config.DataDir(), "state.sqlite3"))
-			if err != nil {
-				t.Fatal(err)
-			}
+			must(t, err)
 			defer svc.Close()
 			rows := svc.Transfers()
-			if len(rows) != 2 {
-				t.Fatalf("lost history: %+v", rows)
-			}
+			failIfFmt(t, len(rows) != 2, "lost history: %+v", rows)
 			for _, row := range rows {
 				want := "interrupted"
 				if row.Filename == `Music\one` && (mode == "eof" || mode == "signal") {
 					want = "completed"
 				}
-				if row.State != want {
-					t.Fatalf("%s: %+v", mode, row)
-				}
+				failIfFmt(t, row.State != want, "%s: %+v", mode, row)
 			}
 		})
 	}
@@ -373,19 +333,13 @@ func TestDaemonShutdownWithoutUploadsAndIPCFailure(t *testing.T) {
 			cfg.Soulseek.ConnectOnStartup = false
 			cfg.Uploads.WaitForActiveUploadsOnQuit = true
 			svc, err := daemon.New(cfg, filepath.Join(t.TempDir(), "state.sqlite3"))
-			if err != nil {
-				t.Fatal(err)
-			}
+			must(t, err)
 			defer svc.Close()
 			path := config.SocketPath()
 			if failure {
-				if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
-					t.Fatal(err)
-				}
+				must(t, os.MkdirAll(filepath.Dir(path), 0700))
 				other, err := net.Listen("unix", path)
-				if err != nil {
-					t.Fatal(err)
-				}
+				must(t, err)
 				defer other.Close()
 			}
 			eof := make(chan struct{})
@@ -397,9 +351,7 @@ func TestDaemonShutdownWithoutUploadsAndIPCFailure(t *testing.T) {
 			}
 			select {
 			case err := <-done:
-				if (err != nil) != failure {
-					t.Fatalf("failure=%t: %v", failure, err)
-				}
+				failIfFmt(t, (err != nil) != failure, "failure=%t: %v", failure, err)
 			case <-time.After(2 * time.Second):
 				t.Fatal("shutdown blocked without active uploads")
 			}

@@ -70,6 +70,37 @@ jobs:
           docker logs "$cid"
           [ "$status" = 0 ]
 
+  community:
+    needs: generated
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: 1.25.x
+          cache: true
+      - uses: actions/checkout@v4
+        with:
+          repository: nicotine-plus/nicotine-plus
+          ref: 0e2a467269255572906f8360e89f70ddc40f7076
+          path: nicotine-plus
+      - name: Install terminal test dependency
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends tmux
+      - name: Cross-check independent social wire fixtures
+        run: python3 scripts/check-social-fixtures.py
+      - name: Run real Community terminal workflows
+        env:
+          OTO_E2E_ARTIFACTS: ${{ runner.temp }}/community-artifacts
+        run: go test -tags communitye2e -count=1 -v ./internal/e2e
+      - name: Preserve isolated failure artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: community-failures
+          path: ${{ runner.temp }}/community-artifacts
+          if-no-files-found: ignore
+
   soulfind:
     needs: [generated, unit]
     runs-on: ubuntu-latest

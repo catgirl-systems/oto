@@ -17,9 +17,7 @@ func TestUploadActionRoutes(t *testing.T) {
 	cfg := config.Default()
 	cfg.Soulseek.Username, cfg.Soulseek.Password = "test", "test"
 	svc, err := daemon.New(cfg, filepath.Join(t.TempDir(), "state.sqlite3"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	defer svc.Close()
 	handler := NewServer(svc, "").handler()
 	for _, tc := range []struct {
@@ -41,20 +39,14 @@ func TestUploadActionRoutes(t *testing.T) {
 	} {
 		w := httptest.NewRecorder()
 		handler.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/v1/uploads/actions", strings.NewReader(tc.body)))
-		if w.Code != tc.status {
-			t.Fatalf("%s: %d %s", tc.body, w.Code, w.Body.String())
-		}
+		failIfFmt(t, w.Code != tc.status, "%s: %d %s", tc.body, w.Code, w.Body.String())
 	}
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/v1/uploads/actions", nil))
-	if w.Code != 405 {
-		t.Fatal(w.Code)
-	}
+	failIf(t, w.Code != 405, w.Code)
 	w = httptest.NewRecorder()
 	handler.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/v1/transfers/upload:missing", strings.NewReader(`{"action":"clear"}`)))
-	if w.Code != 400 {
-		t.Fatal(w.Code)
-	}
+	failIf(t, w.Code != 400, w.Code)
 	// Exercise the actual Unix-socket client codec, not just handler validation.
 	socket := filepath.Join(t.TempDir(), "ipc.sock")
 	server := NewServer(svc, socket)
@@ -68,16 +60,10 @@ func TestUploadActionRoutes(t *testing.T) {
 	go server.http.Serve(server.listener)
 	client := NewClient(socket)
 	result, err := client.UploadAction(ctx, daemon.UploadActionRequest{Action: "clear", All: true})
-	if err != nil || result.Changed != 0 {
-		t.Fatalf("client round trip %+v %v", result, err)
-	}
+	failIfFmt(t, err != nil || result.Changed != 0, "client round trip %+v %v", result, err)
 	result, err = client.UploadAction(ctx, daemon.UploadActionRequest{Action: "cancel", IDs: []string{"upload:missing"}})
-	if err != nil || len(result.Errors) != 1 {
-		t.Fatalf("batch item error %+v %v", result, err)
-	}
+	failIfFmt(t, err != nil || len(result.Errors) != 1, "batch item error %+v %v", result, err)
 	// The result's counters and errors are stable JSON fields.
 	data, _ := json.Marshal(result)
-	if !strings.Contains(string(data), `"changed":0`) {
-		t.Fatal(string(data))
-	}
+	failIf(t, !strings.Contains(string(data), `"changed":0`), string(data))
 }

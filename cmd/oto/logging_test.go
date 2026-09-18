@@ -20,18 +20,14 @@ func TestChildStartupCaptureBounded(t *testing.T) {
 	legacy := filepath.Join(config.DataDir(), "daemon.log")
 	os.WriteFile(legacy, []byte("untouched"), 0600)
 	script := filepath.Join(t.TempDir(), "startup-child")
-	if err := os.WriteFile(script, []byte("#!/bin/sh\nexec 1>&2\nprintf '%040000d' 0\nprintf '\\n{\"level\":\"ERROR\",\"msg\":\"startup_fixture_failed\"}\\n'\nexit 1\n"), 0700); err != nil {
-		t.Fatal(err)
-	}
+	must(t, os.WriteFile(script, []byte("#!/bin/sh\nexec 1>&2\nprintf '%040000d' 0\nprintf '\\n{\"level\":\"ERROR\",\"msg\":\"startup_fixture_failed\"}\\n'\nexit 1\n"), 0700))
 	old := executable
 	executable = func() (string, error) { return script, nil }
 	defer func() { executable = old }()
 	ctx, cancel := context.WithTimeout(context.Background(), 750*time.Millisecond)
 	defer cancel()
 	child, input, err := startChild(ctx, "unused")
-	if err == nil || child != nil || input != nil || !strings.Contains(err.Error(), "startup_fixture_failed") || len(err.Error()) > 33<<10 {
-		t.Fatalf("startup capture: %v", err)
-	}
+	failIfFmt(t, err == nil || child != nil || input != nil || !strings.Contains(err.Error(), "startup_fixture_failed") || len(err.Error()) > 33<<10, "startup capture: %v", err)
 	if b, _ := os.ReadFile(legacy); string(b) != "untouched" {
 		t.Fatal("legacy log was changed")
 	}
@@ -52,13 +48,9 @@ func TestSecondDaemonCannotRecoverLogs(t *testing.T) {
 	cfg.Soulseek.ConnectOnStartup = false
 	cfg.DownloadDir = t.TempDir()
 	path := filepath.Join(t.TempDir(), "config.json")
-	if err := cfg.Save(path); err != nil {
-		t.Fatal(err)
-	}
+	must(t, cfg.Save(path))
 	first, err := daemon.New(cfg, filepath.Join(config.DataDir(), "state.sqlite3"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	defer first.Close()
 	dir := filepath.Join(config.DataDir(), "logs")
 	os.MkdirAll(dir, 0700)

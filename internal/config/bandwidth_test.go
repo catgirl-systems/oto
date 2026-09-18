@@ -34,77 +34,47 @@ func TestBandwidthMigration(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			for _, c := range []Config{{}, Default()} {
 				err := json.Unmarshal([]byte(test.body), &c)
-				if (err != nil) != test.invalid {
-					t.Fatalf("decode = %v", err)
-				}
-				if !test.invalid && !reflect.DeepEqual(c.Bandwidth, test.want) {
-					t.Fatalf("got %+v", c.Bandwidth)
-				}
+				failIfFmt(t, (err != nil) != test.invalid, "decode = %v", err)
+				failIfFmt(t, !test.invalid && !reflect.DeepEqual(c.Bandwidth, test.want), "got %+v", c.Bandwidth)
 			}
 		})
 	}
 	path := filepath.Join(t.TempDir(), "config.json")
 	legacy := `{"soulseek":{"username":"u","password":"p"},"uploads":{"profiles":[{"name":"Limited","speed_limit_kib":17}],"active_profile":"Limited","limit_scope":"per_transfer","scheduling":"random"}}`
-	if err := os.WriteFile(path, []byte(legacy), 0600); err != nil {
-		t.Fatal(err)
-	}
+	must(t, os.WriteFile(path, []byte(legacy), 0600))
 	c, err := Load(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	raw, _ := os.ReadFile(path)
-	if string(raw) != legacy {
-		t.Fatal("Load rewrote legacy file")
-	}
-	if c.Uploads.LimitScope != UploadLimitPerTransfer || c.Uploads.Scheduling != UploadSchedulingRandom {
-		t.Fatal("migration changed upload behavior")
-	}
-	if err := c.Save(path); err != nil {
-		t.Fatal(err)
-	}
+	failIf(t, string(raw) != legacy, "Load rewrote legacy file")
+	failIf(t, c.Uploads.LimitScope != UploadLimitPerTransfer || c.Uploads.Scheduling != UploadSchedulingRandom, "migration changed upload behavior")
+	must(t, c.Save(path))
 	raw, _ = os.ReadFile(path)
 	var saved map[string]json.RawMessage
 	_ = json.Unmarshal(raw, &saved)
-	if strings.Contains(string(saved["uploads"]), "profile") || len(saved["bandwidth"]) == 0 {
-		t.Fatal("save did not emit canonical-only profiles")
-	}
+	failIf(t, strings.Contains(string(saved["uploads"]), "profile") || len(saved["bandwidth"]) == 0, "save did not emit canonical-only profiles")
 	got, err := Load(path)
-	if err != nil || !reflect.DeepEqual(got.Bandwidth, c.Bandwidth) {
-		t.Fatalf("round trip: %+v %v", got, err)
-	}
+	failIfFmt(t, err != nil || !reflect.DeepEqual(got.Bandwidth, c.Bandwidth), "round trip: %+v %v", got, err)
 	safe := c.Redacted()
 	safe.Bandwidth.Profiles[0].Name = "mutated"
-	if c.Bandwidth.Profiles[0].Name != "Limited" {
-		t.Fatal("redacted profile slice aliases config")
-	}
+	failIf(t, c.Bandwidth.Profiles[0].Name != "Limited", "redacted profile slice aliases config")
 }
 
 func TestBandwidthValidation(t *testing.T) {
 	for _, name := range []string{"", " ", " leading", "trailing ", "bad\nname", strings.Repeat("x", 65)} {
-		if ValidateBandwidthProfileName(name) == nil {
-			t.Fatalf("accepted name %q", name)
-		}
+		failIfFmt(t, ValidateBandwidthProfileName(name) == nil, "accepted name %q", name)
 	}
-	if ValidateBandwidthProfileName(strings.Repeat("猫", 64)) != nil {
-		t.Fatal("64 Unicode characters rejected")
-	}
+	failIf(t, ValidateBandwidthProfileName(strings.Repeat("猫", 64)) != nil, "64 Unicode characters rejected")
 	b := defaultBandwidth()
 	b.Profiles = append(b.Profiles, BandwidthProfile{Name: "unlimited"})
-	if validateBandwidth(b) == nil {
-		t.Fatal("case-insensitive duplicate accepted")
-	}
+	failIf(t, validateBandwidth(b) == nil, "case-insensitive duplicate accepted")
 	for _, rates := range [][2]int{{0, 0}, {0, 1000000}, {1000000, 0}, {64, 128}, {-1, 0}, {0, -1}, {1000001, 0}, {0, 1000001}} {
 		c := Default()
 		c.Soulseek.Username, c.Soulseek.Password = "u", "p"
 		c.Bandwidth.Profiles[0].UploadSpeedLimitKiB, c.Bandwidth.Profiles[0].DownloadSpeedLimitKiB = rates[0], rates[1]
 		invalid := rates[0] < 0 || rates[1] < 0 || rates[0] > 1000000 || rates[1] > 1000000
-		if (c.Validate() != nil) != invalid {
-			t.Fatalf("rate validation %v", rates)
-		}
+		failIfFmt(t, (c.Validate() != nil) != invalid, "rate validation %v", rates)
 		data, err := json.Marshal(c)
-		if err != nil {
-			t.Fatal(err)
-		}
+		must(t, err)
 		if (json.Unmarshal(data, &Config{}) != nil) != invalid {
 			t.Fatalf("decoded rate validation %v", rates)
 		}

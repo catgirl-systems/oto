@@ -30,23 +30,15 @@ func protocolDiagnostics(t *testing.T, check func([]map[string]any), stderr io.W
 	t.Cleanup(func() {
 		m.Close()
 		data, err := os.ReadFile(filepath.Join(dir, "daemon.log"))
-		if err != nil {
-			t.Fatal(err)
-		}
+		must(t, err)
 		for _, sentinel := range []string{"song", "File not shared", "PRIVATE_PATH", "PRIVATE_CONTENT"} {
-			if bytes.Contains(data, []byte(sentinel)) {
-				t.Fatalf("leaked %s", sentinel)
-			}
+			failIfFmt(t, bytes.Contains(data, []byte(sentinel)), "leaked %s", sentinel)
 		}
 		var records []map[string]any
 		for _, line := range bytes.Split(bytes.TrimSpace(data), []byte{'\n'}) {
 			var r map[string]any
-			if err := json.Unmarshal(line, &r); err != nil {
-				t.Fatal(err)
-			}
-			if r["run_id"] == nil || r["component"] == nil {
-				t.Fatal("missing identity")
-			}
+			must(t, json.Unmarshal(line, &r))
+			failIf(t, r["run_id"] == nil || r["component"] == nil, "missing identity")
 			records = append(records, r)
 		}
 		check(records)
@@ -70,9 +62,7 @@ func checkDownloadEvents(t *testing.T, action string, records []map[string]any) 
 	}
 	matched := requireEvent(t, records, "file_token_matched")
 	first := requireEvent(t, records, "transfer_first_read")
-	if matched["connection_id"] != first["connection_id"] || matched["operation_id"] != first["operation_id"] || matched["transfer_id"] != "d-test" || matched["attempt_id"] != float64(2) {
-		t.Fatal("file correlation changed")
-	}
+	failIf(t, matched["connection_id"] != first["connection_id"] || matched["operation_id"] != first["operation_id"] || matched["transfer_id"] != "d-test" || matched["attempt_id"] != float64(2), "file correlation changed")
 	if action == "disk_failure" {
 		requireEvent(t, records, "transfer_write_ended")
 		requireEvent(t, records, "transfer_failed")
@@ -88,9 +78,7 @@ func checkDownloadEvents(t *testing.T, action string, records []map[string]any) 
 		requireEvent(t, records, "transfer_failed")
 	default:
 		control := requireEvent(t, records, "control_closed_file_continues")
-		if control["connection_id"] == matched["connection_id"] || control["operation_id"] != matched["operation_id"] {
-			t.Fatal("P/F association lost")
-		}
+		failIf(t, control["connection_id"] == matched["connection_id"] || control["operation_id"] != matched["operation_id"], "P/F association lost")
 		requireEvent(t, records, "transfer_completed")
 	}
 }
@@ -104,9 +92,7 @@ func TestBrowseFailureStages(t *testing.T) {
 					want = "frame_body"
 					requireEvent(t, records, "frame_header_received")
 				}
-				if stage != want {
-					t.Fatalf("stage=%v want=%s", stage, want)
-				}
+				failIfFmt(t, stage != want, "stage=%v want=%s", stage, want)
 				requireEvent(t, records, "browse_read_failed")
 			})
 			c := NewClient(ClientConfig{Logger: logger})
@@ -140,16 +126,12 @@ func TestStallSummaryRecoveryAndLimits(t *testing.T) {
 				recoveries++
 			}
 		}
-		if stalls != 1 || recoveries != 1 {
-			t.Fatalf("transitions: %d/%d", stalls, recoveries)
-		}
+		failIfFmt(t, stalls != 1 || recoveries != 1, "transitions: %d/%d", stalls, recoveries)
 		summary := requireEvent(t, records, "transfer_summary")
 		if _, ok := summary["last_data_age_ms"]; ok {
 			t.Fatal("unknown last data represented as known")
 		}
-		if summary["committed_bytes"] != float64(3) {
-			t.Fatal("resume offset not accounted")
-		}
+		failIf(t, summary["committed_bytes"] != float64(3), "resume offset not accounted")
 	})
 	c := NewClient(ClientConfig{Logger: logger})
 	o := c.newObservation(context.Background(), "download", 3, 100)
@@ -162,13 +144,9 @@ func TestStallSummaryRecoveryAndLimits(t *testing.T) {
 	c.LogDiagnostics(time.Now())
 	o.observe(true, 5, nil)
 	o.observe(false, 5, nil)
-	if o.committed != 3 || !o.stallWarned {
-		t.Fatal("write incorrectly counted as committed progress")
-	}
+	failIf(t, o.committed != 3 || !o.stallWarned, "write incorrectly counted as committed progress")
 	observedProgress(o, func(Progress) {
-		if o.committed != 3 {
-			t.Fatal("committed before callback returned")
-		}
+		failIf(t, o.committed != 3, "committed before callback returned")
 	})(Progress{Done: 8})
 	c.LogDiagnostics(time.Now())
 }
@@ -178,25 +156,17 @@ func TestObservedWriteKeepsOriginalError(t *testing.T) {
 	o := c.newObservation(context.Background(), "download", 0, 1)
 	defer c.endObservation(o)
 	file, err := os.CreateTemp(t.TempDir(), "PRIVATE_PATH")
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	file.Close()
 	_, err = observedWriterAt{WriterAt: file, observation: o}.WriteAt([]byte("PRIVATE_CONTENT"), 0)
-	if err == nil {
-		t.Fatal("write error hidden")
-	}
+	failIf(t, err == nil, "write error hidden")
 }
 func TestDiagnosticSocketCapability(t *testing.T) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	defer listener.Close()
 	conn, err := net.Dial("tcp", listener.Addr().String())
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	defer conn.Close()
 	wrapped := &diagnosticConn{Conn: conn}
 	if _, err := wrapped.SyscallConn(); err != nil {
@@ -223,9 +193,7 @@ func TestDownloadWaitSeconds(t *testing.T) {
 			check := func(want *uint64) {
 				t.Helper()
 				got := c.DownloadWaitSeconds("peer", `album\file`, now)
-				if (got == nil) != (want == nil) || got != nil && *got != *want {
-					t.Fatalf("wait = %v, want %v", got, want)
-				}
+				failIfFmt(t, (got == nil) != (want == nil) || got != nil && *got != *want, "wait = %v, want %v", got, want)
 			}
 			check(nil) // queued/setup, even for a resumed file
 			o.started = now.Add(-42 * time.Second)
@@ -235,9 +203,7 @@ func TestDownloadWaitSeconds(t *testing.T) {
 			o.lastRead = now.Add(-31 * time.Second)
 			seconds = 31
 			check(&seconds)
-			if o.stallWarned || !o.sampled.IsZero() {
-				t.Fatal("status read changed diagnostic sampling")
-			}
+			failIf(t, o.stallWarned || !o.sampled.IsZero(), "status read changed diagnostic sampling")
 			for _, stage := range []string{"write", "stream", "remote_upload_failed", "transfer_failed", "transfer_completed"} {
 				o.setStage(stage)
 				check(nil)

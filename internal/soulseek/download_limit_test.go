@@ -17,9 +17,7 @@ func TestDownloadBucketAccounting(t *testing.T) {
 	l.configure(1024)
 	now := l.last
 	n, delay, changed := l.take(32768, now)
-	if n != 1024 || delay != 0 {
-		t.Fatalf("initial credit: %d %v", n, delay)
-	}
+	failIfFmt(t, n != 1024 || delay != 0, "initial credit: %d %v", n, delay)
 	if n, delay, _ := l.take(1024, now); n != 0 || delay != time.Second {
 		t.Fatalf("shared credit: %d %v", n, delay)
 	}
@@ -28,9 +26,7 @@ func TestDownloadBucketAccounting(t *testing.T) {
 		t.Fatalf("short read refund: %d %v", n, delay)
 	}
 	l.configure(1024)
-	if l.changed != changed || l.credit != 512 {
-		t.Fatal("unchanged limit reset credit")
-	}
+	failIf(t, l.changed != changed || l.credit != 512, "unchanged limit reset credit")
 	if n, _, _ := l.take(1024, now.Add(time.Hour)); n != 1024 {
 		t.Fatal("idle refill missing")
 	}
@@ -45,9 +41,7 @@ func TestDownloadBucketAccounting(t *testing.T) {
 	}
 	_, _, _ = l.take(1024, l.last)
 	l.refund(1024, changed)
-	if l.credit != 0 {
-		t.Fatal("old generation refunded new bucket")
-	}
+	failIf(t, l.credit != 0, "old generation refunded new bucket")
 	l.configure(0)
 	if n, delay, _ := l.take(32768, l.last); n != 32768 || delay != 0 {
 		t.Fatal("unlimited not immediate")
@@ -86,9 +80,7 @@ func TestDownloadLimiterWakeAndRefund(t *testing.T) {
 			}
 			l.configure(rate)
 			synctest.Wait()
-			if err := <-done; err != nil {
-				t.Fatal(err)
-			}
+			must(t, <-done)
 		}
 	})
 }
@@ -135,31 +127,19 @@ func TestSharedDownloadLimitReceivePath(t *testing.T) {
 			}(uint32(i + 1))
 		}
 		synctest.Wait()
-		if len(progress) != 1 {
-			t.Fatalf("expected one shared initial chunk, got %d", len(progress))
-		}
+		failIfFmt(t, len(progress) != 1, "expected one shared initial chunk, got %d", len(progress))
 		p := <-progress
-		if p.Done != 1031 {
-			t.Fatalf("low rate did not report short read immediately: %+v", p)
-		}
+		failIfFmt(t, p.Done != 1031, "low rate did not report short read immediately: %+v", p)
 		for step := 1; step <= 3; step++ {
 			time.Sleep(time.Second)
 			synctest.Wait()
-			if len(progress) != 1 {
-				t.Fatalf("second %d: progress count %d", step, len(progress))
-			}
+			failIfFmt(t, len(progress) != 1, "second %d: progress count %d", step, len(progress))
 			<-progress
 		}
 		for i, p := range pending {
-			if err := <-p.done; err != nil {
-				t.Fatal(err)
-			}
-			if err := <-peers; err != nil {
-				t.Fatal(err)
-			}
-			if string(targets[i][:7]) != "resumed" || !bytes.Equal(targets[i][7:], bytes.Repeat([]byte("x"), 2048)) {
-				t.Fatal("resume corrupted payload")
-			}
+			must(t, <-p.done)
+			must(t, <-peers)
+			failIf(t, string(targets[i][:7]) != "resumed" || !bytes.Equal(targets[i][7:], bytes.Repeat([]byte("x"), 2048)), "resume corrupted payload")
 		}
 	})
 }
@@ -175,16 +155,12 @@ func TestThrottledDownloadCancellation(t *testing.T) {
 			done <- copyAtMost(ctx, &dst, downloadReader{ctx, &l, bytes.NewReader(make([]byte, 65536))}, 65536, 0, nil)
 		}()
 		synctest.Wait()
-		if dst.Len() != 1024 {
-			t.Fatalf("partial bytes: %d", dst.Len())
-		}
+		failIfFmt(t, dst.Len() != 1024, "partial bytes: %d", dst.Len())
 		cancel()
 		synctest.Wait()
 		if err := <-done; !errors.Is(err, ErrTransferCancelled) {
 			t.Fatalf("cancel: %v", err)
 		}
-		if dst.Len() != 1024 {
-			t.Fatal("cancellation read more bytes")
-		}
+		failIf(t, dst.Len() != 1024, "cancellation read more bytes")
 	})
 }

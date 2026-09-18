@@ -12,12 +12,8 @@ func TestStopUploadsReportsCancelledNotCompleted(t *testing.T) {
 			a := &uploadAttempt{target: target, state: state, done: done, cancel: func() {}}
 			c.uploads[downloadKey(target.Username, target.Filename)] = a
 			got := c.StopUploads([]UploadTarget{target, target, {Username: "peer", Filename: "file", Attempt: 2}}, true)
-			if state == "completed" && len(got) != 0 {
-				t.Fatalf("completion counted as cancellation: %+v", got)
-			}
-			if state == "cancelled" && (len(got) != 1 || got[0] != target) {
-				t.Fatalf("wrong cancelled identities: %+v", got)
-			}
+			failIfFmt(t, state == "completed" && len(got) != 0, "completion counted as cancellation: %+v", got)
+			failIfFmt(t, state == "cancelled" && (len(got) != 1 || got[0] != target), "wrong cancelled identities: %+v", got)
 		})
 	}
 }

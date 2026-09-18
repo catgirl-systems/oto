@@ -59,6 +59,9 @@ type Soulseek struct {
 type Share struct {
 	Name string `json:"name" validate:"required"`
 	Path string `json:"path" validate:"required"`
+	// Empty access preserves existing public roots. Reveal only discloses locked entries.
+	Access string `json:"access,omitempty" validate:"omitempty,oneof=public buddy trusted"`
+	Reveal bool   `json:"reveal,omitempty"`
 }
 
 type Search struct {
@@ -100,13 +103,16 @@ type Bandwidth struct {
 }
 
 type Uploads struct {
-	MaxQueuedFilesPerUser      uint64           `json:"max_queued_files_per_user" validate:"max=1000000"`
-	MaxQueuedBytesPerUser      uint64           `json:"max_queued_bytes_per_user" validate:"max=9223372036854775807"`
-	AutoClearCompleted         bool             `json:"auto_clear_completed"`
-	AutoClearCancelled         bool             `json:"auto_clear_cancelled"`
-	WaitForActiveUploadsOnQuit bool             `json:"wait_for_active_uploads_on_quit"`
-	LimitScope                 UploadLimitScope `json:"limit_scope" validate:"oneof=total per_transfer"`
-	Scheduling                 UploadScheduling `json:"scheduling" validate:"oneof=fifo round_robin random smallest_first"`
+	MaxQueuedFilesPerUser        uint64           `json:"max_queued_files_per_user" validate:"max=1000000"`
+	MaxQueuedBytesPerUser        uint64           `json:"max_queued_bytes_per_user" validate:"max=9223372036854775807"`
+	PrioritizeBuddies            bool             `json:"prioritize_buddies"`
+	PrioritizePrivileged         bool             `json:"prioritize_privileged"`
+	ExemptBuddiesFromQueueLimits bool             `json:"exempt_buddies_from_queue_limits"`
+	AutoClearCompleted           bool             `json:"auto_clear_completed"`
+	AutoClearCancelled           bool             `json:"auto_clear_cancelled"`
+	WaitForActiveUploadsOnQuit   bool             `json:"wait_for_active_uploads_on_quit"`
+	LimitScope                   UploadLimitScope `json:"limit_scope" validate:"oneof=total per_transfer"`
+	Scheduling                   UploadScheduling `json:"scheduling" validate:"oneof=fifo round_robin random smallest_first"`
 }
 
 type legacyUploadProfile struct {
@@ -178,20 +184,23 @@ type Statistics struct {
 	ASCIICharts        bool `json:"ascii_charts"`
 }
 type Config struct {
-	Logging         Logging    `json:"logging"`
-	Statistics      Statistics `json:"statistics"`
-	Browse          Browse     `json:"browse"`
-	AudioMetadata   bool       `json:"audio_metadata"`
-	Soulseek        Soulseek   `json:"soulseek"`
-	Search          Search     `json:"search"`
-	Bandwidth       Bandwidth  `json:"bandwidth"`
-	Uploads         Uploads    `json:"uploads"`
-	Downloads       Downloads  `json:"downloads"`
-	DownloadDir     string     `json:"download_dir" validate:"required"`
-	Shares          []Share    `json:"shares" validate:"unique=Name,dive"`
-	ShareExclusions []string   `json:"share_exclusions"`
-	DownloadSlots   int        `json:"download_slots" validate:"min=1"`
-	UploadSlots     int        `json:"upload_slots" validate:"min=1"`
+	CommunityText   map[string]CommunityTextTools `json:"community_text,omitempty"`
+	CommunityAway   map[string]CommunityAway      `json:"community_away,omitempty" validate:"dive"`
+	Receiving       map[string]Receiving          `json:"receiving,omitempty"`
+	Logging         Logging                       `json:"logging"`
+	Statistics      Statistics                    `json:"statistics"`
+	Browse          Browse                        `json:"browse"`
+	AudioMetadata   bool                          `json:"audio_metadata"`
+	Soulseek        Soulseek                      `json:"soulseek"`
+	Search          Search                        `json:"search"`
+	Bandwidth       Bandwidth                     `json:"bandwidth"`
+	Uploads         Uploads                       `json:"uploads"`
+	Downloads       Downloads                     `json:"downloads"`
+	DownloadDir     string                        `json:"download_dir" validate:"required"`
+	Shares          []Share                       `json:"shares" validate:"unique=Name,dive"`
+	ShareExclusions []string                      `json:"share_exclusions"`
+	DownloadSlots   int                           `json:"download_slots" validate:"min=1"`
+	UploadSlots     int                           `json:"upload_slots" validate:"min=1"`
 }
 
 type SafeConfig struct {
@@ -238,6 +247,14 @@ func (c Config) Redacted() SafeConfig {
 }
 
 func (c Config) Validate() error {
+	for _, policy := range c.Receiving {
+		if err := policy.Validate(); err != nil {
+			return err
+		}
+		if policy.Directory != "" && filepath.Clean(policy.Directory) == filepath.Clean(c.DownloadDir) {
+			return errors.New("received-files directory must be separate from the ordinary download directory")
+		}
+	}
 	if _, err := NormalizeLogLevel(c.Logging.Level); err != nil {
 		return err
 	}

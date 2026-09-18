@@ -14,6 +14,7 @@ import (
 	"github.com/catgirl-systems/oto/internal/config"
 	"github.com/catgirl-systems/oto/internal/daemon"
 	"github.com/catgirl-systems/oto/internal/ipc"
+	"github.com/catgirl-systems/oto/internal/soulseek"
 	"github.com/catgirl-systems/oto/internal/storage"
 )
 
@@ -37,7 +38,7 @@ func RunWithTransient(ctx context.Context, client *ipc.Client, configPath string
 	if err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("load config: %w", err)
 	}
-	stateDB, err := storage.OpenTUI(config.StatePath())
+	stateDB, err := storage.Open(config.StatePath())
 	if err != nil {
 		return fmt.Errorf("open state database: %w", err)
 	}
@@ -282,9 +283,16 @@ func (m model) browseShare(nodeID, path string, generation, request uint64) tea.
 		return shareBrowseMsg{nodeID: nodeID, generation: generation, request: request, entries: toEntries(entries), err: err}
 	}
 }
-func (m model) search(query, filter string, request, operation uint64, users ...string) tea.Cmd {
+func (m model) searchScoped(query, filter string, request, operation uint64, scope string, rooms, users []string) tea.Cmd {
+	identity := m.community.summary.CommunityIdentity
 	return func() tea.Msg {
-		page, err := m.client.Search(m.ctx, query, filter, users...)
+		var page daemon.SearchPage
+		var err error
+		if scope == "" {
+			page, err = m.client.Search(m.ctx, query, filter, users...)
+		} else {
+			page, err = m.client.SearchScoped(m.ctx, daemon.ScopedSearchRequest{CommunityIdentity: identity, Query: query, Filter: filter, Scope: scope, Usernames: users, Rooms: rooms})
+		}
 		return searchMsg{page: page, request: request, operation: operation, filter: filter, err: err}
 	}
 }
@@ -380,6 +388,9 @@ func (m *model) closeSearchTab() {
 }
 
 func (m *model) openSearch(query string, users ...string) tea.Cmd {
+	return m.openScopedSearch(query, "", users, nil)
+}
+func (m *model) openScopedSearch(query, scope string, users, rooms []string) tea.Cmd {
 	query = strings.TrimSpace(query)
 	if query == "" {
 		return nil
@@ -397,11 +408,19 @@ func (m *model) openSearch(query string, users ...string) tea.Cmd {
 	}
 	m.searchRequest++
 	m.searchOperation++
-	tab := searchTab{usernames: append([]string(nil), users...), query: query, filter: filter, selected: map[int]bool{}, loading: true, searching: true, request: m.searchRequest, operation: m.searchOperation}
+	requestScope := scope
+	tabScope := scope
+	if tabScope == "" {
+		tabScope = "global"
+		if len(users) > 0 {
+			tabScope = "users"
+		}
+	}
+	tab := searchTab{usernames: append([]string(nil), users...), rooms: append([]string(nil), rooms...), scope: tabScope, identity: m.community.summary.CommunityIdentity, query: query, filter: filter, selected: map[int]bool{}, loading: true, searching: true, request: m.searchRequest, operation: m.searchOperation}
 	m.searchTabs = append(m.searchTabs, tab)
 	m.workspace = workspaceSearch
 	m.loadSearchTab(len(m.searchTabs) - 1)
-	return m.withActivity(m.search(tab.query, tab.filter, tab.request, tab.operation, tab.usernames...))
+	return m.withActivity(m.searchScoped(tab.query, tab.filter, tab.request, tab.operation, requestScope, tab.rooms, tab.usernames))
 }
 
 func (m *model) openSearchPage(query, filter string, page daemon.SearchPage) {
@@ -427,6 +446,19 @@ func applySearchMsg(tab *searchTab, message searchMsg) {
 	if message.err != nil {
 		return
 	}
+	if message.page.CommunityIdentity != (daemon.CommunityIdentity{}) {
+		if tab.identity != (daemon.CommunityIdentity{}) && message.page.CommunityIdentity != tab.identity {
+			tab.err = daemon.ErrCommunitySession.Error()
+			return
+		}
+		tab.identity = message.page.CommunityIdentity
+	}
+	if message.page.Scope != "" {
+		tab.scope = message.page.Scope
+	}
+	tab.rooms = append([]string(nil), message.page.Rooms...)
+	tab.warning = message.page.Warning
+	tab.targetCount = message.page.TargetCount
 	tab.usernames = append([]string(nil), message.page.Usernames...)
 	results := toResults(message.page.Results)
 	if message.append {
@@ -541,6 +573,8 @@ func (m *model) loadBrowseTab(index int) {
 }
 
 func (m *model) switchWorkspace(next workspace) {
+	m.community.chats.navigation++
+	m.sharedSendTarget = nil
 	if m.workspace == workspaceSearch {
 		m.saveSearchTab()
 	} else if m.workspace == workspaceWishlist {
@@ -555,6 +589,20 @@ func (m *model) switchWorkspace(next workspace) {
 		m.transferCursors[m.transferTab] = m.cursor
 	} else if m.workspace == workspaceShares {
 		m.shareCursor = m.cursor
+	}
+	if m.workspace == workspaceCommunity && next != workspaceCommunity {
+		c := &m.community
+		if c.userCancel != nil {
+			c.userCancel()
+			c.userCancel = nil
+		}
+		c.userRequest++
+		c.userLoading, c.userRefreshed = false, time.Time{}
+		c.chats.cancelLoad()
+		c.rooms.cancelLoads()
+		c.buddies.cancelLoad()
+		c.discover.cancelLoad()
+		c.peer.cancelLoad()
 	}
 	m.workspace = (next + workspaceCount) % workspaceCount
 	if m.workspace == workspaceSearch {
@@ -667,16 +715,15 @@ func (m *model) closeBrowseTab() {
 }
 
 func (m *model) openBrowse(user, target string, refresh bool) tea.Cmd {
-	user = strings.TrimSpace(user)
-	if user == "" {
+	// Keep the selected identity exact; saved archives are labeled separately.
+	if err := soulseek.ValidateUsername(user); err != nil {
+		m.setNotice(err.Error())
 		return nil
 	}
-	if m.workspace == workspaceBrowse {
-		m.saveBrowseTab()
-	}
+	m.switchWorkspace(workspaceBrowse)
 	index := -1
 	for i := range m.browseTabs {
-		if strings.EqualFold(m.browseTabs[i].user, user) {
+		if m.browseTabs[i].user == user {
 			index = i
 			break
 		}
@@ -690,7 +737,6 @@ func (m *model) openBrowse(user, target string, refresh bool) tea.Cmd {
 	if tab.target != "" {
 		tab.filter = ""
 	}
-	m.workspace = workspaceBrowse
 	if tab.loaded && !refresh {
 		m.loadBrowseTab(index)
 		if tab.target != "" && tab.paged {
@@ -742,10 +788,82 @@ func (m model) Init() tea.Cmd {
 	if m.setup {
 		return nil
 	}
-	return tea.Batch(m.loadStatus(), m.loadTransfers(), m.loadShares(), m.loadSavedBrowses(), m.loadWishlist(), tick())
+	return tea.Batch(m.loadStatus(), m.loadTransfers(), m.loadShares(), m.loadSavedBrowses(), m.loadWishlist(), m.communitySummaryCmd(0), tick())
 }
-func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (m model) updateMessage(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch x := msg.(type) {
+	case chatCompletionMsg:
+		return m, m.applyChatCompletion(x)
+	case chatDataMsg:
+		return m, m.applyChatData(x)
+	case chatOperationMsg:
+		return m, m.applyChatOperation(x)
+	case chatCommandMsg:
+		return m, m.applyChatCommand(x)
+	case chatReadMsg:
+		return m, m.applyChatRead(x)
+	case roomPageMsg:
+		return m, m.applyRoomPage(x)
+	case roomActionMsg:
+		return m, m.applyRoomAction(x)
+	case roomMembersMsg:
+		return m, m.applyRoomMembers(x)
+	case roomFeedMsg:
+		return m, m.applyRoomFeed(x)
+	case roomFeedActionMsg:
+		return m, m.applyRoomFeedAction(x)
+	case roomWallMsg:
+		return m, m.applyCommunityWall(x)
+	case privateRoomActionMsg:
+		return m, m.applyPrivateRoomAction(x)
+	case buddyPageMsg:
+		return m, m.applyBuddyPage(x)
+	case buddyOpenMsg:
+		return m, m.applyBuddyOpen(x)
+	case buddyActionMsg:
+		return m, m.applyBuddyAction(x)
+	case discoverPageMsg:
+		return m, m.applyDiscoverPage(x)
+	case discoverInterestActionMsg:
+		return m, m.applyDiscoverInterest(x)
+	case discoverProfileMsg:
+		m.applyDiscoverProfile(x)
+	case discoverProfileSaveMsg:
+		return m, m.applyDiscoverProfileSave(x)
+	case communityPeerMsg:
+		m.applyCommunityPeer(x)
+	case communityPictureSavedMsg:
+		m.applyPeerPicture(x)
+	case tea.BlurMsg:
+		m.community.chats.blurred = true
+	case tea.FocusMsg:
+		m.community.chats.blurred = false
+		return m, m.readCommunityChat()
+	case communitySummaryMsg:
+		return m, m.applyCommunitySummary(x)
+	case privilegeMsg:
+		m.applyPrivilegeMsg(x)
+		return m, nil
+	case sharedSendPreviewMsg:
+		cmd := m.applySharedSendPreview(x)
+		return m, cmd
+	case broadcastOutputMsg:
+		cmd := m.applyBroadcastOutput(x)
+		return m, cmd
+	case receivingSettingsMsg:
+		return m, m.applyReceivingSettings(x)
+	case awaySettingsMsg:
+		return m, m.applyAwaySettings(x)
+	case textToolsMsg:
+		return m, m.applyTextTools(x)
+	case privacyRulesPageMsg:
+		return m, m.applyPrivacyRulesPage(x)
+	case shareAccessMsg:
+		return m, m.applyShareAccess(x)
+	case privacyRulesActionMsg:
+		return m, m.applyPrivacyRulesAction(x)
+	case communityUserMsg:
+		m.applyCommunityUser(x)
 	case statsMsg:
 		if x.request == m.stats.request {
 			m.stats.loading = false
@@ -776,7 +894,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.notice != "" && !time.Time(x).Before(m.noticeUntil) {
 			m.notice = ""
 		}
-		return m, tea.Batch(m.loadStatus(), m.loadTransfers(), m.loadShares(), m.loadWishlist(), m.loadStats(), tick())
+		return m, tea.Batch(m.loadStatus(), m.loadTransfers(), m.loadShares(), m.loadWishlist(), m.loadStats(), m.loadCommunitySummary(), m.loadCommunityRooms(false), m.loadCommunityMembers(false), m.loadCommunityFeed(false), m.loadCommunityWall(false), m.loadCommunityDiscover(false), tick())
 	case activityTickMsg:
 		if !m.activityRunning {
 			break
@@ -810,6 +928,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				scan = &copy
 			}
 			m.status = snapshot{status: x.snapshot.Status, presence: x.snapshot.Presence, user: x.snapshot.Config.Soulseek.Username, publicIP: x.snapshot.PublicIP, publicPort: x.snapshot.PublicPort, err: x.snapshot.Error, shareScan: scan, shareIndexRevision: x.snapshot.ShareIndexRevision}
+			m.cfg.Shares = append([]config.Share(nil), x.snapshot.Shares...)
 			m.status.waitForUploadsOnQuit = x.snapshot.Config.Uploads.WaitForActiveUploadsOnQuit
 			notification := x.snapshot.DownloadNotification
 			bell := notification.SessionID != "" && notification.SessionID == m.downloadNotification.SessionID && notification.Sequence > m.downloadNotification.Sequence
@@ -889,6 +1008,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				tab := &m.searchTabs[i]
 				if tab.request != x.request || tab.operation != x.operation {
 					continue
+				}
+				if x.err == nil && x.page.CommunityIdentity != (daemon.CommunityIdentity{}) && x.page.CommunityIdentity != m.community.summary.CommunityIdentity {
+					x.err = daemon.ErrCommunitySession
+					x.page = daemon.SearchPage{}
 				}
 				if !x.append && !x.filterChange && x.err == nil && tab.filter != x.filter {
 					cmd := m.refilterPendingSearch(tab, x.page)
@@ -1174,6 +1297,70 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.cursor = m.transferCursors[m.transferTab]
 		}
 	case tea.PasteMsg:
+		if m.commandOutput != nil {
+			if m.commandOutput.sharedPrompt != nil {
+				m.pasteSharedSendRecipient(x.Content)
+			}
+			return m, nil
+		}
+		if d := m.searchScope; d != nil {
+			if d.editing && !m.help && !m.confirm && len(x.Content) <= 4096 {
+				value, cursor := insertText(d.value, x.Content, d.cursor)
+				d.setInput(value, cursor)
+			}
+			return m, nil
+		}
+		if m.shareAccess != nil {
+			return m, nil
+		}
+		if m.privileges != nil {
+			m.pastePrivileges(x.Content)
+			return m, nil
+		}
+		if m.receivingEditor != nil {
+			m.pasteReceivingSettings(x.Content)
+			return m, nil
+		}
+		if m.awayEditor != nil {
+			m.pasteAwaySettings(x.Content)
+			return m, nil
+		}
+		if m.textTools != nil {
+			m.pasteTextTools(x.Content)
+			return m, nil
+		}
+		if m.privacyRules != nil {
+			m.pastePrivacyRules(x.Content)
+			return m, nil
+		}
+		if m.workspace == workspaceCommunity && m.community.peer.form && !m.help && m.userActions == nil {
+			m.pastePeerPath(x.Content)
+			return m, nil
+		}
+		if m.workspace == workspaceCommunity && m.community.view == 2 && (m.community.buddies.editor != nil || m.community.buddies.form != "") && m.community.chats.dialog == nil && m.community.buddies.dialog == nil && m.userActions == nil && !m.help {
+			m.pasteCommunityBuddy(x.Content)
+			return m, nil
+		}
+		if m.workspace == workspaceCommunity && m.community.view == 1 && m.community.rooms.private.editing() && m.community.rooms.private.dialog == nil && m.userActions == nil && !m.help {
+			m.pasteCommunityPrivate(x.Content)
+			return m, nil
+		}
+		if m.workspace == workspaceCommunity && m.community.view == 3 && (m.community.discover.form != "" || m.community.discover.kind() == "profile" && m.community.discover.profileDirty) && m.community.discover.dialog == nil && m.userActions == nil && !m.help {
+			m.pasteCommunityDiscover(x.Content)
+			return m, nil
+		}
+		if m.workspace == workspaceCommunity && (m.community.chats.composing || m.community.chats.form != "" || m.community.rooms.form != "") && m.community.chats.dialog == nil && m.community.rooms.dialog == nil && m.userActions == nil && !m.help && !m.community.inspectEditing {
+			if m.community.rooms.form != "" {
+				m.pasteCommunityRoom(x.Content)
+			} else {
+				m.pasteCommunityChat(x.Content)
+			}
+			return m, nil
+		}
+		if m.workspace == workspaceCommunity && m.community.inspectEditing && m.userActions == nil && !m.help {
+			m.pasteCommunityUser(x.Content)
+			return m, nil
+		}
 		if m.downloadAs != nil {
 			m.pasteDownloadAs(x.Content)
 			return m, nil

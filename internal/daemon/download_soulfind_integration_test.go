@@ -24,20 +24,12 @@ func startIntegrationUploader(t *testing.T, address, username string, files map[
 	root := t.TempDir()
 	for name, contents := range files {
 		path := filepath.Join(root, filepath.FromSlash(name))
-		if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(path, contents, 0600); err != nil {
-			t.Fatal(err)
-		}
+		must(t, os.MkdirAll(filepath.Dir(path), 0700))
+		must(t, os.WriteFile(path, contents, 0600))
 	}
 	shares := soulseek.NewShareIndex()
-	if err := shares.AddRoot("Music", root); err != nil {
-		t.Fatal(err)
-	}
-	if err := shares.ScanContext(context.Background()); err != nil {
-		t.Fatal(err)
-	}
+	must(t, shares.AddRoot("Music", root))
+	must(t, shares.ScanContext(context.Background()))
 	uploads := soulseek.NewUploadManager(1)
 	uploads.Configure(soulseek.UploadPolicy{Scheduling: soulseek.UploadScheduleFIFO, BytesPerSecond: bytesPerSecond})
 	client := soulseek.NewClient(soulseek.ClientConfig{Address: address, Username: username, Password: "pw", ListenAddr: "0.0.0.0:0", Share: shares, Uploads: uploads})
@@ -66,12 +58,8 @@ func startIntegrationDownloadService(t *testing.T, address, username, downloadRo
 	cfg.Soulseek.NATPMPPortMapping, cfg.Soulseek.UPnPPortMapping = false, false
 	cfg.DownloadDir, cfg.DownloadSlots = downloadRoot, slots
 	service, err := New(cfg, journalPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := service.Start(context.Background()); err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
+	must(t, service.Start(context.Background()))
 	waitForIntegration(t, func() bool { return service.Snapshot().Status == StatusConnected })
 	return service
 }
@@ -98,9 +86,7 @@ func waitForIntegration(t *testing.T, condition func() bool) {
 	t.Helper()
 	deadline := time.Now().Add(15 * time.Second)
 	for !condition() {
-		if time.Now().After(deadline) {
-			t.Fatal("condition was not satisfied")
-		}
+		failIf(t, time.Now().After(deadline), "condition was not satisfied")
 		time.Sleep(20 * time.Millisecond)
 	}
 }
@@ -122,16 +108,10 @@ func TestSoulfindDaemonDownloadLifecycle(t *testing.T) {
 	t.Cleanup(func() { _ = service.Close() })
 
 	original := filepath.Join(downloadRoot, firstPeer.username, "Music", firstName)
-	if err := os.MkdirAll(filepath.Dir(original), 0700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(original, []byte("existing"), 0600); err != nil {
-		t.Fatal(err)
-	}
+	must(t, os.MkdirAll(filepath.Dir(original), 0700))
+	must(t, os.WriteFile(original, []byte("existing"), 0600))
 	first, err := service.QueueDownloads([]DownloadRequest{{Username: firstPeer.username, Files: []DownloadItem{{Filename: "Music/" + firstName, Size: uint64(len(firstContents))}}}})
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	firstID := first[0].ID
 	waitForIntegration(t, func() bool {
 		transfer := integrationTransfer(service, firstID)
@@ -140,13 +120,9 @@ func TestSoulfindDaemonDownloadLifecycle(t *testing.T) {
 	})
 
 	rows, err := service.stateDB.Queries().ListDownloads(context.Background())
-	if err != nil || len(rows) != 1 || rows[0].ID != firstID {
-		t.Fatalf("queued database rows: %+v %v", rows, err)
-	}
+	failIfFmt(t, err != nil || len(rows) != 1 || rows[0].ID != firstID, "queued database rows: %+v %v", rows, err)
 	second, err := service.QueueDownloads([]DownloadRequest{{Username: secondPeer.username, Files: []DownloadItem{{Filename: "Music/" + secondName, Size: uint64(len(secondContents))}}}})
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	waitForIntegration(t, func() bool {
 		service.mu.RLock()
 		defer service.mu.RUnlock()
@@ -160,15 +136,11 @@ func TestSoulfindDaemonDownloadLifecycle(t *testing.T) {
 		t.Fatalf("queued download created part file: %v", err)
 	}
 
-	if err := service.TransferAction(firstID, "cancel"); err != nil {
-		t.Fatal(err)
-	}
+	must(t, service.TransferAction(firstID, "cancel"))
 	waitForIntegration(t, func() bool { return integrationDownload(service, firstID).State == "cancelled" })
 	waitForIntegration(t, func() bool { return integrationDownload(service, second[0].ID).State == "completed" })
 	firstPeer.uploads.Configure(soulseek.UploadPolicy{Scheduling: soulseek.UploadScheduleFIFO})
-	if err := service.TransferAction(firstID, "retry"); err != nil {
-		t.Fatal(err)
-	}
+	must(t, service.TransferAction(firstID, "retry"))
 	waitForIntegration(t, func() bool { return integrationDownload(service, firstID).State == "completed" })
 
 	if got, err := os.ReadFile(original); err != nil || string(got) != "existing" {
@@ -179,18 +151,14 @@ func TestSoulfindDaemonDownloadLifecycle(t *testing.T) {
 		t.Fatalf("completed collision download: bytes=%d err=%v", len(got), err)
 	}
 	transfer := integrationTransfer(service, firstID)
-	if transfer.State != "completed" || transfer.Done != uint64(len(firstContents)) || transfer.Total != uint64(len(firstContents)) {
-		t.Fatalf("completed progress: %+v", transfer)
-	}
+	failIfFmt(t, transfer.State != "completed" || transfer.Done != uint64(len(firstContents)) || transfer.Total != uint64(len(firstContents)), "completed progress: %+v", transfer)
 	// Completion is published before the worker finishes cleanup; clear requires both.
 	waitForIntegration(t, func() bool {
 		service.mu.RLock()
 		defer service.mu.RUnlock()
 		return service.downloadCancels[firstID] == nil
 	})
-	if err := service.TransferAction(firstID, "clear"); err != nil {
-		t.Fatal(err)
-	}
+	must(t, service.TransferAction(firstID, "clear"))
 	if download := integrationDownload(service, firstID); download.ID != "" {
 		t.Fatalf("cleared download remains: %+v", download)
 	}
@@ -216,9 +184,7 @@ func TestSoulfindDaemonRestartsAndResumesDownload(t *testing.T) {
 	username := "s" + stamp
 	service := startIntegrationDownloadService(t, address, username, downloadRoot, journalPath, 2)
 	downloads, err := service.QueueDownloads([]DownloadRequest{{Username: peer.username, Files: []DownloadItem{{Filename: "Music/" + filename, Size: uint64(len(contents))}}}})
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	id := downloads[0].ID
 	part := incompletePath(id)
 	waitForIntegration(t, func() bool {
@@ -226,12 +192,8 @@ func TestSoulfindDaemonRestartsAndResumesDownload(t *testing.T) {
 		return err == nil && stat.Size() > 0
 	})
 	before, err := os.Stat(part)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := service.Close(); err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
+	must(t, service.Close())
 	if download := integrationDownload(service, id); download.State != "queued" || download.Offset < uint64(before.Size()) {
 		t.Fatalf("shutdown journal state: %+v", download)
 	}

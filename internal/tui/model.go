@@ -54,6 +54,7 @@ const (
 	workspaceWishlist
 	workspaceBrowse
 	workspaceTransfers
+	workspaceCommunity
 	workspaceStats
 	workspaceShares
 	workspaceSettings
@@ -73,6 +74,7 @@ const (
 	settingsBrowse
 	settingsStatistics
 	settingsLogging
+	settingsCommunity
 	settingsSectionCount
 )
 
@@ -93,7 +95,10 @@ type activity struct {
 }
 
 type searchTab struct {
-	usernames                          []string
+	usernames, rooms                   []string
+	scope, warning                     string
+	targetCount                        int
+	identity                           daemon.CommunityIdentity
 	query, id, filter, filterUndo, err string
 	results                            []result
 	total, found, next, cursor         int
@@ -127,7 +132,10 @@ type transfer struct {
 	waitingForPeerSeconds, retryInSeconds     *uint64
 	queue                                     uint32
 }
-type share struct{ name, path string }
+type share struct {
+	name, path, access string
+	reveal             bool
+}
 type download struct {
 	filename string
 	size     uint64
@@ -190,6 +198,11 @@ const (
 	settingBrowseMaxEntries
 	settingBrowseMaxCompressedMiB
 	settingBrowseMaxDecompressedMiB
+	settingPrivacyRules
+	settingTextTools
+	settingChatCommands
+	settingAway
+	settingReceiving
 )
 
 type settingField struct {
@@ -201,6 +214,7 @@ type settingField struct {
 type model struct {
 	stats                                  statsViewState
 	searchScope                            *searchScope
+	commandOutput                          *commandOutput
 	downloadSelected                       map[string]bool
 	forcePending                           []string
 	ctx                                    context.Context
@@ -233,6 +247,20 @@ type model struct {
 	passwordForm, passwordChanging         bool
 	width, height                          int
 	workspace                              workspace
+	community                              communityModel
+	userActions                            *userActions
+	sharedSendTarget                       *userActions
+	privacyRules                           *privacyRulesEditor
+	textTools                              *textToolsEditor
+	awayEditor                             *awayEditor
+	receivingEditor                        *receivingEditor
+	activityBusy                           bool
+	activityRequest                        uint64
+	activityQueued                         daemon.CommunityIdentity
+	privacyRulesRequest                    uint64
+	privileges                             *privilegeEditor
+	shareAccess                            *shareAccessEditor
+	shareAccessRequest                     uint64
 	settingsSection                        settingsSection
 	transferTab                            transferTab
 	cursor, statusMenuChoice               int
@@ -312,6 +340,8 @@ func (m model) rows() int {
 		return len(m.browseTree.visible)
 	case workspaceTransfers:
 		return len(m.transferTrees[m.transferTab].visible)
+	case workspaceCommunity:
+		return 0 // Community owns its per-pane cursors.
 	case workspaceShares:
 		return len(m.shareTree.visible)
 	default:
@@ -354,7 +384,7 @@ func toTransfers(x []daemon.Transfer) []transfer {
 func toShares(x []config.Share) []share {
 	r := make([]share, len(x))
 	for i, v := range x {
-		r[i] = share{v.Name, v.Path}
+		r[i] = share{name: v.Name, path: v.Path, access: v.Access, reveal: v.Reveal}
 	}
 	return r
 }

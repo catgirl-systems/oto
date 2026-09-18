@@ -16,6 +16,10 @@ import (
 )
 
 func (s *Service) completeDownload(id, root, partPath string) {
+	s.completeDownloadContext(context.Background(), id, root, partPath)
+}
+
+func (s *Service) completeDownloadContext(workerCtx context.Context, id, root, partPath string) {
 	if absolute, err := filepath.Abs(root); err == nil {
 		root = absolute
 	} else {
@@ -27,7 +31,7 @@ func (s *Service) completeDownload(id, root, partPath string) {
 	// All bytes have arrived. Commit to finishing before releasing the lock;
 	// potentially large cross-device copies must not block the whole daemon.
 	s.mu.Lock()
-	if s.closed || s.requeueDownloads {
+	if s.closed || s.requeueDownloads || workerCtx.Err() != nil {
 		s.mu.Unlock()
 		return
 	}
@@ -35,6 +39,20 @@ func (s *Service) completeDownload(id, root, partPath string) {
 	for i := range s.journal.Downloads {
 		d := &s.journal.Downloads[i]
 		if d.ID == id && d.State == "running" {
+			// Finalization committed under this lock may finish after later revocation.
+			// Revocation already published, or an unresolved recovery address, cannot pass.
+			if receivedDownload(*d) {
+				if err := s.receivingPermissionLocked(d.StatsAccount, d.Username, s.receivedAddresses[id]); err != nil {
+					offset := d.Offset
+					s.mu.Unlock()
+					s.finishDownload(id, "failed", offset, err)
+					return
+				}
+			}
+			if workerCtx.Err() != nil {
+				s.mu.Unlock()
+				return
+			}
 			d.State, d.Offset = "finalizing", d.Size
 			s.stopTransferLocked(id)
 			download = *d
@@ -72,6 +90,9 @@ func (s *Service) completeDownload(id, root, partPath string) {
 		break
 	}
 	commands, ctx := s.cfg.Downloads, s.runCtx
+	if receivedDownload(download) && (download.StatsAccount != accountKey(s.cfg) || !s.cfg.Receiving[download.StatsAccount].CompletionHooks) {
+		commands.AfterFileCommand, commands.AfterFolderCommand = "", ""
+	}
 	folder := filepath.Dir(target)
 	folderFinished := folder != root && s.folderCompleteLocked(download.Username, folder)
 	closed := s.closed
@@ -109,6 +130,18 @@ type completionRetry struct {
 
 func (s *Service) runCompletionEffects(r completionRetry) {
 	s.mu.Lock()
+	if strings.HasPrefix(r.id, "d-received-") {
+		allow := false
+		for _, d := range s.journal.Downloads {
+			if d.ID == r.id {
+				allow = d.StatsAccount == accountKey(s.cfg) && s.cfg.Receiving[d.StatsAccount].CompletionHooks
+				break
+			}
+		}
+		if !allow {
+			r.commands.AfterFileCommand, r.commands.AfterFolderCommand = "", ""
+		}
+	}
 	r.closed = r.closed || s.closed
 	if !r.closed {
 		s.notifyDownloadLocked(r.username, r.target, r.folderFinished)

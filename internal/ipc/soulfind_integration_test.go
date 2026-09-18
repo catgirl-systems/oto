@@ -18,16 +18,10 @@ import (
 func startIPCSoulfindPeer(t *testing.T, address, username, filename string, contents []byte) {
 	t.Helper()
 	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, filename), contents, 0600); err != nil {
-		t.Fatal(err)
-	}
+	must(t, os.WriteFile(filepath.Join(root, filename), contents, 0600))
 	shares := soulseek.NewShareIndex()
-	if err := shares.AddRoot("Music", root); err != nil {
-		t.Fatal(err)
-	}
-	if err := shares.ScanContext(context.Background()); err != nil {
-		t.Fatal(err)
-	}
+	must(t, shares.AddRoot("Music", root))
+	must(t, shares.ScanContext(context.Background()))
 	client := soulseek.NewClient(soulseek.ClientConfig{Address: address, Username: username, Password: "pw", ListenAddr: "0.0.0.0:0", Share: shares})
 	deadline := time.Now().Add(10 * time.Second)
 	for {
@@ -37,9 +31,7 @@ func startIPCSoulfindPeer(t *testing.T, address, username, filename string, cont
 		if err == nil {
 			break
 		}
-		if time.Now().After(deadline) {
-			t.Fatalf("connect to Soulfind: %v", err)
-		}
+		failIfFmt(t, time.Now().After(deadline), "connect to Soulfind: %v", err)
 		time.Sleep(100 * time.Millisecond)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
@@ -65,13 +57,9 @@ func startIPCSoulfindPeer(t *testing.T, address, username, filename string, cont
 func freeListenAddress(t *testing.T) string {
 	t.Helper()
 	listener, err := net.Listen("tcp4", "0.0.0.0:0")
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	address := listener.Addr().String()
-	if err := listener.Close(); err != nil {
-		t.Fatal(err)
-	}
+	must(t, listener.Close())
 	return address
 }
 
@@ -95,17 +83,13 @@ func TestSoulfindIPCSearchAndDownload(t *testing.T) {
 	cfg.Soulseek.NATPMPPortMapping, cfg.Soulseek.UPnPPortMapping = false, false
 	cfg.DownloadDir = downloadRoot
 	service, err := daemon.New(cfg, filepath.Join(t.TempDir(), "state.sqlite3"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	socketPath := filepath.Join(t.TempDir(), "oto.sock")
 	server := NewServer(service, socketPath)
 	runCtx, stop := context.WithCancel(context.Background())
 	serverDone := make(chan error, 1)
 	go func() { serverDone <- server.Serve(runCtx) }()
-	if err := service.Start(runCtx); err != nil {
-		t.Fatal(err)
-	}
+	must(t, service.Start(runCtx))
 	t.Cleanup(func() {
 		stop()
 		_ = server.Close()
@@ -124,17 +108,13 @@ func TestSoulfindIPCSearchAndDownload(t *testing.T) {
 		if err == nil && status.Status == daemon.StatusConnected {
 			break
 		}
-		if time.Now().After(deadline) {
-			t.Fatalf("daemon did not connect through IPC: %+v %v", status, err)
-		}
+		failIfFmt(t, time.Now().After(deadline), "daemon did not connect through IPC: %+v %v", status, err)
 		time.Sleep(20 * time.Millisecond)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	page, err := client.Search(ctx, filename, "")
 	cancel()
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	var result daemon.SearchResult
 	for _, candidate := range page.Results {
 		if candidate.Username == peerUser && candidate.Path == "Music\\"+filename {
@@ -142,16 +122,12 @@ func TestSoulfindIPCSearchAndDownload(t *testing.T) {
 			break
 		}
 	}
-	if result.Username == "" || result.Size != uint64(len(contents)) {
-		t.Fatalf("search result: %+v", page.Results)
-	}
+	failIfFmt(t, result.Username == "" || result.Size != uint64(len(contents)), "search result: %+v", page.Results)
 
 	ctx, cancel = context.WithTimeout(context.Background(), 15*time.Second)
 	queued, err := client.QueueDownloads(ctx, []daemon.DownloadRequest{{Username: result.Username, Files: []daemon.DownloadItem{{Filename: result.Path, Size: result.Size}}}})
 	cancel()
-	if err != nil || len(queued) != 1 {
-		t.Fatalf("queue download: %+v %v", queued, err)
-	}
+	failIfFmt(t, err != nil || len(queued) != 1, "queue download: %+v %v", queued, err)
 	deadline = time.Now().Add(15 * time.Second)
 	for {
 		transfers, err := client.Transfers(context.Background())
@@ -160,16 +136,12 @@ func TestSoulfindIPCSearchAndDownload(t *testing.T) {
 				if transfer.ID == queued[0].ID && transfer.State == "completed" {
 					path := filepath.Join(downloadRoot, result.Username, "Music", filename)
 					got, readErr := os.ReadFile(path)
-					if readErr != nil || !bytes.Equal(got, contents) {
-						t.Fatalf("downloaded file: bytes=%d err=%v", len(got), readErr)
-					}
+					failIfFmt(t, readErr != nil || !bytes.Equal(got, contents), "downloaded file: bytes=%d err=%v", len(got), readErr)
 					return
 				}
 			}
 		}
-		if time.Now().After(deadline) {
-			t.Fatalf("download did not complete: %v", err)
-		}
+		failIfFmt(t, time.Now().After(deadline), "download did not complete: %v", err)
 		time.Sleep(20 * time.Millisecond)
 	}
 }

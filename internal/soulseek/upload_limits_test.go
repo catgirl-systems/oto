@@ -10,13 +10,9 @@ func TestOutstandingUploadLimits(t *testing.T) {
 	m := NewUploadManager(2)
 	m.Configure(UploadPolicy{MaxQueuedFilesPerUser: 2, MaxQueuedBytesPerUser: 10})
 	a, err := m.TryEnqueue("a", TransferRequest{Size: 4})
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	b, err := m.TryEnqueue("a", TransferRequest{Size: 6})
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	if _, err = m.TryEnqueue("a", TransferRequest{}); !errors.Is(err, ErrTooManyUploadFiles) {
 		t.Fatal(err)
 	}
@@ -44,16 +40,12 @@ func TestOutstandingUploadLimits(t *testing.T) {
 		}()
 	}
 	wg.Wait()
-	if accepted != 2 {
-		t.Fatalf("accepted %d", accepted)
-	}
+	failIfFmt(t, accepted != 2, "accepted %d", accepted)
 	m.Configure(UploadPolicy{MaxQueuedFilesPerUser: 1, MaxQueuedBytesPerUser: 1})
 	if _, err = m.TryEnqueue("a", TransferRequest{}); !errors.Is(err, ErrTooManyUploadFiles) {
 		t.Fatal(err)
 	}
 	restored := m.EnqueueRestored("a", TransferRequest{Size: 20})
-	if restored == nil {
-		t.Fatal("restore rejected")
-	}
+	failIf(t, restored == nil, "restore rejected")
 	m.Done(restored)
 }

@@ -21,20 +21,14 @@ func TestCancelScanOwners(t *testing.T) {
 			cfg := testConfig(t)
 			cfg.Soulseek.ConnectOnStartup = false
 			s, err := New(cfg, filepath.Join(t.TempDir(), "state.sqlite3"))
-			if err != nil {
-				t.Fatal(err)
-			}
+			must(t, err)
 			defer s.Close()
 			s.SetConfigPath(filepath.Join(t.TempDir(), "config.json"))
 			s.shareRescanDelay = 0
-			if err := cfg.Save(s.configPath); err != nil {
-				t.Fatal(err)
-			}
+			must(t, cfg.Save(s.configPath))
 			if kind == "startup" {
 				index, err := buildShareIndex(context.Background(), cfg.Shares)
-				if err != nil {
-					t.Fatal(err)
-				}
+				must(t, err)
 				s.mu.Lock()
 				s.shares = index
 				s.mu.Unlock()
@@ -44,9 +38,7 @@ func TestCancelScanOwners(t *testing.T) {
 			}
 			before := s.Snapshot()
 			cache, err := s.loadShareIndexCache(s.cfg.Shares, s.cfg.ShareExclusions)
-			if err != nil {
-				t.Fatal(err)
-			}
+			must(t, err)
 			configuration, _ := os.ReadFile(s.configPath)
 			if kind == "startup" {
 				s.cfg.ShareExclusions = []string{"*.startup"}
@@ -80,33 +72,23 @@ func TestCancelScanOwners(t *testing.T) {
 			if err := s.CancelShareScan(id + 1); !errors.Is(err, ErrScanConflict) {
 				t.Fatalf("stale: %v", err)
 			}
-			if err := s.CancelShareScan(id); err != nil {
-				t.Fatal(err)
-			}
+			must(t, s.CancelShareScan(id))
 			if err := s.CancelShareScan(id); err != nil {
 				t.Fatalf("repeat: %v", err)
 			}
-			if s.Snapshot().ShareScan.State != "cancelling" {
-				t.Fatal("not cancelling")
-			}
+			failIf(t, s.Snapshot().ShareScan.State != "cancelling", "not cancelling")
 			close(release)
 			select {
 			case err := <-done:
-				if kind == "startup" && err != nil || kind != "startup" && !errors.Is(err, ErrScanCancelled) {
-					t.Fatalf("result: %v", err)
-				}
+				failIfFmt(t, kind == "startup" && err != nil || kind != "startup" && !errors.Is(err, ErrScanCancelled), "result: %v", err)
 			case <-time.After(time.Second):
 				t.Fatal("cancellation blocked on lifecycle lock")
 			}
 			after := s.Snapshot()
-			if after.ShareScan.State != "cancelled" || after.ShareScan.Error != "" || before.ShareIndexRevision != after.ShareIndexRevision || s.cfg.DownloadSlots != cfg.DownloadSlots {
-				t.Fatalf("cancelled scan changed state: %+v", after.ShareScan)
-			}
+			failIfFmt(t, after.ShareScan.State != "cancelled" || after.ShareScan.Error != "" || before.ShareIndexRevision != after.ShareIndexRevision || s.cfg.DownloadSlots != cfg.DownloadSlots, "cancelled scan changed state: %+v", after.ShareScan)
 			gotCache, err := s.loadShareIndexCache(cfg.Shares, cfg.ShareExclusions)
 			gotConfig, _ := os.ReadFile(s.configPath)
-			if err != nil || !reflect.DeepEqual(cache.Files(), gotCache.Files()) || !bytes.Equal(configuration, gotConfig) {
-				t.Fatal("cancel changed persisted state")
-			}
+			failIf(t, err != nil || !reflect.DeepEqual(cache.Files(), gotCache.Files()) || !bytes.Equal(configuration, gotConfig), "cancel changed persisted state")
 			s.shareIndexBuilder = buildShareIndex
 			if err := s.Rescan(); err != nil {
 				t.Fatalf("subsequent scan: %v", err)
@@ -117,9 +99,7 @@ func TestCancelScanOwners(t *testing.T) {
 
 func TestScanPublicationCannotBeCancelled(t *testing.T) {
 	s, err := New(testConfig(t), filepath.Join(t.TempDir(), "journal"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	defer s.Close()
 	entered, release := make(chan struct{}), make(chan struct{})
 	done := make(chan error, 1)
@@ -131,9 +111,7 @@ func TestScanPublicationCannotBeCancelled(t *testing.T) {
 		t.Fatalf("publication cancellation: %v", err)
 	}
 	close(release)
-	if err := <-done; err != nil {
-		t.Fatal(err)
-	}
+	must(t, <-done)
 }
 
 func TestCancelledWatcherWaitsForNewChanges(t *testing.T) {
@@ -149,17 +127,11 @@ func TestCancelledWatcherWaitsForNewChanges(t *testing.T) {
 		return buildShareIndex(ctx, roots)
 	})
 	<-entered
-	if err := s.CancelShareScan(s.Snapshot().ShareScan.ID); err != nil {
-		t.Fatal(err)
-	}
+	must(t, s.CancelShareScan(s.Snapshot().ShareScan.ID))
 	waitFor(t, func() bool { return s.Snapshot().ShareScan.State == "cancelled" })
 	time.Sleep(100 * time.Millisecond)
-	if scans.Load() != 1 {
-		t.Fatal("cancelled watcher immediately retried")
-	}
-	if err := os.WriteFile(filepath.Join(root, "new.flac"), []byte("x"), 0600); err != nil {
-		t.Fatal(err)
-	}
+	failIf(t, scans.Load() != 1, "cancelled watcher immediately retried")
+	must(t, os.WriteFile(filepath.Join(root, "new.flac"), []byte("x"), 0600))
 	waitFor(t, func() bool { return hasLocalFile(s, "Music", "new.flac", 1) })
 }
 
@@ -183,9 +155,7 @@ func TestCancelPublicationArbitration(t *testing.T) {
 		close(release)
 		scanErr, cancelErr := <-done, <-cancelled
 		if cancelErr == nil {
-			if published.Load() || !errors.Is(scanErr, ErrScanCancelled) {
-				t.Fatalf("accepted cancellation published: %v", scanErr)
-			}
+			failIfFmt(t, published.Load() || !errors.Is(scanErr, ErrScanCancelled), "accepted cancellation published: %v", scanErr)
 		} else if !errors.Is(cancelErr, ErrScanConflict) || scanErr != nil || !published.Load() {
 			t.Fatalf("publication arbitration: %v %v", cancelErr, scanErr)
 		}

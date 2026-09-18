@@ -11,6 +11,7 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"net/netip"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -31,10 +32,19 @@ type ClientConfig struct {
 	Uploads                                                   *UploadManager
 	UploadUpdate                                              func(TransferEvent)
 	UploadStreamStart                                         func(TransferEvent)
+	// SharePolicy is consulted for each peer-facing share operation.
+	SharePolicy func(username string, address netip.Addr) SharePermission
 	// UploadAccepted runs after admission is reserved and before execution.
 	// Returning an error rolls the reservation back.
 	UploadAccepted func(TransferEvent) error
 	UploadRejected func(TransferEvent)
+	// DownloadOffered runs without client locks. Nil rejects unsolicited files.
+	// It must bound and persist admission before asynchronously receiving the offer.
+	DownloadOffered func(*DownloadOffer) error
+	// SocialUpdate is authoritative; Events is only a lossy diagnostic stream.
+	// A successful PrivateMessage callback must have committed content or a
+	// deliberate-discard receipt: Run sends its acknowledgement only afterward.
+	SocialUpdate func(context.Context, SocialMessage) error
 	// UploadsReady gates new admissions and streaming until recovery is complete.
 	UploadsReady   <-chan struct{}
 	IncomingSearch *IncomingSearchPolicy
@@ -55,8 +65,9 @@ func defaultIncomingSearchPolicy() IncomingSearchPolicy {
 type UserStatus uint32
 
 const (
-	UserStatusAway   UserStatus = 1
-	UserStatusOnline UserStatus = 2
+	UserStatusOffline UserStatus = 0
+	UserStatusAway    UserStatus = 1
+	UserStatusOnline  UserStatus = 2
 )
 
 type Event struct {
@@ -76,6 +87,7 @@ type pendingDownload struct {
 	writer             io.WriterAt
 	progress           ProgressFunc
 	start              func()
+	authorize          func(netip.Addr) error
 	done               chan error
 	ctx                context.Context
 	observation        *transferObservation
@@ -93,6 +105,7 @@ type peerAddressLookup struct {
 	done    chan struct{}
 	address PeerAddress
 	err     error
+	started time.Time
 }
 
 // Client owns one server connection; reconnecting creates a fresh lifecycle.
@@ -106,8 +119,14 @@ type Client struct {
 	uploadSeq             uint64
 	uploadRoot            context.Context
 	uploadCancel          context.CancelFunc
+	shareResponseRoot     context.Context
+	shareResponseCancel   context.CancelFunc
 	uploadWG              sync.WaitGroup
 	closing               bool
+	lifecycleMu           sync.Mutex // Serialize reconnect with complete upload shutdown.
+	running               bool
+	connectCancel         context.CancelFunc
+	closePending          int
 	browseSlot            chan struct{}
 	searchSlots           chan struct{}
 	conn                  net.Conn
@@ -124,6 +143,7 @@ type Client struct {
 	pending               map[uint32]chan SearchResponse
 	passwordChange        chan string
 	addresses             map[string]*peerAddressLookup
+	peerIPs               map[string]cachedShareAddress
 	pierce                map[uint32]chan net.Conn
 	peers                 map[string]*messagePeer
 	peerConnecting        map[string]chan struct{}
@@ -135,6 +155,7 @@ type Client struct {
 	incomingSearch        IncomingSearchPolicy
 	excludedSearchPhrases []string
 	token                 uint32
+	selfDescription       string
 }
 
 func NewClient(cfg ClientConfig) *Client {
@@ -156,8 +177,10 @@ func NewClient(cfg ClientConfig) *Client {
 	}
 	control := bindToDevice(cfg.NetworkInterface)
 	uploadRoot, uploadCancel := context.WithCancel(context.Background())
-	client := &Client{cfg: cfg, peers: make(map[string]*messagePeer), peerConnecting: make(map[string]chan struct{}), writeMu: make(chan struct{}, 1), dialer: net.Dialer{Control: control}, listenConfig: net.ListenConfig{Control: control}, events: make(chan Event, 32), pending: make(map[uint32]chan SearchResponse), addresses: make(map[string]*peerAddressLookup), pierce: make(map[uint32]chan net.Conn), requested: make(map[string]*pendingDownload), downloads: make(map[uint32]*pendingDownload), uploads: make(map[string]*uploadAttempt), uploadRoot: uploadRoot, uploadCancel: uploadCancel, distributed: NewDistributedNode(), incomingSearch: policy, browseSlot: make(chan struct{}, 1), searchSlots: make(chan struct{}, 2)}
+	client := &Client{cfg: cfg, peers: make(map[string]*messagePeer), peerConnecting: make(map[string]chan struct{}), writeMu: make(chan struct{}, 1), dialer: net.Dialer{Control: control}, listenConfig: net.ListenConfig{Control: control}, events: make(chan Event, 32), pending: make(map[uint32]chan SearchResponse), addresses: make(map[string]*peerAddressLookup), peerIPs: make(map[string]cachedShareAddress), pierce: make(map[uint32]chan net.Conn), requested: make(map[string]*pendingDownload), downloads: make(map[uint32]*pendingDownload), uploads: make(map[string]*uploadAttempt), uploadRoot: uploadRoot, uploadCancel: uploadCancel, distributed: NewDistributedNode(), incomingSearch: policy, browseSlot: make(chan struct{}, 1), searchSlots: make(chan struct{}, 2)}
 	client.ConfigureDownloadLimit(cfg.DownloadLimitBytesPerSecond)
+	client.shareResponseRoot, client.shareResponseCancel = context.WithCancel(uploadRoot)
+	client.beginUploadRecovery()
 	return client
 }
 
@@ -221,7 +244,8 @@ func (c *Client) SetShareIndex(index *ShareIndex) {
 	c.mu.Lock()
 	c.cfg.Share = index
 	c.mu.Unlock()
-	_ = c.send(sharedCounts(index))
+	c.RevalidateSharePolicy()
+	_ = c.send(c.shareCounts(index))
 }
 
 func (c *Client) ConfigureDownloadLimit(bytesPerSecond int64) {
@@ -254,11 +278,25 @@ func (c *Client) UploadPolicy() UploadPolicy {
 
 func (c *Client) Connect(ctx context.Context) error {
 	c.mu.Lock()
-	if c.conn != nil {
+	if c.closePending != 0 {
+		c.mu.Unlock()
+		return errors.New("soulseek: client is closing")
+	}
+	if c.conn != nil || c.running || c.connectCancel != nil {
 		c.mu.Unlock()
 		return errors.New("soulseek: already connected")
 	}
+	ctx, cancel := context.WithCancel(ctx)
+	c.connectCancel = cancel
 	c.mu.Unlock()
+	defer func() {
+		cancel()
+		c.mu.Lock()
+		c.connectCancel = nil
+		c.mu.Unlock()
+	}()
+	c.lifecycleMu.Lock()
+	defer c.lifecycleMu.Unlock()
 	started := time.Now()
 	c.log(ctx, slog.LevelDebug, "server_dial_started", nil)
 	conn, e := c.dialer.DialContext(ctx, "tcp", c.cfg.Address)
@@ -269,11 +307,15 @@ func (c *Client) Connect(ctx context.Context) error {
 	conn = c.traceConn(ctx, conn, "", "S", "server")
 	diagnostics.Event(c.peerLogger(ctx, conn), slog.LevelInfo, "server_connected", nil, slog.Int64("elapsed_ms", time.Since(started).Milliseconds()))
 	c.mu.Lock()
+	c.conn = conn
 	if c.closing {
 		c.uploadRoot, c.uploadCancel = context.WithCancel(context.Background())
+		c.shareResponseRoot, c.shareResponseCancel = context.WithCancel(c.uploadRoot)
+		c.beginUploadRecovery()
 		c.closing = false
+		c.addresses = make(map[string]*peerAddressLookup)
+		c.peerIPs = make(map[string]cachedShareAddress)
 	}
-	c.conn = conn
 	c.ctx, c.cancel = context.WithCancel(context.Background())
 	c.done = make(chan struct{})
 	c.pending = make(map[uint32]chan SearchResponse)
@@ -447,7 +489,7 @@ func (c *Client) Login(ctx context.Context) (loginErr error) {
 		}
 		_ = c.SetStatus(UserStatusOnline)
 		index := c.shareIndex()
-		_ = c.send(sharedCounts(index))
+		_ = c.send(c.shareCounts(index))
 		_ = c.send(AcceptChildren{Value: true})
 		_ = c.send(HaveNoParent{Value: true})
 		return nil
@@ -524,18 +566,26 @@ var ioErrNoProgress = errors.New("soulseek: no progress writing")
 // Run routes server frames until cancellation or connection close.
 func (c *Client) Run(ctx context.Context) error {
 	c.mu.Lock()
-	conn := c.conn
+	conn, root := c.conn, c.uploadRoot
+	if conn == nil || c.running {
+		c.mu.Unlock()
+		return ErrNotConnected
+	}
+	c.running = true
 	if c.done == nil {
 		c.done = make(chan struct{})
 	}
+	done := c.done
 	c.mu.Unlock()
-	if conn == nil {
-		return ErrNotConnected
-	}
-	defer close(c.done)
+	ctx, cancel := context.WithCancel(ctx)
+	stopClose := context.AfterFunc(root, cancel)
+	stopRead := context.AfterFunc(ctx, func() { _ = conn.SetReadDeadline(time.Now()) })
+	defer func() { stopClose(); stopRead(); cancel() }()
 	defer func() {
 		c.mu.Lock()
+		c.running = false
 		c.excludedSearchPhrases = nil
+		close(done)
 		c.mu.Unlock()
 	}()
 	for {
@@ -547,16 +597,47 @@ func (c *Client) Run(ctx context.Context) error {
 			c.emit(Event{Err: e})
 			return e
 		}
-		m, e := DecodeMessage(cmd, p)
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		m, e := DecodeServerMessage(cmd, p)
 		if e != nil {
 			c.emit(Event{Command: cmd, Err: e})
+			if _, social := m.(SocialMessage); social {
+				return e // An authoritative update cannot be silently skipped.
+			}
 			continue
 		}
-		c.route(cmd, m)
+		_, connectsPeer := m.(ConnectPeerInstruction)
+		if !connectsPeer {
+			c.route(cmd, m)
+		}
+		if message, ok := m.(SocialMessage); ok && c.cfg.SocialUpdate != nil {
+			if err := c.cfg.SocialUpdate(ctx, message); err != nil {
+				return fmt.Errorf("soulseek: social update: %w", err)
+			}
+			if private, ok := message.(PrivateMessage); ok {
+				// Callback success promises durable content or a discard receipt.
+				ackCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+				err := c.sendContext(ackCtx, PrivateMessageAck{ID: private.ID})
+				cancel()
+				if err != nil {
+					return fmt.Errorf("soulseek: private message acknowledgement: %w", err)
+				}
+			}
+		}
+		// Publish the server's privilege flag before this peer can queue an upload.
+		if connectsPeer {
+			c.route(cmd, m)
+		}
 	}
 }
 func (c *Client) route(cmd uint32, m any) {
 	switch message := m.(type) {
+	case PrivateMessage, RoomMessage:
+		// Chat content belongs only to the authoritative callback, not diagnostics.
+		c.emit(Event{Command: cmd})
+		return
 	case SearchResponse:
 		c.mu.Lock()
 		ch := c.pending[message.Token]
@@ -588,6 +669,15 @@ func (c *Client) route(cmd uint32, m any) {
 		return
 	case PeerAddress:
 		c.mu.Lock()
+		if ip, err := netip.ParseAddr(message.IP); err == nil {
+			if len(c.peerIPs) >= 4096 {
+				for username := range c.peerIPs {
+					delete(c.peerIPs, username)
+					break
+				}
+			}
+			c.peerIPs[message.Username] = cachedShareAddress{ip.Unmap(), time.Now().Add(time.Minute)}
+		}
 		lookup := c.addresses[message.Username]
 		if lookup != nil {
 			delete(c.addresses, message.Username)
@@ -639,20 +729,37 @@ func (c *Client) nextToken() uint32 {
 func (c *Client) send(m Message) error { return c.sendContext(c.baseContext(), m) }
 
 func (c *Client) sendContext(ctx context.Context, m Message) error {
+	_, err := c.sendTracked(ctx, m, nil)
+	return err
+}
+
+func (c *Client) sendTracked(ctx context.Context, m Message, beforeWrite func() error) (bool, error) {
+	b, err := EncodeMessage(m)
+	if err != nil {
+		return false, err
+	}
 	c.mu.Lock()
 	conn := c.conn
 	c.mu.Unlock()
 	if conn == nil {
-		return ErrNotConnected
-	}
-	b, e := EncodeMessage(m)
-	if e != nil {
-		return e
+		return false, ErrNotConnected
 	}
 	select {
 	case c.writeMu <- struct{}{}:
 	case <-ctx.Done():
-		return ctx.Err()
+		return false, ctx.Err()
+	}
+	defer func() { <-c.writeMu }()
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	if beforeWrite != nil {
+		if err := beforeWrite(); err != nil {
+			return false, err
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return false, err
 	}
 	done := make(chan struct{})
 	stop := context.AfterFunc(ctx, func() { _ = conn.SetWriteDeadline(time.Now()); close(done) })
@@ -661,9 +768,14 @@ func (c *Client) sendContext(ctx context.Context, m Message) error {
 			<-done
 		}
 		_ = conn.SetWriteDeadline(time.Time{})
-		<-c.writeMu
 	}()
-	return writeAll(conn, b)
+	if err := writeAll(conn, b); err != nil {
+		// A partial frame cannot be followed by another frame safely. Only close
+		// the transport here: Close may wait for the very upload doing this write.
+		_ = conn.Close()
+		return true, err
+	}
+	return true, nil
 }
 
 // Search collects token-matched responses for five seconds.
@@ -681,6 +793,10 @@ func (c *Client) collectSearch(ctx context.Context, rawQuery string, wishlist bo
 	if err != nil {
 		return nil, err
 	}
+	return c.collectSearchTargets(ctx, rawQuery, wishlist, targets, nil)
+}
+
+func (c *Client) collectSearchTargets(ctx context.Context, rawQuery string, wishlist bool, targets, rooms []string) ([]SearchResult, error) {
 	allowed := make(map[string]bool, len(targets))
 	for _, user := range targets {
 		allowed[user] = true
@@ -696,26 +812,64 @@ func (c *Client) collectSearch(ctx context.Context, rawQuery string, wishlist bo
 	c.pending[token] = responses
 	c.mu.Unlock()
 	defer func() { c.mu.Lock(); delete(c.pending, token); c.mu.Unlock() }()
-	var request Message = SearchRequest{Token: token, Query: query.wire}
-	if wishlist {
-		request = WishlistSearchRequest{Token: token, Query: query.wire}
-	}
-	if len(targets) == 0 {
-		if err := c.sendContext(ctx, request); err != nil {
-			return nil, err
+	// One cancellable sender feeds the existing collector while responses arrive.
+	// Keep the five-second response window after the final request, with a separate
+	// five-second bound on fan-out. Never spawn one worker per buddy or room.
+	sendCtx, cancelSend := context.WithTimeout(ctx, 5*time.Second)
+	sent := make(chan error, 1)
+	workerDone := make(chan struct{})
+	go func() {
+		defer close(workerDone)
+		send := func(request Message) error {
+			_, err := c.sendTracked(sendCtx, request, func() error {
+				c.mu.Lock()
+				defer c.mu.Unlock()
+				if c.done != done {
+					return ErrNotConnected
+				}
+				return nil
+			})
+			return err
 		}
-	} else {
-		for _, user := range targets {
-			if err := c.sendContext(ctx, UserSearchRequest{Username: user, Token: token, Query: query.wire}); err != nil {
-				return nil, err
+		var err error
+		switch {
+		case len(rooms) > 0:
+			for _, room := range rooms {
+				if err = send(RoomSearchRequest{Room: room, Token: token, Query: query.wire}); err != nil {
+					break
+				}
 			}
+		case len(targets) > 0:
+			for _, user := range targets {
+				if err = send(UserSearchRequest{Username: user, Token: token, Query: query.wire}); err != nil {
+					break
+				}
+			}
+		case wishlist:
+			err = send(WishlistSearchRequest{Token: token, Query: query.wire})
+		default:
+			err = send(SearchRequest{Token: token, Query: query.wire})
 		}
-	}
-	timer := time.NewTimer(5 * time.Second)
-	defer timer.Stop()
+		sent <- err
+	}()
+	defer func() { cancelSend(); <-workerDone }()
+	var timer *time.Timer
+	var timeout <-chan time.Time
+	defer func() {
+		if timer != nil {
+			timer.Stop()
+		}
+	}()
 	var results []SearchResult
 	for {
 		select {
+		case err := <-sent:
+			sent = nil
+			if err != nil {
+				return nil, err
+			}
+			timer = time.NewTimer(5 * time.Second)
+			timeout = timer.C
 		case <-ctx.Done():
 			return nil, ctx.Err()
 		case <-done:
@@ -732,7 +886,7 @@ func (c *Client) collectSearch(ctx context.Context, rawQuery string, wishlist bo
 					results = append(results, result)
 				}
 			}
-		case <-timer.C:
+		case <-timeout:
 			return results, nil
 		}
 	}
@@ -903,10 +1057,27 @@ func (c *Client) connectUserType(ctx context.Context, username, kind string) (ne
 
 func (c *Client) lookupPeerAddress(ctx context.Context, username string) (PeerAddress, error) {
 	c.mu.Lock()
+	done, root := c.done, c.uploadRoot
+	for _, pending := range c.addresses {
+		if !pending.started.IsZero() && time.Since(pending.started) > time.Minute {
+			// Address replies have no token. Retire this connection rather than
+			// reusing correlations that a late response could satisfy incorrectly.
+			conn := c.conn
+			c.mu.Unlock()
+			if conn != nil {
+				_ = conn.Close()
+			}
+			return PeerAddress{}, ErrNotConnected
+		}
+	}
 	lookup := c.addresses[username]
 	owner := lookup == nil
+	if owner && len(c.addresses) >= 256 {
+		c.mu.Unlock()
+		return PeerAddress{}, errors.New("soulseek: too many pending address lookups")
+	}
 	if owner {
-		lookup = &peerAddressLookup{done: make(chan struct{})}
+		lookup = &peerAddressLookup{done: make(chan struct{}), started: time.Now()}
 		c.addresses[username] = lookup
 	}
 	c.mu.Unlock()
@@ -925,6 +1096,10 @@ func (c *Client) lookupPeerAddress(ctx context.Context, username string) (PeerAd
 	select {
 	case <-ctx.Done():
 		return PeerAddress{}, ctx.Err()
+	case <-root.Done():
+		return PeerAddress{}, ErrNotConnected
+	case <-done:
+		return PeerAddress{}, ErrNotConnected
 	case <-lookup.done:
 		return lookup.address, lookup.err
 	}
@@ -1030,6 +1205,10 @@ func (c *Client) Download(ctx context.Context, username, filename string, size, 
 
 // DownloadWithStart is Download with a callback at the exact start of the data stream.
 func (c *Client) DownloadWithStart(ctx context.Context, username, filename string, size, offset uint64, dst io.WriterAt, progress ProgressFunc, start func()) error {
+	return c.downloadWithStart(ctx, username, filename, size, offset, dst, progress, start, nil, nil)
+}
+
+func (c *Client) downloadWithStart(ctx context.Context, username, filename string, size, offset uint64, dst io.WriterAt, progress ProgressFunc, start func(), offer *DownloadOffer, authorize func(netip.Addr) error) error {
 	if dst == nil || offset > size {
 		return ErrMalformed
 	}
@@ -1042,8 +1221,13 @@ func (c *Client) DownloadWithStart(ctx context.Context, username, filename strin
 		ctx = diagnostics.WithLogger(ctx, observation.logger)
 	}
 	pending := &pendingDownload{username: username, filename: filename, size: size, offset: offset, writer: observedWriterAt{WriterAt: dst, observation: observation}, progress: observedProgress(observation, progress), start: start, done: make(chan error, 1), ctx: ctx, observation: observation}
+	pending.authorize = authorize
 	key := downloadKey(username, filename)
 	c.mu.Lock()
+	if c.closing || c.closePending > 0 {
+		c.mu.Unlock()
+		return net.ErrClosed
+	}
 	if _, exists := c.requested[key]; exists {
 		c.mu.Unlock()
 		return errors.New("soulseek: download already queued")
@@ -1066,6 +1250,19 @@ func (c *Client) DownloadWithStart(ctx context.Context, username, filename strin
 		pending.fileMu.Lock()
 		pending.fileMu.Unlock()
 	}()
+	if offer != nil {
+		err := c.acceptDownload(offer.peer, pending, offer.request)
+		offer.releaseLease()
+		if err != nil {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case err := <-pending.done:
+			return err
+		}
+	}
 
 	setupCtx, stopSetup := context.WithTimeout(ctx, downloadSetupTimeout)
 	peer, err := c.connectUser(setupCtx, username)
@@ -1077,6 +1274,11 @@ func (c *Client) DownloadWithStart(ctx context.Context, username, filename strin
 	ctx = diagnostics.WithLogger(ctx, c.peerLogger(ctx, peer))
 	stopPeer := context.AfterFunc(ctx, func() { _ = peer.Close() })
 	defer stopPeer()
+	if authorize != nil {
+		if err := authorize(peerIP(peer.RemoteAddr())); err != nil {
+			return err
+		}
+	}
 	if err := writeMessage(peer, QueueRequest{Filename: filename}); err != nil {
 		return err
 	}
@@ -1167,6 +1369,12 @@ func (c *Client) DownloadWithStart(ctx context.Context, username, filename strin
 }
 
 func (c *Client) acceptDownload(peer net.Conn, pending *pendingDownload, request TransferRequest) error {
+	if pending.authorize != nil {
+		if err := pending.authorize(peerIP(peer.RemoteAddr())); err != nil {
+			_ = writeMessage(peer, TransferResponse{Token: request.Token, Reason: "Cancelled"})
+			return err
+		}
+	}
 	c.mu.Lock()
 	if err := pending.ctx.Err(); err != nil {
 		c.mu.Unlock()
@@ -1232,6 +1440,12 @@ func (c *Client) serveFile(peer net.Conn) {
 		c.log(context.Background(), slog.LevelInfo, "file_token_unmatched", nil, slog.String("stage", "file_handshake"), slog.String("error_class", "unknown_token"))
 		return
 	}
+	if pending.authorize != nil {
+		if err := pending.authorize(peerIP(peer.RemoteAddr())); err != nil {
+			pending.finish(err)
+			return
+		}
+	}
 	fileLogger := c.linkFileLogger(pending.ctx, peer)
 	fileCtx := diagnostics.WithLogger(pending.ctx, fileLogger)
 	diagnostics.Event(fileLogger, slog.LevelDebug, "file_token_matched", nil, slog.String("stage", "file_handshake"))
@@ -1270,6 +1484,10 @@ func (c *Client) serveFile(peer net.Conn) {
 }
 
 func (c *Client) incomingSearchResults(query string) []SearchResult {
+	return c.incomingSearchResultsFor(query, "", netip.Addr{})
+}
+
+func (c *Client) incomingSearchResultsFor(query, username string, address netip.Addr) []SearchResult {
 	c.mu.Lock()
 	index, policy := c.cfg.Share, c.incomingSearch
 	excluded := append([]string(nil), c.excludedSearchPhrases...)
@@ -1277,11 +1495,25 @@ func (c *Client) incomingSearchResults(query string) []SearchResult {
 	if index == nil || !policy.Respond || utf8.RuneCountInString(query) < policy.MinimumLength {
 		return nil
 	}
-	return searchToResults(index.Search(query, policy.MaximumResults), excluded)
+	permission := c.sharePermission(username, address)
+	if permission.Banned {
+		return nil
+	}
+	files := index.search(query, policy.MaximumResults, func(file ShareFile) bool {
+		return c.shareVisibility(permission, file.Root) != ShareHidden
+	})
+	results := searchToResults(files, excluded)
+	for i := range results {
+		results[i].Public = c.shareVisibility(permission, shareRoot(results[i].Path)) == ShareAllowed
+	}
+	return results
 }
 
 // respondSearch admits work before spawning: excess searches are best-effort and dropped.
 func (c *Client) respondSearch(search IncomingSearch) {
+	if ValidateUsername(search.Username) != nil {
+		return
+	}
 	select {
 	case c.searchSlots <- struct{}{}:
 	default:
@@ -1289,11 +1521,20 @@ func (c *Client) respondSearch(search IncomingSearch) {
 	}
 	go func() {
 		defer func() { <-c.searchSlots }()
-		results := c.incomingSearchResults(search.Query)
-		if len(results) == 0 {
+		c.mu.Lock()
+		policy, index := c.incomingSearch, c.cfg.Share
+		c.mu.Unlock()
+		if !policy.Respond || utf8.RuneCountInString(search.Query) < policy.MinimumLength {
+			return
+		}
+		// Avoid peer connections for searches that cannot match any share tier.
+		if index == nil || len(index.Search(search.Query, 1)) == 0 {
 			return
 		}
 		ctx, cancel := context.WithTimeout(c.baseContext(), 10*time.Second)
+		policyCtx := c.shareResponseContext()
+		stopPolicy := context.AfterFunc(policyCtx, cancel)
+		defer stopPolicy()
 		defer cancel()
 		// Search replies are one-shot: receivers may close after each response.
 		peer, err := c.connectUserType(ctx, search.Username, "P")
@@ -1303,7 +1544,11 @@ func (c *Client) respondSearch(search IncomingSearch) {
 		defer peer.Close()
 		stop := context.AfterFunc(ctx, func() { _ = peer.Close() })
 		defer stop()
-		_ = writeMessage(peer, SearchResponse{Username: c.cfg.Username, Token: search.Token, Results: results, SlotFree: true})
+		results := c.incomingSearchResultsFor(search.Query, search.Username, peerIP(peer.RemoteAddr()))
+		if len(results) == 0 {
+			return
+		}
+		_ = writeShareMessage(policyCtx, peer, SearchResponse{Username: c.cfg.Username, Token: search.Token, Results: results, SlotFree: true})
 	}()
 }
 
@@ -1382,9 +1627,7 @@ func (c *Client) serveDistributed(peer net.Conn, username string) {
 	_ = WriteDistributed(peer, DistributedMessage{Command: DistributedBranchLevelCommand, Payload: level.MarshalBinary()})
 	rootPayload, _ := DistributedBranchRoot(root).MarshalBinary()
 	_ = WriteDistributed(peer, DistributedMessage{Command: DistributedBranchRootCommand, Payload: rootPayload})
-	writeDone := make(chan struct{})
 	go func() {
-		defer close(writeDone)
 		for message := range messages {
 			if WriteDistributed(peer, message) != nil {
 				return
@@ -1481,6 +1724,9 @@ func countryCodeForAddress(addr net.Addr) string {
 }
 
 func (c *Client) serveMessagePeer(peer net.Conn, peerInfo PeerInitMessage) {
+	if ValidateUsername(peerInfo.Username) != nil {
+		return
+	}
 	// A completed handshake can still be the losing direct/reverse route.
 	// Only replace the active socket once the remote actually uses this one.
 	conn := peer
@@ -1513,9 +1759,19 @@ func (c *Client) serveMessagePeer(peer net.Conn, peerInfo PeerInitMessage) {
 
 func (c *Client) handleMessagePeer(peer net.Conn, peerInfo PeerInitMessage, command uint32, payload []byte) {
 	switch command {
+	case PeerUserInfoRequest:
+		if len(payload) != 0 {
+			return
+		}
+		if err := writeMessage(peer, c.SelfProfile()); err != nil {
+			return
+		}
 	case PeerGetSharedList:
 		if len(payload) == 0 {
-			_ = writeMessage(peer, SharedListResponse{Entries: c.shareEntries()})
+			ctx := c.shareResponseContext()
+			if writeShareMessage(ctx, peer, SharedListResponse{Entries: c.shareEntriesFor(peerInfo.Username, peerIP(peer.RemoteAddr()))}) != nil {
+				return
+			}
 		}
 	case PeerFolderContents:
 		d := NewDecoder(payload)
@@ -1527,8 +1783,13 @@ func (c *Client) handleMessagePeer(peer net.Conn, peerInfo PeerInitMessage, comm
 		if err != nil || d.Done() != nil {
 			return
 		}
+		ctx := c.shareResponseContext()
 		entries, _ := c.shareIndex().Subtree(path)
-		_ = writeMessage(peer, FolderResponse{Token: token, Path: path, Entries: entries})
+		permission := c.sharePermission(peerInfo.Username, peerIP(peer.RemoteAddr()))
+		entries = c.filterShareEntries(entries, permission)
+		if writeShareMessage(ctx, peer, FolderResponse{Token: token, Path: path, Entries: entries}) != nil {
+			return
+		}
 	case PeerSearch:
 		response, err := DecodeSearchResponse(payload)
 		if err == nil {
@@ -1558,7 +1819,7 @@ func (c *Client) handleMessagePeer(peer net.Conn, peerInfo PeerInitMessage, comm
 			return
 		}
 		if request.Direction == 0 {
-			_, _, err := c.registerUpload(peerInfo.Username, request.Filename, true)
+			_, _, err := c.registerUploadWithAddress(peerInfo.Username, request.Filename, true, peerIP(peer.RemoteAddr()), false, "")
 			if err != nil {
 				_ = writeMessage(peer, TransferResponse{Token: request.Token, Accepted: false, Reason: uploadDenial(err)})
 				return
@@ -1578,34 +1839,61 @@ func (c *Client) handleMessagePeer(peer net.Conn, peerInfo PeerInitMessage, comm
 		pending := c.requested[downloadKey(peerInfo.Username, clean)]
 		c.mu.Unlock()
 		if pending == nil {
-			_ = writeMessage(peer, TransferResponse{Token: request.Token, Accepted: false, Reason: "Cancelled"})
+			c.offerDownload(peer, peerInfo.Username, clean, request)
 			return
 		}
 		if err := c.acceptDownload(peer, pending, request); err != nil {
 			pending.finish(err)
+		}
+	case PeerPlaceInQueueRequest:
+		filename, err := parseStringPayload(payload)
+		if err != nil {
+			return
+		}
+		if c.writeUploadPosition(peer, peerInfo.Username, filename) != nil {
+			return
 		}
 	case PeerQueueUpload:
 		filename, err := parseStringPayload(payload)
 		if err != nil {
 			return
 		}
-		a, _, err := c.registerUpload(peerInfo.Username, filename, true)
+		a, _, err := c.registerUploadWithAddress(peerInfo.Username, filename, true, peerIP(peer.RemoteAddr()), false, "")
 		if err != nil {
 			_ = writeMessage(peer, QueueDenied{Filename: filename, Reason: uploadDenial(err)})
 			return
 		}
-		_ = writeMessage(peer, QueuePlace{Filename: a.target.Filename, Place: 1})
+		if c.writeUploadPosition(peer, peerInfo.Username, a.target.Filename) != nil {
+			return
+		}
 	}
 }
 
 func (c *Client) shareEntries() []ShareEntry {
+	return c.shareEntriesFor("", netip.Addr{})
+}
+
+func (c *Client) shareEntriesFor(username string, address netip.Addr) []ShareEntry {
+	permission := c.sharePermission(username, address)
+	if permission.Banned {
+		return nil
+	}
 	files := c.shareIndex().Files()
 	out := make([]ShareEntry, 0, len(files))
 	for _, file := range files {
-		out = append(out, file.entry(file.Root+"\\"+strings.ReplaceAll(file.Path, "/", "\\")))
+		visibility := c.shareVisibility(permission, file.Root)
+		if visibility == ShareHidden {
+			continue
+		}
+		entry := file.entry(file.Root + "\\" + strings.ReplaceAll(file.Path, "/", "\\"))
+		if visibility == ShareLocked {
+			entry.Private = true
+		}
+		out = append(out, entry)
 	}
 	return out
 }
+
 func searchToResults(files []ShareFile, excludedPhrases []string) []SearchResult {
 	out := make([]SearchResult, 0, len(files))
 	fold := cases.Fold()
@@ -1627,6 +1915,21 @@ func searchToResults(files []ShareFile, excludedPhrases []string) []SearchResult
 
 // Close stops listener and connection, then waits for every upload attempt.
 func (c *Client) Close() error {
+	// Cancel a blocked dial before waiting for its lifecycle transition.
+	c.mu.Lock()
+	c.closePending++
+	defer func() {
+		c.mu.Lock()
+		c.closePending--
+		c.mu.Unlock()
+	}()
+	dialCancel := c.connectCancel
+	c.mu.Unlock()
+	if dialCancel != nil {
+		dialCancel()
+	}
+	c.lifecycleMu.Lock()
+	defer c.lifecycleMu.Unlock()
 	c.mu.Lock()
 	ln, conn, cancel, uploadCancel := c.listener, c.conn, c.cancel, c.uploadCancel
 	c.listener = nil

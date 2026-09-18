@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net/netip"
 	"os"
 	"path"
 	"path/filepath"
@@ -67,21 +68,23 @@ type ShareScan struct {
 }
 
 type Snapshot struct {
-	Logging              *diagnostics.Status  `json:"logging,omitempty"`
-	Shutdown             *ShutdownStatus      `json:"shutdown,omitempty"`
-	StatsWarning         string               `json:"stats_warning,omitempty"`
-	Status               Status               `json:"status"`
-	Presence             Presence             `json:"presence"`
-	Error                string               `json:"error,omitempty"`
-	PublicIP             string               `json:"public_ip,omitempty"`
-	PublicPort           uint16               `json:"public_port,omitempty"`
-	Config               config.SafeConfig    `json:"config"`
-	Shares               []config.Share       `json:"shares"`
-	ShareScan            *ShareScan           `json:"share_scan,omitempty"`
-	ShareIndexRevision   uint64               `json:"share_index_revision"`
-	DownloadNotification DownloadNotification `json:"download_notification"`
-	Downloads            []Download           `json:"downloads"`
-	Transfers            []Transfer           `json:"transfers"`
+	CommunityCapabilities []string             `json:"community_capabilities"`
+	Logging               *diagnostics.Status  `json:"logging,omitempty"`
+	Shutdown              *ShutdownStatus      `json:"shutdown,omitempty"`
+	StatsWarning          string               `json:"stats_warning,omitempty"`
+	Status                Status               `json:"status"`
+	Presence              Presence             `json:"presence"`
+	Error                 string               `json:"error,omitempty"`
+	PublicIP              string               `json:"public_ip,omitempty"`
+	PublicPort            uint16               `json:"public_port,omitempty"`
+	Config                config.SafeConfig    `json:"config"`
+	Shares                []config.Share       `json:"shares"`
+	ShareScan             *ShareScan           `json:"share_scan,omitempty"`
+	ShareIndexRevision    uint64               `json:"share_index_revision"`
+	DownloadNotification  DownloadNotification `json:"download_notification"`
+	BuddyNotification     DownloadNotification `json:"buddy_notification"`
+	Downloads             []Download           `json:"downloads"`
+	Transfers             []Transfer           `json:"transfers"`
 }
 
 type PasswordChangeResult struct {
@@ -109,12 +112,14 @@ type SearchResult struct {
 	Public      bool   `json:"public"`
 }
 type Search struct {
+	SearchContext
 	Usernames []string `json:"usernames,omitempty"`
 	ID        string
 	Query     string
 	Results   []SearchResult
 }
 type SearchPage struct {
+	SearchContext
 	Usernames  []string       `json:"usernames,omitempty"`
 	ID         string         `json:"id"`
 	Query      string         `json:"query"`
@@ -198,10 +203,12 @@ type portMappingOpener func(context.Context, uint16, bool, bool, func(uint16)) (
 type Service struct {
 	diagnostics            *diagnostics.Manager
 	telemetry              *telemetryState
+	community              communityState
 	mu                     sync.RWMutex
 	lifecycleMu            sync.Mutex
 	uploadMu               sync.Mutex
 	uploadEpoch            uint64
+	uploadRecoveryReady    chan struct{}
 	uploadAccounts         map[uint64]string
 	uploadOwners           map[string]uploadOwner
 	uploadCancelEligible   map[string]uploadOwner
@@ -228,12 +235,15 @@ type Service struct {
 	browseProgress         map[string]trackedBrowse
 	fullBrowse             fullBrowseFunc
 	fullBrowseDirectories  func(context.Context, *soulseek.Client, string, func(uint64, uint64)) ([]soulseek.ShareDirectory, error)
+	profileFetch           func(context.Context, *soulseek.Client, string) (soulseek.PeerProfile, error)
 	browseSeq              uint64
 	browseProgressSeq      uint64
 	transfers              map[string]Transfer
 	transferTiming         map[string]transferTiming
 	downloadSlots          chan struct{}
 	downloadCancels        map[string]context.CancelFunc
+	receivedOffers         map[string]*soulseek.DownloadOffer
+	receivedAddresses      map[string]netip.Addr
 	downloadDone           map[string]chan struct{}
 	downloadPeers          map[string]chan struct{}
 	ctx                    context.Context
@@ -241,6 +251,7 @@ type Service struct {
 	shareWatchCancel       context.CancelFunc
 	shareIndexBuilder      func(context.Context, []config.Share) (*soulseek.ShareIndex, error)
 	downloadNotification   DownloadNotification
+	buddyNotifyActive      bool
 	desktopNotify          func(context.Context, string, string) error
 	shareScanGate          chan struct{}
 	scanCtx                context.Context
@@ -291,6 +302,7 @@ func New(cfg config.Config, path string) (*Service, error) {
 	}
 	cfg.Logging.Level = level
 	cfg.Bandwidth.Profiles = slices.Clone(cfg.Bandwidth.Profiles)
+	cfg.Shares = slices.Clone(cfg.Shares)
 	rules, err := config.NormalizeShareExclusions(cfg.ShareExclusions)
 	if err != nil {
 		return nil, err
@@ -331,6 +343,12 @@ func New(cfg config.Config, path string) (*Service, error) {
 	if err = s.loadState(); err != nil {
 		return fail(fmt.Errorf("daemon: load state: %w", err))
 	}
+	if err = s.recoverCommunityOutbox(context.Background(), ""); err != nil {
+		return fail(fmt.Errorf("daemon: recover private outbox: %w", err))
+	}
+	if err = s.loadCommunityLocked(context.Background()); err != nil {
+		return fail(fmt.Errorf("daemon: load community: %w", err))
+	}
 	// Load durable records before recovering abandoned attempts.
 	if err = s.loadWishlist(); err != nil {
 		return fail(fmt.Errorf("daemon: load wishlist: %w", err))
@@ -339,6 +357,7 @@ func New(cfg config.Config, path string) (*Service, error) {
 		return fail(fmt.Errorf("daemon: init share storage: %w", err))
 	}
 	s.initTelemetry()
+	s.community.identity.Daemon = s.telemetry.session
 	if err = s.ensureStatsSince(); err != nil {
 		return fail(fmt.Errorf("daemon: save statistics start: %w", err))
 	}
@@ -384,6 +403,8 @@ func (s *Service) Snapshot() Snapshot {
 		warning = s.telemetry.warning
 	}
 	snapshot := Snapshot{Logging: logging, StatsWarning: warning, Status: s.status, Presence: s.presence, Error: s.lastErr, PublicIP: publicIP, PublicPort: publicPort, Config: s.cfg.Redacted(), Shares: append([]config.Share(nil), s.cfg.Shares...), ShareScan: scan, ShareIndexRevision: s.shareIndexRevision, DownloadNotification: s.downloadNotification, Downloads: append([]Download(nil), s.journal.Downloads...), Transfers: s.transferValuesLocked(now)}
+	snapshot.CommunityCapabilities = communityCapabilities()
+	snapshot.BuddyNotification = s.community.buddyNotification
 	if s.shuttingDown {
 		snapshot.Shutdown = &ShutdownStatus{}
 		if s.shutdownClient != nil {
@@ -450,6 +471,8 @@ func (s *Service) Start(ctx context.Context) error {
 	go s.wishlistLoop(s.runCtx)
 	s.wg.Add(1)
 	go s.telemetryLoop(s.runCtx)
+	s.wg.Add(1)
+	go s.awayLoop(s.runCtx)
 	s.mu.Unlock()
 	if connect {
 		return s.setPresenceLocked(PresenceOnline)
@@ -469,6 +492,10 @@ func (s *Service) SetPresence(presence Presence) error {
 	if closed {
 		return ErrClosed
 	}
+	s.mu.Lock()
+	s.community.away.automatic = false
+	s.noteCommunityActivityLocked(time.Now())
+	s.mu.Unlock()
 	if presence == PresenceOffline {
 		s.stopSessionLocked(true)
 		return nil
@@ -526,6 +553,9 @@ func (s *Service) setPresenceLocked(presence Presence) error {
 	if s.presence == presence && s.client != nil {
 		s.mu.Unlock()
 		return nil
+	}
+	if presence != s.presence || presence != PresenceAway {
+		s.community.away.replies = nil
 	}
 	s.presence = presence
 	client, active := s.client, s.cancel != nil
@@ -586,6 +616,7 @@ func (s *Service) stopSessionLocked(offline bool) {
 	s.uploadMu.Lock()
 	s.mu.Lock()
 	s.retireUploadsLocked()
+	s.retireCommunityLocked()
 	cancel, client, mapping := s.cancel, s.client, s.mapping
 	s.ctx, s.cancel, s.client, s.mapping = nil, nil, nil, nil
 	s.wishlistServerInterval = 0
@@ -668,15 +699,30 @@ func (s *Service) connectOnce(ctx context.Context) error {
 		s.mu.Unlock()
 		return context.Canceled
 	}
+	if err := s.loadCommunityLocked(ctx); err != nil {
+		s.mu.Unlock()
+		return err
+	}
+	if err := s.recoverCommunityOutbox(ctx, accountKey(cfg)); err != nil {
+		s.mu.Unlock()
+		return err
+	}
 	s.uploadEpoch++
 	epoch := s.uploadEpoch
 	if s.uploadAccounts == nil {
 		s.uploadAccounts = map[uint64]string{}
 	}
 	s.uploadAccounts[epoch] = accountKey(cfg)
+	identity := CommunityIdentity{Account: accountKey(cfg), Daemon: s.community.identity.Daemon, Session: epoch}
+	description := s.community.discovery.description
 	s.mu.Unlock()
 	uploadsReady := make(chan struct{})
-	defer close(uploadsReady)
+	connected := false
+	defer func() {
+		if !connected {
+			close(uploadsReady)
+		}
+	}()
 	networkLogger := s.logger()
 	if networkLogger != nil {
 		networkLogger = networkLogger.With("session_id", epoch)
@@ -686,14 +732,25 @@ func (s *Service) connectOnce(ctx context.Context) error {
 		Address: cfg.Soulseek.Server, Username: cfg.Soulseek.Username, Password: cfg.Soulseek.Password,
 		ListenAddr: cfg.Soulseek.ListenAddr, NetworkInterface: cfg.Soulseek.NetworkInterface,
 		Share: idx, Uploads: newUploadManager(cfg), IncomingSearch: &searchPolicy,
+		SharePolicy: func(username string, address netip.Addr) soulseek.SharePermission {
+			return s.communitySharePermission(epoch, identity.Account, username, address)
+		},
 		UploadsReady:                uploadsReady,
 		DownloadLimitBytesPerSecond: downloadLimit(cfg),
 		BrowseLimits:                browseLimits(cfg),
 		UploadAccepted:              func(event soulseek.TransferEvent) error { return s.uploadAccepted(epoch, event) },
+		DownloadOffered:             func(offer *soulseek.DownloadOffer) error { return s.queueReceivedOffer(identity, epoch, offer) },
 		UploadRejected:              func(event soulseek.TransferEvent) { s.uploadRejected(epoch, event) },
 		UploadUpdate:                func(event soulseek.TransferEvent) { s.uploadUpdate(epoch, event) },
 		UploadStreamStart:           func(event soulseek.TransferEvent) { s.uploadStreamStart(epoch, event) },
+		SocialUpdate: func(ctx context.Context, message soulseek.SocialMessage) error {
+			return s.communityUpdate(ctx, identity, message)
+		},
 	})
+	if err := client.SetSelfDescription(description); err != nil {
+		_ = client.Close()
+		return err
+	}
 	if err := client.Connect(ctx); err != nil {
 		return err
 	}
@@ -745,13 +802,25 @@ func (s *Service) connectOnce(ctx context.Context) error {
 	client.ConfigureDownloadLimit(downloadLimit(s.cfg))
 	client.ConfigureIncomingSearch(incomingSearchPolicy(s.cfg))
 	client.ConfigureBrowseLimits(browseLimits(s.cfg))
+	if err := client.SetSelfDescription(s.community.discovery.description); err != nil {
+		s.mu.Unlock()
+		s.closePortMapping(mapping)
+		_ = client.Close()
+		return err
+	}
+	s.community.discovery.written = map[string]string{}
 	s.client, s.mapping = client, mapping
+	s.uploadRecoveryReady = uploadsReady
+	s.community.identity, s.community.online = identity, true
+	s.applyUploadUserPoliciesLocked()
+	s.beginCommunityRoomsLocked()
+	s.community.revision++
 	idx = s.shares
 	s.status, s.lastErr = StatusConnected, ""
 	s.mu.Unlock()
 	s.event(slog.LevelInfo, "session_connected", nil, slog.String("public_ip", client.PublicIP()), slog.Uint64("advertised_port", uint64(client.PublicPort())))
 	client.SetShareIndex(idx)
-	s.recoverUploads(client, epoch)
+	connected = true
 	return nil
 }
 
@@ -799,6 +868,7 @@ func (s *Service) reconnectLoop(ctx context.Context) {
 
 		s.mu.RLock()
 		client, mapping, current := s.client, s.mapping, s.ctx == ctx && !s.shuttingDown
+		ready, epoch := s.uploadRecoveryReady, s.uploadEpoch
 		s.mu.RUnlock()
 		if !current || ctx.Err() != nil {
 			return
@@ -811,7 +881,20 @@ func (s *Service) reconnectLoop(ctx context.Context) {
 			eventCtx, stopEvents := context.WithCancel(ctx)
 			eventsDone := make(chan struct{})
 			go func() { s.consumeClientEvents(eventCtx, client); close(eventsDone) }()
+			recoveryDone := make(chan struct{})
+			go func() {
+				defer close(recoveryDone)
+				if ready != nil {
+					defer close(ready)
+				}
+				s.recoverUploads(client, epoch)
+			}()
 			err = client.Run(ctx)
+			s.mu.Lock()
+			if s.client == client {
+				s.retireCommunityLocked()
+			}
+			s.mu.Unlock()
 			s.event(slog.LevelWarn, "session_disconnected", err)
 			stopEvents()
 			<-eventsDone
@@ -826,6 +909,7 @@ func (s *Service) reconnectLoop(ctx context.Context) {
 			s.mu.Unlock()
 			_ = client.Close()
 			s.uploadMu.Unlock()
+			<-recoveryDone
 			s.wakeWishlist()
 		}
 		if err == nil {
@@ -903,6 +987,7 @@ func (s *Service) Close() error {
 		return nil
 	}
 	s.retireUploadsLocked()
+	s.retireCommunityLocked()
 	s.closed = true
 	s.requeueDownloads = s.cancel != nil
 	runCancel, cancel, client, mapping := s.runCancel, s.cancel, s.client, s.mapping
@@ -953,31 +1038,7 @@ func (s *Service) Close() error {
 }
 
 func (s *Service) Search(ctx context.Context, query, expression string, users ...string) (SearchPage, error) {
-	targets, targetErr := soulseek.NormalizeSearchUsers(users)
-	if targetErr != nil {
-		return SearchPage{}, targetErr
-	}
-	filter, err := parseSearchFilter(expression)
-	if err != nil {
-		return SearchPage{}, err
-	}
-	s.mu.RLock()
-	c := s.client
-	s.mu.RUnlock()
-	if c == nil {
-		return SearchPage{}, ErrNotStarted
-	}
-	r, err := c.Search(ctx, query, targets...)
-	if err != nil {
-		return SearchPage{}, err
-	}
-	out := fromSoulseekResults(r)
-	sortSearchResults(out)
-	search := Search{Usernames: targets, ID: fmt.Sprintf("%d", time.Now().UnixNano()), Query: query, Results: out}
-	s.mu.Lock()
-	s.searches[search.ID] = search
-	s.mu.Unlock()
-	return filteredSearchPage(search, filter, 0), nil
+	return s.SearchScoped(ctx, ScopedSearchRequest{Query: query, Filter: expression, Usernames: users})
 }
 
 func sortSearchResults(results []SearchResult) {
@@ -1007,7 +1068,9 @@ func filteredSearchPage(search Search, filter searchFilter, cursor int) SearchPa
 	}
 	cursor = max(0, min(cursor, len(results)))
 	end := min(cursor+searchPageSize, len(results))
-	page := SearchPage{Usernames: slices.Clone(search.Usernames), ID: search.ID, Query: search.Query, Results: append([]SearchResult(nil), results[cursor:end]...), Cursor: cursor, Total: len(results), FoundTotal: len(search.Results)}
+	page := SearchPage{SearchContext: search.SearchContext, Usernames: slices.Clone(search.Usernames[:min(len(search.Usernames), 200)]), ID: search.ID, Query: search.Query, Results: append([]SearchResult(nil), results[cursor:end]...), Cursor: cursor, Total: len(results), FoundTotal: len(search.Results)}
+	page.Rooms = slices.Clone(search.Rooms[:min(len(search.Rooms), 200)])
+	page.TargetsTruncated = len(search.Usernames) > 200 || len(search.Rooms) > 200
 	if end < len(results) {
 		page.NextCursor = end
 	}
@@ -1188,10 +1251,38 @@ func (s *Service) QueueFolder(ctx context.Context, req FolderDownloadRequest) ([
 }
 
 func (s *Service) QueueDownloads(reqs []DownloadRequest) ([]Download, error) {
+	return s.queueDownloads(context.Background(), reqs, nil)
+}
+
+// A browse selection is checked under the same lock as durable admission.
+func (s *Service) queueDownloads(ctx context.Context, reqs []DownloadRequest, source *loadedBrowse) ([]Download, error) {
+	return s.queueDownloadsWithOffer(ctx, reqs, source, nil)
+}
+
+func (s *Service) queueDownloadsWithOffer(ctx context.Context, reqs []DownloadRequest, source *loadedBrowse, received *receivedOffer) ([]Download, error) {
 	s.mu.Lock()
+	if err := ctx.Err(); err != nil {
+		s.mu.Unlock()
+		return nil, err
+	}
+	if source != nil {
+		current, ok := s.browses[source.username]
+		if !ok || current.result.Revision != source.result.Revision || current.snapshot != source.snapshot {
+			s.mu.Unlock()
+			return nil, ErrBrowseRevision
+		}
+	}
 	if s.closed {
 		s.mu.Unlock()
 		return nil, ErrClosed
+	}
+	if received != nil {
+		var err error
+		reqs, err = s.prepareReceivedRequestLocked(ctx, received)
+		if err != nil {
+			s.mu.Unlock()
+			return nil, err
+		}
 	}
 	matcher, err := downloadMatcher(s.cfg)
 	if err != nil {
@@ -1244,6 +1335,10 @@ func (s *Service) QueueDownloads(reqs []DownloadRequest) ([]Download, error) {
 				state, reason = "filtered", "Matched download filter"
 			}
 			out = append(out, Download{ID: fmt.Sprintf("d-%d", sequence), Username: req.Username, Filename: strings.ReplaceAll(name, "/", "\\"), Size: item.Size, Offset: item.Offset, DownloadDir: root, Destination: dest, State: state, Error: reason, CreatedAt: now, UpdatedAt: now})
+			if received != nil {
+				out[len(out)-1].ID = fmt.Sprintf("d-received-%d", sequence)
+				out[len(out)-1].StatsAccount = received.identity.Account
+			}
 		}
 	}
 	previous := s.journal
@@ -1262,9 +1357,9 @@ func (s *Service) QueueDownloads(reqs []DownloadRequest) ([]Download, error) {
 	for _, d := range out {
 		dirty[d.ID] = true
 	}
-	err = s.commitLockedFor(context.Background(), dirty, func(q *db.Queries) error {
+	err = s.commitLockedFor(ctx, dirty, func(q *db.Queries) error {
 		for _, d := range out {
-			if err := q.UpsertDownload(context.Background(), downloadParams(d)); err != nil {
+			if err := q.UpsertDownload(ctx, downloadParams(d)); err != nil {
 				return err
 			}
 		}
@@ -1280,6 +1375,16 @@ func (s *Service) QueueDownloads(reqs []DownloadRequest) ([]Download, error) {
 	}
 	for _, d := range out {
 		s.transfers[d.ID] = Transfer{ID: d.ID, Username: d.Username, Filename: d.Filename, Direction: "download", State: d.State, Done: d.Offset, Total: d.Size, Error: d.Error}
+		if received != nil && d.State != "filtered" {
+			if s.receivedOffers == nil {
+				s.receivedOffers = make(map[string]*soulseek.DownloadOffer)
+			}
+			s.receivedOffers[d.ID] = received.offer
+			if s.receivedAddresses == nil {
+				s.receivedAddresses = make(map[string]netip.Addr)
+			}
+			s.receivedAddresses[d.ID] = received.offer.Address()
+		}
 	}
 	s.mu.Unlock()
 	for _, d := range out {
@@ -1561,6 +1666,7 @@ func (s *Service) UpdateConfig(c config.Config) (updateErr error) {
 	}
 	c.Logging.Level = level
 	c.Bandwidth.Profiles = slices.Clone(c.Bandwidth.Profiles)
+	c.Shares = slices.Clone(c.Shares)
 	rules, err := config.NormalizeShareExclusions(c.ShareExclusions)
 	if err != nil {
 		return err
@@ -1581,14 +1687,34 @@ func (s *Service) UpdateConfig(c config.Config) (updateErr error) {
 		s.mu.Unlock()
 		return ErrClosed
 	}
+	// Account-scoped settings use their revision/consent-aware endpoints, not
+	// the bulk settings snapshot (which may omit or contain stale copies).
+	c.Receiving = s.cfg.Receiving
+	c.CommunityAway = s.cfg.CommunityAway
+	c.CommunityText = s.cfg.CommunityText
+	// A stale settings form must not silently reopen a restricted root.
+	currentShares := make(map[string]config.Share, len(s.cfg.Shares))
+	for _, root := range s.cfg.Shares {
+		currentShares[root.Name] = root
+	}
+	for _, root := range c.Shares {
+		if old, ok := currentShares[root.Name]; ok && old.Path == root.Path && (old.Access != root.Access || old.Reveal != root.Reveal) {
+			s.mu.Unlock()
+			return errors.New("community: share permissions changed; reload settings; use /v1/shares/access to change access")
+		}
+	}
 	reconnect := !hotConfigUpdate(s.cfg, c)
 	if !reconnect && slices.Equal(s.cfg.ShareExclusions, c.ShareExclusions) && s.cfg.AudioMetadata == c.AudioMetadata {
 		oldInterval := s.cfg.Search.WishlistIntervalMinutes
 		uploadsChanged := uploadPolicy(s.cfg) != uploadPolicy(c)
+		uploadUsersChanged := s.cfg.Uploads != c.Uploads
 		client := s.client
 		err := c.Save(s.configPath)
 		if err == nil {
 			s.cfg = c
+			if uploadUsersChanged {
+				s.applyUploadUserPoliciesLocked()
+			}
 			if !c.Uploads.AutoClearCancelled {
 				clear(s.uploadCancelEligible)
 			}
@@ -1637,7 +1763,14 @@ func (s *Service) UpdateConfig(c config.Config) (updateErr error) {
 			s.stopSessionLocked(false)
 		}
 		s.mu.Lock()
+		if accountKey(s.cfg) != accountKey(c) {
+			// Invalidate at publication, even offline and without a summary poll.
+			s.retireCommunityLocked()
+			// The next load restores durable preferences with a new generation.
+			s.community = communityState{identity: CommunityIdentity{Daemon: s.community.identity.Daemon}}
+		}
 		s.cfg, s.shares = c, index
+		s.applyUploadUserPoliciesLocked()
 		if !c.Uploads.AutoClearCancelled {
 			clear(s.uploadCancelEligible)
 		}

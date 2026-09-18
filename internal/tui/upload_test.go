@@ -54,23 +54,17 @@ func TestUploadSelectionAndPolling(t *testing.T) {
 	}
 	m.switchTransferTab(transferDownloads)
 	m.switchTransferTab(transferUploads)
-	if !m.uploadSelected["upload:a:one"] {
-		t.Fatal("tab switch removed mark")
-	}
+	failIf(t, !m.uploadSelected["upload:a:one"], "tab switch removed mark")
 	next, _ = m.Update(transferMsg{transfers: []transfer{before[2]}})
 	m = next.(model)
-	if len(m.uploadSelected) != 0 {
-		t.Fatal("removed selection not pruned")
-	}
+	failIf(t, len(m.uploadSelected) != 0, "removed selection not pruned")
 }
 
 func TestUploadKeysBatchAndConfirmations(t *testing.T) {
 	t.Setenv("NO_COLOR", "1")
 	path := filepath.Join(t.TempDir(), "ipc.sock")
 	ln, err := net.Listen("unix", path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	requests := make(chan daemon.UploadActionRequest, 10)
 	server := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/v1/uploads/actions" {
@@ -90,21 +84,13 @@ func TestUploadKeysBatchAndConfirmations(t *testing.T) {
 	m.client = ipc.NewClient(path)
 	m.uploadSelected = map[string]bool{"upload:a:one": true, "upload:b:one": true}
 	cmd := pressUpload(&m, 'd')
-	if cmd == nil || m.uploadConfirm {
-		t.Fatal("d must abort selection directly")
-	}
+	failIf(t, cmd == nil || m.uploadConfirm, "d must abort selection directly")
 	msg := cmd().(transferActionMsg)
-	if msg.result.Changed != 2 {
-		t.Fatal(msg)
-	}
+	failIf(t, msg.result.Changed != 2, msg)
 	req := <-requests
-	if req.Action != "cancel" || len(req.IDs) != 2 || len(req.Usernames) != 0 {
-		t.Fatalf("d scope %+v", req)
-	}
+	failIfFmt(t, req.Action != "cancel" || len(req.IDs) != 2 || len(req.Usernames) != 0, "d scope %+v", req)
 	cmd = pressUpload(&m, 'D')
-	if cmd != nil || !m.uploadConfirm || m.uploadConfirmChoice != 0 {
-		t.Fatal("D must confirm, default No")
-	}
+	failIf(t, cmd != nil || !m.uploadConfirm || m.uploadConfirmChoice != 0, "D must confirm, default No")
 	if !reflect.DeepEqual(m.uploadPending.Usernames, []string{"a", "b"}) {
 		t.Fatal(m.uploadPending)
 	}
@@ -115,13 +101,9 @@ func TestUploadKeysBatchAndConfirmations(t *testing.T) {
 	cmd = pressUpload(&m, 'y')
 	cmd()
 	req = <-requests
-	if req.Action != "cancel" || len(req.Usernames) != 2 || len(req.IDs) != 0 {
-		t.Fatal(req)
-	}
+	failIf(t, req.Action != "cancel" || len(req.Usernames) != 2 || len(req.IDs) != 0, req)
 	pressUpload(&m, 'c')
-	if !m.uploadConfirm || !strings.Contains(m.uploadConfirmLabel, "stop") {
-		t.Fatal("selected clear must warn")
-	}
+	failIf(t, !m.uploadConfirm || !strings.Contains(m.uploadConfirmLabel, "stop"), "selected clear must warn")
 	if cmd = m.key(tea.KeyPressMsg(tea.Key{Code: tea.KeyEscape})); cmd != nil {
 		t.Fatal("Escape submitted")
 	}
@@ -130,30 +112,20 @@ func TestUploadKeysBatchAndConfirmations(t *testing.T) {
 		m.uploadStatusChoice = i
 		cmd = m.key(tea.KeyPressMsg(tea.Key{Code: tea.KeyEnter}))
 		if i >= 5 {
-			if cmd != nil || !m.uploadConfirm || m.uploadConfirmChoice != 0 {
-				t.Fatal("live clear lacks confirmation")
-			}
+			failIf(t, cmd != nil || !m.uploadConfirm || m.uploadConfirmChoice != 0, "live clear lacks confirmation")
 			cmd = pressUpload(&m, 'y')
 		}
-		if cmd == nil {
-			t.Fatal("clear did not submit")
-		}
+		failIf(t, cmd == nil, "clear did not submit")
 		cmd()
 		req = <-requests
-		if len(req.IDs) != 0 || len(req.Usernames) != 0 || req.All != scope.all || !reflect.DeepEqual(req.States, scope.states) {
-			t.Fatalf("global clear scope %+v", req)
-		}
+		failIfFmt(t, len(req.IDs) != 0 || len(req.Usernames) != 0 || req.All != scope.all || !reflect.DeepEqual(req.States, scope.states), "global clear scope %+v", req)
 	}
 	for _, width := range []int{24, 40, 80} {
 		m.width = width
 		for _, view := range []string{m.uploadConfirmView(), m.uploadStatusMenuView(), m.renderTransfers(width, 12)} {
-			if strings.Contains(view, "\x1b[") {
-				t.Fatal("NO_COLOR ignored")
-			}
+			failIf(t, strings.Contains(view, "\x1b["), "NO_COLOR ignored")
 			for _, line := range strings.Split(view, "\n") {
-				if lipgloss.Width(line) > width {
-					t.Fatalf("view exceeds %d: %q", width, line)
-				}
+				failIfFmt(t, lipgloss.Width(line) > width, "view exceeds %d: %q", width, line)
 			}
 		}
 	}

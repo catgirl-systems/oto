@@ -59,24 +59,33 @@ type loadedBrowse struct {
 type fullBrowseFunc func(context.Context, *soulseek.Client, string, func(received, total uint64)) ([]soulseek.ShareEntry, error)
 
 func browseUsername(username string) (string, error) {
-	username = strings.TrimSpace(username)
-	if username == "" {
-		return "", errors.New("daemon: browse username is required")
+	if err := soulseek.ValidateUsername(username); err != nil {
+		return "", err
 	}
-	return strings.ToLower(username), nil
+	return username, nil
 }
 
-func (s *Service) beginBrowseProgress(username string) (string, uint64, func(received, total uint64)) {
+// Only explicit saved archives retain the historical case-folded key.
+func archiveBrowseUsername(username string) (string, error) {
+	username, err := browseUsername(strings.TrimSpace(username))
+	return strings.ToLower(username), err
+}
+
+func (s *Service) beginBrowseProgress(username string, request uint64) (string, uint64, func(received, total uint64)) {
 	key, _ := browseUsername(username)
 	s.mu.Lock()
+	if s.browses[key].request != request {
+		s.mu.Unlock()
+		return key, 0, func(uint64, uint64) {}
+	}
 	s.browseProgressSeq++
 	generation := s.browseProgressSeq
-	s.browseProgress[key] = trackedBrowse{generation: generation, progress: BrowseProgress{Username: strings.TrimSpace(username)}}
+	s.browseProgress[key] = trackedBrowse{generation: generation, progress: BrowseProgress{Username: username}}
 	s.mu.Unlock()
 	return key, generation, func(received, total uint64) {
 		s.mu.Lock()
 		tracked, ok := s.browseProgress[key]
-		if ok && tracked.generation == generation {
+		if ok && tracked.generation == generation && s.browses[key].request == request {
 			tracked.progress.Received, tracked.progress.Total = received, total
 			s.browseProgress[key] = tracked
 		}
@@ -114,39 +123,57 @@ func (s *Service) BrowseProgress(username string) *BrowseProgress {
 	return &progress
 }
 
-func (s *Service) rememberBrowse(username string, entries []soulseek.ShareEntry, cached bool, savedAt time.Time) BrowseResult {
+func (s *Service) rememberBrowse(ctx context.Context, username string, entries []soulseek.ShareEntry, cached bool, savedAt time.Time, request uint64) (BrowseResult, error) {
 	key, _ := browseUsername(username)
 	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return BrowseResult{}, err
+	}
+	if s.browses[key].request != request {
+		return BrowseResult{}, ErrBrowseRevision
+	}
 	s.browseSeq++
 	result := BrowseResult{Entries: entries, Cached: cached, SavedAt: savedAt, Revision: s.browseSeq}
-	s.browses[key] = loadedBrowse{username: strings.TrimSpace(username), result: result}
-	s.mu.Unlock()
-	return result
+	s.browses[key] = loadedBrowse{username: username, result: result, request: request}
+	return result, nil
 }
 
 // BrowseComplete fetches a complete remote list, falling back to an explicitly saved copy.
 func (s *Service) BrowseComplete(ctx context.Context, username string) (BrowseResult, error) {
-	if _, err := browseUsername(username); err != nil {
+	key, err := browseUsername(username)
+	if err != nil {
 		return BrowseResult{}, err
 	}
-	s.mu.RLock()
+	s.mu.Lock()
 	client, browse := s.client, s.fullBrowse
-	s.mu.RUnlock()
+	s.browseSeq++
+	request := s.browseSeq
+	previous := s.browses[key]
+	previous.request = request
+	s.browses[key] = previous
+	s.mu.Unlock()
 
 	var remoteErr error
 	if client != nil {
-		key, generation, progress := s.beginBrowseProgress(username)
-		entries, err := browse(ctx, client, strings.TrimSpace(username), progress)
+		key, generation, progress := s.beginBrowseProgress(username, request)
+		entries, err := browse(ctx, client, username, progress)
 		s.finishBrowseProgress(key, generation, err == nil)
+		if err := ctx.Err(); err != nil {
+			return BrowseResult{}, err
+		}
 		if err == nil {
-			return s.rememberBrowse(username, entries, false, time.Time{}), nil
+			return s.rememberBrowse(ctx, username, entries, false, time.Time{}, request)
 		}
 		remoteErr = err
 	}
 
 	cache, cacheErr := s.loadRemoteShareCache(username)
+	if err := ctx.Err(); err != nil {
+		return BrowseResult{}, err
+	}
 	if cacheErr == nil {
-		return s.rememberBrowse(cache.Username, cache.Entries, true, cache.SavedAt), nil
+		return s.rememberBrowse(ctx, username, cache.Entries, true, cache.SavedAt, request)
 	}
 	if remoteErr != nil {
 		return BrowseResult{}, remoteErr

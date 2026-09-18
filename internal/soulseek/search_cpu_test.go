@@ -17,23 +17,15 @@ import (
 func TestSearchPathsFollowSnapshots(t *testing.T) {
 	root := t.TempDir()
 	for _, name := range []string{"Straße.flac", "STRASSE live.flac", "猫.flac"} {
-		if err := os.WriteFile(filepath.Join(root, name), nil, 0600); err != nil {
-			t.Fatal(err)
-		}
+		must(t, os.WriteFile(filepath.Join(root, name), nil, 0600))
 	}
 	index := NewShareIndex()
-	if err := index.AddRoot("MÜSIC", root); err != nil {
-		t.Fatal(err)
-	}
-	if err := index.ScanContext(t.Context()); err != nil {
-		t.Fatal(err)
-	}
+	must(t, index.AddRoot("MÜSIC", root))
+	must(t, index.ScanContext(t.Context()))
 	files := index.Files()
 	slices.Reverse(files) // Restoring must sort filenames and search paths together.
 	restored, err := RestoreShareIndex(index.Roots(), files)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	var workers sync.WaitGroup
 	for _, snapshot := range []*ShareIndex{index, restored} {
 		for range 4 {
@@ -69,15 +61,9 @@ func TestSearchPathsFollowSnapshots(t *testing.T) {
 	if got := index.Search("strasse -live", 300); len(got) != 1 {
 		t.Fatal("cancelled scan replaced search paths")
 	}
-	if err := os.Rename(filepath.Join(root, "Straße.flac"), filepath.Join(root, "Neu.flac")); err != nil {
-		t.Fatal(err)
-	}
-	if err := index.ScanContext(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-	if len(index.Search("strasse -live", 300)) != 0 || len(index.Search("neu", 300)) != 1 || len(restored.Search("strasse -live", 300)) != 1 {
-		t.Fatal("rescan did not replace only its own search paths")
-	}
+	must(t, os.Rename(filepath.Join(root, "Straße.flac"), filepath.Join(root, "Neu.flac")))
+	must(t, index.ScanContext(t.Context()))
+	failIf(t, len(index.Search("strasse -live", 300)) != 0 || len(index.Search("neu", 300)) != 1 || len(restored.Search("strasse -live", 300)) != 1, "rescan did not replace only its own search paths")
 }
 
 func TestSearchAllocationsDoNotScaleWithShareCount(t *testing.T) {
@@ -86,9 +72,7 @@ func TestSearchAllocationsDoNotScaleWithShareCount(t *testing.T) {
 		files[i] = ShareFile{Root: "Music", Path: fmt.Sprintf("Beyoncé/Track %04d.flac", i)}
 	}
 	index, err := RestoreShareIndex([]ShareRoot{{Name: "Music", Path: t.TempDir()}}, files)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	if allocs := testing.AllocsPerRun(10, func() { index.Search("absent", 300) }); allocs > 20 {
 		t.Fatalf("full scan allocated %.0f objects; filenames should already be folded", allocs)
 	}
@@ -97,9 +81,7 @@ func TestSearchAllocationsDoNotScaleWithShareCount(t *testing.T) {
 func TestIncomingSearchAdmissionAndRelease(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		index := NewShareIndex()
-		if err := index.setFiles(t.Context(), []ShareFile{{Root: "Music", Path: "song.flac"}}); err != nil {
-			t.Fatal(err)
-		}
+		must(t, index.setFiles(t.Context(), []ShareFile{{Root: "Music", Path: "song.flac"}}))
 		client := NewClient(ClientConfig{Share: index})
 		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
@@ -107,22 +89,16 @@ func TestIncomingSearchAdmissionAndRelease(t *testing.T) {
 		// Keep matching responses waiting for a peer address, without network I/O.
 		client.addresses["peer"] = &peerAddressLookup{done: make(chan struct{})}
 		messages, err := client.distributed.AddChild("child")
-		if err != nil {
-			t.Fatal(err)
-		}
+		must(t, err)
 		payload, err := (DistributedSearchQuery{Username: "peer", Token: 7, Query: "song"}).MarshalBinary()
-		if err != nil {
-			t.Fatal(err)
-		}
+		must(t, err)
 		for round := range 2 {
 			for range cap(client.searchSlots) * 2 {
 				client.route(ServerFileSearch, IncomingSearch{Username: "peer", Query: "song"})
 				client.handleDistributedSearch(payload)
 				select {
 				case message := <-messages:
-					if message.Command != DistributedSearchCommand || !bytes.Equal(message.Payload, payload) {
-						t.Fatal("distributed forwarding changed")
-					}
+					failIf(t, message.Command != DistributedSearchCommand || !bytes.Equal(message.Payload, payload), "distributed forwarding changed")
 				default:
 					t.Fatal("busy client stopped forwarding searches")
 				}
@@ -137,16 +113,12 @@ func TestIncomingSearchAdmissionAndRelease(t *testing.T) {
 				cancel()
 			}
 			synctest.Wait()
-			if len(client.searchSlots) != 0 {
-				t.Fatal("timeout/cancellation did not release search slots")
-			}
+			failIf(t, len(client.searchSlots) != 0, "timeout/cancellation did not release search slots")
 		}
 		for _, query := range []string{"absent", "song"} {
 			client.respondSearch(IncomingSearch{Query: query}) // No match, then invalid peer.
 			synctest.Wait()
-			if len(client.searchSlots) != 0 {
-				t.Fatal("early return did not release search slot")
-			}
+			failIf(t, len(client.searchSlots) != 0, "early return did not release search slot")
 		}
 	})
 }

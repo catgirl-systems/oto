@@ -19,9 +19,7 @@ func TestWaitForUploadsSettingSaveAndQuit(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.json")
 	socket := filepath.Join(t.TempDir(), "ipc.sock")
 	ln, err := net.Listen("unix", socket)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	server := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var cfg config.Config
 		if err := json.NewDecoder(r.Body).Decode(&cfg); err != nil {
@@ -48,31 +46,21 @@ func TestWaitForUploadsSettingSaveAndQuit(t *testing.T) {
 			break
 		}
 	}
-	if !found || !m.cfg.Uploads.WaitForActiveUploadsOnQuit {
-		t.Fatal("missing opt-in toggle")
-	}
+	failIf(t, !found || !m.cfg.Uploads.WaitForActiveUploadsOnQuit, "missing opt-in toggle")
 	m.confirm = true
-	if strings.Contains(m.footerView(), "Wait for") {
-		t.Fatal("unsaved toggle changed quit policy")
-	}
+	failIf(t, strings.Contains(m.footerView(), "Wait for"), "unsaved toggle changed quit policy")
 	m.confirm = false
 	cmd := m.key(key("s"))
-	if cmd == nil {
-		t.Fatal("no save command")
-	}
+	failIf(t, cmd == nil, "no save command")
 	if msg := cmd().(settingsMsg); msg.err != nil {
 		t.Fatal(msg.err)
 	}
 	saved, err := config.Load(path)
-	if err != nil || !saved.Uploads.WaitForActiveUploadsOnQuit {
-		t.Fatal("save/reload", err)
-	}
+	failIf(t, err != nil || !saved.Uploads.WaitForActiveUploadsOnQuit, "save/reload", err)
 	updated, _ := m.Update(statusMsg{snapshot: daemon.Snapshot{Config: saved.Redacted()}})
 	m = updated.(model)
 	m.confirm = true
-	if !strings.Contains(m.footerView(), "Wait for active uploads, then interrupt downloads?") {
-		t.Fatal(m.footerView())
-	}
+	failIf(t, !strings.Contains(m.footerView(), "Wait for active uploads, then interrupt downloads?"), m.footerView())
 	if cmd := m.key(key("y")); cmd == nil {
 		t.Fatal("cannot confirm quit")
 	} else if _, ok := cmd().(tea.QuitMsg); !ok {

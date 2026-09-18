@@ -16,10 +16,26 @@ func (m model) View() tea.View {
 	content := m.mainView()
 	if m.setup {
 		content = m.setupView()
+	} else if m.commandOutput != nil {
+		content = m.commandOutputView()
 	} else if m.downloadAs != nil {
 		content = m.downloadAsView()
 	} else if m.searchScope != nil {
 		content = m.searchScopeView()
+	} else if m.privileges != nil && !m.confirm {
+		content = m.privilegesView()
+	} else if m.receivingEditor != nil && !m.confirm {
+		content = m.receivingSettingsView()
+	} else if m.awayEditor != nil && !m.confirm {
+		content = m.awaySettingsView()
+	} else if m.textTools != nil && !m.confirm {
+		content = m.textToolsView()
+	} else if m.privacyRules != nil && !m.confirm {
+		content = m.privacyRulesView()
+	} else if m.shareAccess != nil && !m.confirm {
+		content = m.shareAccessView()
+	} else if m.userActions != nil {
+		content = m.userActionsView()
 	} else if m.passwordForm {
 		content = m.passwordFormView()
 	} else if m.folderMenu {
@@ -35,8 +51,25 @@ func (m model) View() tea.View {
 	} else if m.details {
 		content = m.detailView()
 	}
+	if m.community.chats.dialog != nil {
+		content = m.chatDialogView()
+	} else if m.community.rooms.dialog != nil {
+		content = m.roomDialogView()
+	}
+	if m.community.rooms.private.dialog != nil {
+		content = m.privateRoomDialogView()
+	}
+	if m.community.buddies.dialog != nil {
+		content = m.buddyDialogView()
+	} else if m.community.discover.dialog != nil {
+		content = m.discoverDialogView()
+	}
+	if m.community.peer.dialog {
+		content = communityConfirmationView("Save picture for "+m.community.peer.image.Username+" to "+m.community.peer.path+"? Existing files are never overwritten.", m.community.peer.confirm, m.community.peer.dialogScroll, m.width, m.height)
+	}
 	v := tea.NewView(content)
 	v.AltScreen = true
+	v.ReportFocus = true
 	return v
 }
 
@@ -117,7 +150,7 @@ func (m model) passwordFormView() string {
 }
 
 func (m model) workspaceNames() []string {
-	names := []string{"Search", "Wishlist", "Browse", "Transfers", "Stats", "Shares", "Settings"}
+	names := []string{"Search", "Wishlist", "Browse", "Transfers", "Community", "Stats", "Shares", "Settings"}
 	unread, downloads, uploads := 0, 0, 0
 	for _, item := range m.wishlist {
 		if item.Unread {
@@ -141,11 +174,10 @@ func (m model) workspaceNames() []string {
 	return names
 }
 func (m model) mainView() string {
-	if m.width < 36 || m.height < 8 {
+	if m.width < 36 || m.height < 8 || m.workspace == workspaceCommunity && m.community.chats.composing && m.height < 14 {
 		return m.compactView()
 	}
 
-	names := m.workspaceNames()
 	left := styled("oto", lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#CBA6F7"))) + muted("  Soulseek for your terminal")
 	header := spread(left, m.statusView(), m.width-2)
 	hs := lipgloss.NewStyle().Width(m.width).Padding(0, 1)
@@ -154,18 +186,7 @@ func (m model) mainView() string {
 	}
 	header = hs.Render(header)
 
-	var tabs strings.Builder
-	for i, name := range names {
-		if i > 0 {
-			tabs.WriteString("  ")
-		}
-		if workspace(i) == m.workspace {
-			tabs.WriteString(styled(" "+name+" ", lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#11111B")).Background(lipgloss.Color("#CBA6F7"))))
-		} else {
-			tabs.WriteString(muted(" " + name + " "))
-		}
-	}
-	tabLine := lipgloss.NewStyle().Width(m.width).Padding(0, 1).Render(tabs.String())
+	tabLine := lipgloss.NewStyle().Width(m.width).Padding(0, 1).Render(m.workspaceTabs(m.width - 2))
 
 	panelHeight := max(4, m.height-4)
 	innerWidth := max(10, m.width-4)
@@ -180,6 +201,8 @@ func (m model) mainView() string {
 		body = m.renderBrowse(innerWidth, innerHeight)
 	case workspaceTransfers:
 		body = m.renderTransfers(innerWidth, innerHeight)
+	case workspaceCommunity:
+		body = m.renderCommunity(innerWidth, innerHeight)
 	case workspaceStats:
 		body = m.renderStats(innerWidth, innerHeight)
 	case workspaceShares:
@@ -194,7 +217,31 @@ func (m model) mainView() string {
 }
 
 func (m model) compactView() string {
-	names := m.workspaceNames()
+	if m.workspace == workspaceCommunity && m.community.peer.form {
+		return strings.Join(m.peerPictureForm(m.width, m.height), "\n")
+	}
+	if m.workspace == workspaceCommunity && m.community.inspectEditing {
+		return strings.Join([]string{m.workspaceTabs(m.width), renderInputWindow(m.community.input, m.community.inputCursor, m.width), trunc(m.community.inputErr, m.width), trunc("Esc back · Enter inspect", m.width)}, "\n")
+	}
+	if m.workspace == workspaceCommunity && m.community.chats.form != "" {
+		return strings.Join(m.chatFormView(m.width, m.height), "\n")
+	}
+	if m.workspace == workspaceCommunity && m.community.rooms.form != "" {
+		return strings.Join(m.roomFormView(m.width, m.height), "\n")
+	}
+	if m.workspace == workspaceCommunity && m.community.rooms.private.editing() {
+		return strings.Join(m.privateRoomFormView(m.width, m.height), "\n")
+	}
+	if m.workspace == workspaceCommunity && m.community.view == 2 && (m.community.buddies.editor != nil || m.community.buddies.form != "") {
+		return strings.Join(m.buddyEditorView(m.width, m.height), "\n")
+	}
+	if m.workspace == workspaceCommunity && m.community.view == 3 && m.community.discover.form != "" {
+		return strings.Join(m.discoverFormView(m.width, m.height), "\n")
+	}
+	if m.workspace == workspaceCommunity && m.community.chats.composing {
+		d := m.community.chats.drafts[m.chatKey()]
+		return strings.Join(communityPane([]string{"Compose to " + m.community.chats.conversation.Target, renderInputWindow(strings.ReplaceAll(strings.ReplaceAll(d.text, "\n", "↵"), "\t", "⇥"), d.cursor, m.width), m.community.chats.err, "Enter send · Esc navigate"}, m.width, m.height, 0), "\n")
+	}
 	footer := "tab switch  o status  ? help  q quit"
 	if activity := m.activityView(m.width); activity != "" {
 		footer = activity
@@ -206,7 +253,7 @@ func (m model) compactView() string {
 	}
 	lines := []string{
 		trunc("oto  "+m.statusText(), m.width),
-		trunc("["+names[m.workspace]+"]", m.width),
+		m.workspaceTabs(m.width),
 		trunc(m.errorText(), m.width),
 		trunc(footer, m.width),
 	}
@@ -324,7 +371,7 @@ func (m model) helpView() string {
 			{"page up/down", "move by a page"},
 			{"← →", "expand / collapse; change Settings section"},
 			{"home / end", "first / last item; line boundary while editing"},
-			{"ctrl+page up/down", "switch search, browse, or transfer tabs"},
+			{"ctrl+page up/down", "switch Search, Browse, Transfers or Community tabs"},
 		}},
 		{"Editing", [][2]string{
 			{"ctrl+← → / ctrl+⌫", "move / delete by word"},
@@ -335,6 +382,41 @@ func (m model) helpView() string {
 		{"Files & actions", [][2]string{
 			{"enter", "toggle folder / download Search or Browse file"},
 			{"i", "show file details"},
+			{"U", "User actions: inspect / browse / search selected user"},
+			{"F6 / shift+F6", "Community: next / previous pane; Esc goes back"},
+			{"/ (Community)", "inspect an exact username"},
+			{"N / ctrl+n (Chats)", "new / next unread conversation"},
+			{"i / Enter (chat)", "compose; multiline Enter previews before send"},
+			{"Tab / Esc (composer)", "complete username / return to navigation"},
+			{"f / p n / End (chat)", "find history / older-newer pages / reach latest"},
+			{"y / e E (chat)", "copy selected / export text or JSON to new file"},
+			{"↑↓ / j k (chat)", "select message; page up/down scroll the transcript"},
+			{"R / X / C (private chat)", "confirm retry / cancel selected / clear history"},
+			{"ctrl+w / h (Chats list)", "close (keep history/draft) / show closed history"},
+			{"N / J (Rooms)", "join/create form / join selected room"},
+			{"u (Rooms / Buddies)", "search selected room / all buddies; preview query and scope"},
+			{"Enter / ctrl+w (room)", "open / close history; neither changes membership"},
+			{"L / R / F (room)", "leave now / remember autojoin / forget autojoin"},
+			{"f / m / p n (Rooms list)", "filter / all-remembered-joined-history-invitations / pages"},
+			{"G / g (public feed)", "view read-only feed / explicitly subscribe or stop"},
+			{"Ctrl+P (join form)", "explicit public/private creation"},
+			{"M / W / I (Rooms)", "private roles / room wall / invitation preference"},
+			{"a / A (private roles)", "add exact member / operator (confirmed role required)"},
+			{"o / O / d (private roles)", "grant / revoke operator / remove selected member"},
+			{"c / C (private roles)", "relinquish membership / ownership; retains history"},
+			{"r (private roles)", "reconcile last request ID, never duplicate an uncertain write"},
+			{"i / C (wall)", "edit desired text / clear own ticker; restored after rejoin"},
+			{"F6 then U (room)", "focus members, choose user, open User actions"},
+			{"a / e / D (Buddies)", "add / edit note and flags / remove exact buddy (Cancel default)"},
+			{"f / s / p / n (Buddies)", "filter username/note / sort all buddies / previous/next page"},
+			{"Tab / Space (buddy editor)", "choose field / toggle notification, priority, or trust"},
+			{"Ctrl+R / Esc (buddy editor)", "confirm reloading saved metadata / retain local draft"},
+			{"↑↓ / Enter (Discover)", "choose interests / recommendations / users / self-profile"},
+			{"s / i / u (Discover item)", "search files / item recommendations / related users"},
+			{"a / e / D (Interests)", "add / edit like or dislike / confirmed removal"},
+			{"e / Ctrl+J / Ctrl+R (self-profile)", "edit description / insert newline / confirm reload"},
+			{"r / p / n (User Inspector)", "refresh peer profile / first / next interests page"},
+			{"P (User Inspector)", "save cached picture to chosen path (confirm, no overwrite)"},
 			{"f", "edit Search filters / find in loaded Browse list"},
 			{"c", "clear / restore search filters"},
 			{"w (search)", "save the active query and filter to Wishlist"},
@@ -353,6 +435,7 @@ func (m model) helpView() string {
 		}},
 		{"General", [][2]string{
 			{"share scan", "Shares: r rescan, c cancel before publication; last index stays available"},
+			{"s (Shares)", "send highlighted shared file/folder: recipient, paged preview, explicit confirmation"},
 			{"elapsed / ETA", "daemon stream time; folder/user elapsed is cumulative"},
 			{"Settings → Shares", "edit/add rules, d remove, restore defaults; s saves"},
 			{"Settings → Bandwidth", "named upload + download limits; s saves both"},
@@ -568,7 +651,11 @@ func (m model) searchTabsLine(width int) string {
 	labels := make([]string, len(m.searchTabs))
 	for i, tab := range m.searchTabs {
 		label := tab.query
-		if len(tab.usernames) > 0 {
+		if tab.scope == "rooms" && len(tab.rooms) > 0 {
+			label = "#" + strings.Join(tab.rooms, ", ") + ": " + label
+		} else if tab.scope == "buddies" {
+			label = "buddies: " + label
+		} else if len(tab.usernames) > 0 {
 			label = "@" + strings.Join(tab.usernames, ", ") + ": " + label
 		}
 		if tab.loading {
@@ -606,7 +693,7 @@ func (m model) statusView() string {
 	}
 	label := styled("●", lipgloss.NewStyle().Foreground(color)) + " " + status
 	if m.status.user != "" {
-		label += muted("  @" + m.status.user)
+		label += muted(" @" + m.status.user)
 	}
 	return label
 }
@@ -646,7 +733,7 @@ func (m model) footerHints() []string {
 
 	switch m.workspace {
 	case workspaceSearch:
-		hints := []string{"/ search", "f filter", "w wishlist"}
+		hints := []string{"/ search", "U user actions", "f filter", "w wishlist"}
 		_, node := m.searchTree.node(m.cursor)
 		if node == nil {
 			return hints
@@ -665,7 +752,7 @@ func (m model) footerHints() []string {
 		if len(m.browseTabs) == 0 {
 			return []string{"enter open", "r refresh"}
 		}
-		hints := []string{"s save list", "r refresh"}
+		hints := []string{"U user actions", "s save list", "r refresh"}
 		if m.browseLoaded {
 			hints = append([]string{"f find"}, hints...)
 		}
@@ -681,11 +768,43 @@ func (m model) footerHints() []string {
 		}
 		return append([]string{"enter expand"}, hints...)
 	case workspaceTransfers:
-		hints := []string{"s search", "S folder search"}
+		hints := []string{"U user actions", "s search", "S folder search"}
 		if m.transferTab == transferDownloads {
 			return append(hints, "space mark files", "F download anyway", "p pause", "r resume/retry", "d cancel", "c clear")
 		}
 		return append(hints, "space mark", "r retry", "d abort", "D abort users", "c clear selected", "C clear status")
+	case workspaceCommunity:
+		if m.community.inspectEditing {
+			return []string{"enter inspect", "esc back"}
+		}
+		if m.community.chats.composing {
+			return []string{"enter send/preview", "tab complete", "esc navigate"}
+		}
+		if m.community.chats.form != "" {
+			return []string{"enter submit", "esc cancel"}
+		}
+		if m.community.view == 2 && m.community.supports("buddies") {
+			return []string{"a add", "e edit", "D remove", "f filter", "s sort", "p/n pages", "U actions"}
+		}
+		if m.community.view == 1 && m.community.supports("public-rooms") {
+			if m.community.rooms.private.editing() {
+				return []string{"enter submit/preview", "esc keep wall draft"}
+			}
+			if m.community.rooms.private.view != "" {
+				return []string{"p/n pages", "r refresh/reconcile", "esc back"}
+			}
+			if m.community.rooms.form != "" {
+				return []string{"enter submit", "tab autojoin", "esc cancel"}
+			}
+			if m.community.rooms.feedView {
+				return []string{"g subscribe/off", "up/down scroll", "p/n pages", "esc back"}
+			}
+			return []string{"J join", "L leave", "R remember", "F forget", "F6 members", "G feed", "C clear", "e/E export"}
+		}
+		if m.community.view == 0 && m.community.supports("private-chat") {
+			return []string{"N new chat", "i compose", "ctrl+n unread", "F6 panes", "f find", "e/E export", "R/X retry/cancel", "C clear"}
+		}
+		return []string{"F6 panes", "ctrl+pgup/down views", "/ inspect", "U actions", "esc back"}
 	case workspaceStats:
 		if m.stats.edit != "" {
 			return []string{"enter apply", "esc cancel"}
@@ -706,7 +825,7 @@ func (m model) footerHints() []string {
 		}
 		return append(hints, "P prune")
 	case workspaceShares:
-		hints := []string{"/ add", "r rescan"}
+		hints := []string{"/ add", "s send", "Enter access", "r rescan"}
 		if scan := m.status.shareScan; scan != nil && scan.State == "scanning" {
 			hints = append(hints, "c cancel scan")
 		}
@@ -856,6 +975,9 @@ func spread(left, right string, width int) string {
 	lw, rw := lipgloss.Width(left), lipgloss.Width(right)
 	if lw+rw+1 <= width {
 		return left + strings.Repeat(" ", width-lw-rw) + right
+	}
+	if rw >= width {
+		return trunc(right, width)
 	}
 	if rw+1 < width {
 		return trunc(left, width-rw-1) + " " + right

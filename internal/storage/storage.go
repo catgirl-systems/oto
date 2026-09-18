@@ -24,8 +24,11 @@ import (
 //go:embed schema.sql
 var schema []byte
 
+//go:embed community.sql
+var communitySchema []byte
+
 const (
-	SchemaVersion  = 1
+	SchemaVersion  = 2
 	ShareBatchSize = 1000
 )
 
@@ -48,9 +51,6 @@ type DB struct {
 
 // Open opens an ordinary, unlocked state database.
 func Open(path string) (*DB, error) { return open(path, false) }
-
-// OpenTUI is an explicit alias for ordinary opens. It never takes the daemon lock.
-func OpenTUI(path string) (*DB, error) { return Open(path) }
 
 // OpenDaemon takes the advisory lock before opening or validating the database.
 func OpenDaemon(path string) (*DB, error) { return open(path, true) }
@@ -101,10 +101,19 @@ func open(path string, daemon bool) (*DB, error) {
 	if err = sqlDB.Ping(); err != nil {
 		return closeDB(fmt.Errorf("%w: open database: %v", ErrCorrupt, err))
 	}
-	if err = bootstrapSchema(sqlDB, schema); err != nil {
+	var version int
+	if err = sqlDB.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
+		return closeDB(fmt.Errorf("%w: read user_version: %v", ErrCorrupt, err))
+	}
+	if version == 1 && daemon {
+		err = migrateV1(context.Background(), sqlDB, absolute, communitySchema)
+	} else {
+		err = bootstrapSchema(sqlDB, schema)
+	}
+	if err != nil {
 		return closeDB(err)
 	}
-	if err = verifySchema(sqlDB); err != nil {
+	if err = verifySchema(context.Background(), sqlDB, SchemaVersion); err != nil {
 		return closeDB(err)
 	}
 	if err = chmodStateFiles(absolute); err != nil {
@@ -140,6 +149,9 @@ func bootstrapSchema(db *sql.DB, schema []byte) error {
 	}
 	if version != 0 || objects != 0 {
 		if version != SchemaVersion {
+			if version == 1 {
+				return fmt.Errorf("%w: schema 1 requires upgrade to %d; restart the daemon before attaching the TUI", ErrUnsupportedSchema, SchemaVersion)
+			}
 			return fmt.Errorf("%w: got user_version %d", ErrUnsupportedSchema, version)
 		}
 		if err := tx.Commit(); err != nil {
@@ -147,7 +159,7 @@ func bootstrapSchema(db *sql.DB, schema []byte) error {
 		}
 		return nil
 	}
-	if _, err := tx.Exec(string(schema)); err != nil {
+	if _, err := tx.Exec(string(schema) + "\n" + string(communitySchema)); err != nil {
 		return fmt.Errorf("storage: initialize schema: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
@@ -156,29 +168,43 @@ func bootstrapSchema(db *sql.DB, schema []byte) error {
 	return nil
 }
 
-func verifySchema(db *sql.DB) error {
+// Both ordinary pools and migration transactions are checked before readiness.
+type schemaReader interface {
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
+}
+
+func verifySchema(ctx context.Context, db schemaReader, want int) error {
 	var version int
-	if err := db.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
+	if err := db.QueryRowContext(ctx, "PRAGMA user_version").Scan(&version); err != nil {
 		return fmt.Errorf("%w: read user_version: %v", ErrCorrupt, err)
 	}
-	if version != SchemaVersion {
-		return fmt.Errorf("%w: got user_version %d, want %d", ErrUnsupportedSchema, version, SchemaVersion)
+	if version != want {
+		return fmt.Errorf("%w: got user_version %d, want %d", ErrUnsupportedSchema, version, want)
 	}
 	var integrity string
-	if err := db.QueryRow("PRAGMA integrity_check").Scan(&integrity); err != nil {
+	if err := db.QueryRowContext(ctx, "PRAGMA integrity_check").Scan(&integrity); err != nil {
 		return fmt.Errorf("%w: integrity check: %v", ErrCorrupt, err)
 	}
 	if integrity != "ok" {
 		return fmt.Errorf("%w: integrity_check: %s", ErrCorrupt, integrity)
 	}
 	var marker int
-	if err := db.QueryRow("SELECT version FROM storage_schema WHERE id = 1").Scan(&marker); err != nil {
+	if err := db.QueryRowContext(ctx, "SELECT version FROM storage_schema WHERE id = 1").Scan(&marker); err != nil {
 		return fmt.Errorf("%w: schema marker: %v", ErrCorrupt, err)
 	}
-	if marker != SchemaVersion {
+	if marker != want {
 		return fmt.Errorf("%w: schema marker %d", ErrUnsupportedSchema, marker)
 	}
-	return nil
+	rows, err := db.QueryContext(ctx, "PRAGMA foreign_key_check")
+	if err != nil {
+		return fmt.Errorf("%w: foreign key check: %v", ErrCorrupt, err)
+	}
+	defer rows.Close()
+	if rows.Next() {
+		return fmt.Errorf("%w: foreign key violation", ErrCorrupt)
+	}
+	return rows.Err()
 }
 
 func chmodStateFiles(path string) error {
@@ -206,16 +232,9 @@ func (d *DB) Queries() *db.Queries {
 	return db.New(d.sql)
 }
 
-// BeginWrite begins the driver's immediate transaction. The DSN's txlock is
-// deliberate: all database/sql write transactions acquire RESERVED up front.
-func (d *DB) BeginWrite(ctx context.Context) (*sql.Tx, error) {
-	if d == nil || d.sql == nil {
-		return nil, errors.New("storage: nil database")
-	}
-	return d.sql.BeginTx(ctx, nil)
-}
-
 // WriteTx runs fn in an immediate transaction and rolls it back on any error.
+// The DSN's txlock is deliberate: all database/sql write transactions acquire
+// RESERVED up front.
 func (d *DB) WriteTx(ctx context.Context, fn func(*sql.Tx) error) (err error) {
 	if d == nil || d.sql == nil {
 		return errors.New("storage: nil database")
@@ -228,7 +247,7 @@ func (d *DB) WriteTx(ctx context.Context, fn func(*sql.Tx) error) (err error) {
 	case <-ctx.Done():
 		return ctx.Err()
 	}
-	tx, err := d.BeginWrite(ctx)
+	tx, err := d.sql.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}

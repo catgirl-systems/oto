@@ -38,19 +38,13 @@ func TestSoulfindDaemonUploadShutdown(t *testing.T) {
 			cfg.Shares = []config.Share{{Name: "Music", Path: root}}
 			contents := bytes.Repeat([]byte("Soulfind shutdown\n"), 16384)
 			for _, name := range []string{"active.bin", "queued.bin"} {
-				if err := os.WriteFile(filepath.Join(root, name), contents, 0600); err != nil {
-					t.Fatal(err)
-				}
+				must(t, os.WriteFile(filepath.Join(root, name), contents, 0600))
 			}
 			journal := filepath.Join(t.TempDir(), "state.sqlite3")
 			uploader, err := New(cfg, journal)
-			if err != nil {
-				t.Fatal(err)
-			}
+			must(t, err)
 			t.Cleanup(func() { _ = uploader.Close() })
-			if err := uploader.Start(context.Background()); err != nil {
-				t.Fatal(err)
-			}
+			must(t, uploader.Start(context.Background()))
 			waitForIntegration(t, func() bool { return uploader.Snapshot().Status == StatusConnected })
 			receiverConfig := cfg
 			receiverConfig.Soulseek.Username = "down" + stamp
@@ -59,13 +53,9 @@ func TestSoulfindDaemonUploadShutdown(t *testing.T) {
 			receiverConfig.Shares = nil
 			receiverConfig.DownloadDir, receiverConfig.DownloadSlots = t.TempDir(), 2
 			downloader, err := New(receiverConfig, filepath.Join(t.TempDir(), "state.sqlite3"))
-			if err != nil {
-				t.Fatal(err)
-			}
+			must(t, err)
 			t.Cleanup(func() { _ = downloader.Close() })
-			if err := downloader.Start(context.Background()); err != nil {
-				t.Fatal(err)
-			}
+			must(t, downloader.Start(context.Background()))
 			waitForIntegration(t, func() bool { return downloader.Snapshot().Status == StatusConnected })
 			t.Cleanup(func() {
 				if t.Failed() {
@@ -73,9 +63,7 @@ func TestSoulfindDaemonUploadShutdown(t *testing.T) {
 				}
 			})
 			downloads, err := downloader.QueueDownloads([]DownloadRequest{{Username: cfg.Soulseek.Username, Files: []DownloadItem{{Filename: `Music\active.bin`, Size: uint64(len(contents))}}}})
-			if err != nil {
-				t.Fatal(err)
-			}
+			must(t, err)
 			activeID := downloads[0].ID
 			waitForIntegration(t, func() bool {
 				tr := integrationTransfer(downloader, activeID)
@@ -84,9 +72,7 @@ func TestSoulfindDaemonUploadShutdown(t *testing.T) {
 			// A second peer is necessary: oto serializes downloads from one user.
 			queuedPeer := startIntegrationUploader(t, address, "queue"+stamp, nil, 0)
 			queuedFile, err := os.CreateTemp(t.TempDir(), "queued")
-			if err != nil {
-				t.Fatal(err)
-			}
+			must(t, err)
 			transferCtx, cancelTransfer := context.WithCancel(context.Background())
 			queuedDone := make(chan error, 1)
 			go func() {
@@ -137,9 +123,7 @@ func TestSoulfindDaemonUploadShutdown(t *testing.T) {
 				waitForIntegration(t, func() bool { return integrationDownload(downloader, activeID).State == "completed" })
 				download := integrationDownload(downloader, activeID)
 				got, err := os.ReadFile(filepath.Join(download.DownloadDir, download.Destination))
-				if err != nil || !bytes.Equal(got, contents) {
-					t.Fatalf("completed download differs: %d bytes, %v", len(got), err)
-				}
+				failIfFmt(t, err != nil || !bytes.Equal(got, contents), "completed download differs: %d bytes, %v", len(got), err)
 			}
 			if info, err := queuedFile.Stat(); err != nil || info.Size() != 0 {
 				t.Fatalf("queued upload wrote data during drain: %v %v", info, err)
@@ -148,18 +132,12 @@ func TestSoulfindDaemonUploadShutdown(t *testing.T) {
 			_ = downloader.Close()
 			_ = queuedPeer.client.Close()
 			reopened, err := New(cfg, journal)
-			if err != nil {
-				t.Fatal(err)
-			}
+			must(t, err)
 			defer reopened.Close()
-			if len(reopened.journal.Uploads) != 2 {
-				t.Fatalf("lost upload history: %+v", reopened.journal.Uploads)
-			}
+			failIfFmt(t, len(reopened.journal.Uploads) != 2, "lost upload history: %+v", reopened.journal.Uploads)
 			for _, upload := range reopened.journal.Uploads {
 				complete := mode == "finish" && upload.Filename == `Music\active.bin`
-				if complete && (upload.State != "completed" || upload.Recoverable) || !complete && (upload.State != "interrupted" || !upload.Recoverable) {
-					t.Fatalf("incorrect persisted upload: %+v", upload)
-				}
+				failIfFmt(t, complete && (upload.State != "completed" || upload.Recoverable) || !complete && (upload.State != "interrupted" || !upload.Recoverable), "incorrect persisted upload: %+v", upload)
 			}
 		})
 	}

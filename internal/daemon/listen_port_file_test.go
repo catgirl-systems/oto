@@ -23,23 +23,15 @@ func TestWatchListenPortFile(t *testing.T) {
 	}, nil)
 	waitForListenPort(t, updates, listenPortUpdate{})
 
-	if err := os.WriteFile(path, []byte("43001\n"), 0600); err != nil {
-		t.Fatal(err)
-	}
+	must(t, os.WriteFile(path, []byte("43001\n"), 0600))
 	waitForListenPort(t, updates, listenPortUpdate{port: 43001, available: true})
 
 	replacement := path + ".new"
-	if err := os.WriteFile(replacement, []byte("43002\n"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Rename(replacement, path); err != nil {
-		t.Fatal(err)
-	}
+	must(t, os.WriteFile(replacement, []byte("43002\n"), 0600))
+	must(t, os.Rename(replacement, path))
 	waitForListenPort(t, updates, listenPortUpdate{port: 43002, available: true})
 
-	if err := os.WriteFile(path, nil, 0600); err != nil {
-		t.Fatal(err)
-	}
+	must(t, os.WriteFile(path, nil, 0600))
 	waitForListenPort(t, updates, listenPortUpdate{})
 }
 
@@ -52,21 +44,15 @@ func TestListenPortFileFallsBackToConfiguredReconciliation(t *testing.T) {
 		updates <- listenPortUpdate{port: port, available: available}
 	}, nil)
 	waitForListenPort(t, updates, listenPortUpdate{})
-	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(path, []byte("44001"), 0600); err != nil {
-		t.Fatal(err)
-	}
+	must(t, os.MkdirAll(filepath.Dir(path), 0700))
+	must(t, os.WriteFile(path, []byte("44001"), 0600))
 	waitForListenPort(t, updates, listenPortUpdate{port: 44001, available: true})
 }
 
 func TestReadListenPortFileRejectsMalformedPort(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "port")
 	for _, value := range []string{"later", "80", "65536", "40000\n40001"} {
-		if err := os.WriteFile(path, []byte(value), 0600); err != nil {
-			t.Fatal(err)
-		}
+		must(t, os.WriteFile(path, []byte(value), 0600))
 		if _, _, err := readListenPortFile(path); err == nil {
 			t.Fatalf("accepted %q", value)
 		}

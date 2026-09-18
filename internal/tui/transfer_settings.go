@@ -22,6 +22,10 @@ const (
 	settingStatsASCII
 	settingStatsPrune
 	settingLoggingLevel
+	settingPrioritizeBuddies
+	settingPrioritizePrivileged
+	settingExemptBuddiesFromQueueLimits
+	settingAccountPrivileges
 )
 
 func (m model) downloadFilterFields() []settingField {

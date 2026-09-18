@@ -22,13 +22,9 @@ func TestFilterForceAndStatisticsEndpoints(t *testing.T) {
 	cfg.Downloads.FiltersEnabled = true
 	path := filepath.Join(t.TempDir(), "state.sqlite3")
 	svc, err := daemon.New(cfg, path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	downloads, err := svc.QueueDownloads([]daemon.DownloadRequest{{Username: "peer", Files: []daemon.DownloadItem{{Filename: `Music\a.exe`, Size: 1}, {Filename: `Music\b.exe`, Size: 2}}}})
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	handler := NewServer(svc, "").handler()
 	request := func(method, url, body string) *httptest.ResponseRecorder {
 		t.Helper()
@@ -39,14 +35,10 @@ func TestFilterForceAndStatisticsEndpoints(t *testing.T) {
 		return w
 	}
 	force := request("POST", "/v1/downloads/force", fmt.Sprintf(`{"ids":[%q,%q]}`, downloads[0].ID, downloads[0].ID))
-	if force.Code != 200 {
-		t.Fatalf("force: %d %s", force.Code, force.Body.String())
-	}
+	failIfFmt(t, force.Code != 200, "force: %d %s", force.Code, force.Body.String())
 	svc.Close()
 	svc, err = daemon.New(cfg, path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	defer svc.Close()
 	handler = NewServer(svc, "").handler()
 	overview := request("GET", "/v1/stats", "")
@@ -66,9 +58,7 @@ func TestFilterForceAndStatisticsEndpoints(t *testing.T) {
 	}
 	body := fmt.Sprintf(`{"cutoff":%q,"logs":true,"daily":true}`, time.Now().UTC().Format(time.RFC3339Nano))
 	preview := request("POST", "/v1/stats/prune/preview", body)
-	if preview.Code != 200 {
-		t.Fatal(preview.Body.String())
-	}
+	failIf(t, preview.Code != 200, preview.Body.String())
 	if after := request("GET", "/v1/transfer-log?limit=1", ""); !strings.Contains(after.Body.String(), page.Entries[0].ID) {
 		t.Fatal("preview deleted data")
 	}

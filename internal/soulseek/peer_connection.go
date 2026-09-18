@@ -272,6 +272,11 @@ func (l *peerLease) Close() error {
 	return nil
 }
 
+// retain returns an independent lease on the same peer connection, or nil when
+// the peer already finished. Message handlers receive a lease that is closed as
+// soon as they return, so a response sent later needs one that outlives them.
+func (l *peerLease) retain() *peerLease { return l.messagePeer.lease() }
+
 func (l *peerLease) LocalAddr() net.Addr { l.mu.Lock(); defer l.mu.Unlock(); return l.Conn.LocalAddr() }
 func (l *peerLease) RemoteAddr() net.Addr {
 	l.mu.Lock()
@@ -390,7 +395,7 @@ func (l *peerLease) writeMessage(m Message) error {
 	}
 	l.mu.Lock()
 	switch m.(type) {
-	case SharedListRequest, FolderRequest, QueueRequest, TransferRequest:
+	case SharedListRequest, FolderRequest, QueueRequest, TransferRequest, UserInfoRequest:
 		l.request = m
 	}
 	l.mu.Unlock()
@@ -460,6 +465,8 @@ func (l *peerLease) matches(f peerFrame) bool {
 	switch req := l.request.(type) {
 	case SharedListRequest:
 		return f.command == PeerSharedList
+	case UserInfoRequest:
+		return f.command == PeerUserInfoResponse
 	case FolderRequest:
 		if f.command != PeerFolderResponse {
 			return false

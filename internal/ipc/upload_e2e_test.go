@@ -30,9 +30,7 @@ func TestUploadControlsEndToEnd(t *testing.T) {
 	var sockets []net.Conn
 	listen := func() net.Listener {
 		ln, err := net.Listen("tcp", "127.0.0.1:0")
-		if err != nil {
-			t.Fatal(err)
-		}
+		must(t, err)
 		t.Cleanup(func() { _ = ln.Close() })
 		return ln
 	}
@@ -132,9 +130,7 @@ func TestUploadControlsEndToEnd(t *testing.T) {
 	root := t.TempDir()
 	contents := bytes.Repeat([]byte("data"), 4096)
 	for _, name := range []string{"one", "two"} {
-		if err := os.WriteFile(filepath.Join(root, name), contents, 0600); err != nil {
-			t.Fatal(err)
-		}
+		must(t, os.WriteFile(filepath.Join(root, name), contents, 0600))
 	}
 	cfg := config.Default()
 	cfg.Soulseek.Server = server.Addr().String()
@@ -149,14 +145,10 @@ func TestUploadControlsEndToEnd(t *testing.T) {
 	cfg.UploadSlots = 1
 	cfg.Bandwidth.Profiles[0].UploadSpeedLimitKiB = 1
 	svc, err := daemon.New(cfg, filepath.Join(t.TempDir(), "state.sqlite3"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	svc.SetConfigPath(filepath.Join(t.TempDir(), "config.json"))
 	defer svc.Close()
-	if err := svc.Start(ctx); err != nil {
-		t.Fatal(err)
-	}
+	must(t, svc.Start(ctx))
 	var port uint32
 	select {
 	case port = <-ports:
@@ -177,15 +169,11 @@ func TestUploadControlsEndToEnd(t *testing.T) {
 		deadline := time.Now().Add(4 * time.Second)
 		for {
 			rows, err := client.Transfers(ctx)
-			if err != nil {
-				t.Fatal(err)
-			}
+			must(t, err)
 			if check(rows) {
 				return
 			}
-			if time.Now().After(deadline) {
-				t.Fatalf("state timeout: %+v", rows)
-			}
+			failIfFmt(t, time.Now().After(deadline), "state timeout: %+v", rows)
 			time.Sleep(5 * time.Millisecond)
 		}
 	}
@@ -200,18 +188,14 @@ func TestUploadControlsEndToEnd(t *testing.T) {
 		})
 	}
 	incoming, err := net.Dial("tcp", fmt.Sprintf("127.0.0.1:%d", port))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	defer incoming.Close()
 	_ = incoming.SetDeadline(time.Now().Add(12 * time.Second))
 	var init soulseek.Encoder
 	_ = init.String("receiver")
 	_ = init.String("P")
 	init.U32(0)
-	if err := soulseek.WriteInitFrame(incoming, byte(soulseek.PeerInit), init.Payload()); err != nil {
-		t.Fatal(err)
-	}
+	must(t, soulseek.WriteInitFrame(incoming, byte(soulseek.PeerInit), init.Payload()))
 	// Offers now reuse the incoming P connection instead of requiring a fresh dial.
 	places := make(chan error, 4)
 	wg.Add(1)
@@ -254,9 +238,7 @@ func TestUploadControlsEndToEnd(t *testing.T) {
 	action := func(req daemon.UploadActionRequest, changed int) {
 		t.Helper()
 		result, err := client.UploadAction(ctx, req)
-		if err != nil || result.Changed != changed || len(result.Errors) != 0 {
-			t.Fatalf("action %+v: %+v %v", req, result, err)
-		}
+		failIfFmt(t, err != nil || result.Changed != changed || len(result.Errors) != 0, "action %+v: %+v %v", req, result, err)
 	}
 	one, two := "upload:1", "upload:2"
 	queue("one")
@@ -279,9 +261,7 @@ func TestUploadControlsEndToEnd(t *testing.T) {
 	wait(func(rows []daemon.Transfer) bool { return len(rows) == 0 })
 	cfg.Uploads.AutoClearCancelled = true
 	saved, err := client.UpdateConfig(ctx, cfg)
-	if err != nil || !saved.Uploads.AutoClearCancelled {
-		t.Fatalf("auto-clear config round trip: %+v %v", saved, err)
-	}
+	failIfFmt(t, err != nil || !saved.Uploads.AutoClearCancelled, "auto-clear config round trip: %+v %v", saved, err)
 	queue("one")
 	state("upload:3", "running")
 	queue("two")
@@ -294,8 +274,6 @@ func TestUploadControlsEndToEnd(t *testing.T) {
 	wait(func(rows []daemon.Transfer) bool { return len(rows) == 0 })
 	for _, name := range []string{"one", "two"} {
 		got, err := os.ReadFile(filepath.Join(root, name))
-		if err != nil || !bytes.Equal(got, contents) {
-			t.Fatal("shared file modified")
-		}
+		failIf(t, err != nil || !bytes.Equal(got, contents), "shared file modified")
 	}
 }

@@ -40,6 +40,19 @@ func (m model) renderSearch(width, height int) string {
 		lines = append(lines, tabs)
 	}
 	lines = append(lines, trunc(prompt, width), trunc(filterLine, width))
+	if m.searchTabIndex >= 0 && m.searchTabIndex < len(m.searchTabs) {
+		tab := &m.searchTabs[m.searchTabIndex]
+		if tab.scope != "" && tab.scope != "global" {
+			context := map[string]string{"users": "specific users", "buddies": "all buddies", "rooms": "joined rooms"}[tab.scope]
+			lines = append(lines, trunc(muted("Scope: "+context), width))
+			if tab.targetCount > 0 {
+				lines = append(lines, trunc(muted(fmt.Sprintf("%d captured targets", tab.targetCount)), width))
+			}
+			if tab.warning != "" {
+				lines = append(lines, trunc(muted("Warning: "+tab.warning), width))
+			}
+		}
+	}
 	if m.editing && m.filterEditing {
 		lines = append(lines, trunc(muted(filterCompletionHint(inputBeforeCursor(m.input, m.inputCursor))), width))
 	}
@@ -555,7 +568,7 @@ func (m model) renderShares(width, height int) string {
 		limit--
 	}
 	if len(m.shares) == 0 && limit > 0 {
-		return strings.Join(append(lines, "\n"+muted("No public folders. Press / to add one as name:path.")), "\n")
+		return strings.Join(append(lines, "\n"+muted("No shared folders. Press / to add one as name:path.")), "\n")
 	}
 	start, end := visibleRange(len(m.shareTree.visible), m.cursor, limit)
 	frames := []rune("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏")
@@ -564,7 +577,17 @@ func (m model) renderShares(width, height int) string {
 		node := m.shareTree.nodes[nodeIndex]
 		status := ""
 		if node.kind == treeShareRoot {
-			status = trunc(node.detail, max(4, width/2))
+			access := "public"
+			if node.source >= 0 && node.source < len(m.shares) {
+				root := m.shares[node.source]
+				if root.access != "" {
+					access = root.access
+				}
+				if root.reveal && access != "public" {
+					access += ", locked reveal"
+				}
+			}
+			status = trunc("["+access+"] "+node.detail, max(4, width/2))
 		} else if node.kind == treeFile {
 			status = formatBytes(node.size)
 		}
@@ -579,7 +602,7 @@ func (m model) renderShares(width, height int) string {
 	return strings.Join(lines, "\n")
 }
 
-var settingsSectionNames = [settingsSectionCount]string{"Account", "Connection", "Bandwidth", "Downloads", "Uploads", "Search", "Shares", "Browse", "Statistics", "Logging"}
+var settingsSectionNames = [settingsSectionCount]string{"Account", "Connection", "Bandwidth", "Downloads", "Uploads", "Search", "Shares", "Browse", "Statistics", "Logging", "Community"}
 
 func (m model) renderSettings(width, height int) string {
 	if m.stats.prune {
@@ -587,6 +610,9 @@ func (m model) renderSettings(width, height int) string {
 	}
 	if m.shareExclusions.open {
 		return m.renderShareExclusions(width, height)
+	}
+	if width < 4 || height < 2 {
+		return trunc("Settings", width)
 	}
 	sections := settingsSectionNames[:]
 	lines := []string{sectionHeader("SETTINGS", "Press s to save changes", width)}
@@ -609,14 +635,20 @@ func (m model) renderSettings(width, height int) string {
 	if colorsEnabled() {
 		sideStyle = sideStyle.BorderForeground(lipgloss.Color("#45475A"))
 	}
+	side := sideStyle.Render(sidebar.String())
+	formWidth, rowsPerField := width, 2
+	if width >= 70 {
+		formWidth, rowsPerField = width-lipgloss.Width(side)-2, 1
+	}
 
 	fields := m.settingFields()
 	labelWidth := 0
 	for _, field := range fields {
 		labelWidth = max(labelWidth, utf8.RuneCountInString(field.label))
 	}
-	formLines := []string{strong(sections[m.settingsSection])}
-	fieldStart, fieldEnd := visibleRange(len(fields), m.cursor, max(1, contentHeight-1))
+	labelWidth = min(labelWidth, max(1, formWidth-18))
+	formLines := []string{strong(trunc(sections[m.settingsSection]+"  ← → section", formWidth))}
+	fieldStart, fieldEnd := visibleRange(len(fields), m.cursor, max(0, contentHeight-1)/rowsPerField)
 	for i := fieldStart; i < fieldEnd; i++ {
 		field := fields[i]
 		value := field.value
@@ -652,17 +684,23 @@ func (m model) renderSettings(width, height int) string {
 				value = muted("Not set")
 			}
 		}
-		row := fmt.Sprintf("%-*s %s", labelWidth, field.label, value)
-		formLines = append(formLines, selectedRow(trunc(row, max(4, width-sidebarWidth-4)), i == m.cursor))
+		if rowsPerField == 2 {
+			formLines = append(formLines, selectedRow(trunc(field.label, formWidth-2), i == m.cursor), "  "+trunc(value, formWidth-2))
+		} else {
+			row := searchTextColumn(field.label, labelWidth) + " " + value
+			formLines = append(formLines, selectedRow(trunc(row, formWidth-2), i == m.cursor))
+		}
 	}
 	if m.settingsSection == settingsBrowse && len(formLines)+3 <= contentHeight {
-		formLines = append(formLines, muted(trunc("Payload limits only; decoded entries and UI use extra RAM.", max(4, width-sidebarWidth-4))))
+		formLines = append(formLines, muted(trunc("Payload limits only; decoded entries and UI use extra RAM.", formWidth)))
 	}
 	if fieldStart == 0 && fieldEnd == len(fields) && len(formLines)+2 <= contentHeight {
-		formLines = append(formLines, "", muted("enter edit/toggle/choose/run  •  s save  •  ← → section"))
+		formLines = append(formLines, "", muted(trunc("enter edit/toggle/choose/run  •  s save  •  ← → section", formWidth)))
 	}
-	formWidth := max(12, width-sidebarWidth-2)
-	content := lipgloss.JoinHorizontal(lipgloss.Top, sideStyle.Render(sidebar.String()), lipgloss.NewStyle().Width(formWidth).PaddingLeft(2).Render(strings.Join(formLines, "\n")))
+	content := strings.Join(formLines, "\n")
+	if rowsPerField == 1 {
+		content = lipgloss.JoinHorizontal(lipgloss.Top, side, "  ", lipgloss.NewStyle().Width(formWidth).Render(content))
+	}
 	return strings.Join(append(lines, content), "\n")
 }
 
@@ -696,7 +734,10 @@ func (m model) settingFields() []settingField {
 		return []settingField{
 			{settingUsername, "Username", m.cfg.Soulseek.Username, settingText},
 			{settingChangePassword, "Change Soulseek password", "Press Enter", settingAction},
+			{settingAccountPrivileges, "Supporter privileges / gifting", "Press Enter", settingAction},
 		}
+	case settingsCommunity:
+		return []settingField{{settingPrivacyRules, "Privacy / ignore / ban rules", "Press Enter", settingAction}, {settingTextTools, "Chat text tools / CTCP", "Press Enter", settingAction}, {settingChatCommands, "Commands / aliases help", "Press Enter", settingAction}, {settingAway, "Automatic away / replies", "Press Enter", settingAction}}
 	case settingsConnection:
 		publicIP := m.status.publicIP
 		if publicIP == "" {
@@ -727,14 +768,14 @@ func (m model) settingFields() []settingField {
 			{settingUPnPPortMapping, "UPnP port forwarding", strconv.FormatBool(m.cfg.Soulseek.UPnPPortMapping), settingBool},
 		}
 	case settingsDownloads:
-		return append([]settingField{
+		return append(append([]settingField{
 			{settingDownloadPath, "Download path", m.cfg.DownloadDir, settingText},
 			{settingAfterFileCommand, "After file command", m.cfg.Downloads.AfterFileCommand, settingText},
 			{settingAfterFolderCommand, "After folder command", m.cfg.Downloads.AfterFolderCommand, settingText},
 			{settingFileNotifications, "File notifications", strconv.FormatBool(m.cfg.Downloads.FileNotifications), settingBool},
 			{settingFolderNotifications, "Folder notifications", strconv.FormatBool(m.cfg.Downloads.FolderNotifications), settingBool},
 			{settingAutoClearDownloads, "Auto-clear new completed downloads", strconv.FormatBool(m.cfg.Downloads.AutoClearCompleted), settingBool},
-		}, m.downloadFilterFields()...)
+		}, m.downloadFilterFields()...), settingField{settingReceiving, "Consented received files", "Press Enter", settingAction})
 	case settingsBandwidth:
 		profile := m.cfg.Bandwidth.ActiveProfileLimits()
 		return []settingField{
@@ -748,6 +789,9 @@ func (m model) settingFields() []settingField {
 		return []settingField{
 			{settingUploadLimitScope, "Limit applies to", m.choiceValue(settingUploadLimitScope, uploadScopeLabel(m.cfg.Uploads.LimitScope)), settingChoice},
 			{settingUploadScheduling, "Scheduling", m.choiceValue(settingUploadScheduling, uploadSchedulingLabel(m.cfg.Uploads.Scheduling)), settingChoice},
+			{settingPrioritizeBuddies, "Prioritize all buddies", strconv.FormatBool(m.cfg.Uploads.PrioritizeBuddies), settingBool},
+			{settingPrioritizePrivileged, "Prioritize supporter users", strconv.FormatBool(m.cfg.Uploads.PrioritizePrivileged), settingBool},
+			{settingExemptBuddiesFromQueueLimits, "Exempt buddies from queue limits", strconv.FormatBool(m.cfg.Uploads.ExemptBuddiesFromQueueLimits), settingBool},
 			{settingAutoClearUploads, "Auto-clear new completed uploads", strconv.FormatBool(m.cfg.Uploads.AutoClearCompleted), settingBool},
 			{settingAutoClearCancelledUploads, "Auto-clear new cancelled uploads", strconv.FormatBool(m.cfg.Uploads.AutoClearCancelled), settingBool},
 			{settingWaitForActiveUploadsOnQuit, "Wait for active uploads on quit", strconv.FormatBool(m.cfg.Uploads.WaitForActiveUploadsOnQuit), settingBool},
