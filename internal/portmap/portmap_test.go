@@ -97,46 +97,28 @@ func TestOpenFiltersAndPrefersNATPMP(t *testing.T) {
 			var discoveries atomic.Int32
 			var changed uint16
 			mapping, err := openWithLogger(context.Background(), 50300, tc.natPMP, tc.upnp, func(port uint16) { changed = port }, time.Hour, discovery(&discoveries, upnp, pmp), nil)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if mapping.gateway.Type() != tc.wantKind {
-				t.Fatalf("selected %q, want %q", mapping.gateway.Type(), tc.wantKind)
-			}
+			must(t, err)
+			failIfFmt(t, mapping.gateway.Type() != tc.wantKind, "selected %q, want %q", mapping.gateway.Type(), tc.wantKind)
 			pmpCalls, _ := pmp.snapshot()
 			upnpCalls, _ := upnp.snapshot()
-			if (len(pmpCalls) > 0) != tc.wantPMP || (len(upnpCalls) > 0) != tc.wantUPnPAdd {
-				t.Fatalf("mapping calls: NAT-PMP=%d UPnP=%d", len(pmpCalls), len(upnpCalls))
-			}
+			failIfFmt(t, (len(pmpCalls) > 0) != tc.wantPMP || (len(upnpCalls) > 0) != tc.wantUPnPAdd, "mapping calls: NAT-PMP=%d UPnP=%d", len(pmpCalls), len(upnpCalls))
 			selectedCalls := pmpCalls
 			wantPort := uint16(5100)
 			if tc.wantKind != "NAT-PMP" {
 				selectedCalls, wantPort = upnpCalls, 5200
 			}
-			if changed != wantPort || len(selectedCalls) != 1 {
-				t.Fatalf("callback=%d calls=%+v", changed, selectedCalls)
-			}
+			failIfFmt(t, changed != wantPort || len(selectedCalls) != 1, "callback=%d calls=%+v", changed, selectedCalls)
 			call := selectedCalls[0]
-			if call.protocol != "tcp" || call.internal != 50300 || call.description != "oto" || call.lease != 12*time.Hour {
-				t.Fatalf("mapping request: %+v", call)
-			}
-			if err := mapping.Close(); err != nil {
-				t.Fatal(err)
-			}
+			failIfFmt(t, call.protocol != "tcp" || call.internal != 50300 || call.description != "oto" || call.lease != 12*time.Hour, "mapping request: %+v", call)
+			must(t, mapping.Close())
 			selectedCalls, deletes := mapping.gateway.(*fakeNAT).snapshot()
 			wantCalls := 1
 			if tc.wantKind == "NAT-PMP" {
 				wantCalls = 2
-				if selectedCalls[1].lease != 0 {
-					t.Fatalf("NAT-PMP cleanup lease=%v", selectedCalls[1].lease)
-				}
+				failIfFmt(t, selectedCalls[1].lease != 0, "NAT-PMP cleanup lease=%v", selectedCalls[1].lease)
 			}
-			if len(selectedCalls) != wantCalls || deletes != 1 {
-				t.Fatalf("cleanup calls=%d deletes=%d", len(selectedCalls), deletes)
-			}
-			if discoveries.Load() != 1 {
-				t.Fatalf("discoveries=%d", discoveries.Load())
-			}
+			failIfFmt(t, len(selectedCalls) != wantCalls || deletes != 1, "cleanup calls=%d deletes=%d", len(selectedCalls), deletes)
+			failIfFmt(t, discoveries.Load() != 1, "discoveries=%d", discoveries.Load())
 		})
 	}
 }
@@ -148,17 +130,11 @@ func TestOpenFallsBackToUPnPAndRetriesPermanentLease(t *testing.T) {
 	upnp := &fakeNAT{kind: "UPNP (IG1-IP1)", defaultPort: 5300, results: []addResult{{err: &fault}, {port: 5300}}}
 	var discoveries atomic.Int32
 	mapping, err := openWithLogger(context.Background(), 50300, true, true, nil, time.Hour, discovery(&discoveries, upnp, pmp), nil)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	defer mapping.Close()
-	if mapping.gateway != upnp || mapping.lease != 0 {
-		t.Fatalf("selected mapping: %+v", mapping)
-	}
+	failIfFmt(t, mapping.gateway != upnp || mapping.lease != 0, "selected mapping: %+v", mapping)
 	calls, _ := upnp.snapshot()
-	if len(calls) != 2 || calls[0].lease != 12*time.Hour || calls[1].lease != 0 {
-		t.Fatalf("UPnP lease attempts: %+v", calls)
-	}
+	failIfFmt(t, len(calls) != 2 || calls[0].lease != 12*time.Hour || calls[1].lease != 0, "UPnP lease attempts: %+v", calls)
 }
 
 func TestRenewalReportsChangedPortAndCancellationDeletes(t *testing.T) {
@@ -170,17 +146,13 @@ func TestRenewalReportsChangedPortAndCancellationDeletes(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	changed := make(chan uint16, 3)
 	mapping, err := openWithLogger(ctx, 50300, false, true, func(port uint16) { changed <- port }, 5*time.Millisecond, discovery(&discoveries, gateway), nil)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	if port := <-changed; port != 5400 {
 		t.Fatalf("initial port=%d", port)
 	}
 	select {
 	case port := <-changed:
-		if port != 5401 {
-			t.Fatalf("renewed port=%d", port)
-		}
+		failIfFmt(t, port != 5401, "renewed port=%d", port)
 	case <-time.After(time.Second):
 		t.Fatal("changed renewal port was not reported")
 	}
@@ -190,19 +162,13 @@ func TestRenewalReportsChangedPortAndCancellationDeletes(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("mapping was not deleted on cancellation")
 	}
-	if err := mapping.Close(); err != nil {
-		t.Fatal(err)
-	}
+	must(t, mapping.Close())
 	calls, deletes := gateway.snapshot()
-	if len(calls) < 3 || deletes != 1 {
-		t.Fatalf("calls=%d deletes=%d", len(calls), deletes)
-	}
+	failIfFmt(t, len(calls) < 3 || deletes != 1, "calls=%d deletes=%d", len(calls), deletes)
 }
 
 func TestDisabledSkipsDiscovery(t *testing.T) {
 	var discoveries atomic.Int32
 	mapping, err := openWithLogger(context.Background(), 50300, false, false, nil, time.Hour, discovery(&discoveries), nil)
-	if err != nil || mapping != nil || discoveries.Load() != 0 {
-		t.Fatalf("mapping=%v err=%v discoveries=%d", mapping, err, discoveries.Load())
-	}
+	failIfFmt(t, err != nil || mapping != nil || discoveries.Load() != 0, "mapping=%v err=%v discoveries=%d", mapping, err, discoveries.Load())
 }
