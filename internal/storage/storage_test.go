@@ -16,7 +16,7 @@ func TestOpenReopenAndSchema(t *testing.T) {
 	if got := db.SQL().Stats().MaxOpenConnections; got != 4 {
 		t.Fatalf("max connections = %d, want 4", got)
 	}
-	for _, pragma := range []struct{ name, want string }{{"user_version", "2"}, {"foreign_keys", "1"}, {"synchronous", "2"}} {
+	for _, pragma := range []struct{ name, want string }{{"user_version", "3"}, {"foreign_keys", "1"}, {"synchronous", "2"}} {
 		var got string
 		must(t, db.SQL().QueryRow("PRAGMA "+pragma.name).Scan(&got))
 		failIfFmt(t, got != pragma.want, "%s = %q, want %q", pragma.name, got, pragma.want)
@@ -57,7 +57,7 @@ func TestRejectsCorruptAndUnsupported(t *testing.T) {
 	unsupported := filepath.Join(t.TempDir(), "unsupported.sqlite3")
 	db, err := Open(unsupported)
 	must(t, err)
-	if _, err := db.SQL().Exec("PRAGMA user_version = 3"); err != nil {
+	if _, err := db.SQL().Exec("PRAGMA user_version = 4"); err != nil {
 		db.Close()
 		t.Fatal(err)
 	}

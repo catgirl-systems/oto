@@ -2,9 +2,9 @@ PRAGMA foreign_keys = ON;
 
 CREATE TABLE storage_schema (
     id INTEGER PRIMARY KEY CHECK (id = 1),
-    version INTEGER NOT NULL CHECK (version = 3)
+    version INTEGER NOT NULL CHECK (version = 2)
 );
-INSERT INTO storage_schema(id, version) VALUES (1, 3);
+INSERT INTO storage_schema(id, version) VALUES (1, 2);
 
 CREATE TABLE state_meta (
     id INTEGER PRIMARY KEY CHECK (id = 1),
@@ -126,17 +126,6 @@ CREATE TABLE ui_preferences (
     value TEXT NOT NULL
 );
 
-CREATE TABLE api_tokens (
-    id TEXT PRIMARY KEY,
-    name TEXT NOT NULL,
-    token_hash TEXT NOT NULL UNIQUE,
-    user_agent TEXT NOT NULL DEFAULT '',
-    source_ip TEXT NOT NULL DEFAULT '',
-    created_at INTEGER NOT NULL,
-    last_used_at INTEGER,
-    expires_at INTEGER  -- unix nanoseconds, NULL = never
-);
-
 CREATE TABLE share_snapshots (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     source TEXT NOT NULL,
@@ -194,4 +183,4 @@ CREATE TABLE share_entries (
 );
 CREATE INDEX share_entries_lookup ON share_entries(snapshot_id, kind, root, path, name, ordinal);
 
-PRAGMA user_version = 3;
+PRAGMA user_version = 2;

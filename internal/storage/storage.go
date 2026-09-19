@@ -28,7 +28,7 @@ var schema []byte
 var communitySchema []byte
 
 const (
-	SchemaVersion  = 2
+	SchemaVersion  = 3
 	ShareBatchSize = 1000
 )
 
@@ -107,6 +107,8 @@ func open(path string, daemon bool) (*DB, error) {
 	}
 	if version == 1 && daemon {
 		err = migrateV1(context.Background(), sqlDB, absolute, communitySchema)
+	} else if version == 2 && daemon {
+		err = migrateV2(context.Background(), sqlDB)
 	} else {
 		err = bootstrapSchema(sqlDB, schema)
 	}
@@ -149,8 +151,8 @@ func bootstrapSchema(db *sql.DB, schema []byte) error {
 	}
 	if version != 0 || objects != 0 {
 		if version != SchemaVersion {
-			if version == 1 {
-				return fmt.Errorf("%w: schema 1 requires upgrade to %d; restart the daemon before attaching the TUI", ErrUnsupportedSchema, SchemaVersion)
+			if version == 1 || version == 2 {
+				return fmt.Errorf("%w: schema %d requires upgrade to %d; restart the daemon before attaching the TUI", ErrUnsupportedSchema, version, SchemaVersion)
 			}
 			return fmt.Errorf("%w: got user_version %d", ErrUnsupportedSchema, version)
 		}

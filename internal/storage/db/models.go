@@ -139,6 +139,17 @@ type History struct {
 	Recency []byte `json:"recency"`
 }
 
+type ApiToken struct {
+	ID         string `json:"id"`
+	Name       string `json:"name"`
+	TokenHash  string `json:"token_hash"`
+	UserAgent  string `json:"user_agent"`
+	SourceIP   string `json:"source_ip"`
+	CreatedAt  int64  `json:"created_at"`
+	LastUsedAt *int64 `json:"last_used_at"`
+	ExpiresAt  *int64 `json:"expires_at"`
+}
+
 type Seen struct {
 	ID string `json:"id"`
 }

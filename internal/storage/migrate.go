@@ -50,10 +50,57 @@ INSERT INTO storage_schema(id, version) VALUES (1, 2);
 PRAGMA user_version = 2;`); err != nil {
 		return err
 	}
+	if err := upgradeV2(ctx, tx); err != nil {
+		return err
+	}
 	if err := verifySchema(ctx, tx, SchemaVersion); err != nil {
 		return err
 	}
 	return tx.Commit()
+}
+
+// apiSchemaDDL is the purely additive schema 2 to 3 step: the api_tokens table.
+const apiSchemaDDL = `
+CREATE TABLE IF NOT EXISTS api_tokens (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    token_hash TEXT NOT NULL UNIQUE,
+    user_agent TEXT NOT NULL DEFAULT '',
+    source_ip TEXT NOT NULL DEFAULT '',
+    created_at INTEGER NOT NULL,
+    last_used_at INTEGER,
+    expires_at INTEGER
+);
+DROP TABLE storage_schema;
+CREATE TABLE storage_schema (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    version INTEGER NOT NULL CHECK (version = 3)
+);
+INSERT INTO storage_schema(id, version) VALUES (1, 3);
+PRAGMA user_version = 3;`
+
+// migrateV2 upgrades an open schema 2 database to 3. Additive only: no backup.
+func migrateV2(ctx context.Context, database *sql.DB) error {
+	tx, err := database.BeginTx(ctx, nil) // DSN uses BEGIN IMMEDIATE.
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err := verifySchema(ctx, tx, 2); err != nil {
+		return err
+	}
+	if err := upgradeV2(ctx, tx); err != nil {
+		return err
+	}
+	if err := verifySchema(ctx, tx, SchemaVersion); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func upgradeV2(_ context.Context, tx *sql.Tx) error {
+	_, err := tx.Exec(apiSchemaDDL)
+	return err
 }
 
 // VACUUM INTO is SQLite's consistent snapshot facility; unlike copying the main

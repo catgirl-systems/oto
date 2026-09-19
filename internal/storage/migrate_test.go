@@ -314,7 +314,7 @@ func TestCommunityMigrationLiveReader(t *testing.T) {
 	if _, err := reader.ExecContext(ctx, "ROLLBACK"); err != nil {
 		t.Fatal(err)
 	}
-	if err := reader.QueryRowContext(ctx, "SELECT version FROM storage_schema").Scan(&version); err != nil || version != 2 {
+	if err := reader.QueryRowContext(ctx, "SELECT version FROM storage_schema").Scan(&version); err != nil || version != 3 {
 		t.Fatalf("old connection cannot resynchronize: %d %v", version, err)
 	}
 	if _, err := reader.ExecContext(ctx, "UPDATE ui_preferences SET value='after upgrade' WHERE key='sort'"); err != nil {
@@ -340,5 +340,37 @@ func TestCommunityFreshBootstrapRollback(t *testing.T) {
 	database, err := OpenDaemon(path)
 	must(t, err)
 	defer database.Close()
-	must(t, verifySchema(context.Background(), database.SQL(), 2))
+	must(t, verifySchema(context.Background(), database.SQL(), SchemaVersion))
+}
+
+// Frozen verbatim from the schema 2 era, not synthesized from the new schema.
+//
+//go:embed testdata/schema_v2.sql
+var schemaV2 []byte
+
+func TestAPITokenMigrationFromV2(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.sqlite3")
+	legacy, err := sql.Open("sqlite", sqliteDSN(path))
+	must(t, err)
+	legacy.SetMaxOpenConns(1)
+	t.Cleanup(func() { _ = legacy.Close() })
+	if _, err := legacy.Exec(string(schemaV2)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := legacy.Exec("INSERT INTO history VALUES ('search','music',zeroblob(8))"); err != nil {
+		t.Fatal(err)
+	}
+	db, err := OpenDaemon(path)
+	must(t, err)
+	defer db.Close()
+	must(t, verifySchema(context.Background(), db.SQL(), SchemaVersion))
+	var count int
+	if err := db.SQL().QueryRow("SELECT count(*) FROM history WHERE value = 'music'").Scan(&count); err != nil || count != 1 {
+		t.Fatalf("legacy history lost: %d %v", count, err)
+	}
+	if _, err := db.SQL().Exec("INSERT INTO api_tokens(id,name,token_hash,created_at) VALUES ('a1','app','hash',1)"); err != nil {
+		t.Fatalf("api_tokens unusable: %v", err)
+	}
+	backups, _ := filepath.Glob(path + ".v1-backup-*.sqlite3")
+	failIfFmt(t, len(backups) != 0, "additive migration made a backup: %v", backups)
 }
