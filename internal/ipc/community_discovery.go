@@ -6,40 +6,47 @@ import (
 	"strconv"
 
 	"github.com/catgirl-systems/oto/internal/daemon"
+	"github.com/danielgtaylor/huma/v2"
 )
 
-func (s *Server) communityDiscovery(w http.ResponseWriter, r *http.Request) {
-	var req daemon.CommunityDiscoveryRequest
-	if r.Method == http.MethodPost {
-		if err := decode(w, r, &req); err != nil {
-			communityError(w, err)
-			return
-		}
-	} else {
-		q := r.URL.Query()
-		identity, err := communityRoomIdentityQuery(q)
+func (s *Server) registerCommunityDiscoveryRoutes() {
+	route(s, scopeAuthed, huma.Operation{
+		OperationID: "get-discovery", Method: http.MethodGet, Path: "/v1/community/discovery",
+		Summary: "Recommended users and rooms", Errors: communityErrors,
+	}, func(ctx context.Context, input *struct {
+		Account  string `query:"account" doc:"Community account"`
+		Daemon   string `query:"daemon" doc:"Daemon identity"`
+		Session  string `query:"session" doc:"Session number"`
+		Kind     string `query:"kind"`
+		Target   string `query:"target"`
+		Frontend string `query:"frontend"`
+		Cursor   string `query:"cursor"`
+		Limit    int    `query:"limit"`
+	}) (*struct {
+		Body daemon.CommunityDiscoveryPage
+	}, error) {
+		identity, err := identityParams{Account: input.Account, Daemon: input.Daemon, Session: input.Session}.identity()
 		if err != nil {
-			communityError(w, err)
-			return
+			return nil, communityErr(err)
 		}
-		req = daemon.CommunityDiscoveryRequest{CommunityIdentity: identity, Kind: q.Get("kind"), Target: q.Get("target"), Frontend: q.Get("frontend"), Cursor: q.Get("cursor")}
-		if q.Get("limit") != "" {
-			req.Limit, err = strconv.Atoi(q.Get("limit"))
-			if err != nil {
-				communityError(w, err)
-				return
-			}
-		}
-	}
-	var out daemon.CommunityDiscoveryPage
-	var err error
-	if r.Method == http.MethodPost {
-		out, err = s.service.StartCommunityDiscovery(r.Context(), req)
-	} else {
-		out, err = s.service.CommunityDiscovery(r.Context(), req)
-	}
-	communityResult(w, out, err)
+		out, err := s.service.CommunityDiscovery(ctx, daemon.CommunityDiscoveryRequest{
+			CommunityIdentity: identity, Kind: input.Kind, Target: input.Target, Frontend: input.Frontend, Cursor: input.Cursor, Limit: input.Limit,
+		})
+		return communityBody(out, err)
+	})
+	route(s, scopeAuthed, huma.Operation{
+		OperationID: "refresh-discovery", Method: http.MethodPost, Path: "/v1/community/discovery",
+		Summary: "Refresh recommendations", Errors: communityErrors,
+	}, func(ctx context.Context, input *struct {
+		Body daemon.CommunityDiscoveryRequest
+	}) (*struct {
+		Body daemon.CommunityDiscoveryPage
+	}, error) {
+		out, err := s.service.StartCommunityDiscovery(ctx, input.Body)
+		return communityBody(out, err)
+	})
 }
+
 func (c *Client) CommunityDiscovery(ctx context.Context, req daemon.CommunityDiscoveryRequest) (daemon.CommunityDiscoveryPage, error) {
 	q := communityRoomValues(req.CommunityIdentity)
 	q.Set("kind", req.Kind)
@@ -51,6 +58,7 @@ func (c *Client) CommunityDiscovery(ctx context.Context, req daemon.CommunityDis
 	err := c.Do(ctx, http.MethodGet, "/v1/community/discovery?"+q.Encode(), nil, &out)
 	return out, err
 }
+
 func (c *Client) StartCommunityDiscovery(ctx context.Context, req daemon.CommunityDiscoveryRequest) (daemon.CommunityDiscoveryPage, error) {
 	var out daemon.CommunityDiscoveryPage
 	err := c.Do(ctx, http.MethodPost, "/v1/community/discovery", req, &out)

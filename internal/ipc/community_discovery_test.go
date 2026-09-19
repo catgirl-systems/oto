@@ -24,11 +24,14 @@ func TestCommunityDiscoveryIPCValidationAndOffline(t *testing.T) {
 		t.Fatal("offline query pretended to send")
 	}
 	base := "/v1/community/discovery?" + communityRoomValues(req.CommunityIdentity).Encode()
-	for _, suffix := range []string{"&kind=invalid&frontend=one", "&kind=global", "&kind=item&target=&frontend=one", "&kind=global&target=not-allowed&frontend=one", "&kind=similar&limit=-1&frontend=one", "&kind=similar&limit=no&frontend=one"} {
-		resp, err := client.http.Do(mustRequest(http.MethodGet, "http://oto.local"+base+suffix, nil))
+	for _, tc := range []struct {
+		suffix string
+		status int
+	}{{"&kind=invalid&frontend=one", 400}, {"&kind=global", 400}, {"&kind=item&target=&frontend=one", 400}, {"&kind=global&target=not-allowed&frontend=one", 400}, {"&kind=similar&limit=-1&frontend=one", 400}, {"&kind=similar&limit=no&frontend=one", 422}} {
+		resp, err := client.http.Do(mustRequest(http.MethodGet, "http://oto.local"+base+tc.suffix, nil))
 		must(t, err)
 		_ = resp.Body.Close()
-		failIf(t, resp.StatusCode != http.StatusBadRequest, suffix, resp.StatusCode)
+		failIf(t, resp.StatusCode != tc.status, tc.suffix, resp.StatusCode)
 	}
 	req.Session++
 	if _, err := client.CommunityDiscovery(ctx, req); err == nil {
