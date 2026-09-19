@@ -21,8 +21,10 @@ func TestScanCancellationInvalidAndStaleIDs(t *testing.T) {
 		body   string
 		status int
 	}{
-		{"", 400}, {"{}", 400}, {`{"id":0}`, 400}, {`{"id":-1}`, 400},
-		{`{"id":"1"}`, 400}, {`{"id":1} {}`, 400}, {`{"id":18446744073709551616}`, 400}, {`{"id":1}`, 409},
+		// Malformed bodies are rejected by schema validation as 422; domain
+		// errors (unknown or finished scans) keep their historical statuses.
+		{"", 400}, {"{}", 422}, {`{"id":0}`, 400}, {`{"id":-1}`, 422},
+		{`{"id":"1"}`, 422}, {`{"id":1} {}`, 400}, {`{"id":18446744073709551616}`, 422}, {`{"id":1}`, 409},
 	} {
 		response := httptest.NewRecorder()
 		handler.ServeHTTP(response, httptest.NewRequest("POST", "/v1/shares/rescan/cancel", strings.NewReader(tc.body)))

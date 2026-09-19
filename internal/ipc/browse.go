@@ -2,7 +2,6 @@ package ipc
 
 import (
 	"context"
-	"errors"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -10,34 +9,6 @@ import (
 
 	"github.com/catgirl-systems/oto/internal/daemon"
 )
-
-func (s *Server) browsePage(w http.ResponseWriter, r *http.Request) {
-	q := r.URL.Query()
-	revision, err := strconv.ParseUint(q.Get("revision"), 10, 64)
-	if err != nil {
-		writeErr(w, 400, err)
-		return
-	}
-	cursor, err := strconv.Atoi(q.Get("cursor"))
-	if err != nil {
-		writeErr(w, 400, err)
-		return
-	}
-	out, err := s.service.BrowsePage(r.Context(), daemon.BrowsePageRequest{Username: q.Get("user"), Revision: revision, Folder: q.Get("folder"), Query: q.Get("query"), Cursor: cursor})
-	badRequestResult(w, out, err)
-}
-func (s *Server) browseDownload(w http.ResponseWriter, r *http.Request) {
-	var req daemon.BrowseDownloadRequest
-	if !decodeBody(w, r, &req) {
-		return
-	}
-	if r.URL.Path == "/v1/browse/download-as" && req.Destination == "" {
-		writeErr(w, 400, errors.New("download destination is required"))
-		return
-	}
-	out, err := s.service.QueueBrowse(r.Context(), req)
-	badRequestResult(w, out, err)
-}
 
 func (c *Client) OpenBrowse(ctx context.Context, username, folder, query string) (daemon.BrowsePage, error) {
 	q := url.Values{"user": {username}, "folder": {folder}, "query": {query}}
