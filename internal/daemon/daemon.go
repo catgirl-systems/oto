@@ -136,8 +136,8 @@ type Transfer struct {
 	ID                    string  `json:"id"`
 	Username              string  `json:"username"`
 	Filename              string  `json:"filename"`
-	Direction             string  `json:"direction"`
-	State                 string  `json:"state"`
+	Direction             string  `json:"direction" enum:"download,upload"`
+	State                 string  `json:"state" enum:"queued,incomplete,running,finalizing,retrying,paused,completed,cancelled,filtered,rejected,failed,interrupted"`
 	Done                  uint64  `json:"done"`
 	Total                 uint64  `json:"total"`
 	ElapsedMS             *uint64 `json:"elapsed_ms"`

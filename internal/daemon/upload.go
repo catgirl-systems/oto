@@ -14,10 +14,10 @@ import (
 var ErrUploadUnavailable = errors.New("daemon: connect before retrying uploads")
 
 type UploadActionRequest struct {
-	Action    string   `json:"action"`
+	Action    string   `json:"action" enum:"retry,cancel,clear"`
 	IDs       []string `json:"ids,omitempty"`
 	Usernames []string `json:"usernames,omitempty"`
-	States    []string `json:"states,omitempty"`
+	States    []string `json:"states,omitempty" enum:"completed,cancelled,failed,queued,interrupted"`
 	All       bool     `json:"all,omitempty"`
 }
 type UploadActionError struct {
