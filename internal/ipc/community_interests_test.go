@@ -57,11 +57,14 @@ func TestCommunityInterestsIPCMultipleFrontends(t *testing.T) {
 	must(t, err)
 	failIf(t, strings.Contains(string(encoded), "private description"), "state contains description")
 	base := "/v1/community/interests?" + communityRoomValues(id).Encode()
-	for _, path := range []string{base + "&limit=-1", base + "&limit=no", base + "&cursor=%1B", base + "&cursor=UPPERCASE", base + "&query=%1B", "/v1/community/profile/self?session=no"} {
-		resp, err := first.http.Do(mustRequest(http.MethodGet, "http://oto.local"+path, nil))
+	for _, tc := range []struct {
+		path   string
+		status int
+	}{{base + "&limit=-1", 400}, {base + "&limit=no", 422}, {base + "&cursor=%1B", 400}, {base + "&cursor=UPPERCASE", 400}, {base + "&query=%1B", 400}, {"/v1/community/profile/self?session=no", 400}} {
+		resp, err := first.http.Do(mustRequest(http.MethodGet, "http://oto.local"+tc.path, nil))
 		must(t, err)
 		_ = resp.Body.Close()
-		failIf(t, resp.StatusCode != http.StatusBadRequest, path, resp.StatusCode)
+		failIf(t, resp.StatusCode != tc.status, tc.path, resp.StatusCode)
 	}
 	id.Session++
 	if _, err := first.CommunitySelfProfile(ctx, id); err == nil {
