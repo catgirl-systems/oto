@@ -246,7 +246,7 @@ func (s *Service) ApproveAPIAuthRequest(id string, ttl time.Duration) error {
 	}
 	if err := s.stateDB.WriteTx(context.Background(), func(tx *sql.Tx) error {
 		return s.stateDB.Queries().WithTx(tx).InsertAPIToken(context.Background(), storageDB.InsertAPITokenParams{
-			ID: appID, Name: request.name, TokenHash: hash, UserAgent: request.userAgent, SourceIP: request.sourceIP, CreatedAt: createdAt.UnixNano(), ExpiresAt: expiresAt,
+			ID: appID, Name: request.name, TokenHash: hash, UserAgent: request.userAgent, SourceIp: request.sourceIP, CreatedAt: createdAt.UnixNano(), ExpiresAt: expiresAt,
 		})
 	}); err != nil {
 		return err
@@ -291,7 +291,7 @@ func (s *Service) ListAPIApps() ([]APIApp, error) {
 		}
 		apps = make([]APIApp, 0, len(rows))
 		for _, row := range rows {
-			app := APIApp{ID: row.ID, Name: row.Name, UserAgent: row.UserAgent, SourceIP: row.SourceIP, CreatedAt: unixTime(row.CreatedAt)}
+			app := APIApp{ID: row.ID, Name: row.Name, UserAgent: row.UserAgent, SourceIP: row.SourceIp, CreatedAt: unixTime(row.CreatedAt)}
 			if row.LastUsedAt != nil {
 				used := unixTime(*row.LastUsedAt)
 				app.LastUsedAt = &used

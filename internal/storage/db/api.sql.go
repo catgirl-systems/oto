@@ -31,7 +31,7 @@ func (q *Queries) GetAPITokenByHash(ctx context.Context, tokenHash string) (ApiT
 		&i.Name,
 		&i.TokenHash,
 		&i.UserAgent,
-		&i.SourceIP,
+		&i.SourceIp,
 		&i.CreatedAt,
 		&i.LastUsedAt,
 		&i.ExpiresAt,
@@ -49,7 +49,7 @@ type InsertAPITokenParams struct {
 	Name      string `json:"name"`
 	TokenHash string `json:"token_hash"`
 	UserAgent string `json:"user_agent"`
-	SourceIP  string `json:"source_ip"`
+	SourceIp  string `json:"source_ip"`
 	CreatedAt int64  `json:"created_at"`
 	ExpiresAt *int64 `json:"expires_at"`
 }
@@ -60,7 +60,7 @@ func (q *Queries) InsertAPIToken(ctx context.Context, arg InsertAPITokenParams) 
 		arg.Name,
 		arg.TokenHash,
 		arg.UserAgent,
-		arg.SourceIP,
+		arg.SourceIp,
 		arg.CreatedAt,
 		arg.ExpiresAt,
 	)
@@ -86,7 +86,7 @@ func (q *Queries) ListAPITokens(ctx context.Context) ([]ApiToken, error) {
 			&i.Name,
 			&i.TokenHash,
 			&i.UserAgent,
-			&i.SourceIP,
+			&i.SourceIp,
 			&i.CreatedAt,
 			&i.LastUsedAt,
 			&i.ExpiresAt,
