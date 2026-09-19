@@ -110,10 +110,10 @@ func TestCommunityPrivateIPCValidationAndBudgets(t *testing.T) {
 		status int
 	}{
 		{"/v1/community/conversations?session=no", 400},
-		{"/v1/community/conversations?" + q.Encode() + "&include_closed=no", 400},
-		{"/v1/community/conversations/invalid/messages?" + q.Encode(), 400},
-		{"/v1/community/conversations/1/messages?" + q.Encode() + "&newer_than=no", 400},
-		{"/v1/community/conversations/1/export?" + q.Encode() + "&through_id=no&format=json", 400},
+		{"/v1/community/conversations?" + q.Encode() + "&include_closed=no", 422},
+		{"/v1/community/conversations/invalid/messages?" + q.Encode(), 422},
+		{"/v1/community/conversations/1/messages?" + q.Encode() + "&newer_than=no", 422},
+		{"/v1/community/conversations/1/export?" + q.Encode() + "&through_id=no&format=json", 422},
 		{"/v1/community/conversations/1/export?" + q.Encode() + "&format=other", 400},
 		{"/v1/community/conversations/999999/messages?" + q.Encode(), 404},
 	} {

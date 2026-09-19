@@ -7,140 +7,127 @@ import (
 	"strconv"
 
 	"github.com/catgirl-systems/oto/internal/daemon"
+	"github.com/danielgtaylor/huma/v2"
 )
 
-func (s *Server) registerCommunityChats(mux *http.ServeMux) {
-	mux.HandleFunc("GET /v1/community/conversations", s.communityConversations)
-	mux.HandleFunc("POST /v1/community/conversations", s.communityOpenConversation)
-	mux.HandleFunc("POST /v1/community/conversations/action", s.communityConversationAction)
-	mux.HandleFunc("GET /v1/community/conversations/{id}/messages", s.communityMessages)
-	mux.HandleFunc("GET /v1/community/conversations/{id}/export", s.communityExport)
-	mux.HandleFunc("POST /v1/community/messages", s.communitySendPrivate)
-	mux.HandleFunc("POST /v1/community/messages/action", s.communityMessageAction)
-}
-
-func communityQueryInt(q url.Values, name string) (int64, error) {
-	if q.Get(name) == "" {
-		return 0, nil
-	}
-	return strconv.ParseInt(q.Get(name), 10, 64)
-}
-
-func communityConversationQuery(r *http.Request) (daemon.CommunityConversationsRequest, error) {
-	q := r.URL.Query()
-	out := daemon.CommunityConversationsRequest{CommunityIdentity: daemon.CommunityIdentity{Account: q.Get("account"), Daemon: q.Get("daemon")}, Kind: q.Get("kind"), Query: q.Get("query")}
-	var err error
-	if out.Session, err = strconv.ParseUint(q.Get("session"), 10, 64); err != nil {
-		return out, err
-	}
-	if out.Cursor, err = communityQueryInt(q, "cursor"); err != nil {
-		return out, err
-	}
-	if q.Get("limit") != "" {
-		if out.Limit, err = strconv.Atoi(q.Get("limit")); err != nil {
-			return out, err
+func (s *Server) registerCommunityChatRoutes() {
+	route(s, scopeAuthed, huma.Operation{
+		OperationID: "list-conversations", Method: http.MethodGet, Path: "/v1/community/conversations",
+		Summary: "List private conversations", Errors: communityErrors,
+	}, func(ctx context.Context, input *struct {
+		Account       string `query:"account" doc:"Community account"`
+		Daemon        string `query:"daemon" doc:"Daemon identity"`
+		Session       string `query:"session" doc:"Session number"`
+		Kind          string `query:"kind"`
+		Query         string `query:"query"`
+		Cursor        int64  `query:"cursor"`
+		Limit         int    `query:"limit"`
+		IncludeClosed bool   `query:"include_closed"`
+	}) (*struct {
+		Body daemon.CommunityConversationsPage
+	}, error) {
+		identity, err := identityParams{Account: input.Account, Daemon: input.Daemon, Session: input.Session}.identity()
+		if err != nil {
+			return nil, communityErr(err)
 		}
-	}
-	if q.Get("include_closed") != "" {
-		if out.IncludeClosed, err = strconv.ParseBool(q.Get("include_closed")); err != nil {
-			return out, err
+		out, err := s.service.CommunityConversations(ctx, daemon.CommunityConversationsRequest{
+			CommunityIdentity: identity, Kind: input.Kind, Query: input.Query, Cursor: input.Cursor, Limit: input.Limit, IncludeClosed: input.IncludeClosed,
+		})
+		return communityBody(out, err)
+	})
+	route(s, scopeAuthed, huma.Operation{
+		OperationID: "open-conversation", Method: http.MethodPost, Path: "/v1/community/conversations",
+		Summary: "Open a private conversation", Errors: communityErrors,
+	}, func(ctx context.Context, input *struct {
+		Body daemon.CommunityOpenConversationRequest
+	}) (*struct {
+		Body daemon.CommunityConversation
+	}, error) {
+		out, err := s.service.OpenCommunityConversation(ctx, input.Body)
+		return communityBody(out, err)
+	})
+	route(s, scopeAuthed, huma.Operation{
+		OperationID: "conversation-action", Method: http.MethodPost, Path: "/v1/community/conversations/action",
+		Summary: "Act on a conversation", Errors: communityErrors,
+	}, func(ctx context.Context, input *struct {
+		Body daemon.CommunityConversationActionRequest
+	}) (*emptyOutput, error) {
+		if err := s.service.CommunityConversationAction(ctx, input.Body); err != nil {
+			return nil, communityErr(err)
 		}
-	}
-	return out, nil
-}
-
-func (s *Server) communityConversations(w http.ResponseWriter, r *http.Request) {
-	req, err := communityConversationQuery(r)
-	if err != nil {
-		communityError(w, err)
-		return
-	}
-	out, err := s.service.CommunityConversations(r.Context(), req)
-	communityResult(w, out, err)
-}
-
-func (s *Server) communityOpenConversation(w http.ResponseWriter, r *http.Request) {
-	var req daemon.CommunityOpenConversationRequest
-	if !decodeCommunity(w, r, &req) {
-		return
-	}
-	out, err := s.service.OpenCommunityConversation(r.Context(), req)
-	communityResult(w, out, err)
-}
-
-func (s *Server) communityConversationAction(w http.ResponseWriter, r *http.Request) {
-	var req daemon.CommunityConversationActionRequest
-	if !decodeCommunity(w, r, &req) {
-		return
-	}
-	if err := s.service.CommunityConversationAction(r.Context(), req); err != nil {
-		communityError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, struct{}{})
-}
-
-func (s *Server) communityMessages(w http.ResponseWriter, r *http.Request) {
-	base, err := communityConversationQuery(r)
-	if err != nil {
-		communityError(w, err)
-		return
-	}
-	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
-	if err != nil {
-		communityError(w, err)
-		return
-	}
-	newer, err := communityQueryInt(r.URL.Query(), "newer_than")
-	if err != nil {
-		communityError(w, err)
-		return
-	}
-	out, err := s.service.CommunityMessages(r.Context(), daemon.CommunityMessagesRequest{CommunityIdentity: base.CommunityIdentity,
-		ConversationID: id, Cursor: base.Cursor, Limit: base.Limit, Query: base.Query, NewerThan: newer})
-	communityResult(w, out, err)
-}
-
-func (s *Server) communityExport(w http.ResponseWriter, r *http.Request) {
-	base, err := communityConversationQuery(r)
-	if err != nil {
-		communityError(w, err)
-		return
-	}
-	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
-	if err != nil {
-		communityError(w, err)
-		return
-	}
-	through, err := communityQueryInt(r.URL.Query(), "through_id")
-	if err != nil {
-		communityError(w, err)
-		return
-	}
-	out, err := s.service.ExportCommunityHistory(r.Context(), daemon.CommunityExportRequest{CommunityIdentity: base.CommunityIdentity,
-		ConversationID: id, Cursor: base.Cursor, Limit: base.Limit, Query: base.Query, ThroughID: through, Format: r.URL.Query().Get("format")})
-	communityResult(w, out, err)
-}
-
-func (s *Server) communitySendPrivate(w http.ResponseWriter, r *http.Request) {
-	var req daemon.CommunitySendRequest
-	if !decodeCommunity(w, r, &req) {
-		return
-	}
-	out, err := s.service.SendCommunityPrivate(r.Context(), req)
-	communityResult(w, out, err)
-}
-
-func (s *Server) communityMessageAction(w http.ResponseWriter, r *http.Request) {
-	var req daemon.CommunityMessageActionRequest
-	if !decodeCommunity(w, r, &req) {
-		return
-	}
-	if err := s.service.CommunityMessageAction(r.Context(), req); err != nil {
-		communityError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, struct{}{})
+		return &emptyOutput{}, nil
+	})
+	route(s, scopeAuthed, huma.Operation{
+		OperationID: "list-conversation-messages", Method: http.MethodGet, Path: "/v1/community/conversations/{id}/messages",
+		Summary: "Private conversation messages", Errors: communityErrors,
+	}, func(ctx context.Context, input *struct {
+		ID        int64  `path:"id" doc:"Conversation ID"`
+		Account   string `query:"account" doc:"Community account"`
+		Daemon    string `query:"daemon" doc:"Daemon identity"`
+		Session   string `query:"session" doc:"Session number"`
+		Query     string `query:"query"`
+		Cursor    int64  `query:"cursor"`
+		Limit     int    `query:"limit"`
+		NewerThan int64  `query:"newer_than"`
+	}) (*struct {
+		Body daemon.CommunityMessagesPage
+	}, error) {
+		identity, err := identityParams{Account: input.Account, Daemon: input.Daemon, Session: input.Session}.identity()
+		if err != nil {
+			return nil, communityErr(err)
+		}
+		out, err := s.service.CommunityMessages(ctx, daemon.CommunityMessagesRequest{
+			CommunityIdentity: identity, ConversationID: input.ID, Cursor: input.Cursor, Limit: input.Limit, Query: input.Query, NewerThan: input.NewerThan,
+		})
+		return communityBody(out, err)
+	})
+	route(s, scopeAuthed, huma.Operation{
+		OperationID: "export-conversation", Method: http.MethodGet, Path: "/v1/community/conversations/{id}/export",
+		Summary: "Export a conversation", Errors: communityErrors,
+	}, func(ctx context.Context, input *struct {
+		ID        int64  `path:"id" doc:"Conversation ID"`
+		Account   string `query:"account" doc:"Community account"`
+		Daemon    string `query:"daemon" doc:"Daemon identity"`
+		Session   string `query:"session" doc:"Session number"`
+		Query     string `query:"query"`
+		Cursor    int64  `query:"cursor"`
+		Limit     int    `query:"limit"`
+		ThroughID int64  `query:"through_id"`
+		Format    string `query:"format"`
+	}) (*struct {
+		Body daemon.CommunityExportPage
+	}, error) {
+		identity, err := identityParams{Account: input.Account, Daemon: input.Daemon, Session: input.Session}.identity()
+		if err != nil {
+			return nil, communityErr(err)
+		}
+		out, err := s.service.ExportCommunityHistory(ctx, daemon.CommunityExportRequest{
+			CommunityIdentity: identity, ConversationID: input.ID, Cursor: input.Cursor, Limit: input.Limit, Query: input.Query, ThroughID: input.ThroughID, Format: input.Format,
+		})
+		return communityBody(out, err)
+	})
+	route(s, scopeAuthed, huma.Operation{
+		OperationID: "send-private-message", Method: http.MethodPost, Path: "/v1/community/messages",
+		Summary: "Send a private message", Errors: communityErrors,
+	}, func(ctx context.Context, input *struct {
+		Body daemon.CommunitySendRequest
+	}) (*struct {
+		Body daemon.CommunitySendResult
+	}, error) {
+		out, err := s.service.SendCommunityPrivate(ctx, input.Body)
+		return communityBody(out, err)
+	})
+	route(s, scopeAuthed, huma.Operation{
+		OperationID: "private-message-action", Method: http.MethodPost, Path: "/v1/community/messages/action",
+		Summary: "Act on a private message", Errors: communityErrors,
+	}, func(ctx context.Context, input *struct {
+		Body daemon.CommunityMessageActionRequest
+	}) (*emptyOutput, error) {
+		if err := s.service.CommunityMessageAction(ctx, input.Body); err != nil {
+			return nil, communityErr(err)
+		}
+		return &emptyOutput{}, nil
+	})
 }
 
 func communityChatValues(identity daemon.CommunityIdentity, cursor int64, limit int, query string) url.Values {
