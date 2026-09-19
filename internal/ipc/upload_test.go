@@ -31,10 +31,10 @@ func TestUploadActionRoutes(t *testing.T) {
 		{`{"action":"retry","ids":["upload:missing"]}`, 503},
 		{`{"action":"clear"}`, 400},
 		{`{"action":"clear","all":true,"ids":["upload:missing"]}`, 400},
-		{`{"action":"clear","states":["running"]}`, 400},
+		{`{"action":"clear","states":["running"]}`, 422},
 		{`{"action":"clear","ids":["d-1","upload:missing"]}`, 400},
 		{`{"action":"cancel","all":true}`, 400},
-		{`{"action":"unknown","all":true}`, 400},
+		{`{"action":"unknown","all":true}`, 422},
 		{`{`, 400},
 	} {
 		w := httptest.NewRecorder()
