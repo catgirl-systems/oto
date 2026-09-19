@@ -47,11 +47,14 @@ func TestCommunityBuddiesIPCFrontendsAndValidation(t *testing.T) {
 	must(t, err)
 	failIf(t, strings.Contains(string(encoded), "changed by second frontend") || strings.Contains(string(encoded), "private note"), "state snapshot leaked buddy records")
 	base := "/v1/community/buddies?" + communityRoomValues(id).Encode()
-	for _, path := range []string{base + "&limit=-1", base + "&limit=no", base + "&sort=invalid", base + "&cursor=invalid", "/v1/community/buddies?session=invalid"} {
-		resp, err := first.http.Do(mustRequest(http.MethodGet, "http://oto.local"+path, nil))
+	for _, tc := range []struct {
+		path   string
+		status int
+	}{{base + "&limit=-1", 400}, {base + "&limit=no", 422}, {base + "&sort=invalid", 400}, {base + "&cursor=invalid", 400}, {"/v1/community/buddies?session=invalid", 400}} {
+		resp, err := first.http.Do(mustRequest(http.MethodGet, "http://oto.local"+tc.path, nil))
 		must(t, err)
 		_ = resp.Body.Close()
-		failIf(t, resp.StatusCode != http.StatusBadRequest, "invalid page status", path, resp.StatusCode)
+		failIf(t, resp.StatusCode != tc.status, "invalid page status", tc.path, resp.StatusCode)
 	}
 	req.Note = ""
 	req.Revision = &changed.Buddy.Revision
