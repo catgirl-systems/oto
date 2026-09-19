@@ -7,48 +7,61 @@ import (
 
 	"github.com/catgirl-systems/oto/internal/daemon"
 	"github.com/catgirl-systems/oto/internal/soulseek"
+	"github.com/danielgtaylor/huma/v2"
 )
 
-func (s *Server) communityProfile(w http.ResponseWriter, r *http.Request) {
-	var req daemon.CommunityProfileRequest
-	if r.Method == http.MethodPost {
-		if err := decode(w, r, &req); err != nil {
-			communityError(w, err)
-			return
-		}
-	} else {
-		q := r.URL.Query()
-		id, err := communityRoomIdentityQuery(q)
+func (s *Server) registerCommunityProfileRoutes() {
+	route(s, scopeAuthed, huma.Operation{
+		OperationID: "get-user-profile", Method: http.MethodGet, Path: "/v1/community/profile",
+		Summary: "Fetch a user profile", Errors: communityErrors,
+	}, func(ctx context.Context, input *struct {
+		Account  string `query:"account" doc:"Community account"`
+		Daemon   string `query:"daemon" doc:"Daemon identity"`
+		Session  string `query:"session" doc:"Session number"`
+		Username string `query:"username"`
+		Frontend string `query:"frontend"`
+	}) (*struct {
+		Body daemon.CommunityProfile
+	}, error) {
+		identity, err := identityParams{Account: input.Account, Daemon: input.Daemon, Session: input.Session}.identity()
 		if err != nil {
-			communityError(w, err)
-			return
+			return nil, communityErr(err)
 		}
-		req = daemon.CommunityProfileRequest{CommunityIdentity: id, Username: q.Get("username"), Frontend: q.Get("frontend")}
-	}
-	var out daemon.CommunityProfile
-	var err error
-	if r.Method == http.MethodPost {
-		out, err = s.service.StartCommunityProfile(r.Context(), req)
-	} else {
-		out, err = s.service.CommunityProfile(r.Context(), req)
-	}
-	communityResult(w, out, err)
+		out, err := s.service.CommunityProfile(ctx, daemon.CommunityProfileRequest{CommunityIdentity: identity, Username: input.Username, Frontend: input.Frontend})
+		return communityBody(out, err)
+	})
+	route(s, scopeAuthed, huma.Operation{
+		OperationID: "refresh-user-profile", Method: http.MethodPost, Path: "/v1/community/profile",
+		Summary: "Refresh a user profile", Errors: communityErrors,
+	}, func(ctx context.Context, input *struct {
+		Body daemon.CommunityProfileRequest
+	}) (*struct {
+		Body daemon.CommunityProfile
+	}, error) {
+		out, err := s.service.StartCommunityProfile(ctx, input.Body)
+		return communityBody(out, err)
+	})
+	route(s, scopeAuthed, huma.Operation{
+		OperationID: "get-profile-picture", Method: http.MethodGet, Path: "/v1/community/profile/picture",
+		Summary: "Fetch a profile picture", Errors: communityErrors,
+	}, func(ctx context.Context, input *struct {
+		Account  string `query:"account" doc:"Community account"`
+		Daemon   string `query:"daemon" doc:"Daemon identity"`
+		Session  string `query:"session" doc:"Session number"`
+		Username string `query:"username"`
+		Revision uint64 `query:"revision"`
+	}) (*struct {
+		Body daemon.CommunityProfilePicture
+	}, error) {
+		identity, err := identityParams{Account: input.Account, Daemon: input.Daemon, Session: input.Session}.identity()
+		if err != nil {
+			return nil, communityErr(err)
+		}
+		out, err := s.service.CommunityProfilePicture(ctx, daemon.CommunityProfilePictureRequest{CommunityIdentity: identity, Username: input.Username, Revision: input.Revision})
+		return communityBody(out, err)
+	})
 }
-func (s *Server) communityProfilePicture(w http.ResponseWriter, r *http.Request) {
-	q := r.URL.Query()
-	id, err := communityRoomIdentityQuery(q)
-	if err != nil {
-		communityError(w, err)
-		return
-	}
-	revision, err := strconv.ParseUint(q.Get("revision"), 10, 64)
-	if err != nil {
-		communityError(w, err)
-		return
-	}
-	out, err := s.service.CommunityProfilePicture(r.Context(), daemon.CommunityProfilePictureRequest{CommunityIdentity: id, Username: q.Get("username"), Revision: revision})
-	communityResult(w, out, err)
-}
+
 func (c *Client) CommunityProfile(ctx context.Context, req daemon.CommunityProfileRequest) (daemon.CommunityProfile, error) {
 	q := communityRoomValues(req.CommunityIdentity)
 	q.Set("username", req.Username)
@@ -57,11 +70,13 @@ func (c *Client) CommunityProfile(ctx context.Context, req daemon.CommunityProfi
 	err := c.Do(ctx, http.MethodGet, "/v1/community/profile?"+q.Encode(), nil, &out)
 	return out, err
 }
+
 func (c *Client) StartCommunityProfile(ctx context.Context, req daemon.CommunityProfileRequest) (daemon.CommunityProfile, error) {
 	var out daemon.CommunityProfile
 	err := c.Do(ctx, http.MethodPost, "/v1/community/profile", req, &out)
 	return out, err
 }
+
 func (c *Client) CommunityProfilePicture(ctx context.Context, req daemon.CommunityProfilePictureRequest) (daemon.CommunityProfilePicture, error) {
 	q := communityRoomValues(req.CommunityIdentity)
 	q.Set("username", req.Username)
