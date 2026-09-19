@@ -185,6 +185,13 @@ type Statistics struct {
 	DailyRetentionDays int  `json:"daily_retention_days" validate:"min=0,max=365000"`
 	ASCIICharts        bool `json:"ascii_charts"`
 }
+
+// API configures the optional TCP HTTP API. An empty listen address keeps the
+// daemon on its Unix socket only.
+type API struct {
+	ListenAddr string `json:"listen_addr"`
+}
+
 type Config struct {
 	CommunityText   map[string]CommunityTextTools `json:"community_text,omitempty"`
 	CommunityAway   map[string]CommunityAway      `json:"community_away,omitempty" validate:"dive"`
@@ -193,6 +200,7 @@ type Config struct {
 	Statistics      Statistics                    `json:"statistics"`
 	Browse          Browse                        `json:"browse"`
 	AudioMetadata   bool                          `json:"audio_metadata"`
+	API             API                           `json:"api"`
 	Soulseek        Soulseek                      `json:"soulseek"`
 	Search          Search                        `json:"search"`
 	Bandwidth       Bandwidth                     `json:"bandwidth"`
@@ -210,6 +218,7 @@ type SafeConfig struct {
 	Statistics    Statistics `json:"statistics"`
 	Browse        Browse     `json:"browse"`
 	AudioMetadata bool       `json:"audio_metadata"`
+	API           API        `json:"api"`
 	Soulseek      struct {
 		Username          string `json:"username"`
 		Password          string `json:"-"`
@@ -238,7 +247,7 @@ func Default() Config {
 
 func (c Config) Redacted() SafeConfig {
 	var out SafeConfig
-	out.Logging, out.Statistics, out.Browse, out.AudioMetadata = c.Logging, c.Statistics, c.Browse, c.AudioMetadata
+	out.Logging, out.Statistics, out.Browse, out.AudioMetadata, out.API = c.Logging, c.Statistics, c.Browse, c.AudioMetadata, c.API
 	out.Logging.Level, _ = NormalizeLogLevel(c.Logging.Level)
 	out.Soulseek.Username, out.Soulseek.Password, out.Soulseek.Server, out.Soulseek.ListenAddr, out.Soulseek.NetworkInterface, out.Soulseek.ConnectOnStartup, out.Soulseek.NATPMPPortMapping, out.Soulseek.UPnPPortMapping = c.Soulseek.Username, "[redacted]", c.Soulseek.Server, c.Soulseek.ListenAddr, c.Soulseek.NetworkInterface, c.Soulseek.ConnectOnStartup, c.Soulseek.NATPMPPortMapping, c.Soulseek.UPnPPortMapping
 	out.Search, out.Bandwidth, out.Uploads, out.Downloads, out.DownloadDir, out.Shares, out.DownloadSlots, out.UploadSlots = c.Search, c.Bandwidth, c.Uploads, c.Downloads, c.DownloadDir, append([]Share(nil), c.Shares...), c.DownloadSlots, c.UploadSlots
@@ -272,7 +281,10 @@ func (c Config) Validate() error {
 	if err := configValidator.Struct(c); err != nil {
 		return fmt.Errorf("config: %w", err)
 	}
-	for label, address := range map[string]string{"server": c.Soulseek.Server, "listen address": c.Soulseek.ListenAddr} {
+	for label, address := range map[string]string{"server": c.Soulseek.Server, "listen address": c.Soulseek.ListenAddr, "API listen address": c.API.ListenAddr} {
+		if address == "" {
+			continue
+		}
 		_, portText, err := net.SplitHostPort(address)
 		if err != nil {
 			return fmt.Errorf("config: invalid %s: %w", label, err)
@@ -348,7 +360,7 @@ func (c *Config) UnmarshalJSON(data []byte) error {
 	return nil
 }
 func applyEnv(c *Config) {
-	for k, dst := range map[string]*string{"OTO_USERNAME": &c.Soulseek.Username, "OTO_PASSWORD": &c.Soulseek.Password, "OTO_SERVER": &c.Soulseek.Server, "OTO_LISTEN_ADDR": &c.Soulseek.ListenAddr, "OTO_NETWORK_INTERFACE": &c.Soulseek.NetworkInterface, "OTO_DOWNLOAD_DIR": &c.DownloadDir} {
+	for k, dst := range map[string]*string{"OTO_USERNAME": &c.Soulseek.Username, "OTO_PASSWORD": &c.Soulseek.Password, "OTO_SERVER": &c.Soulseek.Server, "OTO_LISTEN_ADDR": &c.Soulseek.ListenAddr, "OTO_NETWORK_INTERFACE": &c.Soulseek.NetworkInterface, "OTO_DOWNLOAD_DIR": &c.DownloadDir, "OTO_API_LISTEN_ADDR": &c.API.ListenAddr} {
 		if v, ok := os.LookupEnv(k); ok && v != "" {
 			*dst = v
 		}

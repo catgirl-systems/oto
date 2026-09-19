@@ -65,6 +65,9 @@
     "ascii_charts": false
   },
   "audio_metadata": true,
+  "api": {
+    "listen_addr": ""
+  },
   "download_dir": "/downloads",
   "shares": [
     {
