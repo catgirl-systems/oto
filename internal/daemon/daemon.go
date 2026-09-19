@@ -78,6 +78,8 @@ type Snapshot struct {
 	PublicIP              string               `json:"public_ip,omitempty"`
 	PublicPort            uint16               `json:"public_port,omitempty"`
 	Config                config.SafeConfig    `json:"config"`
+	PendingAPIAuthCount   int                  `json:"pending_api_auth_count"`
+	PendingAPIAuthName    string               `json:"pending_api_auth_name,omitempty"`
 	Shares                []config.Share       `json:"shares"`
 	ShareScan             *ShareScan           `json:"share_scan,omitempty"`
 	ShareIndexRevision    uint64               `json:"share_index_revision"`
@@ -279,6 +281,7 @@ type Service struct {
 	journalPath            string
 	stateDB                *storage.DB
 	completionRetries      map[string]completionRetry
+	apiAuth                apiAuthState
 	shareStorageMu         sync.Mutex
 	wg                     sync.WaitGroup
 	sessionWG              sync.WaitGroup
@@ -327,7 +330,7 @@ func New(cfg config.Config, path string) (*Service, error) {
 		return client.Search(ctx, query)
 	}, wishlistNotify: notifyWishlist, browses: make(map[string]loadedBrowse), browseProgress: make(map[string]trackedBrowse), fullBrowse: func(ctx context.Context, client *soulseek.Client, username string, progress func(received, total uint64)) ([]soulseek.ShareEntry, error) {
 		return client.BrowseUserWithProgress(ctx, username, "", progress)
-	}, transfers: make(map[string]Transfer), uploadCancelEligible: make(map[string]uploadOwner), completionRetries: make(map[string]completionRetry), downloadSlots: make(chan struct{}, cfg.DownloadSlots), downloadCancels: make(map[string]context.CancelFunc), downloadDone: make(map[string]chan struct{}), downloadPeers: make(map[string]chan struct{}), shareScanGate: make(chan struct{}, 1), shareRescanDelay: DefaultShareRescanDelay, listenPortInterval: DefaultListenPortReconcileInterval, portCheck: defaultListeningPortCheck, reconnectWake: make(chan struct{}, 1), status: StatusStopped, presence: PresenceOffline, journalPath: path}
+	}, transfers: make(map[string]Transfer), uploadCancelEligible: make(map[string]uploadOwner), completionRetries: make(map[string]completionRetry), apiAuth: newAPIAuthState(), downloadSlots: make(chan struct{}, cfg.DownloadSlots), downloadCancels: make(map[string]context.CancelFunc), downloadDone: make(map[string]chan struct{}), downloadPeers: make(map[string]chan struct{}), shareScanGate: make(chan struct{}, 1), shareRescanDelay: DefaultShareRescanDelay, listenPortInterval: DefaultListenPortReconcileInterval, portCheck: defaultListeningPortCheck, reconnectWake: make(chan struct{}, 1), status: StatusStopped, presence: PresenceOffline, journalPath: path}
 	s.portMapOpen = func(ctx context.Context, port uint16, natPMP, upnp bool, changed func(uint16)) (portMapping, error) {
 		return portmap.OpenWithLogger(ctx, port, natPMP, upnp, changed, s.logger())
 	}
@@ -412,6 +415,7 @@ func (s *Service) Snapshot() Snapshot {
 		}
 	}
 	s.mu.RUnlock()
+	snapshot.PendingAPIAuthCount, snapshot.PendingAPIAuthName = s.PendingAPIAuthSummary()
 	addDownloadWaits(snapshot.Transfers, client, now)
 	return snapshot
 }
@@ -1727,6 +1731,7 @@ func (s *Service) UpdateConfig(c config.Config) (updateErr error) {
 		}
 	}
 	reconnect := !hotConfigUpdate(s.cfg, c)
+	oldAPIAddr := s.cfg.API.ListenAddr
 	if !reconnect && slices.Equal(s.cfg.ShareExclusions, c.ShareExclusions) && s.cfg.AudioMetadata == c.AudioMetadata {
 		oldInterval := s.cfg.Search.WishlistIntervalMinutes
 		uploadsChanged := uploadPolicy(s.cfg) != uploadPolicy(c)
@@ -1756,6 +1761,13 @@ func (s *Service) UpdateConfig(c config.Config) (updateErr error) {
 		}
 		if err == nil && oldInterval != c.Search.WishlistIntervalMinutes {
 			s.wakeWishlist()
+		}
+		if err == nil && oldAPIAddr != c.API.ListenAddr {
+			if rbErr := s.RebindAPIListener(c.API.ListenAddr); rbErr != nil {
+				// The previous listener stays up; the saved config applies on restart.
+				s.event(slog.LevelError, "api_rebind_failed", rbErr, slog.String("addr", c.API.ListenAddr))
+				return rbErr
+			}
 		}
 		return err
 	}
@@ -1815,6 +1827,12 @@ func (s *Service) UpdateConfig(c config.Config) (updateErr error) {
 		}
 		s.applyLogLevel(c.Logging.Level)
 		s.persistShareIndex(index)
+		if oldAPIAddr != c.API.ListenAddr {
+			if rbErr := s.RebindAPIListener(c.API.ListenAddr); rbErr != nil {
+				s.event(slog.LevelError, "api_rebind_failed", rbErr, slog.String("addr", c.API.ListenAddr))
+				return rbErr
+			}
+		}
 		return nil
 	})
 	s.mu.Lock()
