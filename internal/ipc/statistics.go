@@ -11,6 +11,7 @@ import (
 
 	"github.com/catgirl-systems/oto/internal/daemon"
 	"github.com/catgirl-systems/oto/internal/stats"
+	"github.com/danielgtaylor/huma/v2"
 )
 
 type PruneRequest struct {
@@ -39,81 +40,166 @@ func statsQuery(f stats.Filter) string {
 	}
 	return "?" + q.Encode()
 }
-func parseStatsFilter(r *http.Request) (stats.Filter, error) {
-	q := r.URL.Query()
-	f := stats.Filter{Account: q.Get("account"), Peer: q.Get("peer"), Direction: q.Get("direction"), Session: q.Get("session"), Cursor: q.Get("cursor")}
-	f.Sort = q.Get("sort")
-	for name, p := range map[string]*int{"limit": &f.Limit, "bins": &f.Bins} {
-		if text := q.Get(name); text != "" {
-			n, err := strconv.Atoi(text)
-			if err != nil {
-				return f, err
-			}
-			*p = n
+
+// statsFilterParams carries the raw statistics query parameters; most are
+// parsed leniently (empty means unset), which huma's typed params cannot
+// express for optional numerics and dual-format dates.
+type statsFilterParams struct {
+	Account   string `query:"account" doc:"Stats account to filter by"`
+	Peer      string `query:"peer" doc:"Peer to filter by"`
+	Direction string `query:"direction" doc:"Transfer direction to filter by"`
+	Session   string `query:"session" doc:"Session to filter by"`
+	Cursor    string `query:"cursor" doc:"Pagination cursor"`
+	Sort      string `query:"sort" doc:"Sort order"`
+	Limit     string `query:"limit" doc:"Maximum rows to return"`
+	Bins      string `query:"bins" doc:"Histogram bin count"`
+	From      string `query:"from" doc:"Range start, RFC 3339 or date"`
+	To        string `query:"to" doc:"Range end, RFC 3339 or date"`
+	Outcome   string `query:"outcome" doc:"Transfer-log outcomes, comma separated"`
+}
+
+func (p statsFilterParams) filter(transferLog bool) (stats.Filter, error) {
+	f := stats.Filter{Account: p.Account, Peer: p.Peer, Direction: p.Direction, Session: p.Session, Cursor: p.Cursor, Sort: p.Sort}
+	for _, number := range []struct {
+		value  string
+		target *int
+	}{{p.Limit, &f.Limit}, {p.Bins, &f.Bins}} {
+		if number.value == "" {
+			continue
 		}
-	}
-	for name, p := range map[string]*time.Time{"from": &f.From, "to": &f.To} {
-		if text := q.Get(name); text != "" {
-			at, err := time.Parse(time.RFC3339Nano, text)
-			if err != nil {
-				at, err = time.Parse(time.DateOnly, text)
-			}
-			if err != nil {
-				return f, err
-			}
-			*p = at
+		n, err := strconv.Atoi(number.value)
+		if err != nil {
+			return f, err
 		}
+		*number.target = n
 	}
-	if text := q.Get("outcome"); text != "" {
-		if r.URL.Path != "/v1/transfer-log" {
+	for _, bound := range []struct {
+		value  string
+		target *time.Time
+	}{{p.From, &f.From}, {p.To, &f.To}} {
+		if bound.value == "" {
+			continue
+		}
+		at, err := time.Parse(time.RFC3339Nano, bound.value)
+		if err != nil {
+			at, err = time.Parse(time.DateOnly, bound.value)
+		}
+		if err != nil {
+			return f, err
+		}
+		*bound.target = at
+	}
+	if p.Outcome != "" {
+		if !transferLog {
 			return f, errors.New("outcome filters apply only to the transfer log")
 		}
-		f.Kinds = strings.Split(text, ",")
+		f.Kinds = strings.Split(p.Outcome, ",")
 	}
 	return f, stats.ValidateFilter(f)
 }
-func (s *Server) registerStats(mux *http.ServeMux) {
-	for _, path := range []string{"/v1/stats", "/v1/stats/series", "/v1/stats/peers", "/v1/transfer-log"} {
-		mux.HandleFunc("GET "+path, func(w http.ResponseWriter, r *http.Request) {
-			f, err := parseStatsFilter(r)
-			if err != nil {
-				writeErr(w, 400, err)
-				return
-			}
-			var result any
-			switch r.URL.Path {
-			case "/v1/stats":
-				result, err = s.service.Statistics(f)
-			case "/v1/stats/series":
-				result, err = s.service.StatsSeries(f)
-			case "/v1/stats/peers":
-				result, err = s.service.StatsPeers(f)
-			case "/v1/transfer-log":
-				result, err = s.service.TransferLog(f)
-			}
-			if err != nil {
-				status := 503
-				if errors.Is(err, stats.ErrInvalidCursor) {
-					status = 400
-				}
-				writeErr(w, status, err)
-				return
-			}
-			writeJSON(w, 200, result)
-		})
+
+func statsServiceError(err error) huma.StatusError {
+	status := 503
+	if errors.Is(err, stats.ErrInvalidCursor) {
+		status = 400
 	}
-	for _, path := range []string{"/v1/stats/prune/preview", "/v1/stats/prune"} {
-		mux.HandleFunc("POST "+path, func(w http.ResponseWriter, r *http.Request) {
-			var req PruneRequest
-			if !decodeBody(w, r, &req) {
-				return
-			}
-			result, err := s.service.PruneStatistics(req.Cutoff, req.Logs, req.Daily, r.URL.Path == "/v1/stats/prune")
+	return errStatus(status, err)
+}
+
+func (s *Server) registerStatsRoutes() {
+	route(s, scopeAuthed, huma.Operation{
+		OperationID: "get-stats", Method: http.MethodGet, Path: "/v1/stats",
+		Summary: "Transfer statistics overview", Errors: []int{400, 503},
+	}, func(ctx context.Context, input *statsFilterParams) (*struct {
+		Body daemon.StatsOverview
+	}, error) {
+		f, err := input.filter(false)
+		if err != nil {
+			return nil, errStatus(400, err)
+		}
+		overview, err := s.service.Statistics(f)
+		if err != nil {
+			return nil, statsServiceError(err)
+		}
+		return &struct {
+			Body daemon.StatsOverview
+		}{overview}, nil
+	})
+	route(s, scopeAuthed, huma.Operation{
+		OperationID: "get-stats-series", Method: http.MethodGet, Path: "/v1/stats/series",
+		Summary: "Daily transfer statistics series", Errors: []int{400, 503},
+	}, func(ctx context.Context, input *statsFilterParams) (*struct {
+		Body []stats.Daily
+	}, error) {
+		f, err := input.filter(false)
+		if err != nil {
+			return nil, errStatus(400, err)
+		}
+		series, err := s.service.StatsSeries(f)
+		if err != nil {
+			return nil, statsServiceError(err)
+		}
+		return &struct {
+			Body []stats.Daily
+		}{series}, nil
+	})
+	route(s, scopeAuthed, huma.Operation{
+		OperationID: "get-stats-peers", Method: http.MethodGet, Path: "/v1/stats/peers",
+		Summary: "Per-peer transfer statistics", Errors: []int{400, 503},
+	}, func(ctx context.Context, input *statsFilterParams) (*struct {
+		Body stats.PeerPage
+	}, error) {
+		f, err := input.filter(false)
+		if err != nil {
+			return nil, errStatus(400, err)
+		}
+		peers, err := s.service.StatsPeers(f)
+		if err != nil {
+			return nil, statsServiceError(err)
+		}
+		return &struct {
+			Body stats.PeerPage
+		}{peers}, nil
+	})
+	route(s, scopeAuthed, huma.Operation{
+		OperationID: "get-transfer-log", Method: http.MethodGet, Path: "/v1/transfer-log",
+		Summary: "Transfer log entries", Errors: []int{400, 503},
+	}, func(ctx context.Context, input *statsFilterParams) (*struct {
+		Body stats.LogPage
+	}, error) {
+		f, err := input.filter(true)
+		if err != nil {
+			return nil, errStatus(400, err)
+		}
+		log, err := s.service.TransferLog(f)
+		if err != nil {
+			return nil, statsServiceError(err)
+		}
+		return &struct {
+			Body stats.LogPage
+		}{log}, nil
+	})
+	for _, prune := range []struct {
+		id      string
+		apply   bool
+		summary string
+	}{{"preview-stats-prune", false, "Preview statistics pruning"}, {"stats-prune", true, "Prune statistics history"}} {
+		apply := prune.apply
+		route(s, scopeAuthed, huma.Operation{
+			OperationID: prune.id, Method: http.MethodPost, Path: "/v1/stats/prune" + map[bool]string{false: "/preview", true: ""}[apply],
+			Summary: prune.summary, Errors: []int{400},
+		}, func(ctx context.Context, input *struct {
+			Body PruneRequest
+		}) (*struct {
+			Body stats.PruneResult
+		}, error) {
+			result, err := s.service.PruneStatistics(input.Body.Cutoff, input.Body.Logs, input.Body.Daily, apply)
 			if err != nil {
-				writeErr(w, 400, err)
-				return
+				return nil, errStatus(400, err)
 			}
-			writeJSON(w, 200, result)
+			return &struct {
+				Body stats.PruneResult
+			}{result}, nil
 		})
 	}
 }
