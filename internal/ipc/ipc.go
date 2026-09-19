@@ -11,14 +11,13 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"slices"
-	"strconv"
 	"strings"
 	"time"
 
 	"github.com/catgirl-systems/oto/internal/config"
 	"github.com/catgirl-systems/oto/internal/daemon"
 	"github.com/catgirl-systems/oto/internal/soulseek"
+	"github.com/danielgtaylor/huma/v2"
 )
 
 const (
@@ -33,10 +32,19 @@ type Server struct {
 	http           *http.Server
 	listener       net.Listener
 	listInterfaces func() ([]net.Interface, error)
+	socketMux      *http.ServeMux
+	tcpMux         *http.ServeMux
+	socketAPI      huma.API
+	tcpAPI         huma.API
 }
 
 func NewServer(service *daemon.Service, path string) *Server {
-	return &Server{service: service, path: path, listInterfaces: net.Interfaces}
+	s := &Server{service: service, path: path, listInterfaces: net.Interfaces}
+	s.socketMux = http.NewServeMux()
+	s.tcpMux = http.NewServeMux()
+	s.newAPIs()
+	s.registerRoutes()
+	return s
 }
 
 // Listen takes ownership of the Unix socket. An existing socket is removed only
@@ -97,47 +105,16 @@ func (s *Server) Close() error {
 	return os.Remove(s.path)
 }
 
+// handler returns the Unix-socket server: every registered route.
 func (s *Server) handler() http.Handler {
-	mux := http.NewServeMux()
-	s.registerStats(mux)
-	s.registerCommunity(mux)
-	mux.HandleFunc("GET /v1/state", s.state)
-	mux.HandleFunc("GET /v1/logs", s.logs)
-	mux.HandleFunc("GET /v1/network/interfaces", s.networkInterfaces)
-	mux.HandleFunc("POST /v1/network/port-check", s.checkListeningPort)
-	mux.HandleFunc("PUT /v1/presence", s.presence)
-	mux.HandleFunc("PUT /v1/account/password", s.accountPassword)
-	mux.HandleFunc("GET /v1/searches", s.searches)
-	mux.HandleFunc("POST /v1/search", s.search)
-	mux.HandleFunc("POST /v1/downloads/force", s.forceDownloads)
-	mux.HandleFunc("GET /v1/browse", s.browse)
-	mux.HandleFunc("GET /v1/browse/page", s.browsePage)
-	mux.HandleFunc("POST /v1/browse/download", s.browseDownload)
-	mux.HandleFunc("POST /v1/browse/download-as", s.browseDownload)
-	mux.HandleFunc("GET /v1/wishlist", s.wishlist)
-	mux.HandleFunc("PUT /v1/wishlist", s.wishlist)
-	mux.HandleFunc("DELETE /v1/wishlist/{id}", s.wishlist)
-	mux.HandleFunc("POST /v1/wishlist/{id}/run", s.wishlist)
-	mux.HandleFunc("POST /v1/wishlist/{id}/open", s.wishlist)
-	mux.HandleFunc("GET /v1/browse/progress", s.browseProgress)
-	mux.HandleFunc("GET /v1/browse/saved", s.savedBrowses)
-	mux.HandleFunc("POST /v1/browse/save", s.saveBrowse)
-	mux.HandleFunc("POST /v1/downloads", s.downloads)
-	mux.HandleFunc("POST /v1/folder-downloads", s.folderDownloads)
-	mux.HandleFunc("POST /v1/folder-downloads/as", s.folderDownloads)
-	mux.HandleFunc("GET /v1/transfers", s.transfers)
-	mux.HandleFunc("POST /v1/transfers/{id}", s.transfers)
-	mux.HandleFunc("POST /v1/uploads/actions", s.uploadAction)
-	mux.HandleFunc("GET /v1/shares", s.shares)
-	mux.HandleFunc("POST /v1/shares", s.shares)
-	mux.HandleFunc("GET /v1/shares/browse", s.shares)
-	mux.HandleFunc("POST /v1/shares/rescan", s.shares)
-	mux.HandleFunc("POST /v1/shares/rescan/cancel", s.cancelShareScan)
-	mux.HandleFunc("DELETE /v1/shares/{name}", s.shares)
-	mux.HandleFunc("PUT /v1/config", s.updateConfig)
-	mux.HandleFunc("PATCH /v1/config", s.updateConfig)
-	return mux
+	return s.socketMux
 }
+
+// tcpHandler returns the TCP API server: public and authed routes only.
+func (s *Server) tcpHandler() http.Handler {
+	return s.tcpMux
+}
+
 func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
@@ -147,43 +124,8 @@ func writeErr(w http.ResponseWriter, status int, err error) {
 	writeJSON(w, status, map[string]string{"error": err.Error()})
 }
 
-// communityResult writes a session-scoped result, mapping failures through
-// communityError.
-func communityResult(w http.ResponseWriter, out any, err error) {
-	if err != nil {
-		communityError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, out)
-}
+var errUnauthorized = errors.New("ipc: missing or invalid bearer token")
 
-// badRequestResult writes a result, mapping failures to 400.
-func badRequestResult(w http.ResponseWriter, out any, err error) {
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, out)
-}
-
-// decodeBody decodes a request body, mapping failures to 400.
-func decodeBody(w http.ResponseWriter, r *http.Request, v any) bool {
-	if err := decode(w, r, v); err != nil {
-		writeErr(w, http.StatusBadRequest, err)
-		return false
-	}
-	return true
-}
-
-// decodeCommunity decodes a request body, mapping failures through
-// communityError.
-func decodeCommunity(w http.ResponseWriter, r *http.Request, v any) bool {
-	if err := decode(w, r, v); err != nil {
-		communityError(w, err)
-		return false
-	}
-	return true
-}
 func decode(w http.ResponseWriter, r *http.Request, v any) error {
 	r.Body = http.MaxBytesReader(w, r.Body, MaxBodySize)
 	d := json.NewDecoder(r.Body)
@@ -195,299 +137,6 @@ func decode(w http.ResponseWriter, r *http.Request, v any) error {
 		return errors.New("ipc: trailing request data")
 	}
 	return nil
-}
-func (s *Server) state(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, 200, s.service.Snapshot())
-}
-
-func portCheckStatus(err error) int {
-	if errors.Is(err, daemon.ErrNotStarted) || errors.Is(err, daemon.ErrListenPortUnavailable) {
-		return http.StatusServiceUnavailable
-	}
-	return http.StatusBadGateway
-}
-
-func (s *Server) checkListeningPort(w http.ResponseWriter, r *http.Request) {
-	result, err := s.service.CheckListeningPort(r.Context())
-	if err != nil {
-		writeErr(w, portCheckStatus(err), err)
-		return
-	}
-	writeJSON(w, http.StatusOK, result)
-}
-
-func (s *Server) networkInterfaces(w http.ResponseWriter, _ *http.Request) {
-	interfaces, err := s.listInterfaces()
-	if err != nil {
-		writeErr(w, http.StatusInternalServerError, err)
-		return
-	}
-	names := make([]string, 0, len(interfaces))
-	for _, networkInterface := range interfaces {
-		if networkInterface.Name != "" {
-			names = append(names, networkInterface.Name)
-		}
-	}
-	slices.Sort(names)
-	names = slices.Compact(names)
-	writeJSON(w, http.StatusOK, names)
-}
-
-func (s *Server) presence(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Presence daemon.Presence `json:"presence"`
-	}
-	if err := decode(w, r, &req); err != nil {
-		writeErr(w, http.StatusBadRequest, err)
-		return
-	}
-	if err := s.service.SetPresence(req.Presence); err != nil {
-		writeErr(w, http.StatusBadRequest, err)
-		return
-	}
-	w.WriteHeader(http.StatusNoContent)
-}
-
-func (s *Server) accountPassword(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Password string `json:"password"`
-	}
-	if err := decode(w, r, &req); err != nil {
-		writeErr(w, http.StatusBadRequest, err)
-		return
-	}
-	if strings.TrimSpace(req.Password) == "" {
-		writeErr(w, http.StatusBadRequest, errors.New("ipc: password cannot be empty"))
-		return
-	}
-	result, err := s.service.ChangePassword(r.Context(), req.Password)
-	if err != nil {
-		writeErr(w, http.StatusServiceUnavailable, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, result)
-}
-func (s *Server) searches(w http.ResponseWriter, r *http.Request) {
-	id := r.URL.Query().Get("id")
-	cursor, err := strconv.Atoi(r.URL.Query().Get("cursor"))
-	if err != nil && r.URL.Query().Get("cursor") != "" {
-		writeErr(w, 400, errors.New("ipc: invalid search cursor"))
-		return
-	}
-	page, err := s.service.SearchPage(id, cursor, r.URL.Query().Get("filter"))
-	if err != nil {
-		status := http.StatusNotFound
-		if errors.Is(err, daemon.ErrInvalidFilter) {
-			status = http.StatusBadRequest
-		}
-		writeErr(w, status, err)
-		return
-	}
-	writeJSON(w, 200, page)
-}
-func (s *Server) search(w http.ResponseWriter, r *http.Request) {
-	var req daemon.ScopedSearchRequest
-	if !decodeBody(w, r, &req) {
-		return
-	}
-	out, err := s.service.SearchScoped(r.Context(), req)
-	if err != nil {
-		if errors.Is(err, daemon.ErrNotStarted) || errors.Is(err, soulseek.ErrNotConnected) || errors.Is(err, context.DeadlineExceeded) {
-			writeErr(w, http.StatusServiceUnavailable, err)
-		} else {
-			communityError(w, err)
-		}
-		return
-	}
-	writeJSON(w, 200, out)
-}
-
-func wishlistStatus(err error) int {
-	switch {
-	case errors.Is(err, daemon.ErrWishlistNotFound), errors.Is(err, daemon.ErrWishlistNoResults):
-		return http.StatusNotFound
-	case errors.Is(err, daemon.ErrNotStarted):
-		return http.StatusServiceUnavailable
-	default:
-		return http.StatusBadRequest
-	}
-}
-
-func (s *Server) wishlist(w http.ResponseWriter, r *http.Request) {
-	switch {
-	case r.Method == http.MethodGet:
-		writeJSON(w, http.StatusOK, s.service.Wishlist())
-	case r.Method == http.MethodPut:
-		var req struct {
-			Query  string `json:"query"`
-			Filter string `json:"filter"`
-		}
-		if err := decode(w, r, &req); err != nil {
-			writeErr(w, http.StatusBadRequest, err)
-			return
-		}
-		item, err := s.service.PutWishlist(req.Query, req.Filter)
-		if err != nil {
-			writeErr(w, wishlistStatus(err), err)
-			return
-		}
-		writeJSON(w, http.StatusOK, item)
-	case r.Method == http.MethodDelete:
-		if err := s.service.RemoveWishlist(r.PathValue("id")); err != nil {
-			writeErr(w, wishlistStatus(err), err)
-			return
-		}
-		w.WriteHeader(http.StatusNoContent)
-	case strings.HasSuffix(r.URL.Path, "/run"):
-		page, err := s.service.RunWishlist(r.Context(), r.PathValue("id"))
-		if err != nil {
-			writeErr(w, wishlistStatus(err), err)
-			return
-		}
-		writeJSON(w, http.StatusOK, page)
-	case strings.HasSuffix(r.URL.Path, "/open"):
-		page, err := s.service.OpenWishlist(r.PathValue("id"))
-		if err != nil {
-			writeErr(w, wishlistStatus(err), err)
-			return
-		}
-		writeJSON(w, http.StatusOK, page)
-	}
-}
-func (s *Server) browse(w http.ResponseWriter, r *http.Request) {
-	out, err := s.service.OpenBrowse(r.Context(), r.URL.Query().Get("user"), r.URL.Query().Get("folder"), r.URL.Query().Get("query"))
-	badRequestResult(w, out, err)
-}
-
-func (s *Server) browseProgress(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, 200, s.service.BrowseProgress(r.URL.Query().Get("user")))
-}
-
-func (s *Server) savedBrowses(w http.ResponseWriter, _ *http.Request) {
-	out, err := s.service.SavedBrowses()
-	badRequestResult(w, out, err)
-}
-
-func (s *Server) saveBrowse(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Revision uint64 `json:"revision"`
-	}
-	if !decodeBody(w, r, &req) {
-		return
-	}
-	out, err := s.service.SaveBrowse(r.URL.Query().Get("user"), req.Revision)
-	badRequestResult(w, out, err)
-}
-func (s *Server) downloads(w http.ResponseWriter, r *http.Request) {
-	var req []daemon.DownloadRequest
-	if !decodeBody(w, r, &req) {
-		return
-	}
-	out, err := s.service.QueueDownloads(req)
-	badRequestResult(w, out, err)
-}
-
-func (s *Server) folderDownloads(w http.ResponseWriter, r *http.Request) {
-	var req daemon.FolderDownloadRequest
-	if !decodeBody(w, r, &req) {
-		return
-	}
-	if r.URL.Path == "/v1/folder-downloads/as" && req.Destination == "" {
-		writeErr(w, 400, errors.New("download destination is required"))
-		return
-	}
-	out, err := s.service.QueueFolder(r.Context(), req)
-	if err != nil {
-		writeErr(w, 400, err)
-		return
-	}
-	writeJSON(w, 200, map[string]int{"queued": len(out)})
-}
-func (s *Server) uploadAction(w http.ResponseWriter, r *http.Request) {
-	var req daemon.UploadActionRequest
-	if !decodeBody(w, r, &req) {
-		return
-	}
-	result, err := s.service.UploadAction(req)
-	if err != nil {
-		status := http.StatusBadRequest
-		if errors.Is(err, daemon.ErrClosed) || errors.Is(err, daemon.ErrUploadUnavailable) {
-			status = http.StatusServiceUnavailable
-		}
-		writeErr(w, status, err)
-		return
-	}
-	writeJSON(w, 200, result)
-}
-
-func (s *Server) transfers(w http.ResponseWriter, r *http.Request) {
-	if id := r.PathValue("id"); id != "" {
-		var req struct {
-			Action string `json:"action"`
-		}
-		if !decodeBody(w, r, &req) {
-			return
-		}
-		if err := s.service.TransferAction(id, req.Action); err != nil {
-			writeErr(w, 400, err)
-			return
-		}
-		writeJSON(w, 200, map[string]bool{"ok": true})
-		return
-	}
-	writeJSON(w, 200, s.service.Transfers())
-}
-func (s *Server) shares(w http.ResponseWriter, r *http.Request) {
-	switch {
-	case r.URL.Path == "/v1/shares/browse":
-		out, err := s.service.BrowseLocal(r.URL.Query().Get("path"))
-		if err != nil {
-			writeErr(w, 400, err)
-			return
-		}
-		writeJSON(w, 200, out)
-	case r.URL.Path == "/v1/shares/rescan":
-		if err := s.service.Rescan(); err != nil {
-			status := http.StatusBadRequest
-			if errors.Is(err, daemon.ErrScanBusy) || errors.Is(err, daemon.ErrScanCancelled) {
-				status = http.StatusConflict
-			}
-			writeErr(w, status, err)
-			return
-		}
-		writeJSON(w, 200, s.service.Shares())
-	case r.PathValue("name") != "":
-		if err := s.service.RemoveShare(r.PathValue("name")); err != nil {
-			writeErr(w, 404, err)
-			return
-		}
-		writeJSON(w, 200, s.service.Shares())
-	case r.Method == "GET":
-		writeJSON(w, 200, s.service.Shares())
-	case r.Method == "POST":
-		var sh config.Share
-		if err := decode(w, r, &sh); err != nil {
-			writeErr(w, 400, err)
-			return
-		}
-		if err := s.service.AddShare(sh); err != nil {
-			writeErr(w, 400, err)
-			return
-		}
-		writeJSON(w, 200, s.service.Shares())
-	}
-}
-func (s *Server) updateConfig(w http.ResponseWriter, r *http.Request) {
-	var c config.Config
-	if err := decode(w, r, &c); err != nil {
-		writeErr(w, 400, err)
-		return
-	}
-	if err := s.service.UpdateConfig(c); err != nil {
-		writeErr(w, 400, err)
-		return
-	}
-	writeJSON(w, 200, s.service.Config())
 }
 
 // Client is the small Unix-socket JSON client used by the TUI.
@@ -693,6 +342,31 @@ func (c *Client) NetworkInterfaces(ctx context.Context) ([]string, error) {
 	var names []string
 	err := c.Do(ctx, "GET", "/v1/network/interfaces", nil, &names)
 	return names, err
+}
+
+// ListAPIAuthRequests returns pending pairing requests for the Settings UI.
+func (c *Client) ListAPIAuthRequests(ctx context.Context) ([]daemon.APIAuthRequest, error) {
+	var requests []daemon.APIAuthRequest
+	err := c.Do(ctx, http.MethodGet, "/v1/auth/requests", nil, &requests)
+	return requests, err
+}
+
+func (c *Client) ApproveAPIAuthRequest(ctx context.Context, id string, expiresInDays int) error {
+	return c.Do(ctx, http.MethodPost, "/v1/auth/requests/"+url.PathEscape(id)+"/approve", map[string]int{"expires_in_days": expiresInDays}, nil)
+}
+
+func (c *Client) RejectAPIAuthRequest(ctx context.Context, id string) error {
+	return c.Do(ctx, http.MethodPost, "/v1/auth/requests/"+url.PathEscape(id)+"/reject", nil, nil)
+}
+
+func (c *Client) ListAPIApps(ctx context.Context) ([]daemon.APIApp, error) {
+	var apps []daemon.APIApp
+	err := c.Do(ctx, http.MethodGet, "/v1/apps", nil, &apps)
+	return apps, err
+}
+
+func (c *Client) RevokeAPIApp(ctx context.Context, id string) error {
+	return c.Do(ctx, http.MethodDelete, "/v1/apps/"+url.PathEscape(id), nil, nil)
 }
 func (c *Client) UpdateConfig(ctx context.Context, cfg config.Config) (config.SafeConfig, error) {
 	var x config.SafeConfig

@@ -213,7 +213,7 @@ func TestStatusMethodsBodyAndSocketMode(t *testing.T) {
 	big := strings.Repeat("x", int(MaxBodySize)+1)
 	resp, err = cl.http.Do(mustRequest("POST", "http://oto.local/v1/downloads", strings.NewReader(big)))
 	must(t, err)
-	failIfFmt(t, resp.StatusCode != 400, "body status %d", resp.StatusCode)
+	failIfFmt(t, resp.StatusCode != http.StatusRequestEntityTooLarge, "body status %d", resp.StatusCode)
 	resp.Body.Close()
 	cancel()
 	select {
@@ -253,10 +253,10 @@ func TestPortCheckClientAndStatusMapping(t *testing.T) {
 	})}}
 	result, err := client.CheckListeningPort(context.Background())
 	failIfFmt(t, err != nil || result.Port != 61000 || !result.Open, "result=%+v err=%v", result, err)
-	if got := portCheckStatus(daemon.ErrNotStarted); got != http.StatusServiceUnavailable {
+	if got := portStatus(daemon.ErrNotStarted); got != http.StatusServiceUnavailable {
 		t.Fatalf("offline status = %d", got)
 	}
-	if got := portCheckStatus(fmt.Errorf("%w: upstream", daemon.ErrPortCheckFailed)); got != http.StatusBadGateway {
+	if got := portStatus(fmt.Errorf("%w: upstream", daemon.ErrPortCheckFailed)); got != http.StatusBadGateway {
 		t.Fatalf("upstream status = %d", got)
 	}
 }
