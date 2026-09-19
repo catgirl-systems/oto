@@ -62,6 +62,9 @@ func (m *model) key(k tea.KeyPressMsg) tea.Cmd {
 	if m.awayEditor != nil && !m.confirm {
 		return m.awaySettingsKey(k)
 	}
+	if m.apiEditor != nil && !m.confirm {
+		return m.apiEditorKey(k)
+	}
 	if m.textTools != nil && !m.confirm {
 		return m.textToolsKey(k)
 	}
@@ -329,6 +332,10 @@ func (m *model) key(k tea.KeyPressMsg) tea.Cmd {
 				return m.openReceivingSettings()
 			case settingAway:
 				return m.openAwaySettings()
+			case settingAPIAuthRequests:
+				return m.openAPIEditor("requests")
+			case settingAPIApps:
+				return m.openAPIEditor("apps")
 			case settingChatCommands:
 				m.showChatCommandHelp()
 				return nil

@@ -602,11 +602,14 @@ func (m model) renderShares(width, height int) string {
 	return strings.Join(lines, "\n")
 }
 
-var settingsSectionNames = [settingsSectionCount]string{"Account", "Connection", "Bandwidth", "Downloads", "Uploads", "Search", "Shares", "Browse", "Statistics", "Logging", "Community"}
+var settingsSectionNames = [settingsSectionCount]string{"Account", "Connection", "Bandwidth", "Downloads", "Uploads", "Search", "Shares", "Browse", "Statistics", "Logging", "API", "Community"}
 
 func (m model) renderSettings(width, height int) string {
 	if m.stats.prune {
 		return m.renderStatsPrune(width, height)
+	}
+	if m.apiEditor != nil {
+		return m.apiEditorView()
 	}
 	if m.shareExclusions.open {
 		return m.renderShareExclusions(width, height)
@@ -758,6 +761,23 @@ func (m model) settingFields() []settingField {
 			{settingTextTools, "Chat text tools / CTCP", countLabel(s.Keywords+s.Substitutions+s.Censorship, "text rule") + " · CTCP " + ctcp + " · Enter to edit", settingAction},
 			{settingChatCommands, "Commands / aliases help", fmt.Sprintf("%d %s · Enter for help", s.Aliases, aliasWord), settingAction},
 			{settingAway, "Automatic away / replies", away + " · Enter to edit", settingAction},
+		}
+	case settingsAPI:
+		requests, apps := "0", "0"
+		if m.apiEditor != nil {
+			requests = strconv.Itoa(len(m.apiEditor.requests))
+			apps = strconv.Itoa(len(m.apiEditor.apps))
+		} else {
+			requests = strconv.Itoa(m.status.pendingAPIAuth)
+		}
+		pending := requests + " pending · Enter to review"
+		if requests == "1" {
+			pending = "1 pending · Enter to review"
+		}
+		return []settingField{
+			{settingAPIListenAddress, "API listen address (empty = off, applies on save)", m.cfg.API.ListenAddr, settingText},
+			{settingAPIAuthRequests, "Connection requests", pending, settingAction},
+			{settingAPIApps, "Connected apps", apps + " apps · Enter to manage", settingAction},
 		}
 	case settingsConnection:
 		publicIP := m.status.publicIP
@@ -911,6 +931,8 @@ func (m *model) setSettingValue(value string) error {
 		m.cfg.Soulseek.Server = value
 	case settingListenAddress:
 		m.cfg.Soulseek.ListenAddr = value
+	case settingAPIListenAddress:
+		m.cfg.API.ListenAddr = value
 	case settingNetworkInterface:
 		if value == "" {
 			return errors.New("network interface cannot be empty; choose Automatic to clear it")

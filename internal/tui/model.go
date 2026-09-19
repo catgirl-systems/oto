@@ -20,6 +20,8 @@ type snapshot struct {
 	shareScan            *daemon.ShareScan
 	shareIndexRevision   uint64
 	waitForUploadsOnQuit bool
+	pendingAPIAuth       int
+	pendingAPIAuthName   string
 }
 type result struct {
 	user, path, extension, country string
@@ -74,6 +76,7 @@ const (
 	settingsBrowse
 	settingsStatistics
 	settingsLogging
+	settingsAPI
 	settingsCommunity
 	settingsSectionCount
 )
@@ -206,6 +209,9 @@ const (
 	settingChatCommands
 	settingAway
 	settingReceiving
+	settingAPIListenAddress
+	settingAPIAuthRequests
+	settingAPIApps
 )
 
 type settingField struct {
@@ -258,6 +264,8 @@ type model struct {
 	textTools                              *textToolsEditor
 	awayEditor                             *awayEditor
 	receivingEditor                        *receivingEditor
+	apiEditor                              *apiEditor
+	apiNotice                              string
 	activityBusy                           bool
 	activityRequest                        uint64
 	activityQueued                         daemon.CommunityIdentity

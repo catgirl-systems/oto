@@ -854,6 +854,10 @@ func (m model) updateMessage(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.applyReceivingSettings(x)
 	case awaySettingsMsg:
 		return m, m.applyAwaySettings(x)
+	case apiListMsg:
+		return m, m.applyAPIList(x)
+	case apiActionMsg:
+		return m, m.applyAPIAction(x)
 	case textToolsMsg:
 		return m, m.applyTextTools(x)
 	case privacyRulesPageMsg:
@@ -927,9 +931,17 @@ func (m model) updateMessage(msg tea.Msg) (tea.Model, tea.Cmd) {
 				copy := *x.snapshot.ShareScan
 				scan = &copy
 			}
-			m.status = snapshot{status: x.snapshot.Status, presence: x.snapshot.Presence, user: x.snapshot.Config.Soulseek.Username, publicIP: x.snapshot.PublicIP, publicPort: x.snapshot.PublicPort, err: x.snapshot.Error, shareScan: scan, shareIndexRevision: x.snapshot.ShareIndexRevision}
+			m.status = snapshot{status: x.snapshot.Status, presence: x.snapshot.Presence, user: x.snapshot.Config.Soulseek.Username, publicIP: x.snapshot.PublicIP, publicPort: x.snapshot.PublicPort, err: x.snapshot.Error, shareScan: scan, shareIndexRevision: x.snapshot.ShareIndexRevision, pendingAPIAuth: x.snapshot.PendingAPIAuthCount, pendingAPIAuthName: x.snapshot.PendingAPIAuthName}
 			m.cfg.Shares = append([]config.Share(nil), x.snapshot.Shares...)
 			m.status.waitForUploadsOnQuit = x.snapshot.Config.Uploads.WaitForActiveUploadsOnQuit
+			if m.status.pendingAPIAuth > 0 {
+				if m.apiNotice != m.status.pendingAPIAuthName {
+					m.apiNotice = m.status.pendingAPIAuthName
+					m.setNotice(fmt.Sprintf("API connection request from %q — Settings → API", m.status.pendingAPIAuthName))
+				}
+			} else {
+				m.apiNotice = ""
+			}
 			notification := x.snapshot.DownloadNotification
 			bell := notification.SessionID != "" && notification.SessionID == m.downloadNotification.SessionID && notification.Sequence > m.downloadNotification.Sequence
 			if notification.SessionID != m.downloadNotification.SessionID || notification.Sequence >= m.downloadNotification.Sequence {
