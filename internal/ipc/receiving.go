@@ -5,34 +5,47 @@ import (
 	"net/http"
 
 	"github.com/catgirl-systems/oto/internal/daemon"
+	"github.com/danielgtaylor/huma/v2"
 )
 
-func (s *Server) receivingSettings(w http.ResponseWriter, r *http.Request) {
-	var out daemon.ReceivingSettings
-	var err error
-	if r.Method == http.MethodGet {
-		id, e := communityRoomIdentityQuery(r.URL.Query())
-		if e != nil {
-			communityError(w, e)
-			return
+func (s *Server) registerReceivingRoutes() {
+	route(s, scopeAuthed, huma.Operation{
+		OperationID: "get-receiving-settings", Method: http.MethodGet, Path: "/v1/downloads/receiving",
+		Summary: "Received-files settings", Errors: communityErrors,
+	}, func(ctx context.Context, input *struct {
+		Account string `query:"account" doc:"Community account"`
+		Daemon  string `query:"daemon" doc:"Daemon identity"`
+		Session string `query:"session" doc:"Session number"`
+	}) (*struct {
+		Body daemon.ReceivingSettings
+	}, error) {
+		identity, err := identityParams{Account: input.Account, Daemon: input.Daemon, Session: input.Session}.identity()
+		if err != nil {
+			return nil, communityErr(err)
 		}
-		out, err = s.service.ReceivingSettings(r.Context(), id)
-	} else {
-		var req daemon.ReceivingSettingsRequest
-		if e := decode(w, r, &req); e != nil {
-			communityError(w, e)
-			return
-		}
-		out, err = s.service.SetReceivingSettings(r.Context(), req)
-	}
-	communityResult(w, out, err)
+		out, err := s.service.ReceivingSettings(ctx, identity)
+		return communityBody(out, err)
+	})
+	route(s, scopeAuthed, huma.Operation{
+		OperationID: "set-receiving-settings", Method: http.MethodPut, Path: "/v1/downloads/receiving",
+		Summary: "Update received-files settings", Errors: communityErrors,
+	}, func(ctx context.Context, input *struct {
+		Body daemon.ReceivingSettingsRequest
+	}) (*struct {
+		Body daemon.ReceivingSettings
+	}, error) {
+		out, err := s.service.SetReceivingSettings(ctx, input.Body)
+		return communityBody(out, err)
+	})
 }
+
 func (c *Client) ReceivingSettings(ctx context.Context, id daemon.CommunityIdentity) (daemon.ReceivingSettings, error) {
 	q := communityRoomValues(id)
 	var out daemon.ReceivingSettings
 	err := c.Do(ctx, http.MethodGet, "/v1/downloads/receiving?"+q.Encode(), nil, &out)
 	return out, err
 }
+
 func (c *Client) SetReceivingSettings(ctx context.Context, req daemon.ReceivingSettingsRequest) (daemon.ReceivingSettings, error) {
 	var out daemon.ReceivingSettings
 	err := c.Do(ctx, http.MethodPut, "/v1/downloads/receiving", req, &out)
