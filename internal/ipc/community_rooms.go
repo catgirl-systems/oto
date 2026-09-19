@@ -7,148 +7,122 @@ import (
 	"strconv"
 
 	"github.com/catgirl-systems/oto/internal/daemon"
+	"github.com/danielgtaylor/huma/v2"
 )
 
-func (s *Server) registerCommunityRooms(mux *http.ServeMux) {
-	mux.HandleFunc("GET /v1/community/rooms", s.communityRooms)
-	mux.HandleFunc("POST /v1/community/rooms/refresh", s.communityRoomsRefresh)
-	mux.HandleFunc("POST /v1/community/rooms/action", s.communityRoomAction)
-	mux.HandleFunc("POST /v1/community/rooms/messages", s.communityRoomSend)
-	mux.HandleFunc("GET /v1/community/rooms/members", s.communityRoomMembers)
-	mux.HandleFunc("GET /v1/community/rooms/feed", s.communityFeed)
-	mux.HandleFunc("POST /v1/community/rooms/feed/subscription", s.communityFeedSubscription)
-	mux.HandleFunc("POST /v1/community/rooms/roles", s.communityRoomRole)
-	mux.HandleFunc("POST /v1/community/rooms/invitations", s.communityRoomInvitations)
-	mux.HandleFunc("GET /v1/community/rooms/wall", s.communityRoomWall)
-	mux.HandleFunc("POST /v1/community/rooms/wall", s.communityRoomWallSet)
-}
-
-func communityRoomIdentityQuery(q url.Values) (daemon.CommunityIdentity, error) {
-	session, err := strconv.ParseUint(q.Get("session"), 10, 64)
-	if err != nil {
-		return daemon.CommunityIdentity{}, err
-	}
-	return daemon.CommunityIdentity{Account: q.Get("account"), Daemon: q.Get("daemon"), Session: session}, nil
-}
-
-func communityRoomPageQuery(r *http.Request) (daemon.CommunityRoomsRequest, error) {
-	q := r.URL.Query()
-	identity, err := communityRoomIdentityQuery(q)
-	if err != nil {
-		return daemon.CommunityRoomsRequest{}, err
-	}
-	limit := 0
-	if q.Get("limit") != "" {
-		limit, err = strconv.Atoi(q.Get("limit"))
+func (s *Server) registerCommunityRoomRoutes() {
+	route(s, scopeAuthed, huma.Operation{
+		OperationID: "list-rooms", Method: http.MethodGet, Path: "/v1/community/rooms",
+		Summary: "List chat rooms", Errors: communityErrors,
+	}, func(ctx context.Context, input *struct {
+		Account string `query:"account" doc:"Community account"`
+		Daemon  string `query:"daemon" doc:"Daemon identity"`
+		Session string `query:"session" doc:"Session number"`
+		Room    string `query:"room"`
+		Cursor  string `query:"cursor"`
+		Query   string `query:"query"`
+		Mode    string `query:"mode"`
+		Limit   int    `query:"limit"`
+	}) (*struct {
+		Body daemon.CommunityRoomsPage
+	}, error) {
+		identity, err := identityParams{Account: input.Account, Daemon: input.Daemon, Session: input.Session}.identity()
 		if err != nil {
-			return daemon.CommunityRoomsRequest{}, err
+			return nil, communityErr(err)
 		}
-	}
-	return daemon.CommunityRoomsRequest{CommunityIdentity: identity, Room: q.Get("room"), Cursor: q.Get("cursor"), Query: q.Get("query"), Mode: q.Get("mode"), Limit: limit}, nil
-}
-
-func (s *Server) communityRooms(w http.ResponseWriter, r *http.Request) {
-	req, err := communityRoomPageQuery(r)
-	if err != nil {
-		communityError(w, err)
-		return
-	}
-	out, err := s.service.CommunityRooms(r.Context(), req)
-	communityResult(w, out, err)
-}
-
-func (s *Server) communityRoomsRefresh(w http.ResponseWriter, r *http.Request) {
-	var identity daemon.CommunityIdentity
-	if err := decode(w, r, &identity); err != nil {
-		communityError(w, err)
-		return
-	}
-	if err := s.service.RefreshCommunityRooms(r.Context(), identity); err != nil {
-		communityError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, struct{}{})
-}
-
-func (s *Server) communityRoomAction(w http.ResponseWriter, r *http.Request) {
-	var req daemon.CommunityRoomActionRequest
-	if !decodeCommunity(w, r, &req) {
-		return
-	}
-	out, err := s.service.CommunityRoomAction(r.Context(), req)
-	communityResult(w, out, err)
-}
-
-func (s *Server) communityRoomSend(w http.ResponseWriter, r *http.Request) {
-	var req daemon.CommunityRoomSendRequest
-	if !decodeCommunity(w, r, &req) {
-		return
-	}
-	out, err := s.service.SendCommunityRoom(r.Context(), req)
-	communityResult(w, out, err)
-}
-
-func (s *Server) communityRoomMembers(w http.ResponseWriter, r *http.Request) {
-	q := r.URL.Query()
-	identity, err := communityRoomIdentityQuery(q)
-	if err != nil {
-		communityError(w, err)
-		return
-	}
-	limit := 0
-	if q.Get("limit") != "" {
-		limit, err = strconv.Atoi(q.Get("limit"))
+		out, err := s.service.CommunityRooms(ctx, daemon.CommunityRoomsRequest{
+			CommunityIdentity: identity, Room: input.Room, Cursor: input.Cursor, Query: input.Query, Mode: input.Mode, Limit: input.Limit,
+		})
+		return communityBody(out, err)
+	})
+	route(s, scopeAuthed, huma.Operation{
+		OperationID: "refresh-rooms", Method: http.MethodPost, Path: "/v1/community/rooms/refresh",
+		Summary: "Refresh rooms", Errors: communityErrors,
+	}, func(ctx context.Context, input *struct {
+		Body daemon.CommunityIdentity
+	}) (*emptyOutput, error) {
+		if err := s.service.RefreshCommunityRooms(ctx, input.Body); err != nil {
+			return nil, communityErr(err)
+		}
+		return &emptyOutput{}, nil
+	})
+	route(s, scopeAuthed, huma.Operation{
+		OperationID: "room-action", Method: http.MethodPost, Path: "/v1/community/rooms/action",
+		Summary: "Join, leave or act in a room", Errors: communityErrors,
+	}, func(ctx context.Context, input *struct {
+		Body daemon.CommunityRoomActionRequest
+	}) (*struct {
+		Body daemon.CommunityRoomActionResult
+	}, error) {
+		out, err := s.service.CommunityRoomAction(ctx, input.Body)
+		return communityBody(out, err)
+	})
+	route(s, scopeAuthed, huma.Operation{
+		OperationID: "send-room-message", Method: http.MethodPost, Path: "/v1/community/rooms/messages",
+		Summary: "Send a room message", Errors: communityErrors,
+	}, func(ctx context.Context, input *struct {
+		Body daemon.CommunityRoomSendRequest
+	}) (*struct {
+		Body daemon.CommunitySendResult
+	}, error) {
+		out, err := s.service.SendCommunityRoom(ctx, input.Body)
+		return communityBody(out, err)
+	})
+	route(s, scopeAuthed, huma.Operation{
+		OperationID: "list-room-members", Method: http.MethodGet, Path: "/v1/community/rooms/members",
+		Summary: "Room members", Errors: communityErrors,
+	}, func(ctx context.Context, input *struct {
+		Account string `query:"account" doc:"Community account"`
+		Daemon  string `query:"daemon" doc:"Daemon identity"`
+		Session string `query:"session" doc:"Session number"`
+		Room    string `query:"room"`
+		Cursor  string `query:"cursor"`
+		Query   string `query:"query"`
+		Limit   int    `query:"limit"`
+		Private bool   `query:"private"`
+	}) (*struct {
+		Body daemon.CommunityRoomMembersPage
+	}, error) {
+		identity, err := identityParams{Account: input.Account, Daemon: input.Daemon, Session: input.Session}.identity()
 		if err != nil {
-			communityError(w, err)
-			return
+			return nil, communityErr(err)
 		}
-	}
-	private := false
-	if q.Get("private") != "" {
-		private, err = strconv.ParseBool(q.Get("private"))
+		out, err := s.service.CommunityRoomMembers(ctx, daemon.CommunityRoomMembersRequest{
+			CommunityIdentity: identity, Room: input.Room, Cursor: input.Cursor, Query: input.Query, Limit: input.Limit, Private: input.Private,
+		})
+		return communityBody(out, err)
+	})
+	route(s, scopeAuthed, huma.Operation{
+		OperationID: "get-room-feed", Method: http.MethodGet, Path: "/v1/community/rooms/feed",
+		Summary: "Room message feed", Errors: communityErrors,
+	}, func(ctx context.Context, input *struct {
+		Account string `query:"account" doc:"Community account"`
+		Daemon  string `query:"daemon" doc:"Daemon identity"`
+		Session string `query:"session" doc:"Session number"`
+		Cursor  int64  `query:"cursor"`
+		Limit   int    `query:"limit"`
+	}) (*struct {
+		Body daemon.CommunityFeedPage
+	}, error) {
+		identity, err := identityParams{Account: input.Account, Daemon: input.Daemon, Session: input.Session}.identity()
 		if err != nil {
-			communityError(w, err)
-			return
+			return nil, communityErr(err)
 		}
-	}
-	out, err := s.service.CommunityRoomMembers(r.Context(), daemon.CommunityRoomMembersRequest{CommunityIdentity: identity, Room: q.Get("room"), Cursor: q.Get("cursor"), Query: q.Get("query"), Limit: limit, Private: private})
-	communityResult(w, out, err)
-}
-
-func (s *Server) communityFeed(w http.ResponseWriter, r *http.Request) {
-	q := r.URL.Query()
-	identity, err := communityRoomIdentityQuery(q)
-	if err != nil {
-		communityError(w, err)
-		return
-	}
-	cursor, err := communityQueryInt(q, "cursor")
-	if err != nil {
-		communityError(w, err)
-		return
-	}
-	limit := 0
-	if q.Get("limit") != "" {
-		limit, err = strconv.Atoi(q.Get("limit"))
-		if err != nil {
-			communityError(w, err)
-			return
+		out, err := s.service.CommunityFeed(ctx, daemon.CommunityFeedRequest{CommunityIdentity: identity, Cursor: input.Cursor, Limit: input.Limit})
+		return communityBody(out, err)
+	})
+	route(s, scopeAuthed, huma.Operation{
+		OperationID: "set-feed-subscription", Method: http.MethodPost, Path: "/v1/community/rooms/feed/subscription",
+		Summary: "Manage feed subscriptions", Errors: communityErrors,
+	}, func(ctx context.Context, input *struct {
+		Body daemon.CommunityFeedSubscription
+	}) (*emptyOutput, error) {
+		if err := s.service.SetCommunityFeed(ctx, input.Body); err != nil {
+			return nil, communityErr(err)
 		}
-	}
-	out, err := s.service.CommunityFeed(r.Context(), daemon.CommunityFeedRequest{CommunityIdentity: identity, Cursor: cursor, Limit: limit})
-	communityResult(w, out, err)
-}
-
-func (s *Server) communityFeedSubscription(w http.ResponseWriter, r *http.Request) {
-	var req daemon.CommunityFeedSubscription
-	if !decodeCommunity(w, r, &req) {
-		return
-	}
-	if err := s.service.SetCommunityFeed(r.Context(), req); err != nil {
-		communityError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, struct{}{})
+		return &emptyOutput{}, nil
+	})
+	s.registerCommunityRoomExtraRoutes()
 }
 
 func communityRoomValues(identity daemon.CommunityIdentity) url.Values {

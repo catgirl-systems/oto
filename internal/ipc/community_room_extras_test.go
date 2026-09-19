@@ -72,14 +72,17 @@ func TestCommunityPrivateRoomIPCPreferencesAndValidation(t *testing.T) {
 	values := communityRoomValues(id)
 	values.Set("room", "oto test")
 	values.Set("private", "not-bool")
-	for _, url := range []string{
-		"/v1/community/rooms/members?" + values.Encode(),
-		"/v1/community/rooms/wall?session=invalid",
-		"/v1/community/rooms/wall?" + communityRoomValues(id).Encode() + "&room=oto+test&limit=-1",
+	for _, tc := range []struct {
+		url    string
+		status int
+	}{
+		{"/v1/community/rooms/members?" + values.Encode(), 422},
+		{"/v1/community/rooms/wall?session=invalid", 400},
+		{"/v1/community/rooms/wall?" + communityRoomValues(id).Encode() + "&room=oto+test&limit=-1", 400},
 	} {
-		response, err := client.http.Do(mustRequest(http.MethodGet, "http://oto.local"+url, nil))
+		response, err := client.http.Do(mustRequest(http.MethodGet, "http://oto.local"+tc.url, nil))
 		must(t, err)
 		_ = response.Body.Close()
-		failIf(t, response.StatusCode != http.StatusBadRequest, url, response.StatusCode)
+		failIf(t, response.StatusCode != tc.status, tc.url, response.StatusCode)
 	}
 }
