@@ -104,7 +104,7 @@ func TestCommunityResourcesContracts(t *testing.T) {
 	}
 	err = json.NewDecoder(response.Body).Decode(&rejection)
 	_ = response.Body.Close()
-	failIfFmt(t, err != nil || response.StatusCode == http.StatusOK || !strings.Contains(rejection.Error, "request body too large"), "server body budget: %+v %v", rejection, err)
+	failIfFmt(t, err != nil || response.StatusCode == http.StatusOK || !strings.Contains(rejection.Error, "request body is too large"), "server body budget: %+v %v", rejection, err)
 	snapshot, err := client.Status(ctx)
 	failIfFmt(t, err != nil || !reflect.DeepEqual(snapshot.CommunityCapabilities, before.Capabilities), "state capabilities: %v", err)
 	encoded, err := json.Marshal(snapshot)

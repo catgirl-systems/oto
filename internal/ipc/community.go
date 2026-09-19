@@ -9,55 +9,39 @@ import (
 	"strconv"
 
 	"github.com/catgirl-systems/oto/internal/daemon"
+	"github.com/danielgtaylor/huma/v2"
 )
 
-func (s *Server) registerCommunity(mux *http.ServeMux) {
-	mux.HandleFunc("PUT /v1/shares/access", s.shareAccess)
-	mux.HandleFunc("GET /v1/community", s.communitySummary)
-	mux.HandleFunc("GET /v1/community/users", s.communityUsers)
-	mux.HandleFunc("PUT /v1/community/watches", s.communityWatches)
-	s.registerCommunityChats(mux)
-	s.registerCommunityRooms(mux)
-	mux.HandleFunc("GET /v1/community/buddies", s.communityBuddies)
-	mux.HandleFunc("PUT /v1/community/buddies", s.communityBuddySet)
-	mux.HandleFunc("DELETE /v1/community/buddies", s.communityBuddySet)
-	mux.HandleFunc("GET /v1/community/interests", s.communityInterests)
-	mux.HandleFunc("PUT /v1/community/interests", s.communityInterestSet)
-	mux.HandleFunc("DELETE /v1/community/interests", s.communityInterestSet)
-	mux.HandleFunc("GET /v1/community/rules", s.communityRules)
-	mux.HandleFunc("PUT /v1/community/rules", s.communityRuleSet)
-	mux.HandleFunc("DELETE /v1/community/rules", s.communityRuleSet)
-	mux.HandleFunc("GET /v1/community/profile/self", s.communitySelfProfile)
-	mux.HandleFunc("PUT /v1/community/profile/self", s.communitySelfProfileSet)
-	mux.HandleFunc("GET /v1/community/discovery", s.communityDiscovery)
-	mux.HandleFunc("POST /v1/community/discovery", s.communityDiscovery)
-	mux.HandleFunc("GET /v1/community/profile", s.communityProfile)
-	mux.HandleFunc("POST /v1/community/profile", s.communityProfile)
-	mux.HandleFunc("GET /v1/community/profile/picture", s.communityProfilePicture)
-	mux.HandleFunc("GET /v1/account/privileges", s.accountPrivileges)
-	mux.HandleFunc("POST /v1/account/privileges/gift", s.accountPrivilegeGift)
-	mux.HandleFunc("POST /v1/commands", s.commands)
-	mux.HandleFunc("GET /v1/community/aliases", s.communityAliases)
-	mux.HandleFunc("POST /v1/community/completion", s.communityCompletion)
-	mux.HandleFunc("POST /v1/community/activity", s.communityActivity)
-	mux.HandleFunc("GET /v1/community/away", s.communityAway)
-	mux.HandleFunc("GET /v1/community/broadcasts", s.communityBroadcast)
-	mux.HandleFunc("POST /v1/community/broadcasts", s.communityBroadcast)
-	mux.HandleFunc("POST /v1/community/broadcasts/action", s.communityBroadcastAction)
-	mux.HandleFunc("GET /v1/shares/send", s.sharedSend)
-	mux.HandleFunc("POST /v1/shares/send", s.sharedSend)
-	mux.HandleFunc("POST /v1/uploads/send", s.sharedSend)
-	mux.HandleFunc("POST /v1/shares/send/action", s.sharedSendAction)
-	mux.HandleFunc("PUT /v1/community/away", s.communityAway)
-	mux.HandleFunc("GET /v1/downloads/receiving", s.receivingSettings)
-	mux.HandleFunc("PUT /v1/downloads/receiving", s.receivingSettings)
-	mux.HandleFunc("GET /v1/community/text-tools", s.communityText)
-	mux.HandleFunc("PUT /v1/community/text-tools", s.communityText)
-	mux.HandleFunc("PUT /v1/community/aliases", s.communityAliasSet)
-	mux.HandleFunc("DELETE /v1/community/aliases", s.communityAliasSet)
+// communityErrors lists the statuses communityError can produce.
+var communityErrors = []int{400, 404, 409, 503}
+
+// identityParams documents the community session query parameters. huma does
+// not parse parameters from embedded structs, so every community GET input
+// repeats these three fields; identity() centralizes their parsing. Session
+// stays a string so missing or malformed values keep the historical 400.
+type identityParams struct {
+	Account string `query:"account" doc:"Community account"`
+	Daemon  string `query:"daemon" doc:"Daemon identity"`
+	Session string `query:"session" doc:"Session number"`
 }
 
-func communityError(w http.ResponseWriter, err error) {
+func (p identityParams) identity() (daemon.CommunityIdentity, error) {
+	session, err := strconv.ParseUint(p.Session, 10, 64)
+	if err != nil {
+		return daemon.CommunityIdentity{}, err
+	}
+	return daemon.CommunityIdentity{Account: p.Account, Daemon: p.Daemon, Session: session}, nil
+}
+
+// communityErr maps a community error onto a huma status error.
+func communityErr(err error) huma.StatusError {
+	if err == nil {
+		return nil
+	}
+	return huma.NewError(communityStatus(err), err.Error())
+}
+
+func communityStatus(err error) int {
 	status := http.StatusBadRequest
 	if errors.Is(err, daemon.ErrCommunitySession) || errors.Is(err, daemon.ErrCommunityMessageState) {
 		status = http.StatusConflict
@@ -68,46 +52,70 @@ func communityError(w http.ResponseWriter, err error) {
 	if errors.Is(err, sql.ErrNoRows) {
 		status = http.StatusNotFound
 	}
-	writeErr(w, status, err)
+	return status
 }
 
-func (s *Server) communitySummary(w http.ResponseWriter, r *http.Request) {
-	out, err := s.service.CommunitySummary(r.Context())
-	communityResult(w, out, err)
-}
-
-func (s *Server) communityUsers(w http.ResponseWriter, r *http.Request) {
-	q := r.URL.Query()
-	session, err := strconv.ParseUint(q.Get("session"), 10, 64)
+// communityBody wraps a service result for huma, mapping failures through
+// communityErr.
+func communityBody[T any](out T, err error) (*struct {
+	Body T
+}, error) {
 	if err != nil {
-		communityError(w, err)
-		return
+		return nil, communityErr(err)
 	}
-	limit := 200
-	if q.Get("limit") != "" {
-		limit, err = strconv.Atoi(q.Get("limit"))
-		if err != nil {
-			communityError(w, err)
-			return
-		}
-	}
-	out, err := s.service.CommunityUsers(r.Context(), daemon.CommunityUsersRequest{
-		CommunityIdentity: daemon.CommunityIdentity{Account: q.Get("account"), Daemon: q.Get("daemon"), Session: session},
-		Cursor:            q.Get("cursor"), Query: q.Get("query"), Username: q.Get("username"), Limit: limit,
-	})
-	communityResult(w, out, err)
+	return &struct {
+		Body T
+	}{out}, nil
 }
 
-func (s *Server) communityWatches(w http.ResponseWriter, r *http.Request) {
-	var req daemon.CommunityWatchRequest
-	if !decodeCommunity(w, r, &req) {
-		return
-	}
-	if err := s.service.WatchCommunityUsers(req.CommunityIdentity, req.Frontend, req.Users); err != nil {
-		communityError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, struct{}{})
+// emptyOutput preserves the historical 200 with an empty JSON object.
+type emptyOutput struct {
+	Body struct{}
+}
+
+func (s *Server) registerCommunityRoutes() {
+	route(s, scopeAuthed, huma.Operation{
+		OperationID: "get-community-summary", Method: http.MethodGet, Path: "/v1/community",
+		Summary: "Community summary", Errors: communityErrors,
+	}, func(ctx context.Context, _ *struct{}) (*struct {
+		Body daemon.CommunitySummary
+	}, error) {
+		return communityBody(s.service.CommunitySummary(ctx))
+	})
+	route(s, scopeAuthed, huma.Operation{
+		OperationID: "search-community-users", Method: http.MethodGet, Path: "/v1/community/users",
+		Summary: "Search community users", Errors: communityErrors,
+	}, func(ctx context.Context, input *struct {
+		Account  string `query:"account" doc:"Community account"`
+		Daemon   string `query:"daemon" doc:"Daemon identity"`
+		Session  string `query:"session" doc:"Session number"`
+		Cursor   string `query:"cursor"`
+		Query    string `query:"query"`
+		Username string `query:"username" doc:"Exact username lookup"`
+		Limit    int    `query:"limit"`
+	}) (*struct {
+		Body daemon.CommunityUsersPage
+	}, error) {
+		identity, err := identityParams{Account: input.Account, Daemon: input.Daemon, Session: input.Session}.identity()
+		if err != nil {
+			return nil, communityErr(err)
+		}
+		out, err := s.service.CommunityUsers(ctx, daemon.CommunityUsersRequest{
+			CommunityIdentity: identity, Cursor: input.Cursor, Query: input.Query, Username: input.Username, Limit: input.Limit,
+		})
+		return communityBody(out, err)
+	})
+	route(s, scopeAuthed, huma.Operation{
+		OperationID: "watch-community-users", Method: http.MethodPut, Path: "/v1/community/watches",
+		Summary: "Watch or unwatch a user", Errors: communityErrors,
+	}, func(ctx context.Context, input *struct {
+		Body daemon.CommunityWatchRequest
+	}) (*emptyOutput, error) {
+		if err := s.service.WatchCommunityUsers(input.Body.CommunityIdentity, input.Body.Frontend, input.Body.Users); err != nil {
+			return nil, communityErr(err)
+		}
+		return &emptyOutput{}, nil
+	})
 }
 
 func (c *Client) CommunitySummary(ctx context.Context) (daemon.CommunitySummary, error) {
