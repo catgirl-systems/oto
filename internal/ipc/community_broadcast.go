@@ -7,42 +7,59 @@ import (
 	"strconv"
 
 	"github.com/catgirl-systems/oto/internal/daemon"
+	"github.com/danielgtaylor/huma/v2"
 )
 
-func (s *Server) communityBroadcast(w http.ResponseWriter, r *http.Request) {
-	var out daemon.CommunityBroadcastPage
-	var err error
-	if r.Method == http.MethodGet {
-		q := r.URL.Query()
-		id, e := communityRoomIdentityQuery(q)
-		if e != nil {
-			communityError(w, e)
-			return
+func (s *Server) registerCommunityBroadcastRoutes() {
+	route(s, scopeAuthed, huma.Operation{
+		OperationID: "list-broadcasts", Method: http.MethodGet, Path: "/v1/community/broadcasts",
+		Summary: "List broadcasts", Errors: communityErrors,
+	}, func(ctx context.Context, input *struct {
+		Account   string `query:"account" doc:"Community account"`
+		Daemon    string `query:"daemon" doc:"Daemon identity"`
+		Session   string `query:"session" doc:"Session number"`
+		RequestID string `query:"request_id"`
+		Cursor    int    `query:"cursor"`
+	}) (*struct {
+		Body daemon.CommunityBroadcastPage
+	}, error) {
+		identity, err := identityParams{Account: input.Account, Daemon: input.Daemon, Session: input.Session}.identity()
+		if err != nil {
+			return nil, communityErr(err)
 		}
-		cursor := 0
-		if q.Get("cursor") != "" {
-			cursor, e = strconv.Atoi(q.Get("cursor"))
-			if e != nil {
-				communityError(w, e)
-				return
-			}
-		}
-		out, err = s.service.CommunityBroadcast(r.Context(), id, q.Get("request_id"), cursor)
-	} else {
-		var req daemon.CommunityBroadcastRequest
-		if e := decode(w, r, &req); e != nil {
-			communityError(w, e)
-			return
-		}
-		out, err = s.service.PreviewCommunityBroadcast(r.Context(), req)
-	}
-	communityResult(w, out, err)
+		out, err := s.service.CommunityBroadcast(ctx, identity, input.RequestID, input.Cursor)
+		return communityBody(out, err)
+	})
+	route(s, scopeAuthed, huma.Operation{
+		OperationID: "preview-broadcast", Method: http.MethodPost, Path: "/v1/community/broadcasts",
+		Summary: "Send a broadcast", Errors: communityErrors,
+	}, func(ctx context.Context, input *struct {
+		Body daemon.CommunityBroadcastRequest
+	}) (*struct {
+		Body daemon.CommunityBroadcastPage
+	}, error) {
+		out, err := s.service.PreviewCommunityBroadcast(ctx, input.Body)
+		return communityBody(out, err)
+	})
+	route(s, scopeAuthed, huma.Operation{
+		OperationID: "broadcast-action", Method: http.MethodPost, Path: "/v1/community/broadcasts/action",
+		Summary: "Act on a broadcast", Errors: communityErrors,
+	}, func(ctx context.Context, input *struct {
+		Body daemon.CommunityBroadcastAction
+	}) (*struct {
+		Body daemon.CommunityBroadcastPage
+	}, error) {
+		out, err := s.service.ActCommunityBroadcast(ctx, input.Body)
+		return communityBody(out, err)
+	})
 }
+
 func (c *Client) PreviewCommunityBroadcast(ctx context.Context, req daemon.CommunityBroadcastRequest) (daemon.CommunityBroadcastPage, error) {
 	var out daemon.CommunityBroadcastPage
 	err := c.Do(ctx, http.MethodPost, "/v1/community/broadcasts", req, &out)
 	return out, err
 }
+
 func (c *Client) CommunityBroadcast(ctx context.Context, id daemon.CommunityIdentity, requestID string, cursor int) (daemon.CommunityBroadcastPage, error) {
 	q := url.Values{"account": {id.Account}, "daemon": {id.Daemon}, "session": {strconv.FormatUint(id.Session, 10)}, "request_id": {requestID}, "cursor": {strconv.Itoa(cursor)}}
 	var out daemon.CommunityBroadcastPage
@@ -50,14 +67,6 @@ func (c *Client) CommunityBroadcast(ctx context.Context, id daemon.CommunityIden
 	return out, err
 }
 
-func (s *Server) communityBroadcastAction(w http.ResponseWriter, r *http.Request) {
-	var req daemon.CommunityBroadcastAction
-	if !decodeCommunity(w, r, &req) {
-		return
-	}
-	out, err := s.service.ActCommunityBroadcast(r.Context(), req)
-	communityResult(w, out, err)
-}
 func (c *Client) ActCommunityBroadcast(ctx context.Context, req daemon.CommunityBroadcastAction) (daemon.CommunityBroadcastPage, error) {
 	var out daemon.CommunityBroadcastPage
 	err := c.Do(ctx, http.MethodPost, "/v1/community/broadcasts/action", req, &out)
