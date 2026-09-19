@@ -287,7 +287,10 @@ func daemonCommand(args []string) error {
 		defer stop()
 		eof = parent.Done()
 	}
-	return runDaemon(service, ipc.NewServer(service, config.SocketPath()), signals, eof)
+	socket := ipc.NewServer(service, config.SocketPath())
+	api := ipc.NewAPIServer(socket, cfg.API.ListenAddr)
+	service.SetAPIListener(api.Rebind)
+	return runDaemon(service, signals, eof, socket, api)
 }
 
 func transfersCommand(args []string) error {

@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
@@ -16,14 +17,28 @@ import (
 
 // A shutdown request is not cancellation of the live session: uploads need its
 // connections, callbacks and port mapping until the drain finishes.
-func runDaemon(service *daemon.Service, server *ipc.Server, signals <-chan os.Signal, eof <-chan struct{}) error {
+type daemonServer interface {
+	Serve(context.Context) error
+	Close() error
+}
+
+func runDaemon(service *daemon.Service, signals <-chan os.Signal, eof <-chan struct{}, servers ...daemonServer) error {
 	ctx, cancel := context.WithCancel(context.Background())
-	serverErr := make(chan error, 1)
-	go func() { serverErr <- server.Serve(ctx); close(serverErr) }()
+	var serveWG sync.WaitGroup
+	serverErr := make(chan error, len(servers))
+	for _, server := range servers {
+		serveWG.Add(1)
+		go func() {
+			defer serveWG.Done()
+			serverErr <- server.Serve(ctx)
+		}()
+	}
 	defer func() {
 		cancel()
-		<-serverErr
-		_ = server.Close()
+		serveWG.Wait()
+		for _, server := range servers {
+			_ = server.Close()
+		}
 	}()
 	started := make(chan error, 1)
 	go func() { started <- service.Start(ctx) }()

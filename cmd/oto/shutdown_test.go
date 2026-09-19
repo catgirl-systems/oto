@@ -344,7 +344,7 @@ func TestDaemonShutdownWithoutUploadsAndIPCFailure(t *testing.T) {
 			}
 			eof := make(chan struct{})
 			done := make(chan error, 1)
-			go func() { done <- runDaemon(svc, ipc.NewServer(svc, path), make(chan os.Signal), eof) }()
+			go func() { done <- runDaemon(svc, make(chan os.Signal), eof, ipc.NewServer(svc, path)) }()
 			if !failure {
 				shutdownStatus(t, ipc.NewClient(path), func(s daemon.Snapshot) bool { return s.Shutdown == nil })
 				close(eof)
