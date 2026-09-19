@@ -8,45 +8,64 @@ import (
 	"strconv"
 
 	"github.com/catgirl-systems/oto/internal/daemon"
+	"github.com/danielgtaylor/huma/v2"
 )
 
-func (s *Server) communityAliases(w http.ResponseWriter, r *http.Request) {
-	q := r.URL.Query()
-	identity, err := communityRoomIdentityQuery(q)
-	if err != nil {
-		communityError(w, err)
-		return
-	}
-	limit := 0
-	if q.Get("limit") != "" {
-		limit, err = strconv.Atoi(q.Get("limit"))
+func (s *Server) registerCommunityAliasRoutes() {
+	route(s, scopeAuthed, huma.Operation{
+		OperationID: "list-aliases", Method: http.MethodGet, Path: "/v1/community/aliases",
+		Summary: "List chat command aliases", Errors: communityErrors,
+	}, func(ctx context.Context, input *struct {
+		Account string `query:"account" doc:"Community account"`
+		Daemon  string `query:"daemon" doc:"Daemon identity"`
+		Session string `query:"session" doc:"Session number"`
+		Cursor  string `query:"cursor"`
+		Limit   int    `query:"limit"`
+	}) (*struct {
+		Body daemon.CommunityAliasesPage
+	}, error) {
+		identity, err := identityParams{Account: input.Account, Daemon: input.Daemon, Session: input.Session}.identity()
 		if err != nil {
-			communityError(w, err)
-			return
+			return nil, communityErr(err)
 		}
-	}
-	out, err := s.service.CommunityAliases(r.Context(), daemon.CommunityAliasesRequest{CommunityIdentity: identity, Cursor: q.Get("cursor"), Limit: limit})
-	communityResult(w, out, err)
+		out, err := s.service.CommunityAliases(ctx, daemon.CommunityAliasesRequest{CommunityIdentity: identity, Cursor: input.Cursor, Limit: input.Limit})
+		return communityBody(out, err)
+	})
+	route(s, scopeAuthed, huma.Operation{
+		OperationID: "set-alias", Method: http.MethodPut, Path: "/v1/community/aliases",
+		Summary: "Add or update an alias", Errors: communityErrors,
+	}, func(ctx context.Context, input *struct {
+		Body daemon.CommunityAliasRequest
+	}) (*struct {
+		Body daemon.CommunityAlias
+	}, error) {
+		if input.Body.Remove {
+			return nil, communityErr(errors.New("community: use DELETE to remove an alias"))
+		}
+		out, err := s.service.SetCommunityAlias(ctx, input.Body)
+		return communityBody(out, err)
+	})
+	route(s, scopeAuthed, huma.Operation{
+		OperationID: "remove-alias", Method: http.MethodDelete, Path: "/v1/community/aliases",
+		Summary: "Remove an alias", Errors: communityErrors,
+	}, func(ctx context.Context, input *struct {
+		Body daemon.CommunityAliasRequest
+	}) (*struct {
+		Body daemon.CommunityAlias
+	}, error) {
+		input.Body.Remove = true
+		out, err := s.service.SetCommunityAlias(ctx, input.Body)
+		return communityBody(out, err)
+	})
 }
-func (s *Server) communityAliasSet(w http.ResponseWriter, r *http.Request) {
-	var req daemon.CommunityAliasRequest
-	if !decodeCommunity(w, r, &req) {
-		return
-	}
-	if r.Method != http.MethodDelete && req.Remove {
-		communityError(w, errors.New("use DELETE to remove an alias"))
-		return
-	}
-	req.Remove = r.Method == http.MethodDelete
-	out, err := s.service.SetCommunityAlias(r.Context(), req)
-	communityResult(w, out, err)
-}
+
 func (c *Client) CommunityAliases(ctx context.Context, req daemon.CommunityAliasesRequest) (daemon.CommunityAliasesPage, error) {
 	q := url.Values{"account": {req.Account}, "daemon": {req.Daemon}, "session": {strconv.FormatUint(req.Session, 10)}, "cursor": {req.Cursor}, "limit": {strconv.Itoa(req.Limit)}}
 	var out daemon.CommunityAliasesPage
 	err := c.Do(ctx, http.MethodGet, "/v1/community/aliases?"+q.Encode(), nil, &out)
 	return out, err
 }
+
 func (c *Client) SetCommunityAlias(ctx context.Context, req daemon.CommunityAliasRequest) (daemon.CommunityAlias, error) {
 	method := http.MethodPut
 	if req.Remove {
