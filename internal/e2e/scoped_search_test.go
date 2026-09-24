@@ -43,7 +43,7 @@ func TestCommunityScopedSearchTerminal(t *testing.T) {
 				globalSearches.Add(1)
 			case 42, 120:
 				d := soulseek.NewDecoder(data)
-				_ = d.String()
+				name := d.String()
 				d.U32()
 				query := d.String()
 				if d.Err() != nil {

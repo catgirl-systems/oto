@@ -41,9 +41,9 @@ func TestCommunityBroadcastCommandsAndPacedOutcomes(t *testing.T) {
 			}
 			if code == 22 {
 				d := soulseek.NewDecoder(body)
-				name, e1 := d.String()
-				text, e2 := d.String()
-				if e1 != nil || e2 != nil || (name != "Alice" && name != "Bob") || text != "hello 世界" {
+				name := d.String()
+				text := d.String()
+				if d.Err() != nil || (name != "Alice" && name != "Bob") || text != "hello 世界" {
 					return fmt.Errorf("unexpected broadcast message")
 				}
 				sent.Add(1)

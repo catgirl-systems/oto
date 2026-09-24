@@ -59,9 +59,9 @@ func TestCommunityAutoAwayUsesRealInputNotPolling(t *testing.T) {
 			}
 			if code == 22 {
 				d := soulseek.NewDecoder(body)
-				user, e1 := d.String()
-				text, e2 := d.String()
-				if e1 != nil || e2 != nil || user != "Alice" || text != "[Automatic Message] back later" {
+				user := d.String()
+				text := d.String()
+				if d.Err() != nil || user != "Alice" || text != "[Automatic Message] back later" {
 					return fmt.Errorf("unexpected automatic reply")
 				}
 				replies.Add(1)
