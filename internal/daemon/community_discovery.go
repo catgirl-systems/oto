@@ -147,21 +147,23 @@ func (s *Service) communityDiscoveryPageLocked(req CommunityDiscoveryRequest, ke
 	if err := s.discoveryWatchesLocked(req.Frontend, users, now); err != nil {
 		return out, err
 	}
-	budget := 0
-	for _, row := range q.rows[offset:end] {
-		if row.User != nil {
-			user := s.community.users[row.User.Username]
-			user.Username = row.User.Username
-			row.User = &user
+	rows, _, err := takePage(func(yield func(CommunityDiscoveryRow) bool) {
+		for _, row := range q.rows[offset:end] {
+			if row.User != nil {
+				user := s.community.users[row.User.Username]
+				user.Username = row.User.Username
+				row.User = &user
+			}
+			if !yield(row) {
+				return
+			}
 		}
-		encoded, _ := json.Marshal(row)
-		if budget+len(encoded)+1 > communityPageBytes {
-			break
-		}
-		budget += len(encoded) + 1
-		out.Rows = append(out.Rows, row)
+	}, int(limit), communityPageBytes)
+	if err != nil {
+		return out, err
 	}
-	end = offset + len(out.Rows)
+	out.Rows = rows
+	end = offset + len(rows)
 	if end < len(q.rows) {
 		raw, _ := json.Marshal(communityDiscoveryCursor{key.Kind, key.Target, q.generation, end})
 		out.NextCursor = base64.RawURLEncoding.EncodeToString(raw)

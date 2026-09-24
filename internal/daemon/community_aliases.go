@@ -83,14 +83,17 @@ func (s *Service) CommunityAliases(ctx context.Context, req CommunityAliasesRequ
 	if err != nil {
 		return out, err
 	}
-	bytes := 0
-	for _, row := range rows {
-		bytes += len(row.Name) + len(row.Expansion) + 128
-		if bytes > 64<<10 {
-			break
-		} // Includes worst-case JSON escaping within the IPC page budget.
-		out.Aliases = append(out.Aliases, aliasFromRow(row))
+	aliases, _, err := takePage(func(yield func(CommunityAlias) bool) {
+		for _, row := range rows {
+			if !yield(aliasFromRow(row)) {
+				return
+			}
+		}
+	}, int(limit), 64<<10) // Measured JSON stays within the IPC page budget.
+	if err != nil {
+		return out, err
 	}
+	out.Aliases = aliases
 	if len(out.Aliases) > 0 && (len(rows) == int(limit) || len(out.Aliases) < len(rows)) {
 		out.NextCursor = out.Aliases[len(out.Aliases)-1].Name
 	}

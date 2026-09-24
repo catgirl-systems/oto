@@ -3,7 +3,6 @@ package daemon
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/netip"
@@ -135,18 +134,19 @@ func (s *Service) CommunityRules(ctx context.Context, req CommunityRulesRequest)
 		return out, err
 	}
 	out.Revision = uint64(account.Revision)
-	budget := 0
-	for _, rule := range s.community.rules {
-		if rule.ID <= after {
-			continue
+	rules, more, err := takePage(func(yield func(CommunityRule) bool) {
+		for _, rule := range s.community.rules {
+			if rule.ID > after && !yield(rule) {
+				return
+			}
 		}
-		encoded, _ := json.Marshal(rule)
-		if len(out.Rules) == int(limit) || budget+len(encoded)+1 > communityPageBytes {
-			out.NextCursor = strconv.FormatInt(out.Rules[len(out.Rules)-1].ID, 10)
-			break
-		}
-		out.Rules = append(out.Rules, rule)
-		budget += len(encoded) + 1
+	}, int(limit), communityPageBytes)
+	if err != nil {
+		return CommunityRulesPage{}, err
+	}
+	out.Rules = rules
+	if more {
+		out.NextCursor = strconv.FormatInt(rules[len(rules)-1].ID, 10)
 	}
 	return out, nil
 }

@@ -3,7 +3,6 @@ package daemon
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
@@ -139,16 +138,17 @@ func (s *Service) CommunityInterests(ctx context.Context, req CommunityInterests
 		}
 	}
 	slices.Sort(names)
-	budget := 0
-	for _, item := range names[:min(len(names), int(limit))] {
-		row := s.communityInterestLocked(item)
-		encoded, _ := json.Marshal(row)
-		if budget+len(encoded)+1 > communityPageBytes {
-			break
+	interests, _, err := takePage(func(yield func(CommunityInterest) bool) {
+		for _, item := range names[:min(len(names), int(limit))] {
+			if !yield(s.communityInterestLocked(item)) {
+				return
+			}
 		}
-		budget += len(encoded) + 1
-		out.Interests = append(out.Interests, row)
+	}, int(limit), communityPageBytes)
+	if err != nil {
+		return out, err
 	}
+	out.Interests = interests
 	if len(names) > len(out.Interests) {
 		out.NextCursor = names[len(out.Interests)-1]
 	}

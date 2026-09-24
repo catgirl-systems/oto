@@ -2,7 +2,6 @@ package daemon
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"slices"
 	"strings"
@@ -130,19 +129,19 @@ func (s *Service) CommunityRooms(ctx context.Context, req CommunityRoomsRequest)
 		names = append(names, name)
 	}
 	slices.Sort(names)
-	budget := 0
-	for _, name := range names {
-		room := s.communityRoomLocked(name)
-		encoded, err := json.Marshal(room)
-		if err != nil {
-			return CommunityRoomsPage{}, err
+	rooms, more, err := takePage(func(yield func(CommunityRoom) bool) {
+		for _, name := range names {
+			if !yield(s.communityRoomLocked(name)) {
+				return
+			}
 		}
-		if len(out.Rooms) == int(limit) || budget+len(encoded)+1 > communityPageBytes {
-			out.NextCursor = out.Rooms[len(out.Rooms)-1].Name
-			break
-		}
-		budget += len(encoded) + 1
-		out.Rooms = append(out.Rooms, room)
+	}, int(limit), communityPageBytes)
+	if err != nil {
+		return CommunityRoomsPage{}, err
+	}
+	out.Rooms = rooms
+	if more {
+		out.NextCursor = rooms[len(rooms)-1].Name
 	}
 	return out, nil
 }
@@ -234,33 +233,34 @@ func (s *Service) CommunityRoomMembers(ctx context.Context, req CommunityRoomMem
 	}
 	slices.Sort(names)
 	// Reserve the worst-case JSON-escaped username cursor as well as the rows.
-	budget := 6 * 1024
-	for _, name := range names {
-		member := r.members[name]
-		user, ok := s.community.users[name]
-		if !ok {
-			user = CommunityUser{Username: name, Exists: true, Status: member.Status, Stats: member.Stats, Country: member.Country}
-		}
-		row := CommunityRoomMember{CommunityUser: user, SlotsFull: member.SlotsFull, SlotsKnown: member.SlotsKnown && out.Room.RosterFresh}
-		if r.private {
-			row.Role = "member"
-			if slices.Contains(r.operators, name) {
-				row.Role = "operator"
+	members, more, err := takePage(func(yield func(CommunityRoomMember) bool) {
+		for _, name := range names {
+			member := r.members[name]
+			user, ok := s.community.users[name]
+			if !ok {
+				user = CommunityUser{Username: name, Exists: true, Status: member.Status, Stats: member.Stats, Country: member.Country}
 			}
-			if name == r.owner {
-				row.Role = "owner"
+			row := CommunityRoomMember{CommunityUser: user, SlotsFull: member.SlotsFull, SlotsKnown: member.SlotsKnown && out.Room.RosterFresh}
+			if r.private {
+				row.Role = "member"
+				if slices.Contains(r.operators, name) {
+					row.Role = "operator"
+				}
+				if name == r.owner {
+					row.Role = "owner"
+				}
+			}
+			if !yield(row) {
+				return
 			}
 		}
-		encoded, err := json.Marshal(row)
-		if err != nil {
-			return CommunityRoomMembersPage{}, err
-		}
-		if len(out.Members) == int(limit) || budget+len(encoded)+1 > communityPageBytes {
-			out.NextCursor = out.Members[len(out.Members)-1].Username
-			break
-		}
-		budget += len(encoded) + 1
-		out.Members = append(out.Members, row)
+	}, int(limit), communityPageBytes-6*1024)
+	if err != nil {
+		return CommunityRoomMembersPage{}, err
+	}
+	out.Members = members
+	if more {
+		out.NextCursor = members[len(members)-1].Username
 	}
 	return out, nil
 }
@@ -308,25 +308,26 @@ func (s *Service) CommunityFeed(ctx context.Context, req CommunityFeedRequest) (
 		return CommunityFeedPage{}, err
 	}
 	out := CommunityFeedPage{CommunityIdentity: req.CommunityIdentity, Messages: []CommunityFeedMessage{}, Revision: s.community.revision, Requested: s.community.feedWanted, RequestWritten: s.community.feedWritten, Connected: s.community.online}
-	budget := 0
-	for i := len(s.community.feed) - 1; i >= 0; i-- {
-		row := s.community.feed[i]
-		if ignored, held := s.communityIgnoreLocked(row.Sender); (ignored || held) && row.Sender != s.cfg.Soulseek.Username {
-			continue
+	messages, more, err := takePage(func(yield func(CommunityFeedMessage) bool) {
+		for i := len(s.community.feed) - 1; i >= 0; i-- {
+			row := s.community.feed[i]
+			if ignored, held := s.communityIgnoreLocked(row.Sender); (ignored || held) && row.Sender != s.cfg.Soulseek.Username {
+				continue
+			}
+			if req.Cursor != 0 && row.ID >= req.Cursor {
+				continue
+			}
+			if !yield(row) {
+				return
+			}
 		}
-		if req.Cursor != 0 && row.ID >= req.Cursor {
-			continue
-		}
-		encoded, err := json.Marshal(row)
-		if err != nil {
-			return CommunityFeedPage{}, err
-		}
-		if len(out.Messages) == int(limit) || budget+len(encoded)+1 > communityPageBytes {
-			out.NextCursor = out.Messages[len(out.Messages)-1].ID
-			break
-		}
-		budget += len(encoded) + 1
-		out.Messages = append(out.Messages, row)
+	}, int(limit), communityPageBytes)
+	if err != nil {
+		return CommunityFeedPage{}, err
+	}
+	out.Messages = messages
+	if more {
+		out.NextCursor = messages[len(messages)-1].ID
 	}
 	return out, nil
 }

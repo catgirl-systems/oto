@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -108,14 +109,13 @@ func (s *Service) CompleteCommunity(ctx context.Context, req CommunityCompletion
 		out.Candidates = out.Candidates[:200]
 		out.Truncated = true
 	}
-	bytes := 0
-	for i, name := range out.Candidates {
-		bytes += len(name) + 4
-		if bytes > 64<<10 {
-			out.Candidates = out.Candidates[:i]
-			out.Truncated = true
-			break
-		}
+	page, more, err := takePage(slices.Values(out.Candidates), 200, 64<<10)
+	if err != nil {
+		return out, err
+	}
+	out.Candidates = page
+	if more {
+		out.Truncated = true
 	}
 	return out, ctx.Err()
 }

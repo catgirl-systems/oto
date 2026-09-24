@@ -3,7 +3,6 @@ package daemon
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"time"
 	"unicode/utf8"
@@ -120,25 +119,19 @@ func (s *Service) CommunityConversations(ctx context.Context, req CommunityConve
 		if err != nil {
 			return err
 		}
-		bytes := 0
-		for _, row := range rows {
-			conversation := communityConversation(row)
-			encoded, err := json.Marshal(conversation)
-			if err != nil {
-				return err
-			}
-			if bytes+len(encoded)+1 > communityPageBytes {
-				if len(out.Conversations) == 0 {
-					return errors.New("community: stored conversation exceeds response budget")
+		conversations, more, err := takePage(func(yield func(CommunityConversation) bool) {
+			for _, row := range rows {
+				if !yield(communityConversation(row)) {
+					return
 				}
-				out.NextCursor = out.Conversations[len(out.Conversations)-1].ID
-				return nil
 			}
-			bytes += len(encoded) + 1
-			out.Conversations = append(out.Conversations, conversation)
+		}, int(limit), communityPageBytes)
+		if err != nil {
+			return err
 		}
-		if int64(len(rows)) == limit {
-			out.NextCursor = rows[len(rows)-1].ID
+		out.Conversations = conversations
+		if more || int64(len(rows)) == limit {
+			out.NextCursor = conversations[len(conversations)-1].ID
 		}
 		return nil
 	})
@@ -267,25 +260,19 @@ func (s *Service) CommunityMessages(ctx context.Context, req CommunityMessagesRe
 		if err != nil {
 			return err
 		}
-		bytes := 0
-		for _, row := range rows {
-			message := communityMessage(row)
-			encoded, err := json.Marshal(message)
-			if err != nil {
-				return err
-			}
-			if bytes+len(encoded)+1 > communityPageBytes {
-				if len(out.Messages) == 0 {
-					return errors.New("community: stored message exceeds response budget")
+		messages, more, err := takePage(func(yield func(CommunityMessage) bool) {
+			for _, row := range rows {
+				if !yield(communityMessage(row)) {
+					return
 				}
-				out.NextCursor = out.Messages[len(out.Messages)-1].ID
-				return nil
 			}
-			bytes += len(encoded) + 1
-			out.Messages = append(out.Messages, message)
+		}, int(limit), communityPageBytes)
+		if err != nil {
+			return err
 		}
-		if int64(len(rows)) == limit {
-			out.NextCursor = rows[len(rows)-1].ID
+		out.Messages = messages
+		if more || int64(len(rows)) == limit {
+			out.NextCursor = messages[len(messages)-1].ID
 		}
 		return nil
 	})

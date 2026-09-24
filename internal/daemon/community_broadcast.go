@@ -63,16 +63,13 @@ func broadcastPage(id CommunityIdentity, b communityBroadcast, cursor int) (Comm
 	if b.State == "preview" && b.Identity != id {
 		out.State = "stale-preview"
 	}
-	bytes := 0
-	for i := cursor; i < len(b.Recipients); i++ {
-		row := b.Recipients[i]
-		encoded, _ := json.Marshal(row)
-		if len(out.Recipients) == 200 || bytes+len(encoded) > 64<<10 {
-			out.NextCursor = i
-			break
-		}
-		out.Recipients = append(out.Recipients, row)
-		bytes += len(encoded)
+	recipients, more, err := takePage(slices.Values(b.Recipients[cursor:]), 200, 64<<10)
+	if err != nil {
+		return CommunityBroadcastPage{}, err
+	}
+	out.Recipients = recipients
+	if more {
+		out.NextCursor = cursor + len(recipients)
 	}
 	return out, nil
 }

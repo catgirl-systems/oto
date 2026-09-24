@@ -226,6 +226,12 @@ func TestCommunityRoomPagesAndBoundedFeed(t *testing.T) {
 	page, err := s.CommunityFeed(ctx, CommunityFeedRequest{CommunityIdentity: identity})
 	encoded, _ = json.Marshal(page)
 	failIf(t, err != nil || len(page.Messages) != 1 || page.NextCursor == 0 || len(encoded) > communityPageBytes+2048, "feed budget", len(encoded), err)
+	// A single wire-sized message whose JSON-escaped form alone exceeds the page
+	// budget must error cleanly instead of indexing an empty page (index [-1]).
+	must(t, s.communityUpdate(ctx, identity, soulseek.RoomMessage{Room: "oto test", Username: "Alice", Text: strings.Repeat("<", 96<<10), PublicFeed: true}))
+	if _, err := s.CommunityFeed(ctx, CommunityFeedRequest{CommunityIdentity: identity}); !errors.Is(err, errPageItemTooLarge) {
+		t.Fatal("oversized feed message", err)
+	}
 	must(t, s.SetCommunityFeed(ctx, CommunityFeedSubscription{CommunityIdentity: identity}))
 	syncTestRooms(t, s, client, peer, identity, "public-feed-unsubscribe")
 	id := s.community.feedID

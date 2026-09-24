@@ -3,7 +3,6 @@ package daemon
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"slices"
 	"strings"
@@ -144,19 +143,19 @@ func (s *Service) CommunityRoomWall(ctx context.Context, req CommunityRoomMember
 	}
 	slices.Sort(names)
 	// The standard row budget leaves room for the separately bounded own text.
-	budget := 6 * 1024
-	for _, name := range names {
-		entry := CommunityRoomWallEntry{Username: name, Text: r.wall[name]}
-		encoded, _ := json.Marshal(entry)
-		if len(out.Entries) == int(limit) || budget+len(encoded)+1 > communityPageBytes {
-			if len(out.Entries) == 0 {
-				return out, errors.New("community: wall entry exceeds page budget")
+	entries, more, err := takePage(func(yield func(CommunityRoomWallEntry) bool) {
+		for _, name := range names {
+			if !yield(CommunityRoomWallEntry{Username: name, Text: r.wall[name]}) {
+				return
 			}
-			out.NextCursor = out.Entries[len(out.Entries)-1].Username
-			break
 		}
-		budget += len(encoded) + 1
-		out.Entries = append(out.Entries, entry)
+	}, int(limit), communityPageBytes-6*1024)
+	if err != nil {
+		return out, err
+	}
+	out.Entries = entries
+	if more {
+		out.NextCursor = entries[len(entries)-1].Username
 	}
 	return out, nil
 }

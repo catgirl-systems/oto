@@ -90,6 +90,14 @@ func TestCommunityDiscoveryCorrelationLateRepliesAndPaging(t *testing.T) {
 	if err := s.communityUpdate(ctx, id, soulseek.DiscoveryResponse{Kind: "global"}); !errors.Is(err, ErrCommunitySession) {
 		t.Fatal("retired session applied response", err)
 	}
+	// An oversized first row must error instead of returning an empty page with
+	// a non-advancing cursor (client livelock until results expire).
+	s.mu.Lock()
+	s.community.discovery.queries[communityDiscoveryKey{Kind: "global"}].rows[0].Item = strings.Repeat("<", 96<<10)
+	s.mu.Unlock()
+	if _, err := s.CommunityDiscovery(ctx, req); !errors.Is(err, errPageItemTooLarge) {
+		t.Fatal("oversized discovery row", err)
+	}
 }
 
 func TestCommunityDiscoveryCacheBoundsAndWatchOwnership(t *testing.T) {

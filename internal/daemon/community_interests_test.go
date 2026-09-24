@@ -14,6 +14,20 @@ import (
 	"github.com/catgirl-systems/oto/internal/storage/db"
 )
 
+func TestCommunityInterestsOversizedItemErrors(t *testing.T) {
+	ctx := context.Background()
+	s, err := New(testConfig(t), filepath.Join(t.TempDir(), "state.sqlite3"))
+	must(t, err)
+	t.Cleanup(func() { _ = s.Close() })
+	huge := strings.Repeat("<", 96<<10)
+	s.mu.Lock()
+	s.community.discovery.interests[huge] = CommunityInterest{Item: huge, Opinion: "like"}
+	s.mu.Unlock()
+	if _, err := s.CommunityInterests(ctx, CommunityInterestsRequest{CommunityIdentity: s.community.identity}); !errors.Is(err, errPageItemTooLarge) {
+		t.Fatal("oversized interest", err)
+	}
+}
+
 func TestCommunityInterestsPersistenceVersionsAndAccountIsolation(t *testing.T) {
 	ctx := context.Background()
 	cfg := testConfig(t)
