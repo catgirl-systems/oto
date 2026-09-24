@@ -1322,27 +1322,25 @@ func (m model) updateMessage(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		}
-		if m.shareAccess != nil {
-			return m, nil
-		}
-		if m.privileges != nil {
-			m.pastePrivileges(x.Content)
-			return m, nil
-		}
-		if m.receivingEditor != nil {
-			m.pasteReceivingSettings(x.Content)
-			return m, nil
-		}
-		if m.awayEditor != nil {
-			m.pasteAwaySettings(x.Content)
-			return m, nil
-		}
-		if m.textTools != nil {
-			m.pasteTextTools(x.Content)
-			return m, nil
-		}
-		if m.privacyRules != nil {
-			m.pastePrivacyRules(x.Content)
+		if m.shareAccess != nil || m.privileges != nil || m.receivingEditor != nil || m.awayEditor != nil || m.apiEditor != nil || m.textTools != nil || m.privacyRules != nil {
+			// Modal editors own paste with the same priority as key(); while a
+			// confirm dialog is open it owns the input instead.
+			if !m.confirm {
+				switch {
+				case m.privileges != nil:
+					m.pastePrivileges(x.Content)
+				case m.receivingEditor != nil:
+					m.pasteReceivingSettings(x.Content)
+				case m.awayEditor != nil:
+					m.pasteAwaySettings(x.Content)
+				case m.apiEditor != nil:
+					m.pasteAPISettings(x.Content)
+				case m.textTools != nil:
+					m.pasteTextTools(x.Content)
+				case m.privacyRules != nil:
+					m.pastePrivacyRules(x.Content)
+				}
+			}
 			return m, nil
 		}
 		if m.workspace == workspaceCommunity && m.community.peer.form && !m.help && m.userActions == nil {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -132,6 +133,16 @@ func (e *apiEditor) entries() int {
 		return len(e.apps)
 	}
 	return len(e.requests)
+}
+
+func (m *model) pasteAPISettings(text string) {
+	e := m.apiEditor
+	if e == nil || e.busy || e.approve == "" {
+		return
+	}
+	text = strings.ReplaceAll(strings.ReplaceAll(text, "\r\n", " "), "\n", " ")
+	e.approveDays, e.approveCursor = insertText(e.approveDays, text, e.approveCursor)
+	e.err = ""
 }
 
 func (m *model) apiEditorKey(k tea.KeyPressMsg) tea.Cmd {

@@ -421,7 +421,7 @@ func (m model) chatDraftCount() int {
 	if m.receivingEditor != nil && (m.receivingEditor.dirty || m.receivingEditor.busy) {
 		count++
 	}
-	if m.awayEditor != nil && m.awayEditor.dirty {
+	if m.awayEditor != nil && (m.awayEditor.dirty || m.awayEditor.busy) {
 		count++
 	}
 	if m.textTools != nil && (m.textTools.dirty || m.textTools.form != nil) {
