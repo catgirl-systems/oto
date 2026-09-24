@@ -24,7 +24,8 @@ func (m PrivateMessageRequest) encode(e *Encoder) error {
 	if err := encodeUsername(e, m.Username); err != nil {
 		return err
 	}
-	return e.String(m.Text)
+	e.String(m.Text)
+	return nil
 }
 
 func ValidateChatText(text string) error {
@@ -55,29 +56,20 @@ type PrivateMessage struct {
 
 func (PrivateMessage) socialMessage() {}
 
-func DecodePrivateMessage(payload []byte) (m PrivateMessage, err error) {
+func DecodePrivateMessage(payload []byte) (PrivateMessage, error) {
+	var m PrivateMessage
 	if len(payload) > MaxUsernameBytes+MaxChatBytes+17 {
 		return m, ErrTooLarge
 	}
 	d := NewDecoder(payload)
-	if m.ID, err = d.U32(); err != nil {
-		return m, err
-	}
-	if m.Timestamp, err = d.U32(); err != nil {
-		return m, err
-	}
-	if m.Username, err = decodeUsername(d); err != nil {
-		return m, err
-	}
-	if m.Text, err = d.String(); err != nil {
-		return m, err
-	}
+	m.ID = d.U32()
+	m.Timestamp = d.U32()
+	m.Username = decodeUsername(d)
+	m.Text = d.String()
 	if len(m.Text) > MaxChatBytes {
 		return m, ErrTooLarge
 	}
-	if m.New, err = d.Bool(); err != nil {
-		return m, err
-	}
+	m.New = d.Bool()
 	return m, d.Done()
 }
 

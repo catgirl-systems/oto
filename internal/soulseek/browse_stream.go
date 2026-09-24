@@ -96,6 +96,7 @@ func (r *decompressedLimitReader) Read(p []byte) (int, error) {
 type sharedListStreamDecoder struct {
 	r       *bufio.Reader
 	counted *decompressedLimitReader
+	err     error
 }
 
 func streamDecodeError(err error) error {
@@ -106,6 +107,12 @@ func streamDecodeError(err error) error {
 		return ErrTruncated
 	}
 	return fmt.Errorf("%w: %v", ErrMalformed, err)
+}
+
+func (d *sharedListStreamDecoder) fail(err error) {
+	if d.err == nil {
+		d.err = err
+	}
 }
 
 func (d *sharedListStreamDecoder) readFull(p []byte) error {
@@ -119,144 +126,123 @@ func (d *sharedListStreamDecoder) readFull(p []byte) error {
 	return nil
 }
 
-func (d *sharedListStreamDecoder) take(n int) ([]byte, error) {
+func (d *sharedListStreamDecoder) take(n int) []byte {
 	p, err := d.r.Peek(n)
 	if d.counted.n > d.counted.max {
-		return nil, fmt.Errorf("%w: decompressed payload exceeds %d bytes", ErrTooLarge, d.counted.max)
+		d.fail(fmt.Errorf("%w: decompressed payload exceeds %d bytes", ErrTooLarge, d.counted.max))
+		return nil
 	}
 	if err != nil {
-		return nil, streamDecodeError(err)
+		d.fail(streamDecodeError(err))
+		return nil
 	}
 	_, _ = d.r.Discard(n)
-	return p, nil
+	return p
 }
 
-func (d *sharedListStreamDecoder) U8() (uint8, error) {
-	p, err := d.take(1)
-	if err != nil {
-		return 0, err
+func (d *sharedListStreamDecoder) U8() uint8 {
+	if p := d.take(1); d.err == nil {
+		return p[0]
 	}
-	return p[0], nil
+	return 0
 }
 
-func (d *sharedListStreamDecoder) U32() (uint32, error) {
-	p, err := d.take(4)
-	if err != nil {
-		return 0, err
+func (d *sharedListStreamDecoder) U32() uint32 {
+	if p := d.take(4); d.err == nil {
+		return binary.LittleEndian.Uint32(p)
 	}
-	return binary.LittleEndian.Uint32(p), nil
+	return 0
 }
 
-func (d *sharedListStreamDecoder) U64() (uint64, error) {
-	p, err := d.take(8)
-	if err != nil {
-		return 0, err
+func (d *sharedListStreamDecoder) U64() uint64 {
+	if p := d.take(8); d.err == nil {
+		return binary.LittleEndian.Uint64(p)
 	}
-	return binary.LittleEndian.Uint64(p), nil
+	return 0
 }
 
-func (d *sharedListStreamDecoder) String() (string, error) {
-	n, err := d.U32()
-	if err != nil {
-		return "", err
+func (d *sharedListStreamDecoder) String() string {
+	n := d.U32()
+	if d.err != nil {
+		return ""
 	}
 	if n > MaxStringSize {
-		return "", fmt.Errorf("%w: string has %d bytes (limit %d)", ErrTooLarge, n, MaxStringSize)
+		d.fail(fmt.Errorf("%w: string has %d bytes (limit %d)", ErrTooLarge, n, MaxStringSize))
+		return ""
 	}
 	if n <= uint32(d.r.Size()) {
-		p, err := d.take(int(n))
-		if err != nil {
-			return "", err
-		}
-		return string(p), nil
+		return string(d.take(int(n)))
 	}
 	p := make([]byte, n)
 	if err := d.readFull(p); err != nil {
-		return "", err
+		d.fail(err)
+		return ""
 	}
-	return string(p), nil
+	return string(p)
 }
 
-func (d *sharedListStreamDecoder) optionalU32() (uint32, bool, error) {
+func (d *sharedListStreamDecoder) optionalU32() (uint32, bool) {
 	_, err := d.r.Peek(1)
-	if err == io.EOF {
-		return 0, false, nil
+	if err == nil {
+		return d.U32(), true
 	}
-	if err != nil {
-		return 0, false, streamDecodeError(err)
+	if errors.Is(err, io.EOF) {
+		return 0, false
 	}
-	value, err := d.U32()
-	return value, true, err
+	d.fail(streamDecodeError(err))
+	return 0, false
 }
 
-func (d *sharedListStreamDecoder) file() (ShareEntry, error) {
-	file, err := decodeSearchResult(d)
-	return ShareEntry{Name: strings.ReplaceAll(file.Path, "/", "\\"), Size: file.Size, Extension: file.Extension, Bitrate: file.Bitrate, Duration: file.Duration, VBR: file.VBR, VBRKnown: file.VBRKnown, SampleRate: file.SampleRate, BitDepth: file.BitDepth}, err
+func (d *sharedListStreamDecoder) file() ShareEntry {
+	file := decodeSearchResult(d)
+	return ShareEntry{Name: strings.ReplaceAll(file.Path, "/", "\\"), Size: file.Size, Extension: file.Extension, Bitrate: file.Bitrate, Duration: file.Duration, VBR: file.VBR, VBRKnown: file.VBRKnown, SampleRate: file.SampleRate, BitDepth: file.BitDepth}
 }
 
 func (d *sharedListStreamDecoder) parse(maxEntries int) ([]ShareDirectory, error) {
 	max := uint64(maxEntries)
 	total := uint64(0)
-	readGroups := func(count uint32, private bool) ([]ShareDirectory, error) {
+	readGroups := func(count uint32, private bool) []ShareDirectory {
 		if uint64(count) > max-total {
 			logLimit(d.counted.logger, "entries", max, total+uint64(count))
-			return nil, fmt.Errorf("%w: share list has at least %d directories (limit %d)", ErrTooLarge, total+uint64(count), max)
+			d.fail(fmt.Errorf("%w: share list has at least %d directories (limit %d)", ErrTooLarge, total+uint64(count), max))
+			return nil
 		}
 		groups := make([]ShareDirectory, 0, int(count))
 		for i := uint32(0); i < count; i++ {
-			name, err := d.String()
-			if err != nil {
-				return nil, err
-			}
-			files, err := d.U32()
-			if err != nil {
-				return nil, err
+			name := d.String()
+			files := d.U32()
+			if d.err != nil {
+				return nil
 			}
 			if total >= max || uint64(files) > max-total-1 {
 				logLimit(d.counted.logger, "entries", max, total+1+uint64(files))
-				return nil, fmt.Errorf("%w: share list has at least %d files/directories (limit %d)", ErrTooLarge, total+1+uint64(files), max)
+				d.fail(fmt.Errorf("%w: share list has at least %d files/directories (limit %d)", ErrTooLarge, total+1+uint64(files), max))
+				return nil
 			}
 			total++
 			groups = append(groups, ShareDirectory{Name: name, Private: private, Files: make([]ShareEntry, 0, int(files))})
 			for j := uint32(0); j < files; j++ {
-				file, err := d.file()
-				if err != nil {
-					return nil, err
-				}
+				file := d.file()
 				file.Private = private
 				groups[len(groups)-1].Files = append(groups[len(groups)-1].Files, file)
 				total++
 			}
 		}
-		return groups, nil
+		return groups
 	}
 
-	publicCount, err := d.U32()
-	if err != nil {
-		return nil, err
+	publicCount := d.U32()
+	public := readGroups(publicCount, false)
+	if _, present := d.optionalU32(); !present {
+		return public, d.err
 	}
-	public, err := readGroups(publicCount, false)
-	if err != nil {
-		return nil, err
-	}
-	unknown, present, err := d.optionalU32()
-	_ = unknown
-	if err != nil {
-		return nil, err
-	}
+	privateCount, present := d.optionalU32()
 	if !present {
-		return public, nil
+		return public, d.err
 	}
-	privateCount, present, err := d.optionalU32()
-	if err != nil {
-		return nil, err
-	}
-	if !present {
-		return public, nil
-	}
-	private, err := readGroups(privateCount, true)
-	if err != nil {
-		return nil, err
+	private := readGroups(privateCount, true)
+	if d.err != nil {
+		return nil, d.err
 	}
 	return append(public, private...), nil
 }

@@ -18,11 +18,9 @@ func (CheckPrivilegesRequest) encode(*Encoder) error { return nil }
 type PrivilegeBalance struct{ Seconds uint32 }
 
 func (PrivilegeBalance) socialMessage() {}
-func DecodePrivilegeBalance(payload []byte) (m PrivilegeBalance, err error) {
+func DecodePrivilegeBalance(payload []byte) (PrivilegeBalance, error) {
 	d := NewDecoder(payload)
-	if m.Seconds, err = d.U32(); err != nil {
-		return m, err
-	}
+	m := PrivilegeBalance{Seconds: d.U32()}
 	return m, d.Done()
 }
 

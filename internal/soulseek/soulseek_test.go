@@ -27,14 +27,18 @@ func (c remoteAddressConn) RemoteAddr() net.Addr { return c.remote }
 
 func TestCodecMalformedAndCompressionLimit(t *testing.T) {
 	var e Encoder
-	must(t, e.String("héllo"))
+	e.String("héllo")
 	d := NewDecoder(e.Payload())
-	got, err := d.String()
-	failIfFmt(t, err != nil || got != "héllo", "decode=%q %v", got, err)
-	if _, err := NewDecoder([]byte{4, 0, 0}).String(); err != ErrTruncated {
+	got := d.String()
+	failIfFmt(t, d.Err() != nil || got != "héllo", "decode=%q %v", got, d.Err())
+	short := NewDecoder([]byte{4, 0, 0})
+	_ = short.String()
+	if err := short.Done(); err != ErrTruncated {
 		t.Fatalf("short length: %v", err)
 	}
-	if _, err := NewDecoder([]byte{2, 0, 0, 0, 'x'}).String(); err != ErrTruncated {
+	shortValue := NewDecoder([]byte{2, 0, 0, 0, 'x'})
+	_ = shortValue.String()
+	if err := shortValue.Done(); err != ErrTruncated {
 		t.Fatalf("short value: %v", err)
 	}
 	var frame bytes.Buffer
@@ -53,6 +57,25 @@ func TestCodecMalformedAndCompressionLimit(t *testing.T) {
 	}
 	if _, err := DecompressZlib([]byte("not zlib")); err == nil {
 		t.Fatal("invalid zlib accepted")
+	}
+}
+
+func TestStickyCodecKeepsFirstError(t *testing.T) {
+	d := NewDecoder([]byte{1, 0, 0})
+	if v := d.U8(); v != 1 {
+		t.Fatal(v)
+	}
+	d.U32()      // Truncates here.
+	_ = d.String() // No-op after the first error.
+	if err := d.Done(); err != ErrTruncated {
+		t.Fatalf("sticky first error: %v", err)
+	}
+	var e Encoder
+	e.String("ok")
+	e.Bytes(make([]byte, MaxBytesSize+1))
+	e.String("still ok")
+	if err := e.Err(); err != ErrTooLarge {
+		t.Fatalf("sticky encode error: %v", err)
 	}
 }
 
@@ -298,9 +321,9 @@ func TestPipeLogin(t *testing.T) {
 		if e == nil {
 			var x Encoder
 			x.Bool(true)
-			_ = x.String("ok")
+			x.String("ok")
 			x.U32(0x01020304)
-			_ = x.String("hash")
+			x.String("hash")
 			x.Bool(false)
 			e = WriteFrame(b, ServerLogin, x.Payload())
 		}
@@ -448,7 +471,7 @@ func TestDecodeLegacyDownloadRequestWithSize(t *testing.T) {
 	var payload Encoder
 	payload.U32(0)
 	payload.U32(7)
-	must(t, payload.String("Music\\track.flac"))
+	payload.String("Music\\track.flac")
 	payload.U64(0)
 	request, err := DecodeTransferRequest(payload.Payload())
 	failIfFmt(t, err != nil || request.Direction != 0 || request.Token != 7 || request.Filename != "Music\\track.flac" || request.Size != 0, "legacy transfer request: %+v %v", request, err)
@@ -597,7 +620,7 @@ func TestWireFramingAndDistributedFixtures(t *testing.T) {
 	want := []byte{4, 0, 0, 0, 4, 3, 2, 1}
 	failIfFmt(t, !bytes.Equal(frame.Bytes(), want), "frame %x want %x", frame.Bytes(), want)
 	var addressPayload Encoder
-	_ = addressPayload.String("peer")
+	addressPayload.String("peer")
 	addressPayload.U32(0x7f000001)
 	addressPayload.U32(50300)
 	addressPayload.U32(0)
@@ -685,8 +708,8 @@ func TestBrowseRejectsMismatchedFolderResponse(t *testing.T) {
 			return
 		}
 		d := NewDecoder(payload)
-		token, _ := d.U32()
-		_, _ = d.String()
+		token := d.U32()
+		_ = d.String()
 		_ = writeMessage(peerConn, FolderResponse{Token: token, Path: "Other"})
 	}()
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
@@ -717,7 +740,7 @@ func TestOptionalPrivateLists(t *testing.T) {
 	file := SearchResult{Path: "song.flac", Size: 42}
 
 	var search Encoder
-	_ = search.String("peer")
+	search.String("peer")
 	search.U32(7)
 	search.U32(1)
 	_ = file.encode(&search)
@@ -730,7 +753,7 @@ func TestOptionalPrivateLists(t *testing.T) {
 
 	var shares Encoder
 	shares.U32(1)
-	_ = shares.String("Music")
+	shares.String("Music")
 	shares.U32(1)
 	_ = file.encode(&shares)
 	shares.U32(0) // Unknown field; peers may omit the empty private-list count.
@@ -749,13 +772,13 @@ func TestBrowseLimitDiagnostics(t *testing.T) {
 					raw.U32(0) // Unknown field.
 				case "folder response":
 					raw.U32(7) // Token.
-					_ = raw.String("Music")
+					raw.String("Music")
 				}
 				if directories {
 					raw.U32(maxShareEntries + 1)
 				} else {
 					raw.U32(1)
-					_ = raw.String("Music")
+					raw.String("Music")
 					raw.U32(maxShareEntries) // Files plus the directory exceed the limit.
 				}
 				payload, err := CompressZlib(raw.Payload())

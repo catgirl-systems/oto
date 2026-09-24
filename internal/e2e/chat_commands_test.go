@@ -36,14 +36,8 @@ func TestCommunityComposerCommands(t *testing.T) {
 			}
 			if code == 22 {
 				d := soulseek.NewDecoder(data)
-				if _, err := d.String(); err != nil {
-					return err
-				}
-				text, err := d.String()
-				if err != nil {
-					return err
-				}
-				sent <- text
+				_ = d.String()
+				sent <- d.String()
 			}
 		}
 	})

@@ -46,20 +46,20 @@ func TestScopedSearchCompleteFanoutAndNoFallback(t *testing.T) {
 							return
 						}
 						d := NewDecoder(payload)
-						name, err := d.String()
-						if err != nil || name != want {
-							t.Error(name, err)
+						name := d.String()
+						if name != want {
+							t.Error(name)
 							return
 						}
-						next, err := d.U32()
-						if err != nil || token != 0 && next != token {
-							t.Error("token", next, err)
+						next := d.U32()
+						if d.Err() != nil || token != 0 && next != token {
+							t.Error("token", next, d.Err())
 							return
 						}
 						token = next
-						query, err := d.String()
-						if err != nil || query != "song" {
-							t.Error(query, err)
+						query := d.String()
+						if d.Err() != nil || query != "song" {
+							t.Error(query, d.Err())
 							return
 						}
 						c.mu.Lock()

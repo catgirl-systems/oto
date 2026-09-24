@@ -131,8 +131,8 @@ func TestCommunityPrivateOutboxWriteLifecycle(t *testing.T) {
 			must(t, <-done)
 			failIf(t, get().State != "sent" || binary.LittleEndian.Uint32(body) != soulseek.ServerPrivateMessage, "send not completed")
 			d := soulseek.NewDecoder(body[4:])
-			username, _ := d.String()
-			text, _ := d.String()
+			username := d.String()
+			text := d.String()
 			failIf(t, username != "Alice" || text != "hello 世界" || d.Done() != nil, "wrong private frame")
 			if err := s.CommunityMessageAction(ctx, cancel); !errors.Is(err, ErrCommunityMessageState) {
 				t.Fatal("completed socket write retracted")

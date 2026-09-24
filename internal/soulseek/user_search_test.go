@@ -45,14 +45,14 @@ func TestTargetedSearchIsolation(t *testing.T) {
 					return
 				}
 				d := NewDecoder(payload)
-				user, err := d.String()
-				if err != nil || user != want {
-					t.Errorf("target %q: %v", user, err)
+				user := d.String()
+				if user != want {
+					t.Errorf("target %q", user)
 					return
 				}
-				next, err := d.U32()
-				if err != nil {
-					t.Error(err)
+				next := d.U32()
+				if d.Err() != nil {
+					t.Error(d.Err())
 					return
 				}
 				if token != 0 && token != next {

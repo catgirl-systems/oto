@@ -20,11 +20,10 @@ func (m RoomSearchRequest) encode(e *Encoder) error {
 	if err := ValidateRoomName(m.Room); err != nil {
 		return err
 	}
-	if err := e.String(m.Room); err != nil {
-		return err
-	}
+	e.String(m.Room)
 	e.U32(m.Token)
-	return e.String(m.Query)
+	e.String(m.Query)
+	return nil
 }
 
 // SearchScoped searches an explicitly captured nonempty target set. It never

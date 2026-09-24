@@ -1332,9 +1332,9 @@ func (c *Client) downloadWithStart(ctx context.Context, username, filename strin
 			switch message.command {
 			case PeerPlaceInQueue:
 				d := NewDecoder(message.payload)
-				_, err := d.String()
-				place, placeErr := d.U32()
-				if err == nil && placeErr == nil && pending.progress != nil {
+				_ = d.String() // Filename is not needed for the queue update.
+				place := d.U32()
+				if d.Err() == nil && pending.progress != nil {
 					pending.progress(Progress{Done: offset, Total: size, State: "queued", Queue: place})
 				}
 				continue
@@ -1675,8 +1675,8 @@ func (c *Client) servePeer(p net.Conn) {
 	}
 	if initCmd == PeerPierceFirewall {
 		d := NewDecoder(b)
-		token, err := d.U32()
-		if err != nil || d.Done() != nil {
+		token := d.U32()
+		if d.Done() != nil {
 			_ = p.Close()
 			return
 		}
@@ -1779,12 +1779,9 @@ func (c *Client) handleMessagePeer(peer net.Conn, peerInfo PeerInitMessage, comm
 		}
 	case PeerFolderContents:
 		d := NewDecoder(payload)
-		token, err := d.U32()
-		if err != nil {
-			return
-		}
-		path, err := d.String()
-		if err != nil || d.Done() != nil {
+		token := d.U32()
+		path := d.String()
+		if d.Done() != nil {
 			return
 		}
 		ctx := c.shareResponseContext()

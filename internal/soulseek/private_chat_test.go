@@ -44,8 +44,8 @@ func TestCommunityPrivateProtocol(t *testing.T) {
 	var legacy Encoder
 	legacy.U32(1)
 	legacy.U32(2)
-	_ = legacy.String("Alice")
-	_ = legacy.String("caf\xe9")
+	legacy.String("Alice")
+	legacy.String("caf\xe9")
 	legacy.Bool(false)
 	if m, err := DecodePrivateMessage(legacy.Payload()); err != nil || m.Text != "caf\xe9" {
 		t.Fatalf("lost legacy wire bytes: %+v %v", m, err)
@@ -54,8 +54,8 @@ func TestCommunityPrivateProtocol(t *testing.T) {
 		legacy = Encoder{}
 		legacy.U32(1)
 		legacy.U32(2)
-		_ = legacy.String("Alice")
-		_ = legacy.String(text)
+		legacy.String("Alice")
+		legacy.String(text)
 		legacy.Bool(true)
 		if _, err := DecodePrivateMessage(legacy.Payload()); !errors.Is(err, ErrTooLarge) {
 			t.Fatalf("unbounded incoming chat: %v", err)

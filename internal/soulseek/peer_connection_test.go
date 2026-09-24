@@ -348,10 +348,7 @@ func TestIndirectCancellationRejectsLateSocket(t *testing.T) {
 		t.Fatalf("request %d: %v", command, err)
 	}
 	d := NewDecoder(payload)
-	token, err := d.U32()
-	if err != nil {
-		t.Fatal(err)
-	}
+	token := d.U32()
 	cancel()
 	if err := <-result; !errors.Is(err, context.Canceled) {
 		t.Fatal(err)

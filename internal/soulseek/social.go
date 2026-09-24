@@ -53,21 +53,20 @@ func encodeUsername(e *Encoder, username string) error {
 	if err := ValidateUsername(username); err != nil {
 		return err
 	}
-	return e.String(username)
+	e.String(username)
+	return nil
 }
 
-func decodeUsername(d *Decoder) (string, error) {
-	raw, err := d.Bytes()
-	if err != nil {
-		return "", err
-	}
+func decodeUsername(d *Decoder) string {
+	raw := d.Bytes()
 	if len(raw) > MaxUsernameBytes {
-		return "", ErrTooLarge
+		d.fail(ErrTooLarge)
+		return ""
 	}
 	// XXX: preserve raw wire bytes like DecodeDiscoveryResponse does for
 	// interests and PrivateMessage does for chat text; nicotine+ decodes with a
 	// utf-8/latin-1 fallback and never drops the session over one odd name.
-	return string(raw), nil
+	return string(raw)
 }
 
 type UserStats struct {
@@ -97,48 +96,35 @@ type UserStatistics struct {
 	Stats    UserStats
 }
 
-func decodeUserStatus(d *Decoder) (UserStatus, error) {
-	n, err := d.U32()
-	if err != nil {
-		return 0, err
-	}
+func decodeUserStatus(d *Decoder) UserStatus {
+	n := d.U32()
 	if n > uint32(UserStatusOnline) {
-		return 0, fmt.Errorf("%w: invalid user status", ErrMalformed)
+		d.fail(fmt.Errorf("%w: invalid user status", ErrMalformed))
+		return 0
 	}
-	return UserStatus(n), nil
+	return UserStatus(n)
 }
 
-func decodeUserStats(d *Decoder) (stats UserStats, err error) {
-	for _, field := range []*uint32{&stats.AverageSpeed, &stats.UploadCount, &stats.Unknown, &stats.Files, &stats.Directories} {
-		if *field, err = d.U32(); err != nil {
-			return stats, err
-		}
-	}
-	return stats, nil
+func decodeUserStats(d *Decoder) UserStats {
+	var stats UserStats
+	// Function calls evaluate left to right, matching wire order.
+	stats.AverageSpeed, stats.UploadCount, stats.Unknown, stats.Files, stats.Directories = d.U32(), d.U32(), d.U32(), d.U32(), d.U32()
+	return stats
 }
 
-func DecodeWatchUser(payload []byte) (m WatchUserResponse, err error) {
+func DecodeWatchUser(payload []byte) (WatchUserResponse, error) {
 	d := NewDecoder(payload)
-	if m.Username, err = decodeUsername(d); err != nil {
-		return m, err
-	}
-	if m.Exists, err = d.Bool(); err != nil {
-		return m, err
-	}
+	var m WatchUserResponse
+	m.Username = decodeUsername(d)
+	m.Exists = d.Bool()
 	if !m.Exists {
 		return m, d.Done()
 	}
-	if m.Status, err = decodeUserStatus(d); err != nil {
-		return m, err
-	}
-	if m.Stats, err = decodeUserStats(d); err != nil {
-		return m, err
-	}
+	m.Status = decodeUserStatus(d)
+	m.Stats = decodeUserStats(d)
 	// Offline responses from older servers omit the country entirely.
 	if d.Remaining() > 0 {
-		if m.Country, err = d.String(); err != nil {
-			return m, err
-		}
+		m.Country = d.String()
 		if len(m.Country) > 2 {
 			return m, fmt.Errorf("%w: country code", ErrMalformed)
 		}
@@ -146,28 +132,15 @@ func DecodeWatchUser(payload []byte) (m WatchUserResponse, err error) {
 	return m, d.Done()
 }
 
-func DecodeUserPresence(payload []byte) (m UserPresence, err error) {
+func DecodeUserPresence(payload []byte) (UserPresence, error) {
 	d := NewDecoder(payload)
-	if m.Username, err = decodeUsername(d); err != nil {
-		return m, err
-	}
-	if m.Status, err = decodeUserStatus(d); err != nil {
-		return m, err
-	}
-	if m.Privileged, err = d.Bool(); err != nil {
-		return m, err
-	}
+	m := UserPresence{Username: decodeUsername(d), Status: decodeUserStatus(d), Privileged: d.Bool()}
 	return m, d.Done()
 }
 
-func DecodeUserStatistics(payload []byte) (m UserStatistics, err error) {
+func DecodeUserStatistics(payload []byte) (UserStatistics, error) {
 	d := NewDecoder(payload)
-	if m.Username, err = decodeUsername(d); err != nil {
-		return m, err
-	}
-	if m.Stats, err = decodeUserStats(d); err != nil {
-		return m, err
-	}
+	m := UserStatistics{Username: decodeUsername(d), Stats: decodeUserStats(d)}
 	return m, d.Done()
 }
 

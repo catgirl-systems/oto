@@ -43,16 +43,11 @@ func TestCommunityScopedSearchTerminal(t *testing.T) {
 				globalSearches.Add(1)
 			case 42, 120:
 				d := soulseek.NewDecoder(data)
-				name, err := d.String()
-				if err != nil {
-					return err
-				}
-				if _, err = d.U32(); err != nil {
-					return err
-				}
-				query, err := d.String()
-				if err != nil {
-					return err
+				_ = d.String()
+				d.U32()
+				query := d.String()
+				if d.Err() != nil {
+					return d.Err()
 				}
 				if query != "song" {
 					return fmt.Errorf("unexpected query %q", query)

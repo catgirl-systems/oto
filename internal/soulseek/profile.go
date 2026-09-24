@@ -40,14 +40,11 @@ func (m PeerProfile) encode(e *Encoder) error {
 	if len(m.Description) > MaxProfileDescriptionBytes || len(m.Picture) > MaxProfilePictureBytes {
 		return ErrTooLarge
 	}
-	if err := e.String(m.Description); err != nil {
-		return err
-	}
-	e.Bool(len(m.Picture) > 0)
-	if len(m.Picture) > 0 {
-		if err := e.Bytes(m.Picture); err != nil {
-			return err
-		}
+	e.String(m.Description)
+	hasPicture := len(m.Picture) > 0
+	e.Bool(hasPicture)
+	if hasPicture {
+		e.Bytes(m.Picture)
 	}
 	e.U32(m.UploadSlots)
 	e.U32(m.QueueLength)
@@ -57,37 +54,27 @@ func (m PeerProfile) encode(e *Encoder) error {
 	}
 	return nil
 }
-func DecodePeerProfile(payload []byte) (m PeerProfile, err error) {
+func DecodePeerProfile(payload []byte) (PeerProfile, error) {
+	var m PeerProfile
 	if len(payload) > MaxProfileFrameBytes {
 		return m, ErrTooLarge
 	}
 	d := NewDecoder(payload)
-	if m.Description, err = d.String(); err != nil {
-		return m, err
-	}
+	m.Description = d.String()
 	if len(m.Description) > MaxProfileDescriptionBytes {
 		return m, ErrTooLarge
 	}
-	hasPicture, err := d.Bool()
-	if err != nil {
-		return m, err
-	}
-	if hasPicture {
-		if m.Picture, err = d.Bytes(); err != nil {
-			return m, err
-		}
+	if d.Bool() {
+		m.Picture = d.Bytes()
 		if len(m.Picture) > MaxProfilePictureBytes {
 			return m, ErrTooLarge
 		}
 	}
-	if m.UploadSlots, err = d.U32(); err != nil {
-		return m, err
-	}
-	if m.QueueLength, err = d.U32(); err != nil {
-		return m, err
-	}
-	if m.SlotsAvailable, err = d.Bool(); err != nil {
-		return m, err
+	m.UploadSlots = d.U32()
+	m.QueueLength = d.U32()
+	m.SlotsAvailable = d.Bool()
+	if d.Err() != nil {
+		return m, d.Err()
 	}
 	// Nicotine+ accepts old responses without uploadallowed and Museek+'s three
 	// extra zero bytes from its incorrectly encoded uint32 slotsavail field.
@@ -98,9 +85,7 @@ func DecodePeerProfile(payload []byte) (m PeerProfile, err error) {
 		return m, nil
 	}
 	if d.Remaining() > 0 {
-		if m.UploadAllowed, err = d.U32(); err != nil {
-			return m, err
-		}
+		m.UploadAllowed = d.U32()
 		m.UploadAllowedKnown = true
 	}
 	return m, d.Done()

@@ -58,7 +58,8 @@ func (m InterestChangeRequest) encode(e *Encoder) error {
 	if err != nil {
 		return err
 	}
-	return e.String(item)
+	e.String(item)
+	return nil
 }
 
 type DiscoveryRequest struct{ Kind, Target string }
@@ -92,7 +93,8 @@ func (m DiscoveryRequest) encode(e *Encoder) error {
 		if err != nil {
 			return err
 		}
-		return e.String(item)
+		e.String(item)
+		return nil
 	case "user-interests":
 		return encodeUsername(e, m.Target)
 	default:
@@ -117,27 +119,24 @@ type DiscoveryResponse struct {
 
 func (DiscoveryResponse) socialMessage() {}
 
-func discoveryCount(d *Decoder, minBytes int, remaining int) (int, error) {
-	count, err := d.U32()
-	if err != nil {
-		return 0, err
-	}
+func discoveryCount(d *Decoder, minBytes int, remaining int) int {
+	count := d.U32()
 	if uint64(count) > uint64(remaining) || uint64(count) > uint64(d.Remaining()/minBytes) {
-		return 0, fmt.Errorf("%w: discovery count", ErrMalformed)
+		d.fail(fmt.Errorf("%w: discovery count", ErrMalformed))
+		return 0
 	}
-	return int(count), nil
+	return int(count)
 }
-func decodeInterest(d *Decoder) (string, error) {
-	raw, err := d.Bytes()
-	if err != nil {
-		return "", err
-	}
+func decodeInterest(d *Decoder) string {
+	raw := d.Bytes()
 	if len(raw) > MaxInterestBytes {
-		return "", ErrTooLarge
+		d.fail(ErrTooLarge)
+		return ""
 	}
-	return string(raw), nil // Preserve wire text; the daemon decodes/sanitizes display text.
+	return string(raw) // Preserve wire text; the daemon decodes/sanitizes display text.
 }
-func DecodeDiscoveryResponse(command uint32, payload []byte) (m DiscoveryResponse, err error) {
+func DecodeDiscoveryResponse(command uint32, payload []byte) (DiscoveryResponse, error) {
+	var m DiscoveryResponse
 	if len(payload) > MaxDiscoveryBytes {
 		return m, ErrTooLarge
 	}
@@ -160,18 +159,12 @@ func DecodeDiscoveryResponse(command uint32, payload []byte) (m DiscoveryRespons
 	}
 	if m.Kind == "item" || m.Kind == "item-users" {
 		// Keep the echoed wire target exact for correlation; never normalize a reply.
-		m.Target, err = d.String()
-		if err != nil {
-			return m, err
-		}
+		m.Target = d.String()
 		if len(m.Target) > MaxInterestBytes {
 			return m, ErrTooLarge
 		}
 	} else if m.Kind == "user-interests" {
-		m.Target, err = decodeUsername(d)
-		if err != nil {
-			return m, err
-		}
+		m.Target = decodeUsername(d)
 	}
 	switch m.Kind {
 	case "personal", "global", "item":
@@ -181,20 +174,9 @@ func DecodeDiscoveryResponse(command uint32, payload []byte) (m DiscoveryRespons
 			if list == 1 && d.Remaining() == 0 {
 				break
 			}
-			count, e := discoveryCount(d, 8, MaxDiscoveryEntries-len(m.Recommendations))
-			if e != nil {
-				return m, e
-			}
+			count := discoveryCount(d, 8, MaxDiscoveryEntries-len(m.Recommendations))
 			for range count {
-				item, e := decodeInterest(d)
-				if e != nil {
-					return m, e
-				}
-				score, e := d.U32()
-				if e != nil {
-					return m, e
-				}
-				m.Recommendations = append(m.Recommendations, ScoredInterest{item, int32(score)})
+				m.Recommendations = append(m.Recommendations, ScoredInterest{decodeInterest(d), int32(d.U32())})
 			}
 		}
 	case "similar", "item-users":
@@ -202,38 +184,21 @@ func DecodeDiscoveryResponse(command uint32, payload []byte) (m DiscoveryRespons
 		if m.Kind == "similar" {
 			stride = 8
 		}
-		count, e := discoveryCount(d, stride, MaxDiscoveryEntries)
-		if e != nil {
-			return m, e
-		}
-		for range count {
-			username, e := decodeUsername(d)
-			if e != nil {
-				return m, e
-			}
+		for range discoveryCount(d, stride, MaxDiscoveryEntries) {
+			username := decodeUsername(d)
 			var rating uint32
 			if m.Kind == "similar" {
-				rating, e = d.U32()
-				if e != nil {
-					return m, e
-				}
+				rating = d.U32()
 			}
 			m.Users = append(m.Users, SimilarUser{username, rating})
 		}
 	case "user-interests":
 		remaining := MaxDiscoveryEntries
 		for _, list := range []*[]string{&m.Likes, &m.Dislikes} {
-			count, e := discoveryCount(d, 4, remaining)
-			if e != nil {
-				return m, e
-			}
+			count := discoveryCount(d, 4, remaining)
 			remaining -= count
 			for range count {
-				item, e := decodeInterest(d)
-				if e != nil {
-					return m, e
-				}
-				*list = append(*list, item)
+				*list = append(*list, decodeInterest(d))
 			}
 		}
 	}

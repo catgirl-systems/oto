@@ -69,8 +69,8 @@ func TestIncomingSearchPolicyAndServerExclusions(t *testing.T) {
 func TestExcludedSearchPhrasesProtocolAndSearchResponseLimit(t *testing.T) {
 	var payload Encoder
 	payload.U32(2)
-	_ = payload.String("first phrase")
-	_ = payload.String("second")
+	payload.String("first phrase")
+	payload.String("second")
 	message, err := DecodeMessage(ServerExcludedSearchPhrases, payload.Payload())
 	phrases, ok := message.(ExcludedSearchPhrases)
 	failIfFmt(t, err != nil || !ok || fmt.Sprint(phrases.Phrases) != "[first phrase second]", "excluded phrases: %#v %v", message, err)

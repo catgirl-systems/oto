@@ -332,7 +332,7 @@ func readSoulfindCommand(t *testing.T, conn net.Conn, wanted uint32) []byte {
 func requestSoulfindWatch(t *testing.T, client *Client, username string) soulfindWatch {
 	t.Helper()
 	var request Encoder
-	must(t, request.String(username))
+	request.String(username)
 	must(t, client.send(RawMessage{Command: soulfindWatchUserCommand, Payload: request.Payload()}))
 
 	d := NewDecoder(readSoulfindCommand(t, clientConn(client), soulfindWatchUserCommand))
@@ -354,9 +354,7 @@ func requestSoulfindWatch(t *testing.T, client *Client, username string) soulfin
 	return watch
 }
 
-func mustSoulfindValue[T any](t *testing.T, read func() (T, error)) T {
+func mustSoulfindValue[T any](t *testing.T, read func() T) T {
 	t.Helper()
-	value, err := read()
-	must(t, err)
-	return value
+	return read()
 }

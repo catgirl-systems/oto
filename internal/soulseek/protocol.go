@@ -72,38 +72,17 @@ type LoginRequest struct {
 
 func (LoginRequest) command() uint32 { return ServerLogin }
 func (m LoginRequest) encode(e *Encoder) error {
-	if err := e.String(m.Username); err != nil {
-		return err
-	}
-	if err := e.String(m.Password); err != nil {
-		return err
-	}
+	e.String(m.Username)
+	e.String(m.Password)
 	e.U32(m.Version)
-	if err := e.String(m.Hash); err != nil {
-		return err
-	}
+	e.String(m.Hash)
 	e.U32(m.MinorVersion)
 	return nil
 }
 func DecodeLoginRequest(b []byte) (LoginRequest, error) {
 	d := NewDecoder(b)
-	var m LoginRequest
-	var e error
-	if m.Username, e = d.String(); e != nil {
-		return m, e
-	}
-	if m.Password, e = d.String(); e != nil {
-		return m, e
-	}
-	if m.Version, e = d.U32(); e != nil {
-		return m, e
-	}
-	if m.Hash, e = d.String(); e != nil {
-		return m, e
-	}
-	if m.MinorVersion, e = d.U32(); e != nil {
-		return m, e
-	}
+	// Composite literal fields evaluate left to right, matching wire order.
+	m := LoginRequest{Username: d.String(), Password: d.String(), Version: d.U32(), Hash: d.String(), MinorVersion: d.U32()}
 	return m, d.Done()
 }
 
@@ -119,50 +98,32 @@ type LoginResponse struct {
 func (LoginResponse) command() uint32 { return ServerLogin }
 func (m LoginResponse) encode(e *Encoder) error {
 	e.Bool(m.Success)
-	if err := e.String(m.Message); err != nil {
-		return err
-	}
+	e.String(m.Message)
 	if !m.Success {
 		if m.Detail != "" {
-			return e.String(m.Detail)
+			e.String(m.Detail)
 		}
 		return nil
 	}
 	e.U32(m.IP)
-	if err := e.String(m.Hash); err != nil {
-		return err
-	}
+	e.String(m.Hash)
 	e.Bool(m.Supporter)
 	return nil
 }
 func DecodeLoginResponse(b []byte) (LoginResponse, error) {
 	d := NewDecoder(b)
 	var m LoginResponse
-	var err error
-	if m.Success, err = d.Bool(); err != nil {
-		return m, err
-	}
-	if m.Message, err = d.String(); err != nil {
-		return m, err
-	}
+	m.Success = d.Bool()
+	m.Message = d.String()
 	if !m.Success {
 		if d.Remaining() > 0 {
-			m.Detail, err = d.String()
-		}
-		if err != nil {
-			return m, err
+			m.Detail = d.String()
 		}
 		return m, d.Done()
 	}
-	if m.IP, err = d.U32(); err != nil {
-		return m, err
-	}
-	if m.Hash, err = d.String(); err != nil {
-		return m, err
-	}
-	if m.Supporter, err = d.Bool(); err != nil {
-		return m, err
-	}
+	m.IP = d.U32()
+	m.Hash = d.String()
+	m.Supporter = d.Bool()
 	return m, d.Done()
 }
 
@@ -184,15 +145,12 @@ func (m Status) encode(e *Encoder) error { e.U32(m.Status); return nil }
 type ChangePassword struct{ Password string }
 
 func (ChangePassword) command() uint32           { return ServerChangePassword }
-func (m ChangePassword) encode(e *Encoder) error { return e.String(m.Password) }
+func (m ChangePassword) encode(e *Encoder) error { e.String(m.Password); return nil }
 
 func DecodeChangePassword(b []byte) (ChangePassword, error) {
 	d := NewDecoder(b)
-	password, err := d.String()
-	if err != nil {
-		return ChangePassword{}, err
-	}
-	return ChangePassword{Password: password}, d.Done()
+	m := ChangePassword{Password: d.String()}
+	return m, d.Done()
 }
 
 type SharedCounts struct{ Folders, Files uint32 }
@@ -218,7 +176,7 @@ func (m BranchLevel) encode(e *Encoder) error { e.U32(m.Level); return nil }
 type BranchRoot struct{ Username string }
 
 func (BranchRoot) command() uint32           { return ServerBranchRoot }
-func (m BranchRoot) encode(e *Encoder) error { return e.String(m.Username) }
+func (m BranchRoot) encode(e *Encoder) error { e.String(m.Username); return nil }
 
 type ParentCandidate struct {
 	Username, IP string
@@ -229,26 +187,16 @@ type PossibleParents struct{ Parents []ParentCandidate }
 func DecodePossibleParents(b []byte) (PossibleParents, error) {
 	d := NewDecoder(b)
 	var message PossibleParents
-	count, err := d.U32()
-	if err != nil {
-		return message, err
-	}
+	count := d.U32()
 	if count > 10 {
 		return message, ErrTooLarge
 	}
 	for i := uint32(0); i < count; i++ {
 		var parent ParentCandidate
-		if parent.Username, err = d.String(); err != nil {
-			return message, err
-		}
-		ip, err := d.U32()
-		if err != nil {
-			return message, err
-		}
+		parent.Username = d.String()
+		ip := d.U32()
 		parent.IP = net.IPv4(byte(ip>>24), byte(ip>>16), byte(ip>>8), byte(ip)).String()
-		if parent.Port, err = d.U32(); err != nil {
-			return message, err
-		}
+		parent.Port = d.U32()
 		message.Parents = append(message.Parents, parent)
 	}
 	return message, d.Done()
@@ -261,22 +209,14 @@ type EmbeddedDistributed struct {
 
 func DecodeEmbeddedDistributed(b []byte) (EmbeddedDistributed, error) {
 	d := NewDecoder(b)
-	var message EmbeddedDistributed
-	var err error
-	if message.Command, err = d.U8(); err != nil {
-		return message, err
-	}
-	if message.Payload, err = d.Bytes(); err != nil {
-		return message, err
-	}
-	message.Payload = append([]byte(nil), message.Payload...)
-	return message, d.Done()
+	m := EmbeddedDistributed{Command: d.U8(), Payload: append([]byte(nil), d.Bytes()...)}
+	return m, d.Done()
 }
 
 type PeerAddressRequest struct{ Username string }
 
 func (PeerAddressRequest) command() uint32           { return ServerGetPeerAddress }
-func (m PeerAddressRequest) encode(e *Encoder) error { return e.String(m.Username) }
+func (m PeerAddressRequest) encode(e *Encoder) error { e.String(m.Username); return nil }
 
 type PeerAddress struct {
 	Username       string
@@ -288,9 +228,7 @@ type PeerAddress struct {
 
 func (PeerAddress) command() uint32 { return ServerGetPeerAddress }
 func (m PeerAddress) encode(e *Encoder) error {
-	if err := e.String(m.Username); err != nil {
-		return err
-	}
+	e.String(m.Username)
 	ip := net.ParseIP(m.IP).To4()
 	if ip == nil {
 		return fmt.Errorf("%w: invalid IPv4 address", ErrMalformed)
@@ -304,28 +242,16 @@ func (m PeerAddress) encode(e *Encoder) error {
 
 func DecodePeerAddress(b []byte) (PeerAddress, error) {
 	d := NewDecoder(b)
-	var message PeerAddress
-	var err error
-	if message.Username, err = d.String(); err != nil {
-		return message, err
-	}
-	ip, err := d.U32()
-	if err != nil {
-		return message, err
-	}
-	message.IP = net.IPv4(byte(ip>>24), byte(ip>>16), byte(ip>>8), byte(ip)).String()
-	if message.Port, err = d.U32(); err != nil {
-		return message, err
-	}
+	var m PeerAddress
+	m.Username = d.String()
+	ip := d.U32()
+	m.IP = net.IPv4(byte(ip>>24), byte(ip>>16), byte(ip>>8), byte(ip)).String()
+	m.Port = d.U32()
 	if d.Remaining() > 0 {
-		if message.Obfuscation, err = d.U32(); err != nil {
-			return message, err
-		}
-		if message.ObfuscatedPort, err = d.U16(); err != nil {
-			return message, err
-		}
+		m.Obfuscation = d.U32()
+		m.ObfuscatedPort = d.U16()
 	}
-	return message, d.Done()
+	return m, d.Done()
 }
 
 type ConnectPeer struct {
@@ -337,10 +263,9 @@ type ConnectPeer struct {
 func (ConnectPeer) command() uint32 { return ServerConnectToPeer }
 func (m ConnectPeer) encode(e *Encoder) error {
 	e.U32(m.Token)
-	if err := e.String(m.Username); err != nil {
-		return err
-	}
-	return e.String(m.Kind)
+	e.String(m.Username)
+	e.String(m.Kind)
+	return nil
 }
 
 type ConnectPeerInstruction struct {
@@ -356,37 +281,19 @@ type ConnectPeerInstruction struct {
 
 func DecodeConnectPeerInstruction(b []byte) (ConnectPeerInstruction, error) {
 	d := NewDecoder(b)
-	var message ConnectPeerInstruction
-	var err error
-	if message.Username, err = decodeUsername(d); err != nil {
-		return message, err
-	}
-	if message.Kind, err = d.String(); err != nil {
-		return message, err
-	}
-	ip, err := d.U32()
-	if err != nil {
-		return message, err
-	}
-	message.IP = net.IPv4(byte(ip>>24), byte(ip>>16), byte(ip>>8), byte(ip)).String()
-	if message.Port, err = d.U32(); err != nil {
-		return message, err
-	}
-	if message.Token, err = d.U32(); err != nil {
-		return message, err
-	}
-	if message.Privileged, err = d.Bool(); err != nil {
-		return message, err
-	}
+	var m ConnectPeerInstruction
+	m.Username = decodeUsername(d)
+	m.Kind = d.String()
+	ip := d.U32()
+	m.IP = net.IPv4(byte(ip>>24), byte(ip>>16), byte(ip>>8), byte(ip)).String()
+	m.Port = d.U32()
+	m.Token = d.U32()
+	m.Privileged = d.Bool()
 	if d.Remaining() > 0 {
-		if message.Obfuscation, err = d.U32(); err != nil {
-			return message, err
-		}
-		if message.ObfuscatedPort, err = d.U32(); err != nil {
-			return message, err
-		}
+		m.Obfuscation = d.U32()
+		m.ObfuscatedPort = d.U32()
 	}
-	return message, d.Done()
+	return m, d.Done()
 }
 
 type SearchRequest struct {
@@ -395,45 +302,36 @@ type SearchRequest struct {
 }
 
 func (SearchRequest) command() uint32           { return ServerFileSearch }
-func (m SearchRequest) encode(e *Encoder) error { e.U32(m.Token); return e.String(m.Query) }
+func (m SearchRequest) encode(e *Encoder) error { e.U32(m.Token); e.String(m.Query); return nil }
 
 type WishlistSearchRequest SearchRequest
 
 func (WishlistSearchRequest) command() uint32 { return ServerWishlistSearch }
 func (m WishlistSearchRequest) encode(e *Encoder) error {
 	e.U32(m.Token)
-	return e.String(m.Query)
+	e.String(m.Query)
+	return nil
 }
 
 type WishlistInterval struct{ Seconds uint32 }
 
 func DecodeWishlistInterval(b []byte) (WishlistInterval, error) {
 	d := NewDecoder(b)
-	seconds, err := d.U32()
-	if err != nil {
-		return WishlistInterval{}, err
-	}
-	return WishlistInterval{Seconds: seconds}, d.Done()
+	m := WishlistInterval{Seconds: d.U32()}
+	return m, d.Done()
 }
 
 type ExcludedSearchPhrases struct{ Phrases []string }
 
 func DecodeExcludedSearchPhrases(b []byte) (ExcludedSearchPhrases, error) {
 	d := NewDecoder(b)
-	count, err := d.U32()
-	if err != nil {
-		return ExcludedSearchPhrases{}, err
-	}
+	count := d.U32()
 	if count > maxExcludedSearchPhrases {
 		return ExcludedSearchPhrases{}, ErrTooLarge
 	}
 	message := ExcludedSearchPhrases{Phrases: make([]string, 0, count)}
 	for i := uint32(0); i < count; i++ {
-		phrase, err := d.String()
-		if err != nil {
-			return message, err
-		}
-		message.Phrases = append(message.Phrases, phrase)
+		message.Phrases = append(message.Phrases, d.String())
 	}
 	return message, d.Done()
 }
@@ -446,18 +344,8 @@ type IncomingSearch struct {
 
 func DecodeIncomingSearch(b []byte) (IncomingSearch, error) {
 	d := NewDecoder(b)
-	var message IncomingSearch
-	var err error
-	if message.Username, err = d.String(); err != nil {
-		return message, err
-	}
-	if message.Token, err = d.U32(); err != nil {
-		return message, err
-	}
-	if message.Query, err = d.String(); err != nil {
-		return message, err
-	}
-	return message, d.Done()
+	m := IncomingSearch{Username: d.String(), Token: d.U32(), Query: d.String()}
+	return m, d.Done()
 }
 
 type SearchResponse struct {
@@ -483,15 +371,11 @@ func (m SearchResponse) encode(e *Encoder) error {
 		return ErrTooLarge
 	}
 	var raw Encoder
-	if err := raw.String(m.Username); err != nil {
-		return err
-	}
+	raw.String(m.Username)
 	raw.U32(m.Token)
 	raw.U32(uint32(len(public)))
 	for _, result := range public {
-		if err := result.encode(&raw); err != nil {
-			return err
-		}
+		result.encode(&raw)
 	}
 	raw.Bool(m.SlotFree)
 	raw.U32(m.Speed)
@@ -499,9 +383,10 @@ func (m SearchResponse) encode(e *Encoder) error {
 	raw.U32(0)
 	raw.U32(uint32(len(private)))
 	for _, result := range private {
-		if err := result.encode(&raw); err != nil {
-			return err
-		}
+		result.encode(&raw)
+	}
+	if err := raw.Err(); err != nil {
+		return err
 	}
 	compressed, err := CompressZlib(raw.Payload())
 	if err != nil {
@@ -540,13 +425,9 @@ type SearchResult struct {
 
 func (r SearchResult) encode(e *Encoder) error {
 	e.U8(1)
-	if err := e.String(r.Path); err != nil {
-		return err
-	}
+	e.String(r.Path)
 	e.U64(r.Size)
-	if err := e.String(r.Extension); err != nil {
-		return err
-	}
+	e.String(r.Extension)
 	attributes := [][2]uint32{}
 	if r.Bitrate != 0 {
 		attributes = append(attributes, [2]uint32{FileAttributeBitrate, r.Bitrate})
@@ -576,46 +457,30 @@ func (r SearchResult) encode(e *Encoder) error {
 }
 
 type fileDecoder interface {
-	U8() (uint8, error)
-	U32() (uint32, error)
-	U64() (uint64, error)
-	String() (string, error)
+	U8() uint8
+	U32() uint32
+	U64() uint64
+	String() string
+	fail(error)
 }
 
-func decodeSearchResult(d fileDecoder) (SearchResult, error) {
+func decodeSearchResult(d fileDecoder) SearchResult {
 	var result SearchResult
-	code, err := d.U8()
-	if err != nil {
-		return result, err
+	if code := d.U8(); code != 1 {
+		d.fail(fmt.Errorf("%w: file code %d", ErrMalformed, code))
+		return result
 	}
-	if code != 1 {
-		return result, fmt.Errorf("%w: file code %d", ErrMalformed, code)
-	}
-	if result.Path, err = d.String(); err != nil {
-		return result, err
-	}
-	if result.Size, err = d.U64(); err != nil {
-		return result, err
-	}
-	if result.Extension, err = d.String(); err != nil {
-		return result, err
-	}
-	count, err := d.U32()
-	if err != nil {
-		return result, err
-	}
+	result.Path = d.String()
+	result.Size = d.U64()
+	result.Extension = d.String()
+	count := d.U32()
 	if count > 64 {
-		return result, fmt.Errorf("%w: file has %d attributes (limit 64)", ErrTooLarge, count)
+		d.fail(fmt.Errorf("%w: file has %d attributes (limit 64)", ErrTooLarge, count))
+		return result
 	}
 	for i := uint32(0); i < count; i++ {
-		attribute, attributeErr := d.U32()
-		if attributeErr != nil {
-			return result, attributeErr
-		}
-		value, valueErr := d.U32()
-		if valueErr != nil {
-			return result, valueErr
-		}
+		attribute := d.U32()
+		value := d.U32()
 		switch attribute {
 		case FileAttributeBitrate:
 			result.Bitrate = value
@@ -629,7 +494,7 @@ func decodeSearchResult(d fileDecoder) (SearchResult, error) {
 			result.BitDepth = value
 		}
 	}
-	return result, nil
+	return result
 }
 
 func DecodeSearchResponse(b []byte) (SearchResponse, error) {
@@ -639,56 +504,35 @@ func DecodeSearchResponse(b []byte) (SearchResponse, error) {
 		return message, err
 	}
 	d := NewDecoder(raw)
-	if message.Username, err = d.String(); err != nil {
-		return message, err
-	}
-	if message.Token, err = d.U32(); err != nil {
-		return message, err
-	}
-	count, err := d.U32()
-	if err != nil {
-		return message, err
-	}
+	message.Username = d.String()
+	message.Token = d.U32()
+	count := d.U32()
 	if count > maxSearchResults {
 		return message, ErrTooLarge
 	}
 	message.Results = make([]SearchResult, 0, count)
 	for i := uint32(0); i < count; i++ {
-		result, err := decodeSearchResult(d)
-		if err != nil {
-			return message, err
-		}
+		result := decodeSearchResult(d)
 		result.Username, result.Public = message.Username, true
 		message.Results = append(message.Results, result)
 	}
-	if message.SlotFree, err = d.Bool(); err != nil {
-		return message, err
-	}
-	if message.Speed, err = d.U32(); err != nil {
-		return message, err
-	}
-	if message.QueueLength, err = d.U32(); err != nil {
-		return message, err
-	}
-	if _, err = d.U32(); err != nil {
-		return message, err
-	}
+	message.SlotFree = d.Bool()
+	message.Speed = d.U32()
+	message.QueueLength = d.U32()
+	d.U32()
 	if d.Remaining() > 0 {
-		privateCount, readErr := d.U32()
-		if readErr != nil {
-			return message, readErr
-		}
+		privateCount := d.U32()
 		if privateCount > maxSearchResults {
 			return message, ErrTooLarge
 		}
 		for i := uint32(0); i < privateCount; i++ {
-			result, decodeErr := decodeSearchResult(d)
-			if decodeErr != nil {
-				return message, decodeErr
-			}
+			result := decodeSearchResult(d)
 			result.Username = message.Username
 			message.Results = append(message.Results, result)
 		}
+	}
+	if d.Err() != nil {
+		return message, d.Err()
 	}
 	for i := range message.Results {
 		message.Results[i].SlotFree, message.Results[i].Speed, message.Results[i].QueueLength = message.SlotFree, message.Speed, message.QueueLength
@@ -709,16 +553,12 @@ type FileSearchRequest struct {
 }
 
 func (FileSearchRequest) command() uint32           { return PeerSearch }
-func (m FileSearchRequest) encode(e *Encoder) error { e.U32(m.Token); return e.String(m.Query) }
+func (m FileSearchRequest) encode(e *Encoder) error { e.U32(m.Token); e.String(m.Query); return nil }
 
 func (PeerInitMessage) command() uint32 { return PeerInit }
 func (m PeerInitMessage) encode(e *Encoder) error {
-	if err := e.String(m.Username); err != nil {
-		return err
-	}
-	if err := e.String(m.Type); err != nil {
-		return err
-	}
+	e.String(m.Username)
+	e.String(m.Type)
 	e.U32(m.Token)
 	return nil
 }
@@ -753,7 +593,7 @@ func (m SharedListResponse) encode(e *Encoder) error {
 		return ErrTooLarge
 	}
 	var raw Encoder
-	writeGroups := func(group map[string][]ShareEntry) error {
+	writeGroups := func(group map[string][]ShareEntry) {
 		dirs := make([]string, 0, len(group))
 		for dir := range group {
 			dirs = append(dirs, dir)
@@ -761,24 +601,17 @@ func (m SharedListResponse) encode(e *Encoder) error {
 		sort.Strings(dirs)
 		raw.U32(uint32(len(dirs)))
 		for _, dir := range dirs {
-			if err := raw.String(dir); err != nil {
-				return err
-			}
+			raw.String(dir)
 			raw.U32(uint32(len(group[dir])))
 			for _, file := range group[dir] {
-				result := searchResultFromShare(file, file.Name)
-				if err := result.encode(&raw); err != nil {
-					return err
-				}
+				searchResultFromShare(file, file.Name).encode(&raw)
 			}
 		}
-		return nil
 	}
-	if err := writeGroups(groups[0]); err != nil {
-		return err
-	}
+	writeGroups(groups[0])
 	raw.U32(0)
-	if err := writeGroups(groups[1]); err != nil {
+	writeGroups(groups[1])
+	if err := raw.Err(); err != nil {
 		return err
 	}
 	compressed, err := CompressZlib(raw.Payload())
@@ -800,67 +633,47 @@ func decodeSharedListResponse(b []byte, limits BrowseLimits, loggers ...*slog.Lo
 		return message, err
 	}
 	d := NewDecoder(raw)
-	count, err := d.U32()
-	if err != nil {
-		return message, err
-	}
+	count := d.U32()
 	if uint64(count) > uint64(limits.MaxEntries) {
 		logLimit(firstLogger(loggers), "entries", uint64(limits.MaxEntries), uint64(count))
 		return message, fmt.Errorf("%w: share list has %d directories (limit %d)", ErrTooLarge, count, limits.MaxEntries)
 	}
 	for i := uint32(0); i < count; i++ {
-		dir, err := d.String()
-		if err != nil {
-			return message, err
+		if d.Err() != nil {
+			return message, d.Err()
 		}
+		dir := d.String()
 		message.Entries = append(message.Entries, ShareEntry{Name: dir, Directory: true})
-		files, err := d.U32()
-		if err != nil {
-			return message, err
-		}
+		files := d.U32()
 		if uint64(len(message.Entries))+uint64(files) > uint64(limits.MaxEntries) {
 			logLimit(firstLogger(loggers), "entries", uint64(limits.MaxEntries), uint64(len(message.Entries))+uint64(files))
 			return message, fmt.Errorf("%w: share list has at least %d files/directories (limit %d)", ErrTooLarge, uint64(len(message.Entries))+uint64(files), limits.MaxEntries)
 		}
 		for j := uint32(0); j < files; j++ {
-			file, err := decodeSearchResult(d)
-			if err != nil {
-				return message, err
-			}
+			file := decodeSearchResult(d)
 			message.Entries = append(message.Entries, shareEntryFromSearch(strings.TrimPrefix(dir+"\\"+file.Path, "\\"), file, false))
 		}
 	}
-	if _, err = d.U32(); err != nil {
-		return message, err
-	}
+	d.U32()
 	if d.Remaining() > 0 {
-		private, readErr := d.U32()
-		if readErr != nil {
-			return message, readErr
-		}
+		private := d.U32()
 		if uint64(len(message.Entries))+uint64(private) > uint64(limits.MaxEntries) {
 			logLimit(firstLogger(loggers), "entries", uint64(limits.MaxEntries), uint64(len(message.Entries))+uint64(private))
 			return message, fmt.Errorf("%w: share list including private directories has at least %d files/directories (limit %d)", ErrTooLarge, uint64(len(message.Entries))+uint64(private), limits.MaxEntries)
 		}
 		for i := uint32(0); i < private; i++ {
-			dir, decodeErr := d.String()
-			if decodeErr != nil {
-				return message, decodeErr
+			if d.Err() != nil {
+				return message, d.Err()
 			}
+			dir := d.String()
 			message.Entries = append(message.Entries, ShareEntry{Name: dir, Directory: true, Private: true})
-			count, decodeErr := d.U32()
-			if decodeErr != nil {
-				return message, decodeErr
-			}
+			count := d.U32()
 			if uint64(len(message.Entries))+uint64(count) > uint64(limits.MaxEntries) {
 				logLimit(firstLogger(loggers), "entries", uint64(limits.MaxEntries), uint64(len(message.Entries))+uint64(count))
 				return message, fmt.Errorf("%w: share list including private entries has at least %d files/directories (limit %d)", ErrTooLarge, uint64(len(message.Entries))+uint64(count), limits.MaxEntries)
 			}
 			for j := uint32(0); j < count; j++ {
-				file, decodeErr := decodeSearchResult(d)
-				if decodeErr != nil {
-					return message, decodeErr
-				}
+				file := decodeSearchResult(d)
 				message.Entries = append(message.Entries, shareEntryFromSearch(strings.TrimPrefix(dir+"\\"+file.Path, "\\"), file, true))
 			}
 		}
@@ -894,7 +707,8 @@ type FolderRequest struct {
 func (FolderRequest) command() uint32 { return PeerFolderContents }
 func (m FolderRequest) encode(e *Encoder) error {
 	e.U32(m.Token)
-	return e.String(m.Path)
+	e.String(m.Path)
+	return nil
 }
 
 type FolderResponse struct {
@@ -938,20 +752,17 @@ func (m FolderResponse) encode(e *Encoder) error {
 
 	var raw Encoder
 	raw.U32(m.Token)
-	if err := raw.String(m.Path); err != nil {
-		return err
-	}
+	raw.String(m.Path)
 	raw.U32(uint32(len(dirs)))
 	for _, dir := range dirs {
-		if err := raw.String(dir); err != nil {
-			return err
-		}
+		raw.String(dir)
 		raw.U32(uint32(len(folders[dir])))
 		for _, file := range folders[dir] {
-			if err := searchResultFromShare(file, file.Name).encode(&raw); err != nil {
-				return err
-			}
+			searchResultFromShare(file, file.Name).encode(&raw)
 		}
+	}
+	if err := raw.Err(); err != nil {
+		return err
 	}
 	compressed, err := CompressZlib(raw.Payload())
 	if err != nil {
@@ -972,39 +783,26 @@ func decodeFolderResponse(b []byte, limits BrowseLimits, loggers ...*slog.Logger
 		return message, err
 	}
 	d := NewDecoder(raw)
-	if message.Token, err = d.U32(); err != nil {
-		return message, err
-	}
-	if message.Path, err = d.String(); err != nil {
-		return message, err
-	}
-	folders, err := d.U32()
-	if err != nil {
-		return message, err
-	}
+	message.Token = d.U32()
+	message.Path = d.String()
+	folders := d.U32()
 	if uint64(folders) > uint64(limits.MaxEntries) {
 		logLimit(firstLogger(loggers), "entries", uint64(limits.MaxEntries), uint64(folders))
 		return message, fmt.Errorf("%w: folder response has %d directories (limit %d)", ErrTooLarge, folders, limits.MaxEntries)
 	}
 	for i := uint32(0); i < folders; i++ {
-		dir, err := d.String()
-		if err != nil {
-			return message, err
+		if d.Err() != nil {
+			return message, d.Err()
 		}
+		dir := d.String()
 		message.Entries = append(message.Entries, ShareEntry{Name: dir, Directory: true})
-		count, err := d.U32()
-		if err != nil {
-			return message, err
-		}
+		count := d.U32()
 		if uint64(len(message.Entries))+uint64(count) > uint64(limits.MaxEntries) {
 			logLimit(firstLogger(loggers), "entries", uint64(limits.MaxEntries), uint64(len(message.Entries))+uint64(count))
 			return message, fmt.Errorf("%w: folder response has at least %d files/directories (limit %d)", ErrTooLarge, uint64(len(message.Entries))+uint64(count), limits.MaxEntries)
 		}
 		for j := uint32(0); j < count; j++ {
-			file, err := decodeSearchResult(d)
-			if err != nil {
-				return message, err
-			}
+			file := decodeSearchResult(d)
 			message.Entries = append(message.Entries, shareEntryFromSearch(strings.TrimPrefix(dir+"\\"+file.Path, "\\"), file, false))
 		}
 	}
@@ -1018,7 +816,7 @@ type QueueRequest struct {
 }
 
 func (QueueRequest) command() uint32           { return PeerQueueUpload }
-func (m QueueRequest) encode(e *Encoder) error { return e.String(m.Filename) }
+func (m QueueRequest) encode(e *Encoder) error { e.String(m.Filename); return nil }
 
 type QueuePlace struct {
 	Filename string
@@ -1027,9 +825,7 @@ type QueuePlace struct {
 
 func (QueuePlace) command() uint32 { return PeerPlaceInQueue }
 func (m QueuePlace) encode(e *Encoder) error {
-	if err := e.String(m.Filename); err != nil {
-		return err
-	}
+	e.String(m.Filename)
 	e.U32(m.Place)
 	return nil
 }
@@ -1038,37 +834,26 @@ type QueueDenied struct{ Filename, Reason string }
 
 func (QueueDenied) command() uint32 { return PeerUploadDenied }
 func (m QueueDenied) encode(e *Encoder) error {
-	if err := e.String(m.Filename); err != nil {
-		return err
-	}
-	return e.String(m.Reason)
+	e.String(m.Filename)
+	e.String(m.Reason)
+	return nil
 }
 
 type QueueFailedMessage struct{ Filename, Reason string }
 
 func (QueueFailedMessage) command() uint32           { return PeerUploadFailed }
-func (m QueueFailedMessage) encode(e *Encoder) error { return e.String(m.Filename) }
+func (m QueueFailedMessage) encode(e *Encoder) error { e.String(m.Filename); return nil }
 
 func DecodeQueueDenied(b []byte) (QueueDenied, error) {
 	d := NewDecoder(b)
-	filename, err := d.String()
-	if err != nil {
-		return QueueDenied{}, err
-	}
-	reason, err := d.String()
-	if err != nil {
-		return QueueDenied{}, err
-	}
-	return QueueDenied{Filename: filename, Reason: reason}, d.Done()
+	m := QueueDenied{Filename: d.String(), Reason: d.String()}
+	return m, d.Done()
 }
 
 func DecodeQueueFailed(b []byte) (QueueFailedMessage, error) {
 	d := NewDecoder(b)
-	filename, err := d.String()
-	if err != nil {
-		return QueueFailedMessage{}, err
-	}
-	return QueueFailedMessage{Filename: filename}, d.Done()
+	m := QueueFailedMessage{Filename: d.String()}
+	return m, d.Done()
 }
 
 type TransferRequest struct {
@@ -1083,9 +868,7 @@ func (TransferRequest) command() uint32 { return PeerTransferRequest }
 func (m TransferRequest) encode(e *Encoder) error {
 	e.U32(m.Direction)
 	e.U32(m.Token)
-	if err := e.String(m.Filename); err != nil {
-		return err
-	}
+	e.String(m.Filename)
 	if m.Direction == 1 {
 		e.U64(m.Size)
 	}
@@ -1104,7 +887,8 @@ func (m TransferResponse) encode(e *Encoder) error {
 	e.U32(m.Token)
 	e.Bool(m.Accepted)
 	if !m.Accepted {
-		return e.String(m.Reason)
+		e.String(m.Reason)
+		return nil
 	}
 	if m.Size > 0 {
 		e.U64(m.Size)
@@ -1119,6 +903,9 @@ func EncodeMessage(m Message) ([]byte, error) {
 	}
 	var e Encoder
 	if err := m.encode(&e); err != nil {
+		return nil, err
+	}
+	if err := e.Err(); err != nil {
 		return nil, err
 	}
 	return encodeRaw(m.command(), e.Payload())
@@ -1179,79 +966,51 @@ func (m RawMessage) encode(*Encoder) error { return nil }
 
 func encodePeerHandshake(w net.Conn, m PeerInitMessage) error {
 	var payload Encoder
-	if err := m.encode(&payload); err != nil {
-		return err
+	m.encode(&payload)
+	if payload.Err() != nil {
+		return payload.Err()
 	}
 	return WriteInitFrame(w, byte(PeerInit), payload.Payload())
 }
 func parsePeerInit(b []byte) (PeerInitMessage, error) {
 	d := NewDecoder(b)
-	var m PeerInitMessage
-	var err error
-	if m.Username, err = d.String(); err != nil {
-		return m, err
-	}
-	if m.Type, err = d.String(); err != nil {
-		return m, err
-	}
-	if m.Token, err = d.U32(); err != nil {
-		return m, err
-	}
+	m := PeerInitMessage{Username: d.String(), Type: d.String(), Token: d.U32()}
 	return m, d.Done()
 }
 
 func DecodeTransferRequest(b []byte) (TransferRequest, error) {
 	d := NewDecoder(b)
-	var message TransferRequest
-	var err error
-	if message.Direction, err = d.U32(); err != nil {
-		return message, err
+	var m TransferRequest
+	m.Direction = d.U32()
+	m.Token = d.U32()
+	m.Filename = d.String()
+	if m.Direction > 1 {
+		return m, fmt.Errorf("%w: transfer direction", ErrMalformed)
 	}
-	if message.Token, err = d.U32(); err != nil {
-		return message, err
+	if m.Direction == 1 || d.Remaining() > 0 {
+		m.Size = d.U64()
 	}
-	if message.Filename, err = d.String(); err != nil {
-		return message, err
-	}
-	if message.Direction > 1 {
-		return message, fmt.Errorf("%w: transfer direction", ErrMalformed)
-	}
-	if message.Direction == 1 || d.Remaining() > 0 {
-		if message.Size, err = d.U64(); err != nil {
-			return message, err
-		}
-	}
-	return message, d.Done()
+	return m, d.Done()
 }
 
 func DecodeTransferResponse(b []byte) (TransferResponse, error) {
 	d := NewDecoder(b)
-	var message TransferResponse
-	var err error
-	if message.Token, err = d.U32(); err != nil {
-		return message, err
-	}
-	if message.Accepted, err = d.Bool(); err != nil {
-		return message, err
-	}
-	if !message.Accepted {
-		if message.Reason, err = d.String(); err != nil {
-			return message, err
-		}
+	var m TransferResponse
+	m.Token = d.U32()
+	m.Accepted = d.Bool()
+	if !m.Accepted {
+		m.Reason = d.String()
+	} else if d.Err() != nil {
+		return m, d.Err()
 	} else if d.Remaining() == 8 {
-		if message.Size, err = d.U64(); err != nil {
-			return message, err
-		}
+		m.Size = d.U64()
 	} else if d.Remaining() != 0 {
-		return message, fmt.Errorf("%w: transfer response", ErrMalformed)
+		return m, fmt.Errorf("%w: transfer response", ErrMalformed)
 	}
-	return message, d.Done()
+	return m, d.Done()
 }
 func parseStringPayload(b []byte) (string, error) {
 	d := NewDecoder(b)
-	s, e := d.String()
-	if e == nil {
-		e = d.Done()
-	}
-	return s, e
+	s := d.String()
+	return s, d.Done()
 }

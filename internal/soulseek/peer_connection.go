@@ -488,7 +488,7 @@ func (l *peerLease) matches(f peerFrame) bool {
 		var filename string
 		switch f.command {
 		case PeerPlaceInQueue, PeerUploadDenied, PeerUploadFailed:
-			filename, _ = NewDecoder(f.payload).String()
+			filename = NewDecoder(f.payload).String()
 		case PeerTransferRequest:
 			r, err := DecodeTransferRequest(f.payload)
 			if err != nil || r.Direction != 1 {

@@ -47,8 +47,8 @@ func syncCommunityTestWatches(t *testing.T, s *Service, client *soulseek.Client,
 		command, payload, err := soulseek.ReadFrame(peer)
 		must(t, err)
 		d := soulseek.NewDecoder(payload)
-		username, err := d.String()
-		failIfFmt(t, err != nil || d.Done() != nil || command != want.command || username != want.username, "watch %d %q, want %+v: %v", command, username, want, err)
+		username := d.String()
+		failIfFmt(t, d.Done() != nil || command != want.command || username != want.username, "watch %d %q, want %+v: %v", command, username, want, d.Done())
 	}
 	must(t, <-result)
 }
@@ -241,7 +241,7 @@ func TestCommunityWatchesReconnect(t *testing.T) {
 				return nil
 			} // A local lifecycle test deliberately closes it.
 			if command == soulseek.ServerWatchUser {
-				username, err := soulseek.NewDecoder(payload).String()
+				username := soulseek.NewDecoder(payload).String()
 				if err != nil {
 					return err
 				}

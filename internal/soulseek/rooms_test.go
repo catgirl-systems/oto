@@ -107,10 +107,10 @@ func TestCommunityRoomValidationAndBounds(t *testing.T) {
 		t.Fatal("unbounded directory", err)
 	}
 	var e Encoder
-	_ = e.String("test")
+	e.String("test")
 	e.U32(2)
-	_ = e.String("Alice")
-	_ = e.String("Alice")
+	e.String("Alice")
+	e.String("Alice")
 	for range 4 {
 		e.U32(0)
 	}
@@ -118,9 +118,9 @@ func TestCommunityRoomValidationAndBounds(t *testing.T) {
 		t.Fatal("duplicate roster identity")
 	}
 	e = Encoder{}
-	_ = e.String("test")
-	_ = e.String("Alice")
-	_ = e.String(strings.Repeat("x", MaxChatBytes+1))
+	e.String("test")
+	e.String("Alice")
+	e.String(strings.Repeat("x", MaxChatBytes+1))
 	if _, err := DecodeRoomMessage(e.Payload(), false); !errors.Is(err, ErrTooLarge) {
 		t.Fatal("unbounded message", err)
 	}

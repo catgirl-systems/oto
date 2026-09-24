@@ -28,8 +28,22 @@ var (
 	ErrTruncated = errors.New("soulseek: truncated message")
 )
 
-// Encoder writes little-endian Soulseek payload values.
-type Encoder struct{ buf bytes.Buffer }
+// Encoder writes little-endian Soulseek payload values. Size-limit failures
+// are sticky: the first error is kept and the payload is rejected once, so
+// write methods need no error plumbing.
+type Encoder struct {
+	buf bytes.Buffer
+	err error
+}
+
+func (e *Encoder) fail(err error) {
+	if e.err == nil {
+		e.err = err
+	}
+}
+
+// Err returns the first write error, if any; check once after encoding.
+func (e *Encoder) Err() error { return e.err }
 
 func (e *Encoder) U8(v uint8)   { _ = e.buf.WriteByte(v) }
 func (e *Encoder) U16(v uint16) { _ = binary.Write(&e.buf, binary.LittleEndian, v) }
@@ -42,105 +56,121 @@ func (e *Encoder) Bool(v bool) {
 		e.U8(0)
 	}
 }
-func (e *Encoder) Bytes(v []byte) error {
+func (e *Encoder) Bytes(v []byte) {
 	if len(v) > MaxBytesSize {
-		return ErrTooLarge
+		e.fail(ErrTooLarge)
+		return
 	}
 	e.U32(uint32(len(v)))
-	_, err := e.buf.Write(v)
-	return err
+	_, _ = e.buf.Write(v)
 }
-func (e *Encoder) String(v string) error {
-	if len(v) > MaxStringSize {
-		return ErrTooLarge
-	}
-	return e.Bytes([]byte(v))
-}
+func (e *Encoder) String(v string) { e.Bytes([]byte(v)) }
 func (e *Encoder) Raw(v []byte)    { _, _ = e.buf.Write(v) }
 func (e *Encoder) Payload() []byte { return e.buf.Bytes() }
 
-// Decoder reads a bounded Soulseek payload. Every read is checked before advancing.
+// Decoder reads a bounded Soulseek payload. Reads use sticky errors: the
+// first failure is remembered, every later read returns a zero value, and
+// Done reports the first error. The Go spec guarantees function calls in an
+// expression are evaluated left to right, so reads listed in a composite
+// literal happen in wire order.
 type Decoder struct {
 	b   []byte
 	off int
+	err error
 }
 
 func NewDecoder(b []byte) *Decoder { return &Decoder{b: b} }
-func (d *Decoder) need(n int) error {
-	if n < 0 || n > len(d.b)-d.off {
-		return ErrTruncated
+
+// fail records err as the first decode error if none was recorded yet.
+func (d *Decoder) fail(err error) {
+	if d.err == nil {
+		d.err = err
 	}
-	return nil
 }
-func (d *Decoder) U8() (uint8, error) {
-	if err := d.need(1); err != nil {
-		return 0, err
+
+// Err returns the first read error without the trailing-bytes check; partial
+// readers that do not consume the whole payload check this instead of Done.
+func (d *Decoder) Err() error { return d.err }
+
+func (d *Decoder) need(n int) {
+	if d.err == nil && (n < 0 || n > len(d.b)-d.off) {
+		d.err = ErrTruncated
+	}
+}
+func (d *Decoder) U8() uint8 {
+	d.need(1)
+	if d.err != nil {
+		return 0
 	}
 	v := d.b[d.off]
 	d.off++
-	return v, nil
+	return v
 }
-func (d *Decoder) U16() (uint16, error) {
-	if err := d.need(2); err != nil {
-		return 0, err
+func (d *Decoder) U16() uint16 {
+	d.need(2)
+	if d.err != nil {
+		return 0
 	}
 	v := binary.LittleEndian.Uint16(d.b[d.off:])
 	d.off += 2
-	return v, nil
+	return v
 }
-func (d *Decoder) U32() (uint32, error) {
-	if err := d.need(4); err != nil {
-		return 0, err
+func (d *Decoder) U32() uint32 {
+	d.need(4)
+	if d.err != nil {
+		return 0
 	}
 	v := binary.LittleEndian.Uint32(d.b[d.off:])
 	d.off += 4
-	return v, nil
+	return v
 }
-func (d *Decoder) U64() (uint64, error) {
-	if err := d.need(8); err != nil {
-		return 0, err
+func (d *Decoder) U64() uint64 {
+	d.need(8)
+	if d.err != nil {
+		return 0
 	}
 	v := binary.LittleEndian.Uint64(d.b[d.off:])
 	d.off += 8
-	return v, nil
+	return v
 }
-func (d *Decoder) Bool() (bool, error) {
-	v, e := d.U8()
-	if e != nil {
-		return false, e
-	}
+func (d *Decoder) Bool() bool {
+	v := d.U8()
 	if v > 1 {
-		return false, fmt.Errorf("%w: invalid bool", ErrMalformed)
+		d.fail(fmt.Errorf("%w: invalid bool", ErrMalformed))
+		return false
 	}
-	return v == 1, nil
+	return v == 1
 }
-func (d *Decoder) Bytes() ([]byte, error) {
-	n, e := d.U32()
-	if e != nil {
-		return nil, e
+func (d *Decoder) Bytes() []byte {
+	n := d.U32()
+	if d.err != nil {
+		return nil
 	}
 	if n > MaxBytesSize {
-		return nil, fmt.Errorf("%w: byte field has %d bytes (limit %d)", ErrTooLarge, n, MaxBytesSize)
+		d.fail(fmt.Errorf("%w: byte field has %d bytes (limit %d)", ErrTooLarge, n, MaxBytesSize))
+		return nil
 	}
-	if e = d.need(int(n)); e != nil {
-		return nil, e
+	d.need(int(n))
+	if d.err != nil {
+		return nil
 	}
 	v := d.b[d.off : d.off+int(n)]
 	d.off += int(n)
-	return v, nil
+	return v
 }
-func (d *Decoder) String() (string, error) {
-	v, e := d.Bytes()
-	if e != nil {
-		return "", e
-	}
+func (d *Decoder) String() string {
+	v := d.Bytes()
 	if len(v) > MaxStringSize {
-		return "", fmt.Errorf("%w: string has %d bytes (limit %d)", ErrTooLarge, len(v), MaxStringSize)
+		d.fail(fmt.Errorf("%w: string has %d bytes (limit %d)", ErrTooLarge, len(v), MaxStringSize))
+		return ""
 	}
-	return string(v), nil
+	return string(v)
 }
 func (d *Decoder) Remaining() int { return len(d.b) - d.off }
 func (d *Decoder) Done() error {
+	if d.err != nil {
+		return d.err
+	}
 	if d.Remaining() != 0 {
 		return fmt.Errorf("%w: %d trailing bytes", ErrMalformed, d.Remaining())
 	}

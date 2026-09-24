@@ -18,7 +18,7 @@ func TestBrowseBeyondOldEntryLimit(t *testing.T) {
 	}
 	var raw, file Encoder
 	raw.U32(1)
-	_ = raw.String("Music")
+	raw.String("Music")
 	raw.U32(500_000)
 	must(t, (SearchResult{Path: "song.flac", Size: 42}).encode(&file))
 	raw.Raw(bytes.Repeat(file.Payload(), 500_000))
@@ -50,7 +50,7 @@ func TestBrowseConfiguredLimits(t *testing.T) {
 					entries := []ShareEntry{{Name: `Music\song.flac`, Size: 42}}
 					var message Message = SharedListResponse{Entries: entries}
 					if folder {
-						token, _ := NewDecoder(request).U32()
+						token := NewDecoder(request).U32()
 						message = FolderResponse{Token: token, Path: path, Entries: entries}
 					}
 					_ = writeMessage(right, message)

@@ -85,24 +85,26 @@ func TestCommunityUserProtocol(t *testing.T) {
 	for _, username := range []string{"Alice", "alice", " Alice ", "猫"} {
 		var e Encoder
 		must(t, encodeUsername(&e, username))
-		if got, err := decodeUsername(NewDecoder(e.Payload())); err != nil || got != username {
-			t.Fatalf("identity rewritten: %q %v", got, err)
+		if got := decodeUsername(NewDecoder(e.Payload())); got != username {
+			t.Fatalf("identity rewritten: %q", got)
 		}
 	}
 	// XXX: decoders preserve undecodable wire names; nicotine+ renders whatever
 	// it receives and never drops the session over one odd name.
 	for _, raw := range []string{"", "\nAlice", string([]byte{0xff})} {
 		var e Encoder
-		must(t, e.String(raw))
-		if got, err := decodeUsername(NewDecoder(e.Payload())); err != nil || got != raw {
-			t.Fatalf("wire name dropped: %q %v", got, err)
+		e.String(raw)
+		if got := decodeUsername(NewDecoder(e.Payload())); got != raw {
+			t.Fatalf("wire name dropped: %q", got)
 		}
 	}
 	for _, raw := range []string{string(bytes.Repeat([]byte{'x'}, MaxUsernameBytes+1))} {
 		var e Encoder
-		must(t, e.String(raw))
-		if _, err := decodeUsername(NewDecoder(e.Payload())); !errors.Is(err, ErrTooLarge) {
-			t.Fatalf("oversize name accepted: %v", err)
+		e.String(raw)
+		d := NewDecoder(e.Payload())
+		decodeUsername(d)
+		if !errors.Is(d.Done(), ErrTooLarge) {
+			t.Fatalf("oversize name accepted: %v", d.Done())
 		}
 	}
 	// Peer code 5 is a share list, never a server watch response.
@@ -347,7 +349,7 @@ func TestCommunityCancelledRequestDoesNotWrite(t *testing.T) {
 	go func() { result <- client.WatchUser(context.Background(), "Bob") }()
 	cmd, payload, err := ReadFrame(right)
 	failIfFmt(t, err != nil || cmd != ServerWatchUser, "next request: %d %v", cmd, err)
-	username, err := NewDecoder(payload).String()
+	username := NewDecoder(payload).String()
 	failIfFmt(t, err != nil || username != "Bob", "cancelled request was transmitted: %s %v", username, err)
 	must(t, <-result)
 }

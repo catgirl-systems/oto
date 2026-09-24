@@ -423,9 +423,9 @@ func TestChangePasswordPersistenceAndOwnership(t *testing.T) {
 		if err == nil {
 			var response soulseek.Encoder
 			response.Bool(true)
-			_ = response.String("ok")
+			response.String("ok")
 			response.U32(0)
-			_ = response.String("hash")
+			response.String("hash")
 			response.Bool(false)
 			err = soulseek.WriteFrame(serverConn, soulseek.ServerLogin, response.Payload())
 		}

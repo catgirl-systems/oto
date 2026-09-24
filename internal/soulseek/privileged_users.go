@@ -12,17 +12,11 @@ type PrivilegedUsers struct{ Users []string }
 func (PrivilegedUsers) socialMessage()        {}
 func (ConnectPeerInstruction) socialMessage() {}
 
-func DecodePrivilegedUsers(payload []byte) (m PrivilegedUsers, err error) {
+func DecodePrivilegedUsers(payload []byte) (PrivilegedUsers, error) {
 	d := NewDecoder(payload)
-	n, err := decodeRoomCount(d, MaxPrivilegedUsers, 4)
-	if err != nil {
-		return m, err
-	}
-	m.Users = make([]string, n)
+	m := PrivilegedUsers{Users: make([]string, decodeRoomCount(d, MaxPrivilegedUsers, 4))}
 	for i := range m.Users {
-		if m.Users[i], err = decodeUsername(d); err != nil {
-			return m, err
-		}
+		m.Users[i] = decodeUsername(d)
 	}
 	return m, d.Done()
 }

@@ -39,14 +39,16 @@ func encodeRoomName(e *Encoder, room string) error {
 	if err := ValidateRoomName(room); err != nil {
 		return err
 	}
-	return e.String(room)
+	e.String(room)
+	return nil
 }
-func decodeRoomName(d *Decoder) (string, error) {
-	room, err := d.String()
-	if err != nil {
-		return "", err
+func decodeRoomName(d *Decoder) string {
+	room := d.String()
+	if err := ValidateRoomName(room); err != nil {
+		d.fail(err)
+		return ""
 	}
-	return room, ValidateRoomName(room)
+	return room
 }
 
 type JoinRoomRequest struct {
@@ -90,7 +92,8 @@ func (m RoomMessageRequest) encode(e *Encoder) error {
 	if strings.ContainsAny(m.Text, "\r\n") {
 		return fmt.Errorf("%w: room messages must be one line", ErrMalformed)
 	}
-	return e.String(m.Text)
+	e.String(m.Text)
+	return nil
 }
 func (RoomListRequest) encode(*Encoder) error   { return nil }
 func (PublicFeedRequest) encode(*Encoder) error { return nil }
@@ -139,216 +142,125 @@ func (RoomDirectory) socialMessage()  {}
 
 // Every array has its own count. Bound allocation and reject overlong parallel
 // arrays while retaining explicitly missing metadata as unknown, like Nicotine+.
-func decodeRoomCount(d *Decoder, maximum, recordBytes int) (int, error) {
-	n, err := d.U32()
-	if err != nil {
-		return 0, err
-	}
+func decodeRoomCount(d *Decoder, maximum, recordBytes int) int {
+	n := d.U32()
 	if uint64(n) > uint64(maximum) {
-		return 0, fmt.Errorf("%w: room array count", ErrTooLarge)
+		d.fail(fmt.Errorf("%w: room array count", ErrTooLarge))
+		return 0
 	}
 	if uint64(n)*uint64(recordBytes) > uint64(d.Remaining()) {
-		return 0, ErrTruncated
+		d.fail(ErrTruncated)
+		return 0
 	}
-	return int(n), nil
+	return int(n)
 }
-func decodeRoomCountry(d *Decoder) (string, error) {
-	country, err := d.String()
-	if err != nil {
-		return "", err
-	}
+func decodeRoomCountry(d *Decoder) string {
+	country := d.String()
 	if len(country) > 2 {
-		return "", fmt.Errorf("%w: country code", ErrMalformed)
+		d.fail(fmt.Errorf("%w: country code", ErrMalformed))
 	}
-	return country, nil
+	return country
 }
-func DecodeRoomJoined(payload []byte) (m RoomJoined, err error) {
+func DecodeRoomJoined(payload []byte) (RoomJoined, error) {
 	d := NewDecoder(payload)
-	if m.Room, err = decodeRoomName(d); err != nil {
-		return m, err
-	}
-	n, err := decodeRoomCount(d, MaxRoomUsers, 4)
-	if err != nil {
-		return m, err
-	}
+	var m RoomJoined
+	m.Room = decodeRoomName(d)
+	n := decodeRoomCount(d, MaxRoomUsers, 4)
 	m.Users = make([]RoomUser, n)
 	seen := make(map[string]bool, n)
 	for i := range m.Users {
-		if m.Users[i].Username, err = decodeUsername(d); err != nil {
-			return m, err
+		m.Users[i].Username = decodeUsername(d)
+		if d.Err() != nil {
+			return m, d.Err()
 		}
 		if seen[m.Users[i].Username] {
 			return m, fmt.Errorf("%w: duplicate room user", ErrMalformed)
 		}
 		seen[m.Users[i].Username] = true
 	}
-	count, err := decodeRoomCount(d, n, 4)
-	if err != nil {
-		return m, err
+	for i := range decodeRoomCount(d, n, 4) {
+		m.Users[i].Status, m.Users[i].StatusKnown = decodeUserStatus(d), true
 	}
-	for i := range count {
-		if m.Users[i].Status, err = decodeUserStatus(d); err != nil {
-			return m, err
-		}
-		m.Users[i].StatusKnown = true
+	for i := range decodeRoomCount(d, n, 20) {
+		m.Users[i].Stats, m.Users[i].StatsKnown = decodeUserStats(d), true
 	}
-	count, err = decodeRoomCount(d, n, 20)
-	if err != nil {
-		return m, err
+	for i := range decodeRoomCount(d, n, 4) {
+		m.Users[i].SlotsFull, m.Users[i].SlotsKnown = d.U32(), true
 	}
-	for i := range count {
-		if m.Users[i].Stats, err = decodeUserStats(d); err != nil {
-			return m, err
-		}
-		m.Users[i].StatsKnown = true
-	}
-	count, err = decodeRoomCount(d, n, 4)
-	if err != nil {
-		return m, err
-	}
-	for i := range count {
-		if m.Users[i].SlotsFull, err = d.U32(); err != nil {
-			return m, err
-		}
-		m.Users[i].SlotsKnown = true
-	}
-	count, err = decodeRoomCount(d, n, 4)
-	if err != nil {
-		return m, err
-	}
-	for i := range count {
-		if m.Users[i].Country, err = decodeRoomCountry(d); err != nil {
-			return m, err
-		}
-		m.Users[i].CountryKnown = true
+	for i := range decodeRoomCount(d, n, 4) {
+		m.Users[i].Country, m.Users[i].CountryKnown = decodeRoomCountry(d), true
 	}
 	if d.Remaining() > 0 {
 		m.Private = true
-		if m.Owner, err = d.String(); err != nil {
-			return m, err
-		}
+		m.Owner = d.String()
 		// An empty owner field does not establish ownership.
 		if m.Owner != "" {
-			if err = ValidateUsername(m.Owner); err != nil {
+			if err := ValidateUsername(m.Owner); err != nil {
 				return m, err
 			}
 		}
-		count, err = decodeRoomCount(d, MaxRoomUsers, 4)
-		if err != nil {
-			return m, err
-		}
-		m.Operators = make([]string, count)
+		m.Operators = make([]string, decodeRoomCount(d, MaxRoomUsers, 4))
 		for i := range m.Operators {
-			if m.Operators[i], err = decodeUsername(d); err != nil {
-				return m, err
-			}
+			m.Operators[i] = decodeUsername(d)
 		}
 	}
 	return m, d.Done()
 }
-func DecodeRoomLeft(payload []byte) (m RoomLeft, err error) {
+func DecodeRoomLeft(payload []byte) (RoomLeft, error) {
 	d := NewDecoder(payload)
-	if m.Room, err = decodeRoomName(d); err != nil {
-		return m, err
-	}
+	m := RoomLeft{Room: decodeRoomName(d)}
 	return m, d.Done()
 }
-func DecodeRoomUserJoined(payload []byte) (m RoomUserJoined, err error) {
+func DecodeRoomUserJoined(payload []byte) (RoomUserJoined, error) {
 	d := NewDecoder(payload)
-	if m.Room, err = decodeRoomName(d); err != nil {
-		return m, err
-	}
-	if m.User.Username, err = decodeUsername(d); err != nil {
-		return m, err
-	}
-	if m.User.Status, err = decodeUserStatus(d); err != nil {
-		return m, err
-	}
-	if m.User.Stats, err = decodeUserStats(d); err != nil {
-		return m, err
-	}
-	if m.User.SlotsFull, err = d.U32(); err != nil {
-		return m, err
-	}
-	if m.User.Country, err = decodeRoomCountry(d); err != nil {
-		return m, err
-	}
+	m := RoomUserJoined{Room: decodeRoomName(d)}
+	m.User.Username = decodeUsername(d)
+	m.User.Status = decodeUserStatus(d)
+	m.User.Stats = decodeUserStats(d)
+	m.User.SlotsFull = d.U32()
+	m.User.Country = decodeRoomCountry(d)
 	m.User.StatusKnown, m.User.StatsKnown, m.User.SlotsKnown, m.User.CountryKnown = true, true, true, true
 	return m, d.Done()
 }
-func DecodeRoomUserLeft(payload []byte) (m RoomUserLeft, err error) {
+func DecodeRoomUserLeft(payload []byte) (RoomUserLeft, error) {
 	d := NewDecoder(payload)
-	if m.Room, err = decodeRoomName(d); err != nil {
-		return m, err
-	}
-	if m.Username, err = decodeUsername(d); err != nil {
-		return m, err
-	}
+	m := RoomUserLeft{Room: decodeRoomName(d), Username: decodeUsername(d)}
 	return m, d.Done()
 }
-func DecodeRoomMessage(payload []byte, publicFeed bool) (m RoomMessage, err error) {
-	m.PublicFeed = publicFeed
+func DecodeRoomMessage(payload []byte, publicFeed bool) (RoomMessage, error) {
+	m := RoomMessage{PublicFeed: publicFeed}
 	if len(payload) > MaxRoomNameBytes+MaxUsernameBytes+MaxChatBytes+12 {
 		return m, ErrTooLarge
 	}
 	d := NewDecoder(payload)
-	if m.Room, err = decodeRoomName(d); err != nil {
-		return m, err
-	}
-	if m.Username, err = decodeUsername(d); err != nil {
-		return m, err
-	}
-	if m.Text, err = d.String(); err != nil {
-		return m, err
-	}
+	m.Room = decodeRoomName(d)
+	m.Username = decodeUsername(d)
+	m.Text = d.String()
 	if len(m.Text) > MaxChatBytes {
 		return m, ErrTooLarge
 	}
 	return m, d.Done()
 }
-func decodeRoomPopulations(d *Decoder, maximum int) ([]RoomPopulation, error) {
-	n, err := decodeRoomCount(d, maximum, 4)
-	if err != nil {
-		return nil, err
-	}
+func decodeRoomPopulations(d *Decoder, maximum int) []RoomPopulation {
+	n := decodeRoomCount(d, maximum, 4)
 	rooms := make([]RoomPopulation, n)
 	for i := range rooms {
-		if rooms[i].Room, err = decodeRoomName(d); err != nil {
-			return nil, err
-		}
+		rooms[i].Room = decodeRoomName(d)
 	}
-	count, err := decodeRoomCount(d, n, 4)
-	if err != nil {
-		return nil, err
+	for i := range decodeRoomCount(d, n, 4) {
+		rooms[i].Users, rooms[i].UsersKnown = d.U32(), true
 	}
-	for i := range count {
-		if rooms[i].Users, err = d.U32(); err != nil {
-			return nil, err
-		}
-		rooms[i].UsersKnown = true
-	}
-	return rooms, nil
+	return rooms
 }
-func DecodeRoomDirectory(payload []byte) (m RoomDirectory, err error) {
+func DecodeRoomDirectory(payload []byte) (RoomDirectory, error) {
 	d := NewDecoder(payload)
-	if m.Public, err = decodeRoomPopulations(d, MaxRoomEntries); err != nil {
-		return m, err
-	}
-	if m.Owned, err = decodeRoomPopulations(d, MaxRoomEntries-len(m.Public)); err != nil {
-		return m, err
-	}
-	if m.Member, err = decodeRoomPopulations(d, MaxRoomEntries-len(m.Public)-len(m.Owned)); err != nil {
-		return m, err
-	}
-	count, err := decodeRoomCount(d, MaxRoomEntries-len(m.Public)-len(m.Owned)-len(m.Member), 4)
-	if err != nil {
-		return m, err
-	}
-	m.Operated = make([]string, count)
+	var m RoomDirectory
+	m.Public = decodeRoomPopulations(d, MaxRoomEntries)
+	m.Owned = decodeRoomPopulations(d, MaxRoomEntries-len(m.Public))
+	m.Member = decodeRoomPopulations(d, MaxRoomEntries-len(m.Public)-len(m.Owned))
+	m.Operated = make([]string, decodeRoomCount(d, MaxRoomEntries-len(m.Public)-len(m.Owned)-len(m.Member), 4))
 	for i := range m.Operated {
-		if m.Operated[i], err = decodeRoomName(d); err != nil {
-			return m, err
-		}
+		m.Operated[i] = decodeRoomName(d)
 	}
 	return m, d.Done()
 }

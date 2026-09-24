@@ -87,11 +87,9 @@ type RoomInvitations struct{ Enabled bool }
 func (RoomInvitations) socialMessage()            {}
 func (RoomInvitations) command() uint32           { return ServerRoomInvitations }
 func (m RoomInvitations) encode(e *Encoder) error { e.Bool(m.Enabled); return nil }
-func DecodeRoomInvitations(payload []byte) (m RoomInvitations, err error) {
+func DecodeRoomInvitations(payload []byte) (RoomInvitations, error) {
 	d := NewDecoder(payload)
-	if m.Enabled, err = d.Bool(); err != nil {
-		return m, err
-	}
+	m := RoomInvitations{Enabled: d.Bool()}
 	return m, d.Done()
 }
 
@@ -101,7 +99,8 @@ type RoomRoleUpdate struct {
 }
 
 func (RoomRoleUpdate) socialMessage() {}
-func DecodeRoomRoleUpdate(payload []byte, code uint32) (m RoomRoleUpdate, err error) {
+func DecodeRoomRoleUpdate(payload []byte, code uint32) (RoomRoleUpdate, error) {
+	var m RoomRoleUpdate
 	switch code {
 	case ServerAddRoomMember:
 		m.Action = RoomAddMember
@@ -125,14 +124,10 @@ func DecodeRoomRoleUpdate(payload []byte, code uint32) (m RoomRoleUpdate, err er
 		return m, fmt.Errorf("%w: unknown room role update", ErrMalformed)
 	}
 	d := NewDecoder(payload)
-	if m.Room, err = decodeRoomName(d); err != nil {
-		return m, err
-	}
+	m.Room = decodeRoomName(d)
 	switch m.Action {
 	case RoomAddMember, RoomRemoveMember, RoomAddOperator, RoomRemoveOperator:
-		if m.Username, err = decodeUsername(d); err != nil {
-			return m, err
-		}
+		m.Username = decodeUsername(d)
 	}
 	return m, d.Done()
 }
@@ -144,21 +139,13 @@ type RoomRoleList struct {
 }
 
 func (RoomRoleList) socialMessage() {}
-func DecodeRoomRoleList(payload []byte, operators bool) (m RoomRoleList, err error) {
-	m.Operators = operators
+func DecodeRoomRoleList(payload []byte, operators bool) (RoomRoleList, error) {
+	m := RoomRoleList{Operators: operators}
 	d := NewDecoder(payload)
-	if m.Room, err = decodeRoomName(d); err != nil {
-		return m, err
-	}
-	n, err := decodeRoomCount(d, MaxRoomUsers, 4)
-	if err != nil {
-		return m, err
-	}
-	m.Users = make([]string, n)
+	m.Room = decodeRoomName(d)
+	m.Users = make([]string, decodeRoomCount(d, MaxRoomUsers, 4))
 	for i := range m.Users {
-		if m.Users[i], err = decodeUsername(d); err != nil {
-			return m, err
-		}
+		m.Users[i] = decodeUsername(d)
 	}
 	return m, d.Done()
 }
@@ -170,23 +157,15 @@ type RoomWallSnapshot struct {
 }
 
 func (RoomWallSnapshot) socialMessage() {}
-func DecodeRoomWallSnapshot(payload []byte) (m RoomWallSnapshot, err error) {
+func DecodeRoomWallSnapshot(payload []byte) (RoomWallSnapshot, error) {
 	d := NewDecoder(payload)
-	if m.Room, err = decodeRoomName(d); err != nil {
-		return m, err
-	}
-	n, err := decodeRoomCount(d, MaxRoomUsers, 8)
-	if err != nil {
-		return m, err
-	}
+	var m RoomWallSnapshot
+	m.Room = decodeRoomName(d)
+	n := decodeRoomCount(d, MaxRoomUsers, 8)
 	m.Entries = make([]RoomWallEntry, n)
 	for i := range m.Entries {
-		if m.Entries[i].Username, err = decodeUsername(d); err != nil {
-			return m, err
-		}
-		if m.Entries[i].Text, err = d.String(); err != nil {
-			return m, err
-		}
+		m.Entries[i].Username = decodeUsername(d)
+		m.Entries[i].Text = d.String()
 		if len(m.Entries[i].Text) > MaxChatBytes {
 			return m, ErrTooLarge
 		}
@@ -224,7 +203,8 @@ func (m RoomWallRequest) encode(e *Encoder) error {
 	if err := encodeRoomName(e, m.Room); err != nil {
 		return err
 	}
-	return e.String("")
+	e.String("")
+	return nil
 }
 func (c *Client) ChangeRoomRole(ctx context.Context, req RoomRoleRequest, before func() error) (bool, error) {
 	return c.sendTracked(ctx, req, before)

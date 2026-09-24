@@ -27,10 +27,9 @@ func TestCTCPReplyConsentReplayAndRate(t *testing.T) {
 	command, payload, err := soulseek.ReadFrame(peer)
 	must(t, err)
 	d := soulseek.NewDecoder(payload)
-	username, err := d.String()
-	must(t, err)
-	body, err := d.String()
-	failIf(t, err != nil || d.Done() != nil || command != soulseek.ServerPrivateMessage || username != "Alice" || !strings.HasPrefix(body, "VERSION: oto"), command, username, body, err)
+	username := d.String()
+	body := d.String()
+	failIf(t, d.Done() != nil || command != soulseek.ServerPrivateMessage || username != "Alice" || !strings.HasPrefix(body, "VERSION: oto"), command, username, body, d.Done())
 	s.wg.Wait()
 	s.mu.Lock()
 	s.community.ctcp.last = time.Time{}

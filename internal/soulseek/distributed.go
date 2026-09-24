@@ -78,36 +78,22 @@ type DistributedSearchQuery struct {
 func (m DistributedSearchQuery) MarshalBinary() ([]byte, error) {
 	var e Encoder
 	e.U32(49)
-	if err := e.String(m.Username); err != nil {
-		return nil, err
-	}
+	e.String(m.Username)
 	e.U32(m.Token)
-	if err := e.String(m.Query); err != nil {
-		return nil, err
-	}
-	return append([]byte(nil), e.Payload()...), nil
+	e.String(m.Query)
+	return append([]byte(nil), e.Payload()...), e.Err()
 }
 
 func DecodeDistributedSearch(b []byte) (DistributedSearchQuery, error) {
 	d := NewDecoder(b)
-	var message DistributedSearchQuery
-	identifier, err := d.U32()
-	if err != nil {
-		return message, err
+	var m DistributedSearchQuery
+	if identifier := d.U32(); identifier != 49 {
+		return m, ErrMalformed
 	}
-	if identifier != 49 {
-		return message, ErrMalformed
-	}
-	if message.Username, err = d.String(); err != nil {
-		return message, err
-	}
-	if message.Token, err = d.U32(); err != nil {
-		return message, err
-	}
-	if message.Query, err = d.String(); err != nil {
-		return message, err
-	}
-	return message, d.Done()
+	m.Username = d.String()
+	m.Token = d.U32()
+	m.Query = d.String()
+	return m, d.Done()
 }
 
 type DistributedBranchLevel int32
@@ -119,27 +105,19 @@ func (level DistributedBranchLevel) MarshalBinary() []byte {
 }
 func DecodeDistributedBranchLevel(b []byte) (DistributedBranchLevel, error) {
 	d := NewDecoder(b)
-	value, err := d.U32()
-	if err != nil {
-		return 0, err
-	}
-	return DistributedBranchLevel(int32(value)), d.Done()
+	level := DistributedBranchLevel(int32(d.U32()))
+	return level, d.Done()
 }
 
 type DistributedBranchRoot string
 
 func (root DistributedBranchRoot) MarshalBinary() ([]byte, error) {
 	var e Encoder
-	if err := e.String(string(root)); err != nil {
-		return nil, err
-	}
-	return append([]byte(nil), e.Payload()...), nil
+	e.String(string(root))
+	return append([]byte(nil), e.Payload()...), e.Err()
 }
 func DecodeDistributedBranchRoot(b []byte) (DistributedBranchRoot, error) {
 	d := NewDecoder(b)
-	root, err := d.String()
-	if err != nil {
-		return "", err
-	}
-	return DistributedBranchRoot(root), d.Done()
+	root := DistributedBranchRoot(d.String())
+	return root, d.Done()
 }

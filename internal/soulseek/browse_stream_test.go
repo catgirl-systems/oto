@@ -23,13 +23,13 @@ func groupedRaw(t *testing.T, private bool) []byte {
 	t.Helper()
 	var raw Encoder
 	raw.U32(1)
-	_ = raw.String("Music\\Album")
+	raw.String("Music\\Album")
 	raw.U32(1)
 	must(t, (SearchResult{Path: "disc/song.mp3", Size: 42, Extension: "mp3", Bitrate: 320}).encode(&raw))
 	raw.U32(0) // legacy unknown field
 	if private {
 		raw.U32(1)
-		_ = raw.String("Locked")
+		raw.String("Locked")
 		raw.U32(1)
 		must(t, (SearchResult{Path: "secret.flac", Size: 84, Extension: "flac"}).encode(&raw))
 	}
@@ -75,7 +75,7 @@ func TestDecodeSharedListDirectoriesBoundaries(t *testing.T) {
 func TestDecodeSharedListDirectoriesAllowsMissingOptionalFields(t *testing.T) {
 	var raw Encoder
 	raw.U32(1)
-	_ = raw.String("Music")
+	raw.String("Music")
 	raw.U32(0)
 	if _, err := decodeSharedListDirectories(groupedPayload(t, raw.Payload()), BrowseLimits{}); err != nil {
 		t.Fatalf("missing optional fields: %v", err)
@@ -92,12 +92,12 @@ func TestDecodeSharedListDirectoriesFieldLimits(t *testing.T) {
 
 	var tooManyAttributes Encoder
 	tooManyAttributes.U32(1)
-	_ = tooManyAttributes.String("Music")
+	tooManyAttributes.String("Music")
 	tooManyAttributes.U32(1)
 	tooManyAttributes.U8(1)
-	_ = tooManyAttributes.String("song.mp3")
+	tooManyAttributes.String("song.mp3")
 	tooManyAttributes.U64(1)
-	_ = tooManyAttributes.String("mp3")
+	tooManyAttributes.String("mp3")
 	tooManyAttributes.U32(65)
 	if _, err := decodeSharedListDirectories(groupedPayload(t, tooManyAttributes.Payload()), BrowseLimits{}); !errors.Is(err, ErrTooLarge) {
 		t.Fatalf("attribute limit: %v", err)
@@ -123,10 +123,10 @@ func BenchmarkDecodeSharedListDirectories(b *testing.B) {
 	var raw Encoder
 	raw.U32(1000)
 	for i := 0; i < 1000; i++ {
-		_ = raw.String("Music\\Album")
+		raw.String("Music\\Album")
 		raw.U32(100)
 		for j := 0; j < 100; j++ {
-			_ = (SearchResult{Path: "song.mp3", Size: uint64(j), Extension: "mp3"}).encode(&raw)
+			(SearchResult{Path: "song.mp3", Size: uint64(j), Extension: "mp3"}).encode(&raw)
 		}
 	}
 	raw.U32(0)

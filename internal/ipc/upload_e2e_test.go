@@ -86,11 +86,11 @@ func TestUploadControlsEndToEnd(t *testing.T) {
 				send(p, soulseek.LoginResponse{Success: true, IP: 0x7f000001})
 			case soulseek.ServerSetListenPort:
 				d := soulseek.NewDecoder(b)
-				port, _ := d.U32()
+				port := d.U32()
 				ports <- port
 			case soulseek.ServerGetPeerAddress:
 				d := soulseek.NewDecoder(b)
-				user, _ := d.String()
+				user := d.String()
 				send(p, soulseek.PeerAddress{Username: user, IP: "127.0.0.1", Port: uint32(peer.Addr().(*net.TCPAddr).Port)})
 			}
 		}
@@ -102,8 +102,8 @@ func TestUploadControlsEndToEnd(t *testing.T) {
 			return
 		}
 		d := soulseek.NewDecoder(b)
-		_, _ = d.String()
-		kind, _ := d.String()
+		_ = d.String()
+		kind := d.String()
 		if kind == "P" {
 			cmd, b, err := soulseek.ReadFrame(p)
 			if err != nil || cmd != soulseek.PeerTransferRequest {
@@ -192,8 +192,8 @@ func TestUploadControlsEndToEnd(t *testing.T) {
 	defer incoming.Close()
 	_ = incoming.SetDeadline(time.Now().Add(12 * time.Second))
 	var init soulseek.Encoder
-	_ = init.String("receiver")
-	_ = init.String("P")
+	init.String("receiver")
+	init.String("P")
 	init.U32(0)
 	must(t, soulseek.WriteInitFrame(incoming, byte(soulseek.PeerInit), init.Payload()))
 	// Offers now reuse the incoming P connection instead of requiring a fresh dial.

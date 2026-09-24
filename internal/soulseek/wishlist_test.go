@@ -14,10 +14,9 @@ func TestWishlistProtocol(t *testing.T) {
 	command, payload, err := ReadFrame(bytes.NewReader(framed))
 	failIfFmt(t, err != nil || command != ServerWishlistSearch, "wishlist command: %d %v", command, err)
 	d := NewDecoder(payload)
-	token, err := d.U32()
-	must(t, err)
-	query, err := d.String()
-	failIfFmt(t, err != nil || d.Done() != nil || token != 7 || query != "rare album", "wishlist payload: token=%d query=%q err=%v", token, query, err)
+	token := d.U32()
+	query := d.String()
+	failIfFmt(t, d.Done() != nil || token != 7 || query != "rare album", "wishlist payload: token=%d query=%q err=%v", token, query, d.Done())
 
 	var encoded Encoder
 	encoded.U32(900)

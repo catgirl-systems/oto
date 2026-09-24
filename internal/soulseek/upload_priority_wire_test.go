@@ -35,9 +35,9 @@ func TestUploadQueuePositionRequestsFollowCurrentPriority(t *testing.T) {
 		code, payload, err := ReadFrame(right)
 		must(t, err)
 		d := NewDecoder(payload)
-		name, e := d.String()
-		position, pe := d.U32()
-		failIf(t, code != PeerPlaceInQueue || e != nil || pe != nil || d.Done() != nil || name != "Public\\song.mp3" || position != want, code, name, position, want, e, pe)
+		name := d.String()
+		position := d.U32()
+		failIf(t, code != PeerPlaceInQueue || d.Done() != nil || name != "Public\\song.mp3" || position != want, code, name, position, want, d.Done())
 	}
 	check(2)
 	c.SetUploadUserPolicies(map[string]UploadUserPolicy{"Alice": {Preferred: true}})

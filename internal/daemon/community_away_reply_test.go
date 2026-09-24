@@ -28,9 +28,9 @@ func TestAwayReplyOncePerPeriodAndDurableTranscript(t *testing.T) {
 		code, body, err := soulseek.ReadFrame(peer)
 		must(t, err)
 		d := soulseek.NewDecoder(body)
-		user, e1 := d.String()
-		text, e2 := d.String()
-		failIf(t, code != soulseek.ServerPrivateMessage || e1 != nil || e2 != nil || d.Done() != nil || user != "Alice" || text != "[Automatic Message] back later", code, user, text, e1, e2)
+		user := d.String()
+		text := d.String()
+		failIf(t, code != soulseek.ServerPrivateMessage || d.Done() != nil || user != "Alice" || text != "[Automatic Message] back later", code, user, text, d.Done())
 		s.wg.Wait()
 	}
 	receive()

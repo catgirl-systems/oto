@@ -16,11 +16,10 @@ type UserSearchRequest struct {
 
 func (UserSearchRequest) command() uint32 { return ServerUserSearch }
 func (m UserSearchRequest) encode(e *Encoder) error {
-	if err := e.String(m.Username); err != nil {
-		return err
-	}
+	e.String(m.Username)
 	e.U32(m.Token)
-	return e.String(m.Query)
+	e.String(m.Query)
+	return nil
 }
 
 func NormalizeSearchUsers(users []string) ([]string, error) {

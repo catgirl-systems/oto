@@ -54,11 +54,8 @@ func TestSharedFolderSendTerminalPartialOutcomes(t *testing.T) {
 			return err
 		}
 		d := soulseek.NewDecoder(body)
-		_, _ = d.String()
-		kind, err := d.String()
-		if err != nil {
-			return err
-		}
+		_ = d.String()
+		kind := d.String()
 		switch kind {
 		case "P":
 			for {
@@ -156,10 +153,7 @@ func TestSharedFolderSendTerminalPartialOutcomes(t *testing.T) {
 				}
 			case soulseek.ServerGetPeerAddress:
 				d := soulseek.NewDecoder(body)
-				user, err := d.String()
-				if err != nil {
-					return err
-				}
+				user := d.String()
 				if err := send(conn, soulseek.PeerAddress{Username: user, IP: "127.0.0.1", Port: uint32(peer.Listener.Addr().(*net.TCPAddr).Port)}); err != nil {
 					return err
 				}

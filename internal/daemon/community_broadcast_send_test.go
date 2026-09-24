@@ -56,8 +56,8 @@ func TestBroadcastPacingStopAndConfirmationDeduplication(t *testing.T) {
 		failIf(t, !previous.IsZero() && now.Sub(previous) < time.Second, "broadcast was not paced")
 		previous = now
 		d := soulseek.NewDecoder(payload)
-		name, _ := d.String()
-		text, _ := d.String()
+		name := d.String()
+		text := d.String()
 		failIf(t, code != soulseek.ServerPrivateMessage || name != expected || text != "hello", code, name, text)
 	}
 	action.Action = "stop"
