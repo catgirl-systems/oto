@@ -15,10 +15,11 @@ import (
 // communityErrors lists the statuses communityError can produce.
 var communityErrors = []int{400, 404, 409, 503}
 
-// identityParams documents the community session query parameters. huma does
-// not parse parameters from embedded structs, so every community GET input
-// repeats these three fields; identity() centralizes their parsing. Session
-// stays a string so missing or malformed values keep the historical 400.
+// identityParams documents the shared community session query parameters and
+// doubles as the huma input type for identity-only GETs; identity()
+// centralizes their parsing. huma does not parse parameters from embedded
+// structs, so inputs with extra fields spell these out instead of embedding.
+// Session stays a string so missing or malformed values keep the historical 400.
 type identityParams struct {
 	Account string `query:"account" doc:"Community account"`
 	Daemon  string `query:"daemon" doc:"Daemon identity"`
@@ -31,6 +32,50 @@ func (p identityParams) identity() (daemon.CommunityIdentity, error) {
 		return daemon.CommunityIdentity{}, err
 	}
 	return daemon.CommunityIdentity{Account: p.Account, Daemon: p.Daemon, Session: session}, nil
+}
+
+// pagedIdentityQuery is the shared input for community GET pages whose only
+// parameters are the session identity and cursor pagination. huma does not
+// parse parameters from embedded structs, so the fields are spelled out.
+type pagedIdentityQuery struct {
+	Account string `query:"account" doc:"Community account"`
+	Daemon  string `query:"daemon" doc:"Daemon identity"`
+	Session string `query:"session" doc:"Session number"`
+	Cursor  string `query:"cursor"`
+	Limit   int    `query:"limit"`
+}
+
+func (p pagedIdentityQuery) identity() (daemon.CommunityIdentity, error) {
+	return identityParams{Account: p.Account, Daemon: p.Daemon, Session: p.Session}.identity()
+}
+
+// endpoint pairs the HTTP method and path so server registration and client
+// calls share one source of truth per route.
+type endpoint[Req, Resp any] struct{ Method, Path string }
+
+// op fills a community huma.Operation carrying the endpoint's method and path.
+func (e endpoint[Req, Resp]) op(operationID, summary string) huma.Operation {
+	return huma.Operation{OperationID: operationID, Method: e.Method, Path: e.Path, Summary: summary, Errors: communityErrors}
+}
+
+func get[Req, Resp any](ctx context.Context, c *Client, e endpoint[Req, Resp], q url.Values) (Resp, error) {
+	var out Resp
+	err := c.Do(ctx, e.Method, e.Path+"?"+q.Encode(), nil, &out)
+	return out, err
+}
+
+func call[Req, Resp any](ctx context.Context, c *Client, e endpoint[Req, Resp], req Req) (Resp, error) {
+	var out Resp
+	err := c.Do(ctx, e.Method, e.Path, req, &out)
+	return out, err
+}
+
+// setRemoveEndpoint picks the PUT or DELETE side of a set/remove pair.
+func setRemoveEndpoint[Req, Resp any](set, remove endpoint[Req, Resp], removing bool) endpoint[Req, Resp] {
+	if removing {
+		return remove
+	}
+	return set
 }
 
 // communityErr maps a community error onto a huma status error.

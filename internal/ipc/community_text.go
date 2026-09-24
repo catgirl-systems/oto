@@ -5,31 +5,25 @@ import (
 	"net/http"
 
 	"github.com/catgirl-systems/oto/internal/daemon"
-	"github.com/danielgtaylor/huma/v2"
+)
+
+var (
+	epCommunityText    = endpoint[daemon.CommunityIdentity, daemon.CommunityTextSettings]{http.MethodGet, "/v1/community/text-tools"}
+	epSetCommunityText = endpoint[daemon.CommunityTextSettings, daemon.CommunityTextSettings]{http.MethodPut, "/v1/community/text-tools"}
 )
 
 func (s *Server) registerCommunityTextRoutes() {
-	route(s, scopeAuthed, huma.Operation{
-		OperationID: "get-text-tools", Method: http.MethodGet, Path: "/v1/community/text-tools",
-		Summary: "Chat text tools", Errors: communityErrors,
-	}, func(ctx context.Context, input *struct {
-		Account string `query:"account" doc:"Community account"`
-		Daemon  string `query:"daemon" doc:"Daemon identity"`
-		Session string `query:"session" doc:"Session number"`
-	}) (*struct {
+	route(s, scopeAuthed, epCommunityText.op("get-text-tools", "Chat text tools"), func(ctx context.Context, input *identityParams) (*struct {
 		Body daemon.CommunityTextSettings
 	}, error) {
-		identity, err := identityParams{Account: input.Account, Daemon: input.Daemon, Session: input.Session}.identity()
+		identity, err := input.identity()
 		if err != nil {
 			return nil, communityErr(err)
 		}
 		out, err := s.service.CommunityTextSettings(ctx, identity)
 		return communityBody(out, err)
 	})
-	route(s, scopeAuthed, huma.Operation{
-		OperationID: "set-text-tools", Method: http.MethodPut, Path: "/v1/community/text-tools",
-		Summary: "Update chat text tools", Errors: communityErrors,
-	}, func(ctx context.Context, input *struct {
+	route(s, scopeAuthed, epSetCommunityText.op("set-text-tools", "Update chat text tools"), func(ctx context.Context, input *struct {
 		Body daemon.CommunityTextSettings
 	}) (*struct {
 		Body daemon.CommunityTextSettings
@@ -40,14 +34,9 @@ func (s *Server) registerCommunityTextRoutes() {
 }
 
 func (c *Client) CommunityTextSettings(ctx context.Context, id daemon.CommunityIdentity) (daemon.CommunityTextSettings, error) {
-	q := communityRoomValues(id)
-	var out daemon.CommunityTextSettings
-	err := c.Do(ctx, http.MethodGet, "/v1/community/text-tools?"+q.Encode(), nil, &out)
-	return out, err
+	return get(ctx, c, epCommunityText, communityRoomValues(id))
 }
 
 func (c *Client) SetCommunityTextSettings(ctx context.Context, req daemon.CommunityTextSettings) (daemon.CommunityTextSettings, error) {
-	var out daemon.CommunityTextSettings
-	err := c.Do(ctx, http.MethodPut, "/v1/community/text-tools", req, &out)
-	return out, err
+	return call(ctx, c, epSetCommunityText, req)
 }
