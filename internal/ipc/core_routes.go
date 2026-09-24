@@ -37,6 +37,26 @@ type presenceInput struct {
 }
 
 func (s *Server) registerStateRoutes() {
+	route(s, scopePublic, huma.Operation{
+		OperationID: "get-health", Method: http.MethodGet, Path: "/v1/health",
+		Summary: "Liveness probe", Errors: []int{503},
+	}, func(ctx context.Context, _ *struct{}) (*struct {
+		Body struct {
+			Status daemon.Status `json:"status"`
+		}
+	}, error) {
+		status := s.service.Status()
+		if status == daemon.StatusStopped || status == daemon.StatusError {
+			return nil, errStatus(http.StatusServiceUnavailable, errors.New("daemon: "+string(status)))
+		}
+		return &struct {
+			Body struct {
+				Status daemon.Status `json:"status"`
+			}
+		}{Body: struct {
+			Status daemon.Status `json:"status"`
+		}{Status: status}}, nil
+	})
 	route(s, scopeAuthed, huma.Operation{
 		OperationID: "get-state", Method: http.MethodGet, Path: "/v1/state",
 		Summary: "Daemon state snapshot",

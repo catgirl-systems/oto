@@ -384,6 +384,13 @@ func (s *Service) Config() config.SafeConfig {
 	return s.cfg.Redacted()
 }
 
+// Status returns the current daemon status without building a full snapshot.
+func (s *Service) Status() Status {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.status
+}
+
 func (s *Service) Snapshot() Snapshot {
 	logging := s.loggingStatus()
 	now := time.Now()

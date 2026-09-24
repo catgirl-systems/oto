@@ -223,7 +223,7 @@ func TestOpenAPIDocumentMatchesRoutes(t *testing.T) {
 	}
 	must(t, json.NewDecoder(resp.Body).Decode(&full))
 	failIf(t, len(full.Paths) < 40, "path count", len(full.Paths))
-	public := map[string]bool{"/v1/auth/requests": true, "/v1/auth/requests/{token}": true, "/openapi.json": true, "/openapi-3.0.json": true, "/openapi.yaml": true, "/openapi-3.0.yaml": true, "/docs": true, "/schemas/{schema}": true}
+	public := map[string]bool{"/v1/health": true, "/v1/auth/requests": true, "/v1/auth/requests/{token}": true, "/openapi.json": true, "/openapi-3.0.json": true, "/openapi.yaml": true, "/openapi-3.0.yaml": true, "/docs": true, "/schemas/{schema}": true}
 	for pattern, entry := range full.Paths {
 		for method, operation := range entry {
 			failIfFmt(t, operation.OperationID == "", "missing operationId on %s %s", method, pattern)
