@@ -405,7 +405,7 @@ func TestCommunityPrivateUnknownRequiresExplicitRetry(t *testing.T) {
 	must(t, err)
 	m.community.chats.composing = false
 	drainChat(t, &m, m.loadCommunityChats(true))
-	failIf(t, !strings.Contains(m.View().Content, "[unknown]"), "uncertainty not rendered")
+	failIf(t, !strings.Contains(ansi.Strip(m.View().Content), "unknown"), "uncertainty not rendered")
 	m.key(chatPress("R"))
 	if d := m.community.chats.dialog; d == nil || !strings.Contains(d.label, "already have reached") || d.confirm {
 		t.Fatal("retry lacks explicit uncertainty warning")

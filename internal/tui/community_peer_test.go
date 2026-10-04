@@ -3,6 +3,7 @@ package tui
 import (
 	"bytes"
 	"encoding/json"
+	"github.com/charmbracelet/x/ansi"
 	"image"
 	"image/png"
 	"net"
@@ -29,8 +30,8 @@ func TestCommunityPeerPartialResponsesAndFencing(t *testing.T) {
 	p := daemon.CommunityProfile{CommunityIdentity: id, Username: "Alice", Description: "hello 世界\nsecond line", UploadSlots: 3, QueueLength: 7, State: "ready", Generation: 1, Revision: 100, UpdatedAt: time.Now()}
 	interests := daemon.CommunityDiscoveryPage{CommunityIdentity: id, Kind: "user-interests", Target: "Alice", State: "ready", Generation: 1, Revision: 100, Rows: []daemon.CommunityDiscoveryRow{{Kind: "like", Item: "techno"}}}
 	m.applyCommunityPeer(communityPeerMsg{request: m.community.peer.request, identity: id, username: "Alice", profile: p, interests: interests})
-	text := strings.Join(m.community.inspectorLines(), "\n")
-	for _, want := range []string{"hello 世界", "Slots: 3", "Queue: 7", "like: techno"} {
+	text := plainText(m.community.inspectorLines())
+	for _, want := range []string{"hello 世界", "Slots 3 ·", "Queue 7", "● techno like"} {
 		failIf(t, !strings.Contains(text, want), "missing partial field", want, text)
 	}
 	m.applyCommunityPeer(communityPeerMsg{request: m.community.peer.request - 1, identity: id, username: "Alice", profile: daemon.CommunityProfile{Description: "old"}})
@@ -38,7 +39,7 @@ func TestCommunityPeerPartialResponsesAndFencing(t *testing.T) {
 	m.applyCommunityPeer(communityPeerMsg{request: m.community.peer.request, identity: id, username: "alice", profile: daemon.CommunityProfile{Description: "wrong case"}})
 	failIf(t, m.community.peer.profile.Description != p.Description, "case-folded target")
 	m.community.summary.Connected = false
-	failIf(t, !strings.Contains(strings.Join(m.community.inspectorLines(), "\n"), "Slots (stale)"), "offline profile advertised fresh metadata")
+	failIf(t, !strings.Contains(plainText(m.community.inspectorLines()), "Slots 3 · full (stale)"), "offline profile advertised fresh metadata")
 	oldRequest := m.community.peer.request
 	m.community.resetUser()
 	m.applyCommunityPeer(communityPeerMsg{request: oldRequest, identity: id, username: "Alice", profile: p})
@@ -159,7 +160,7 @@ func TestCommunityPeerVisibleColumnsAndDiscoverSelection(t *testing.T) {
 	m.width, m.height = 40, 16
 	m.community.view, m.community.pane = 3, 0
 	m.community.discover.mode = 7
-	failIf(t, !strings.Contains(m.View().Content, "› My profile"), "selected Discover mode scrolled off narrow screen", m.View().Content)
+	failIf(t, !strings.Contains(ansi.Strip(m.View().Content), "› My profile"), "selected Discover mode scrolled off narrow screen", m.View().Content)
 }
 
 func TestCommunityPeerSupporterFreshness(t *testing.T) {
@@ -168,7 +169,7 @@ func TestCommunityPeerSupporterFreshness(t *testing.T) {
 	m.community.summary.Connected = true
 	check := func(want string) {
 		t.Helper()
-		failIf(t, !strings.Contains(strings.Join(m.community.inspectorLines(), "\n"), "Supporter: "+want), "wrong supporter freshness", want)
+		failIf(t, !strings.Contains(plainText(m.community.inspectorLines()), "Supporter "+want), "wrong supporter freshness", want)
 	}
 	check("unknown")
 	m.community.user.Privileged, m.community.user.PrivilegeFresh = true, true

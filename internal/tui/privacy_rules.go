@@ -217,7 +217,7 @@ func (m *model) privacyRulesKey(k tea.KeyPressMsg) tea.Cmd {
 			rule := e.rules[e.row]
 			e.form = &privacyRuleForm{rule: rule, old: rule, cursor: len([]rune(rule.Value))}
 		}
-	case "d", "delete":
+	case "x", "d", "delete":
 		if e.row >= 0 && e.row < len(e.rules) {
 			rule := e.rules[e.row]
 			e.dialog = &privacyRuleDialog{kind: "delete", label: fmt.Sprintf("Delete %s %s %q?", rule.Action, rule.Kind, rule.Value), rule: rule, identity: e.identity, revision: e.revision}

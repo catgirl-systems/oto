@@ -10,7 +10,6 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/catgirl-systems/oto/internal/daemon"
 	"github.com/catgirl-systems/oto/internal/soulseek"
-	"github.com/charmbracelet/x/ansi"
 )
 
 type buddyEditor struct {
@@ -604,103 +603,6 @@ func buddyStatus(b daemon.CommunityBuddy, connected bool) string {
 	default:
 		return "offline"
 	}
-}
-func (m model) buddyListPane(width, height int) []string {
-	b := m.community.buddies
-	order := b.sort
-	if order == "" {
-		order = "username"
-	}
-	lines := []string{strong(fmt.Sprintf("Buddies (%d)", b.total)) + muted(" · "+order), muted("a add · e edit · D remove"), muted("s sort · f filter · U actions")}
-	if b.query != "" {
-		lines = append(lines, "Find: "+b.query)
-	}
-	if b.err != "" {
-		lines = append(lines, danger("! "+browseErrorText(b.err)))
-	}
-	if b.loading && !b.listReady {
-		lines = append(lines, muted("Loading buddies…"))
-	}
-	if len(b.buddies) == 0 {
-		lines = append(lines, muted("No matching buddies."))
-	}
-	lines = communityPane(lines, width, max(0, height-2), 0)
-	rows := max(0, height-len(lines)-1)
-	start := max(0, b.row-rows+1)
-	for i := start; i < min(len(b.buddies), start+rows); i++ {
-		mark := " "
-		if i == b.row {
-			mark = ">"
-		}
-		buddy := b.buddies[i]
-		rowContent := buddy.Username + " · " + buddyStatus(buddy, m.community.summary.Connected && m.community.err == "" && b.err == "")
-		rowStr := mark + rowContent
-		if i == b.row && colorsEnabled() {
-			rowStr = selectedRow(rowContent, true)
-		}
-		lines = append(lines, ansi.Truncate(rowStr, max(0, width), "…"))
-	}
-	if height > 0 {
-		lines = append(lines, ansi.Truncate(muted("p/n pages · Enter detail"), max(0, width), "…"))
-	}
-	return lines
-}
-func (m model) buddyDetailPane(width, height int) []string {
-	b := m.community.buddies
-	if b.active == nil {
-		return communityPane([]string{strong("Select a buddy and Enter."), b.selected, muted("a add · e edit · U actions"), b.err}, width, height, 0)
-	}
-	buddy := b.active
-	live := m.community.summary.Connected && m.community.err == "" && b.err == ""
-	country := buddy.Country
-	if country == "" {
-		country = "unknown"
-	}
-	seen := "never observed offline"
-	if !buddy.LastSeen.IsZero() {
-		seen = buddy.LastSeen.Local().Format(time.RFC3339)
-	}
-	if country != "unknown" && (!live || !buddy.StatusFresh) {
-		country += " (stale)"
-	}
-	lines := []string{strong("Buddy: ") + buddy.Username, "Status: " + buddyStatus(*buddy, live), "Country: " + country, "Last seen (observed offline): " + seen, fmt.Sprintf("Notify online: %t", buddy.NotifyOnline), fmt.Sprintf("Priority preference: %t", buddy.Priority), fmt.Sprintf("Trusted preference: %t", buddy.Trusted), muted("Priority: preferred upload class; running files continue."), muted("Trust: trusted roots (not self); bans still apply."), strong("Note:"), strings.ReplaceAll(buddy.Note, "\t", "    "), b.err}
-	lines = communityPane(lines, width, max(0, height-1), b.scroll)
-	if height > 0 {
-		lines = append(lines, ansi.Truncate(muted("↑↓ scroll · e edit · D remove · U actions"), max(0, width), "…"))
-	}
-	return lines
-}
-func (m model) buddyEditorView(width, height int) []string {
-	b, e := m.community.buddies, m.community.buddies.editor
-	if e == nil {
-		return communityPane([]string{"Find buddies by username/note", renderInputWindow(b.input, b.inputCursor, width), b.inputErr, "Enter filter · Esc back"}, width, height, 0)
-	}
-	labels := []string{"Exact username", "Note", "Notify online", "Priority preference", "Trusted preference"}
-	values := []string{e.username, strings.ReplaceAll(strings.ReplaceAll(e.note, "\n", "↵"), "\t", "⇥"), fmt.Sprint(e.notify), fmt.Sprint(e.priority), fmt.Sprint(e.trusted)}
-	cursor := e.noteCursor
-	if e.field == 0 {
-		cursor = e.nameCursor
-	}
-	if width < 60 || height < 14 {
-		return communityPane([]string{"Buddy editor · " + labels[e.field], renderInputWindow(values[e.field], cursor, width), e.err, "Tab fields · Space toggle", "Enter save · Esc keep · Ctrl+R reload"}, width, height, 0)
-	}
-	lines := []string{"Buddy editor"}
-	for i, label := range labels {
-		mark := " "
-		value := ansi.Truncate(values[i], max(1, width-24), "…")
-		if i == e.field {
-			mark = ">"
-			if i < 2 {
-				value = renderInputWindow(values[i], cursor, max(1, width-24))
-			}
-		}
-		lines = append(lines, mark+label+": "+value)
-	}
-	if b.busy || b.opening {
-		lines = append(lines, "Working…")
-	}
-	lines = append(lines, e.err, "Tab fields · Space toggle · Enter save", "Esc keep draft · Ctrl+R reload · paste never submits")
-	return communityPane(lines, width, height, 0)
 }
 func (m model) buddyDialogView() string {
 	d := m.community.buddies.dialog

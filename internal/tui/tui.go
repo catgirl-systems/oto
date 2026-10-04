@@ -786,9 +786,9 @@ func (m model) changePassword(password string) tea.Cmd {
 
 func (m model) Init() tea.Cmd {
 	if m.setup {
-		return nil
+		return tea.RequestBackgroundColor
 	}
-	return tea.Batch(m.loadStatus(), m.loadTransfers(), m.loadShares(), m.loadSavedBrowses(), m.loadWishlist(), m.communitySummaryCmd(0), tick())
+	return tea.Batch(tea.RequestBackgroundColor, m.loadStatus(), m.loadTransfers(), m.loadShares(), m.loadSavedBrowses(), m.loadWishlist(), m.communitySummaryCmd(0), tick())
 }
 func (m model) updateMessage(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch x := msg.(type) {
@@ -893,6 +893,8 @@ func (m model) updateMessage(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case tea.WindowSizeMsg:
 		m.width, m.height = x.Width, x.Height
+	case tea.BackgroundColorMsg:
+		setDarkBackground(x.IsDark())
 	case tickMsg:
 		m.spinner++
 		if m.notice != "" && !time.Time(x).Before(m.noticeUntil) {

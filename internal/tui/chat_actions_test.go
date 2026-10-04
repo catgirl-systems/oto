@@ -8,6 +8,7 @@ import (
 )
 
 func TestChatActionsAreVisuallyDistinctWithoutColor(t *testing.T) {
+	t.Setenv("NO_COLOR", "1")
 	m := model{}
 	m.community.chats.messages = []daemon.CommunityMessage{{ID: 1, Sender: "Alice", Text: "/me waves 世界", Direction: "incoming"}}
 	var text strings.Builder

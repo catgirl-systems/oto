@@ -32,7 +32,7 @@ func TestStatsOverviewLayout(t *testing.T) {
 	for i, rate := range []uint64{0, 1 << 20, 2 << 20, 1 << 20, 3 << 20, 2 << 20} {
 		m.stats.overview.Samples = append(m.stats.overview.Samples, daemon.RateSample{At: at.Add(time.Duration(i) * time.Second), Download: rate, Upload: rate / 2})
 	}
-	wide := m.renderStats(144, 40)
+	wide := m.renderStats(144, 200)
 	t.Log("\n" + wide)
 	for _, want := range []string{"32 MiB", "64 MiB", "2.0 GiB", "4.0 GiB", "Session", "Lifetime", "Last (UTC)", "2.0 MiB/s", "1.0 MiB/s", "19:34:00", "19:34:05 UTC"} {
 		failIfFmt(t, !strings.Contains(wide, want), "missing %q in overview", want)
@@ -59,7 +59,7 @@ func TestStatsOverviewLayout(t *testing.T) {
 	}
 	m.cursor = 0
 	narrow := m.renderStats(80, 200)
-	last, upload := strings.Index(narrow, "Last (UTC)"), strings.Index(narrow, "Upload  ")
+	last, upload := strings.Index(narrow, "Last (UTC)"), strings.Index(narrow, "Upload totals")
 	failIf(t, last < 0 || upload <= last, "narrow overview did not stack directions")
 	top := m.renderStats(80, 12)
 	m.statsKey(key("pgdown"))
@@ -98,7 +98,7 @@ func TestStatsPlotAndContextHints(t *testing.T) {
 	for page := range statsPages {
 		m.stats.page = page
 		hints := strings.Join(m.footerHints(), " · ")
-		failIf(t, !strings.Contains(hints, "ctrl+pgup/down") || !strings.Contains(hints, "P prune"), "lost common controls")
+		failIf(t, !strings.Contains(hints, "[/] page") || !strings.Contains(hints, "P prune"), "lost common controls")
 		failIfFmt(t, strings.Contains(hints, "e outcome") != (page == 3) || strings.Contains(hints, "s sort") != (page == 2), "irrelevant controls on page %d: %s", page, hints)
 	}
 }
@@ -110,7 +110,7 @@ func TestDiagnosticStatsLayoutAndOldDaemon(t *testing.T) {
 	m.stats.overview.Warning = "history warning"
 	m.stats.overview.Logging = &diagnostics.Status{Level: "DEBUG", Directory: strings.Repeat("/long-state", 40), StoredBytes: 33, FileCount: 2, DroppedRecords: 7, RotationBytes: 10 << 20, MaxArchives: 3, Warning: "file output suspended"}
 	full := m.renderStats(144, 200)
-	for _, want := range []string{"Diagnostic logs · daemon-wide", "33 B stored", "2 files", "7 dropped", "history warning", "file output suspended", "retain 3 closed segments"} {
+	for _, want := range []string{"DIAGNOSTIC LOGS", "daemon-wide", "33 B stored", "2 files", "7 dropped", "history warning", "file output suspended", "retain 3 closed segments"} {
 		failIfFmt(t, !strings.Contains(full, want), "missing %q", want)
 	}
 	for _, width := range []int{1, 12, 40, 80, 144} {
@@ -121,5 +121,5 @@ func TestDiagnosticStatsLayoutAndOldDaemon(t *testing.T) {
 	}
 	m.stats.overview.Logging = nil
 	m.cursor = 0
-	failIf(t, strings.Contains(m.renderStats(144, 200), "Diagnostic logs"), "old daemon rendered fictitious logs")
+	failIf(t, strings.Contains(m.renderStats(144, 200), "DIAGNOSTIC LOGS"), "old daemon rendered fictitious logs")
 }

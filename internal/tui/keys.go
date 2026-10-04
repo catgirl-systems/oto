@@ -90,7 +90,7 @@ func (m *model) key(k tea.KeyPressMsg) tea.Cmd {
 		return m.uploadConfirmKey(k)
 	}
 	if m.help {
-		if s == "?" || s == "esc" {
+		if s == "?" || s == "esc" || s == "q" {
 			m.help, m.helpScroll = false, 0
 			return nil
 		}
@@ -153,22 +153,12 @@ func (m *model) key(k tea.KeyPressMsg) tea.Cmd {
 		m.openUserActions()
 	case "F":
 		m.confirmForceDownloads()
-	case "ctrl+pgup":
-		if m.workspace == workspaceSearch {
-			m.switchSearchTab(-1)
-		} else if m.workspace == workspaceBrowse {
-			m.switchBrowseTab(-1)
-		} else if m.workspace == workspaceTransfers {
-			m.switchTransferTab(transferDownloads)
-		}
-	case "ctrl+pgdown":
-		if m.workspace == workspaceSearch {
-			m.switchSearchTab(1)
-		} else if m.workspace == workspaceBrowse {
-			m.switchBrowseTab(1)
-		} else if m.workspace == workspaceTransfers {
-			m.switchTransferTab(transferUploads)
-		}
+	case "[", "ctrl+pgup":
+		return m.cycleTab(-1)
+	case "]", "ctrl+pgdown":
+		return m.cycleTab(1)
+	case "esc":
+		m.clearMarks()
 	case "ctrl+w":
 		if m.workspace == workspaceSearch {
 			m.closeSearchTab()
@@ -183,23 +173,14 @@ func (m *model) key(k tea.KeyPressMsg) tea.Cmd {
 		if n := int(s[0] - '1'); n < int(workspaceCount) {
 			return m.jumpWorkspace(workspace(n))
 		}
-	case "right":
+	case "right", "l":
 		if m.workspace == workspaceSettings {
-			m.settingsSection = (m.settingsSection + 1) % settingsSectionCount
-			m.cursor, m.selected = 0, map[int]bool{}
-			if m.settingsSection == settingsConnection {
-				return m.loadNetworkInterfaces()
-			}
-		} else {
-			return m.openTreeNode(false)
+			return m.cycleTab(1)
 		}
-	case "left":
+		return m.openTreeNode(false)
+	case "left", "h":
 		if m.workspace == workspaceSettings {
-			m.settingsSection = (m.settingsSection + settingsSectionCount - 1) % settingsSectionCount
-			m.cursor, m.selected = 0, map[int]bool{}
-			if m.settingsSection == settingsConnection {
-				return m.loadNetworkInterfaces()
-			}
+			return m.cycleTab(-1)
 		} else if tree := m.currentTree(); tree != nil {
 			m.cursor = tree.left(m.cursor)
 		}
@@ -223,9 +204,9 @@ func (m *model) key(k tea.KeyPressMsg) tea.Cmd {
 			m.loadingMore = true
 			return m.loadSearchPage()
 		}
-	case "home":
+	case "home", "g":
 		m.cursor = 0
-	case "end":
+	case "end", "G":
 		m.cursor = max(0, m.rows()-1)
 	case "space":
 		m.toggle()
@@ -371,39 +352,29 @@ func (m *model) key(k tea.KeyPressMsg) tea.Cmd {
 			_, node := m.currentTree().node(m.cursor)
 			m.details = node != nil && node.kind == treeFile && node.source >= 0
 		}
+	case "x", "delete":
+		return m.removeKey()
+	case "X":
+		if m.workspace == workspaceTransfers && m.transferTab == transferUploads {
+			return m.beginUploadAction("cancel", true)
+		}
+	case "a":
+		if m.workspace == workspaceWishlist || m.workspace == workspaceShares {
+			m.beginEdit()
+		}
+		return nil
 	case "d":
-		if m.workspace == workspaceSettings && m.settingsSection == settingsDownloads {
-			if i := m.downloadRuleIndex(); i >= 0 {
-				rules := append([]string{}, m.cfg.Downloads.FilterPatterns...)
-				m.cfg.Downloads.FilterPatterns = append(rules[:i], rules[i+1:]...)
-			}
-			return nil
-		}
-		if m.workspace == workspaceWishlist && m.cursor >= 0 && m.cursor < len(m.wishlist) {
-			m.wishlistCursor = m.cursor
-			return m.removeWishlist(m.wishlist[m.cursor].ID)
-		}
-		if m.workspace == workspaceSearch {
+		// d kept its older remove/cancel meaning outside the file lists.
+		if m.workspace == workspaceSearch || m.workspace == workspaceBrowse {
 			if m.openFolderMenu() {
 				return nil
 			}
-			return m.queueResult()
-		}
-		if m.workspace == workspaceBrowse {
-			if m.openFolderMenu() {
-				return nil
+			if m.workspace == workspaceSearch {
+				return m.queueResult()
 			}
 			return m.queueBrowse()
 		}
-		if m.workspace == workspaceTransfers {
-			if m.transferTab == transferUploads {
-				return m.beginUploadAction("cancel", false)
-			}
-			return m.action("cancel")
-		}
-		if m.workspace == workspaceShares {
-			return m.removeShare()
-		}
+		return m.removeKey()
 	case "r":
 		if m.workspace == workspaceWishlist && m.cursor >= 0 && m.cursor < len(m.wishlist) {
 			m.wishlistCursor = m.cursor
@@ -514,8 +485,82 @@ func (m *model) key(k tea.KeyPressMsg) tea.Cmd {
 			return m.putWishlist(m.query, m.searchFilter, "Saved search to Wishlist")
 		}
 	case "/":
+		if m.workspace == workspaceTransfers {
+			return m.prepareTransferSearch(false)
+		}
 		m.beginEdit()
 		return nil
+	}
+	return nil
+}
+
+// cycleTab moves to the previous (-1) or next (+1) tab of the workspace:
+// search and user tabs, the transfer direction, or the settings section.
+func (m *model) cycleTab(delta int) tea.Cmd {
+	switch m.workspace {
+	case workspaceSearch:
+		m.switchSearchTab(delta)
+	case workspaceBrowse:
+		m.switchBrowseTab(delta)
+	case workspaceTransfers:
+		if delta < 0 {
+			m.switchTransferTab(transferDownloads)
+		} else {
+			m.switchTransferTab(transferUploads)
+		}
+	case workspaceSettings:
+		m.settingsSection = (m.settingsSection + settingsSection(delta) + settingsSectionCount) % settingsSectionCount
+		m.cursor, m.selected = 0, map[int]bool{}
+		if m.settingsSection == settingsConnection {
+			return m.loadNetworkInterfaces()
+		}
+	}
+	return nil
+}
+
+// clearMarks drops every mark in the current list.
+func (m *model) clearMarks() {
+	switch m.workspace {
+	case workspaceSearch, workspaceBrowse:
+		if len(m.selected) > 0 {
+			m.selected = map[int]bool{}
+			if m.workspace == workspaceBrowse && len(m.browseTabs) > 0 {
+				m.browseRuleAncestors = map[int][]int{}
+				m.saveBrowseTab()
+			}
+		}
+	case workspaceTransfers:
+		if m.transferTab == transferUploads {
+			m.uploadSelected = map[string]bool{}
+		} else {
+			m.downloadSelected = map[string]bool{}
+		}
+	}
+}
+
+// removeKey handles x / delete: remove the highlighted wishlist item, share or
+// download filter, or cancel the highlighted transfers.
+func (m *model) removeKey() tea.Cmd {
+	switch m.workspace {
+	case workspaceSettings:
+		if m.settingsSection == settingsDownloads {
+			if i := m.downloadRuleIndex(); i >= 0 {
+				rules := append([]string{}, m.cfg.Downloads.FilterPatterns...)
+				m.cfg.Downloads.FilterPatterns = append(rules[:i], rules[i+1:]...)
+			}
+		}
+	case workspaceWishlist:
+		if m.cursor >= 0 && m.cursor < len(m.wishlist) {
+			m.wishlistCursor = m.cursor
+			return m.removeWishlist(m.wishlist[m.cursor].ID)
+		}
+	case workspaceTransfers:
+		if m.transferTab == transferUploads {
+			return m.beginUploadAction("cancel", false)
+		}
+		return m.action("cancel")
+	case workspaceShares:
+		return m.removeShare()
 	}
 	return nil
 }

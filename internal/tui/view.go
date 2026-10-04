@@ -2,7 +2,6 @@ package tui
 
 import (
 	"fmt"
-	"os"
 	"strings"
 	"unicode/utf8"
 
@@ -13,59 +12,9 @@ import (
 )
 
 func (m model) View() tea.View {
-	content := m.mainView()
-	if m.setup {
-		content = m.setupView()
-	} else if m.commandOutput != nil {
-		content = m.commandOutputView()
-	} else if m.downloadAs != nil {
-		content = m.downloadAsView()
-	} else if m.searchScope != nil {
-		content = m.searchScopeView()
-	} else if m.privileges != nil && !m.confirm {
-		content = m.privilegesView()
-	} else if m.receivingEditor != nil && !m.confirm {
-		content = m.receivingSettingsView()
-	} else if m.awayEditor != nil && !m.confirm {
-		content = m.awaySettingsView()
-	} else if m.textTools != nil && !m.confirm {
-		content = m.textToolsView()
-	} else if m.privacyRules != nil && !m.confirm {
-		content = m.privacyRulesView()
-	} else if m.shareAccess != nil && !m.confirm {
-		content = m.shareAccessView()
-	} else if m.userActions != nil {
-		content = m.userActionsView()
-	} else if m.passwordForm {
-		content = m.passwordFormView()
-	} else if m.folderMenu {
-		content = m.folderMenuView()
-	} else if m.statusMenu {
-		content = m.statusMenuView()
-	} else if m.uploadStatusMenu {
-		content = m.uploadStatusMenuView()
-	} else if m.uploadConfirm {
-		content = m.uploadConfirmView()
-	} else if m.help {
-		content = m.helpView()
-	} else if m.details {
-		content = m.detailView()
-	}
-	if m.community.chats.dialog != nil {
-		content = m.chatDialogView()
-	} else if m.community.rooms.dialog != nil {
-		content = m.roomDialogView()
-	}
-	if m.community.rooms.private.dialog != nil {
-		content = m.privateRoomDialogView()
-	}
-	if m.community.buddies.dialog != nil {
-		content = m.buddyDialogView()
-	} else if m.community.discover.dialog != nil {
-		content = m.discoverDialogView()
-	}
-	if m.community.peer.dialog {
-		content = communityConfirmationView("Save picture for "+m.community.peer.image.Username+" to "+m.community.peer.path+"? Existing files are never overwritten.", m.community.peer.confirm, m.community.peer.dialogScroll, m.width, m.height)
+	content, modal := m.screen()
+	if modal && colorsEnabled() && m.width >= 40 && m.height >= 8 {
+		content = overlay(m.mainView(), content, m.width, m.height)
 	}
 	v := tea.NewView(content)
 	v.AltScreen = true
@@ -73,242 +22,216 @@ func (m model) View() tea.View {
 	return v
 }
 
+// screen picks what fills the terminal and reports whether it is a dialog
+// drawn over the workspace.
+func (m model) screen() (string, bool) {
+	content, modal := m.mainView(), true
+	switch {
+	case m.setup:
+		content, modal = m.setupView(), false
+	case m.commandOutput != nil:
+		content = m.commandOutputView()
+	case m.downloadAs != nil:
+		content = m.downloadAsView()
+	case m.searchScope != nil:
+		content = m.searchScopeView()
+	case m.privileges != nil && !m.confirm:
+		content = m.privilegesView()
+	case m.receivingEditor != nil && !m.confirm:
+		content = m.receivingSettingsView()
+	case m.awayEditor != nil && !m.confirm:
+		content = m.awaySettingsView()
+	case m.apiEditor != nil && !m.confirm:
+		content = m.apiEditorView()
+	case m.textTools != nil && !m.confirm:
+		content = m.textToolsView()
+	case m.privacyRules != nil && !m.confirm:
+		content = m.privacyRulesView()
+	case m.shareAccess != nil && !m.confirm:
+		content = m.shareAccessView()
+	case m.userActions != nil:
+		content = m.userActionsView()
+	case m.passwordForm:
+		content = m.passwordFormView()
+	case m.folderMenu:
+		content = m.folderMenuView()
+	case m.statusMenu:
+		content = m.statusMenuView()
+	case m.uploadStatusMenu:
+		content = m.uploadStatusMenuView()
+	case m.uploadConfirm:
+		content = m.uploadConfirmView()
+	case m.help:
+		content = m.helpView()
+	case m.details:
+		content = m.detailView()
+	default:
+		modal = false
+	}
+	if m.community.chats.dialog != nil {
+		content, modal = m.chatDialogView(), true
+	} else if m.community.rooms.dialog != nil {
+		content, modal = m.roomDialogView(), true
+	}
+	if m.community.rooms.private.dialog != nil {
+		content, modal = m.privateRoomDialogView(), true
+	}
+	if m.community.buddies.dialog != nil {
+		content, modal = m.buddyDialogView(), true
+	} else if m.community.discover.dialog != nil {
+		content, modal = m.discoverDialogView(), true
+	}
+	if m.community.peer.dialog {
+		content, modal = communityConfirmationView("Save picture for "+m.community.peer.image.Username+" to "+m.community.peer.path+"? Existing files are never overwritten.", m.community.peer.confirm, m.community.peer.dialogScroll, m.width, m.height), true
+	}
+	return content, modal
+}
+
+// dialog centres a modal card of the given total width: title in the top
+// border, the body, and a hint line. Lines are truncated to the inner width.
+func (m model) dialog(title string, body []string, hints string, width int) string {
+	width = max(24, min(width, m.width-4))
+	inner := width - 4
+	lines := []string{""}
+	for _, line := range body {
+		lines = append(lines, ansi.Truncate(line, inner, "…"))
+	}
+	if hints != "" {
+		lines = append(lines, "", dialogHints(hints, inner))
+	}
+	card := modalFrame(title, lines, width)
+	if m.width < 28 || lipgloss.Height(card) > m.height {
+		// Too small for a card: plain lines, clipped to the terminal.
+		plain := append([]string{accent(title)}, body...)
+		if hints != "" {
+			plain = append(plain, dialogHints(hints, max(1, m.width)))
+		}
+		plain = plain[:min(len(plain), max(1, m.height))]
+		for i := range plain {
+			plain[i] = ansi.Truncate(plain[i], max(1, m.width), "…")
+		}
+		return strings.Join(plain, "\n")
+	}
+	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, card)
+}
+
+// modalFrame is frame with an accent border, sized to its content.
+func modalFrame(title string, lines []string, width int) string {
+	inner := width - 4
+	edge := func(s string) string { return styled(s, fg(theme.accent)) }
+	top := edge("╭" + strings.Repeat("─", width-2) + "╮")
+	if title != "" {
+		head := edge("╭─") + " " + accent(ansi.Truncate(title, max(1, width-7), "…")) + " "
+		top = head + edge(strings.Repeat("─", max(0, width-lipgloss.Width(head)-1))+"╮")
+	}
+	out := []string{top}
+	for _, line := range lines {
+		line = ansi.Truncate(line, inner, "…")
+		out = append(out, edge("│")+" "+line+strings.Repeat(" ", max(0, inner-lipgloss.Width(line)))+" "+edge("│"))
+	}
+	out = append(out, edge("│"+strings.Repeat(" ", width-2)+"│"), edge("╰"+strings.Repeat("─", width-2)+"╯"))
+	return strings.Join(out, "\n")
+}
+
+// dialogHints styles "key action · key action" hint text.
+func dialogHints(hints string, width int) string {
+	parts := strings.Split(hints, " · ")
+	for i, part := range parts {
+		parts[i] = renderHint(part)
+	}
+	return ansi.Truncate(strings.Join(parts, "   "), width, "…")
+}
+
+// buttons renders a horizontal choice such as No / Yes.
+func buttons(labels []string, choice int) string {
+	parts := make([]string, len(labels))
+	for i, label := range labels {
+		if i == choice {
+			parts[i] = pill(label, theme.accent, theme.onAccent)
+		} else {
+			parts[i] = " " + muted(label) + " "
+		}
+	}
+	return strings.Join(parts, "  ")
+}
+
+// formField renders a labelled input for setup-style forms.
+func formField(label, raw, placeholder string, focused, secret bool, cursor, width int) string {
+	value := raw
+	if secret {
+		value = strings.Repeat("•", utf8.RuneCountInString(raw))
+	}
+	if value == "" {
+		value = faint(placeholder)
+	}
+	marker, title := "  ", subtle(label)
+	if focused {
+		marker, title = accent("▍ "), strong(label)
+		if raw == "" {
+			value = inputCursorStyle().Render("█") + faint(placeholder)
+		} else {
+			value = renderInput("", raw, cursor, secret, lipgloss.NewStyle())
+		}
+	}
+	return marker + title + "\n" + marker + ansi.Truncate(value, max(4, width-2), "…")
+}
+
 func (m model) setupView() string {
 	labels := []string{"Username", "Password", "Listen address", "Network interface (optional)", "Download path", "Share (name:path, optional)"}
 	placeholders := []string{"Soulseek username", "Required", "0.0.0.0:50300", "Automatic (for example, wg0)", "~/Downloads/oto", "music:/home/me/Music"}
-	var b strings.Builder
-	b.WriteString(styled("oto", lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#CBA6F7"))))
-	b.WriteString("  First-time setup\n")
-	b.WriteString(muted("Connect directly to Soulseek. Your password stays in your local config."))
-	b.WriteString("\n\n")
-	fieldWidth := max(24, min(52, m.width-12))
+	width := max(34, min(64, m.width-4))
+	body := []string{subtle("Connect directly to Soulseek."), muted("Your password stays in your local config."), ""}
 	for i, label := range labels {
-		raw := m.setupVals[i]
-		value := raw
-		if i == 1 {
-			value = strings.Repeat("•", utf8.RuneCountInString(raw))
-		}
-		if value == "" {
-			value = muted(placeholders[i])
-		}
-		marker := "  "
-		if i == m.setupField {
-			marker = styled("› ", lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#CBA6F7")))
-			if raw == "" {
-				value = inputCursorStyle().Render("█") + muted(placeholders[i])
-			} else {
-				value = renderInput("", raw, m.inputCursor, i == 1, lipgloss.NewStyle())
-			}
-		}
-		fmt.Fprintf(&b, "%s%s\n  %s\n", marker, strong(label), trunc(value, fieldWidth))
+		body = append(body, strings.Split(formField(label, m.setupVals[i], placeholders[i], i == m.setupField, i == 1, m.inputCursor, width-4), "\n")...)
+		body = append(body, "")
 	}
 	if m.setupErr != "" {
-		b.WriteString("\n" + danger("! "+m.setupErr))
+		body = append(body, danger("✗ "+m.setupErr))
 	}
-	b.WriteString("\n\n" + muted("↑↓ / tab fields   •   ←→ move caret   •   enter next / save   •   esc quit"))
-
-	cardWidth := max(34, min(64, m.width-4))
-	card := panelStyle().Width(cardWidth).Padding(1, 2).Render(b.String())
-	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, card)
+	return m.dialog("Welcome to oto", body, "tab next field · ←/→ move caret · enter next / save · esc quit", width)
 }
 
 func (m model) passwordFormView() string {
-	var b strings.Builder
-	b.WriteString(styled("Change Soulseek password", lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#CBA6F7"))))
-	b.WriteString("\n\n" + strong("Username") + "\n  " + m.passwordUser)
+	width := max(34, min(64, m.width-4))
+	body := []string{subtle("Username"), "  " + strong(m.passwordUser), ""}
 	labels := []string{"New password", "Confirm new password"}
 	placeholders := []string{"Required", "Enter it again"}
-	fieldWidth := max(24, min(52, m.width-12))
 	for i, label := range labels {
-		raw := m.passwordVals[i]
-		value := strings.Repeat("•", utf8.RuneCountInString(raw))
-		if value == "" {
-			value = muted(placeholders[i])
-		}
-		marker := "  "
-		if i == m.passwordField {
-			marker = styled("› ", lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#CBA6F7")))
-			if raw == "" {
-				value = inputCursorStyle().Render("█") + muted(placeholders[i])
-			} else {
-				value = renderInput("", raw, m.inputCursor, true, lipgloss.NewStyle())
-			}
-		}
-		fmt.Fprintf(&b, "\n\n%s%s\n  %s", marker, strong(label), trunc(value, fieldWidth))
+		body = append(body, strings.Split(formField(label, m.passwordVals[i], placeholders[i], i == m.passwordField, true, m.inputCursor, width-4), "\n")...)
+		body = append(body, "")
 	}
 	if m.passwordErr != "" {
-		b.WriteString("\n\n" + danger("! "+m.passwordErr))
+		body = append(body, danger("✗ "+m.passwordErr))
 	}
+	hints := "tab next field · ←/→ move caret · enter next / change · esc cancel"
 	if m.passwordChanging {
-		b.WriteString("\n\n" + muted("Changing password…"))
-	} else {
-		b.WriteString("\n\n" + muted("↑↓ / tab fields   •   ←→ move caret   •   enter next / change   •   esc cancel"))
+		body, hints = append(body, muted("Changing password…")), ""
 	}
-	cardWidth := max(34, min(64, m.width-4))
-	card := panelStyle().Width(cardWidth).Padding(1, 2).Render(b.String())
-	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, card)
-}
-
-func (m model) workspaceNames() []string {
-	names := []string{"Search", "Wishlist", "Browse", "Transfers", "Community", "Stats", "Shares", "Settings"}
-	unread, downloads, uploads := 0, 0, 0
-	for _, item := range m.wishlist {
-		if item.Unread {
-			unread += item.ResultCount
-		}
-	}
-	for _, transfer := range m.transfers {
-		if transfer.state != "running" {
-			continue
-		}
-		if transfer.direction == "upload" {
-			uploads++
-		} else {
-			downloads++
-		}
-	}
-	if unread > 0 {
-		names[workspaceWishlist] = fmt.Sprintf("Wishlist %d", unread)
-	}
-	names[workspaceTransfers] = fmt.Sprintf("Transfers %d↓ %d↑", downloads, uploads)
-	return names
-}
-func (m model) mainView() string {
-	if m.width < 36 || m.height < 8 || m.workspace == workspaceCommunity && m.community.chats.composing && m.height < 14 {
-		return m.compactView()
-	}
-
-	left := styled("oto", lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#CBA6F7")))
-	if down, up := m.transferSpeeds(); down > 0 || up > 0 {
-		left += muted(fmt.Sprintf("  ↓ %s/s  ↑ %s/s", formatBytes(down), formatBytes(up)))
-	} else {
-		left += muted("  Soulseek for your terminal")
-	}
-	header := spread(left, m.statusView(), m.width-2)
-	hs := lipgloss.NewStyle().Width(m.width).Padding(0, 1)
-	if colorsEnabled() {
-		hs = hs.Background(lipgloss.Color("#181825"))
-	}
-	header = hs.Render(header)
-
-	tabLine := lipgloss.NewStyle().Width(m.width).Padding(0, 1).Render(m.workspaceTabs(m.width - 2))
-
-	panelHeight := max(4, m.height-4)
-	innerWidth := max(10, m.width-4)
-	innerHeight := max(2, panelHeight-2)
-	var body string
-	switch m.workspace {
-	case workspaceSearch:
-		body = m.renderSearch(innerWidth, innerHeight)
-	case workspaceWishlist:
-		body = m.renderWishlist(innerWidth, innerHeight)
-	case workspaceBrowse:
-		body = m.renderBrowse(innerWidth, innerHeight)
-	case workspaceTransfers:
-		body = m.renderTransfers(innerWidth, innerHeight)
-	case workspaceCommunity:
-		body = m.renderCommunity(innerWidth, innerHeight)
-	case workspaceStats:
-		body = m.renderStats(innerWidth, innerHeight)
-	case workspaceShares:
-		body = m.renderShares(innerWidth, innerHeight)
-	case workspaceSettings:
-		body = m.renderSettings(innerWidth, innerHeight)
-	}
-	panel := panelStyle().Width(m.width).Height(panelHeight).Padding(0, 1).Render(body)
-
-	parts := []string{header, tabLine, panel, m.errorView(), m.footerView()}
-	return strings.Join(parts, "\n")
-}
-
-func (m model) transferSpeeds() (uint64, uint64) {
-	var down, up uint64
-	for _, t := range m.transfers {
-		if t.state != "running" {
-			continue
-		}
-		if t.direction == "upload" {
-			up += t.speed
-		} else {
-			down += t.speed
-		}
-	}
-	return down, up
-}
-
-func (m model) compactView() string {
-	if m.workspace == workspaceCommunity && m.community.peer.form {
-		return strings.Join(m.peerPictureForm(m.width, m.height), "\n")
-	}
-	if m.workspace == workspaceCommunity && m.community.inspectEditing {
-		return strings.Join([]string{m.workspaceTabs(m.width), renderInputWindow(m.community.input, m.community.inputCursor, m.width), trunc(m.community.inputErr, m.width), trunc("Esc back · Enter inspect", m.width)}, "\n")
-	}
-	if m.workspace == workspaceCommunity && m.community.chats.form != "" {
-		return strings.Join(m.chatFormView(m.width, m.height), "\n")
-	}
-	if m.workspace == workspaceCommunity && m.community.rooms.form != "" {
-		return strings.Join(m.roomFormView(m.width, m.height), "\n")
-	}
-	if m.workspace == workspaceCommunity && m.community.rooms.private.editing() {
-		return strings.Join(m.privateRoomFormView(m.width, m.height), "\n")
-	}
-	if m.workspace == workspaceCommunity && m.community.view == 2 && (m.community.buddies.editor != nil || m.community.buddies.form != "") {
-		return strings.Join(m.buddyEditorView(m.width, m.height), "\n")
-	}
-	if m.workspace == workspaceCommunity && m.community.view == 3 && m.community.discover.form != "" {
-		return strings.Join(m.discoverFormView(m.width, m.height), "\n")
-	}
-	if m.workspace == workspaceCommunity && m.community.chats.composing {
-		d := m.community.chats.drafts[m.chatKey()]
-		return strings.Join(communityPane([]string{"Compose to " + m.community.chats.conversation.Target, renderInputWindow(strings.ReplaceAll(strings.ReplaceAll(d.text, "\n", "↵"), "\t", "⇥"), d.cursor, m.width), m.community.chats.err, "Enter send · Esc navigate"}, m.width, m.height, 0), "\n")
-	}
-	footer := "tab switch  o status  ? help  q quit"
-	if activity := m.activityView(m.width); activity != "" {
-		footer = activity
-	}
-	if m.workspace == workspaceBrowse {
-		if heading, detail := m.browseFailure(); heading != "" {
-			return strings.Join(browseErrorLines(heading, detail, m.width, m.height), "\n")
-		}
-	}
-	lines := []string{
-		trunc("oto  "+m.statusText(), m.width),
-		m.workspaceTabs(m.width),
-		trunc(m.errorText(), m.width),
-		trunc(footer, m.width),
-	}
-	return strings.Join(lines, "\n")
+	return m.dialog("Change Soulseek password", body, hints, width)
 }
 
 func (m model) folderMenuView() string {
-	width := max(1, min(64, m.width-6))
-	bodyWidth := max(1, width-4)
-	body := []string{strong("Download folder"), fmt.Sprintf("%q  %q", m.folderMenuUser, m.folderMenuPath), ""}
+	width := min(68, m.width-4)
+	inner := max(1, width-4)
+	body := []string{subtle(fmt.Sprintf("%q  %q", m.folderMenuUser, m.folderMenuPath)), ""}
 	for i, option := range []string{"Download folder only", "Download folder + subfolders"} {
-		marker := "  "
-		if i == m.folderMenuChoice {
-			marker, option = accent("› "), strong(option)
-		}
-		body = append(body, marker+option)
+		body = append(body, selectedRow(option, i == m.folderMenuChoice))
 	}
 	for i, field := range []struct{ label, value string }{{"Download root", m.folderMenuDownloadDir}, {"Folder name", m.folderMenuName}} {
 		value := fmt.Sprintf("%q", field.value)
 		if m.folderMenuEditing && (i == 1) == m.folderMenuRename {
-			value = renderInputWindow(field.value, m.inputCursor, bodyWidth)
+			value = renderInputWindow(field.value, m.inputCursor, inner)
 		}
-		body = append(body, "", strong(field.label), value)
+		body = append(body, "", muted(field.label), value)
 	}
-	body = append(body, "", m.folderMenuError)
+	if m.folderMenuError != "" {
+		body = append(body, "", danger("✗ "+m.folderMenuError))
+	}
+	hints := "↑/↓ choose · / edit root · n rename · enter download · esc cancel"
 	if m.folderMenuEditing {
-		body = append(body, "←→ move · enter / esc finish editing")
-	} else {
-		body = append(body, "↑↓ choose · / edit root · n rename", "enter download · esc cancel")
+		hints = "←/→ move caret · enter done · esc done"
 	}
-	for i := range body {
-		body[i] = trunc(body[i], bodyWidth)
-	}
-	card := panelStyle().Width(width).Padding(1, 1).Render(strings.Join(body, "\n"))
-	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, card)
+	return m.dialog("Download folder", body, hints, width)
 }
 
 func renderInputWindow(value string, cursor, width int) string {
@@ -321,8 +244,8 @@ func renderInputWindow(value string, cursor, width int) string {
 var presenceChoices = []daemon.Presence{daemon.PresenceOnline, daemon.PresenceAway, daemon.PresenceOffline}
 
 func (m model) statusMenuView() string {
-	var b strings.Builder
-	b.WriteString(strong("Soulseek status") + "\n\n")
+	var body []string
+	colors := []string{success("●"), warning("●"), danger("●")}
 	for i, presence := range presenceChoices {
 		label := strings.ToUpper(string(presence[:1])) + string(presence[1:])
 		if presence == m.status.presence {
@@ -332,30 +255,20 @@ func (m model) statusMenuView() string {
 		if i == m.statusMenuChoice {
 			marker, label = accent("› "), strong(label)
 		}
-		b.WriteString(marker + label + "\n")
+		body = append(body, marker+colors[i]+" "+label)
 	}
-	b.WriteString("\n" + muted("↑↓ / j k choose  •  enter apply  •  esc / o cancel"))
-	card := panelStyle().Width(max(34, min(48, m.width-4))).Padding(1, 2).Render(b.String())
-	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, card)
+	return m.dialog("Soulseek status", body, "↑/↓ choose · enter apply · esc cancel", 44)
 }
 
 func (m model) uploadStatusMenuView() string {
-	var b strings.Builder
-	b.WriteString(strong("Clear uploads by status") + "\n\n")
+	var body []string
 	for i, scope := range uploadClearScopes {
-		marker, label := "  ", scope.label
-		if i == m.uploadStatusChoice {
-			marker, label = accent("› "), strong(label)
-		}
-		b.WriteString(marker + label + "\n")
+		body = append(body, selectedRow(scope.label, i == m.uploadStatusChoice))
 	}
-	b.WriteString("\n" + muted("↑↓ / j k choose  •  enter clear  •  esc cancel"))
-	card := panelStyle().Width(max(1, min(64, m.width-4))).Padding(1, 2).Render(b.String())
-	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, card)
+	return m.dialog("Clear uploads by status", body, "↑/↓ choose · enter clear · esc cancel", 52)
 }
 
 func (m model) uploadConfirmView() string {
-	var b strings.Builder
 	title := "Confirm upload action"
 	if m.forcePending != nil {
 		title = "Download anyway"
@@ -363,124 +276,10 @@ func (m model) uploadConfirmView() string {
 	if m.restoreShareExclusions {
 		title = "Restore share exclusions"
 	}
-	b.WriteString(strong(title) + "\n\n")
-	b.WriteString(trunc(m.uploadConfirmLabel+"?", max(4, m.width-12)) + "\n\n")
-	for i, label := range []string{"No", "Yes"} {
-		marker := "  "
-		if i == m.uploadConfirmChoice {
-			marker = accent("› ")
-			label = strong(label)
-		}
-		b.WriteString(marker + label + "\n")
-	}
-	b.WriteString("\n" + muted("↑↓ / j k choose  •  enter accept  •  esc cancel"))
-	card := panelStyle().Width(max(1, min(64, m.width-4))).Padding(1, 2).Render(b.String())
-	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, card)
-}
-
-func (m model) helpView() string {
-	rows := []string{accent("Keyboard")}
-	groups := []struct {
-		title string
-		rows  [][2]string
-	}{
-		{"Navigation", [][2]string{
-			{"tab / shift+tab", "switch workspace"},
-			{"1 2 … 8", "jump to a workspace"},
-			{"↑ ↓  or  j k", "move selection / edit history"},
-			{"page up/down", "move by a page"},
-			{"← →", "expand / collapse; change Settings section"},
-			{"home / end", "first / last item; line boundary while editing"},
-			{"ctrl+page up/down", "switch Search, Browse, Transfers or Community tabs"},
-		}},
-		{"Editing", [][2]string{
-			{"ctrl+← → / ctrl+⌫", "move / delete by word"},
-			{"ctrl+a e u k", "move / delete to a line boundary"},
-			{"/", "edit the current field"},
-			{"tab (filter)", "complete fields and special values"},
-		}},
-		{"Files & actions", [][2]string{
-			{"enter", "toggle folder / download Search or Browse file"},
-			{"i", "show file details"},
-			{"U", "User actions: inspect / browse / search selected user"},
-			{"F6 / shift+F6", "Community: next / previous pane; Esc goes back"},
-			{"/ (Community)", "inspect an exact username"},
-			{"N / ctrl+n (Chats)", "new / next unread conversation"},
-			{"i / Enter (chat)", "compose; multiline Enter previews before send"},
-			{"Tab / Esc (composer)", "complete username / return to navigation"},
-			{"f / p n / End (chat)", "find history / older-newer pages / reach latest"},
-			{"y / e E (chat)", "copy selected / export text or JSON to new file"},
-			{"↑↓ / j k (chat)", "select message; page up/down scroll the transcript"},
-			{"R / X / C (private chat)", "confirm retry / cancel selected / clear history"},
-			{"ctrl+w / h (Chats list)", "close (keep history/draft) / show closed history"},
-			{"N / J (Rooms)", "join/create form / join selected room"},
-			{"u (Rooms / Buddies)", "search selected room / all buddies; preview query and scope"},
-			{"Enter / ctrl+w (room)", "open / close history; neither changes membership"},
-			{"L / R / F (room)", "leave now / remember autojoin / forget autojoin"},
-			{"f / m / p n (Rooms list)", "filter / all-remembered-joined-history-invitations / pages"},
-			{"G / g (public feed)", "view read-only feed / explicitly subscribe or stop"},
-			{"Ctrl+P (join form)", "explicit public/private creation"},
-			{"M / W / I (Rooms)", "private roles / room wall / invitation preference"},
-			{"a / A (private roles)", "add exact member / operator (confirmed role required)"},
-			{"o / O / d (private roles)", "grant / revoke operator / remove selected member"},
-			{"c / C (private roles)", "relinquish membership / ownership; retains history"},
-			{"r (private roles)", "reconcile last request ID, never duplicate an uncertain write"},
-			{"i / C (wall)", "edit desired text / clear own ticker; restored after rejoin"},
-			{"F6 then U (room)", "focus members, choose user, open User actions"},
-			{"a / e / D (Buddies)", "add / edit note and flags / remove exact buddy (Cancel default)"},
-			{"f / s / p / n (Buddies)", "filter username/note / sort all buddies / previous/next page"},
-			{"Tab / Space (buddy editor)", "choose field / toggle notification, priority, or trust"},
-			{"Ctrl+R / Esc (buddy editor)", "confirm reloading saved metadata / retain local draft"},
-			{"↑↓ / Enter (Discover)", "choose interests / recommendations / users / self-profile"},
-			{"s / i / u (Discover item)", "search files / item recommendations / related users"},
-			{"a / e / D (Interests)", "add / edit like or dislike / confirmed removal"},
-			{"e / Ctrl+J / Ctrl+R (self-profile)", "edit description / insert newline / confirm reload"},
-			{"r / p / n (User Inspector)", "refresh peer profile / first / next interests page"},
-			{"P (User Inspector)", "save cached picture to chosen path (confirm, no overwrite)"},
-			{"f", "edit Search filters / find in loaded Browse list"},
-			{"c", "clear / restore search filters"},
-			{"w (search)", "save the active query and filter to Wishlist"},
-			{"s / S (transfers)", "prepare file/folder or containing-folder search"},
-			{"/ f r d (wishlist)", "add, edit filter, rerun, or remove a wishlist item"},
-			{"space", "select item or loaded folder contents"},
-			{"d", "download / choose folder mode and destination"},
-			{"D (Search/Browse)", "download highlighted file with a different local filename"},
-			{"r", "refresh browse / resume or retry transfer / rescan shares"},
-			{"d / D (uploads)", "abort selected / confirm abort all for selected users"},
-			{"c / C (uploads)", "confirm clear selected / clear by status"},
-			{"p", "pause download subtree"},
-			{"b (search)", "browse the selected user's folder"},
-			{"s", "save Browse list or Settings"},
-			{"o", "choose Online, Away, or Offline"},
-		}},
-		{"General", [][2]string{
-			{"share scan", "Shares: r rescan, c cancel before publication; last index stays available"},
-			{"s (Shares)", "send highlighted shared file/folder: recipient, paged preview, explicit confirmation"},
-			{"elapsed / ETA", "daemon stream time; folder/user elapsed is cumulative"},
-			{"Settings → Shares", "edit/add rules, d remove, restore defaults; s saves"},
-			{"Settings → Bandwidth", "named upload + download limits; s saves both"},
-			{"auto-clear completed", "Downloads / Uploads: opt in for future completions only"},
-			{"ctrl+w (results)", "close the active search or user tab"},
-			{"? / esc", "open / close this guide"},
-			{"q", "quit"},
-		}},
-	}
-	for _, group := range groups {
-		rows = append(rows, "", muted(strings.ToUpper(group.title)))
-		for _, row := range group.rows {
-			rows = append(rows, fmt.Sprintf("%-20s %s", strong(row[0]), row[1]))
-		}
-	}
-	visible := max(4, m.height-8)
-	scroll := max(0, min(m.helpScroll, len(rows)-visible))
-	window := []string{strong("oto controls") + muted("  ·  ↑↓ scroll  ·  ? / esc close")}
-	window = append(window, rows[scroll:min(len(rows), scroll+visible)]...)
-	if scroll+visible < len(rows) {
-		window = append(window, muted("↓ more"))
-	}
-	cardWidth := max(34, min(72, m.width-4))
-	card := panelStyle().Width(cardWidth).Padding(1, 2).Render(strings.Join(window, "\n"))
-	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, card)
+	width := min(64, m.width-4)
+	body := strings.Split(ansi.Wrap(m.uploadConfirmLabel+"?", max(8, width-4), ""), "\n")
+	body = append(body, "", buttons([]string{"No", "Yes"}, m.uploadConfirmChoice))
+	return m.dialog(title, body, "←/→ choose · y yes · enter accept · esc cancel", width)
 }
 
 func (m model) detailView() string {
@@ -538,16 +337,12 @@ func (m model) detailView() string {
 		}
 		rows = append(rows, [2]string{"Availability", availability})
 	}
-
-	cardWidth := max(34, min(72, m.width-4))
-	var b strings.Builder
-	b.WriteString(accent("File details") + "\n\n")
+	width := max(34, min(76, m.width-4))
+	body := make([]string, 0, len(rows))
 	for _, row := range rows {
-		fmt.Fprintf(&b, "%s %s\n", strong(fmt.Sprintf("%-13s", row[0])), trunc(row[1], cardWidth-18))
+		body = append(body, muted(fmt.Sprintf("%-13s", row[0]))+" "+ansi.Truncate(row[1], width-18, "…"))
 	}
-	b.WriteString("\n" + muted("i / esc close"))
-	card := panelStyle().Width(cardWidth).Padding(1, 2).Render(b.String())
-	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, card)
+	return m.dialog("File details", body, "i close · esc close", width)
 }
 
 func resultPath(path string) (string, string) {
@@ -567,16 +362,19 @@ func searchTextColumn(value string, width int) string {
 	return value + strings.Repeat(" ", max(0, width-lipgloss.Width(value)))
 }
 
-func searchMetadata(x result, width int, peer bool) (string, string) {
-	type column struct {
-		label, value string
-		width        int
-	}
+type metadataColumn struct {
+	label, value string
+	width        int
+	tone         string
+}
+
+// searchColumns lists the file metadata columns that fit width.
+func searchColumns(x result, width int, peer bool) []metadataColumn {
 	size := ""
 	if !x.directory {
 		size = formatBytes(x.size)
 	}
-	columns := []column{{"SIZE", size, 9}}
+	columns := []metadataColumn{{"SIZE", size, 9, ""}}
 	if width >= 70 {
 		quality := ""
 		if x.bitrate > 0 {
@@ -589,31 +387,35 @@ func searchMetadata(x result, width int, peer bool) (string, string) {
 		if x.duration > 0 {
 			duration = formatDuration(uint64(x.duration))
 		}
-		columns = append(columns, column{"RATE", quality, 6}, column{"TIME", duration, 6})
+		columns = append(columns, metadataColumn{"RATE", quality, 6, ""}, metadataColumn{"TIME", duration, 6, ""})
 	}
 	if width >= 90 {
-		status := ""
+		status, tone := "", ""
 		if !x.public {
-			status = "private"
+			status, tone = "private", "warning"
 		}
 		if x.free {
-			status = strings.TrimSpace(status + " free")
+			status, tone = strings.TrimSpace(status+" free"), "success"
 		} else if x.queue > 0 {
-			status = strings.TrimSpace(status + fmt.Sprintf(" q%d", x.queue))
+			status, tone = strings.TrimSpace(status+fmt.Sprintf(" q%d", x.queue)), "warning"
 		}
-		columns = append(columns, column{"STATUS", status, 12})
+		columns = append(columns, metadataColumn{"STATUS", status, 12, tone})
 	}
 	if peer && width >= 110 {
 		speed := ""
 		if x.speed > 0 {
 			speed = formatBytes(uint64(x.speed)) + "/s"
 		}
-		columns = append(columns, column{"SPEED", speed, 11})
+		columns = append(columns, metadataColumn{"SPEED", speed, 11, ""})
 	}
 	if peer && width >= 130 {
-		columns = append(columns, column{"USER", x.user, 18})
+		columns = append(columns, metadataColumn{"USER", x.user, 18, "user"})
 	}
+	return columns
+}
 
+func searchMetadata(x result, width int, peer bool) (string, string) {
+	columns := searchColumns(x, width, peer)
 	headings, values := make([]string, len(columns)), make([]string, len(columns))
 	for i, column := range columns {
 		if column.label == "USER" {
@@ -627,6 +429,31 @@ func searchMetadata(x result, width int, peer bool) (string, string) {
 	return strings.Join(headings, " "), strings.Join(values, " ")
 }
 
+// metadataSpans is searchMetadata's value row as coloured spans.
+func metadataSpans(x result, width int, peer bool) []span {
+	var spans []span
+	for i, column := range searchColumns(x, width, peer) {
+		if i > 0 {
+			spans = append(spans, gap(1))
+		}
+		text := searchColumn(column.value, column.width)
+		if column.label == "USER" {
+			text = searchTextColumn(column.value, column.width)
+		}
+		switch column.tone {
+		case "success":
+			spans = append(spans, tinted(text, theme.success))
+		case "warning":
+			spans = append(spans, tinted(text, theme.warning))
+		case "user":
+			spans = append(spans, tinted(text, theme.accent))
+		default:
+			spans = append(spans, tinted(text, theme.subtext))
+		}
+	}
+	return spans
+}
+
 func treeGlyph(tree *treeState, node treeNode) string {
 	if node.kind == treeFile {
 		return "·"
@@ -637,8 +464,7 @@ func treeGlyph(tree *treeState, node treeNode) string {
 	return "▸"
 }
 
-func treeSelection(tree *treeState, index int, selected map[int]bool) string {
-	chosen, total := tree.selection(index, selected)
+func selectionMark(chosen, total int) string {
 	if chosen == 0 {
 		return "○"
 	}
@@ -646,6 +472,10 @@ func treeSelection(tree *treeState, index int, selected map[int]bool) string {
 		return "●"
 	}
 	return "◐"
+}
+
+func treeSelection(tree *treeState, index int, selected map[int]bool) string {
+	return selectionMark(tree.selection(index, selected))
 }
 
 func treeSelectionIDs(tree *treeState, index int, transfers []transfer, selected map[string]bool) string {
@@ -658,289 +488,54 @@ func treeSelectionIDs(tree *treeState, index int, transfers []transfer, selected
 			}
 		}
 	}
-	if chosen == 0 {
-		return "○"
-	}
-	if chosen == total {
-		return "●"
-	}
-	return "◐"
+	return selectionMark(chosen, total)
 }
 
 func treeLabel(tree *treeState, index int) string {
 	return strings.Repeat("  ", tree.depth(index)) + tree.nodes[index].label
 }
 
-func (m model) searchTabsLine(width int) string {
-	if len(m.searchTabs) == 0 {
+// treeSpans renders the shared leading cells of a tree row: selection mark,
+// expand glyph, and the indented label padded to nameWidth.
+func treeSpans(tree *treeState, index int, mark string, nameWidth int) []span {
+	node := tree.nodes[index]
+	glyph := treeGlyph(tree, node)
+	label := searchTextColumn(treeLabel(tree, index), nameWidth)
+	name := plain(label)
+	switch node.kind {
+	case treeUser:
+		name = boldSpan(label, theme.accent)
+	case treeFolder, treeShareRoot:
+		name = boldSpan(label, theme.text)
+	case treePage:
+		name = tinted(label, theme.muted)
+	}
+	glyphColor := theme.subtext
+	if node.kind == treeFile {
+		glyphColor = theme.faint
+	}
+	spans := []span{}
+	if mark != "" {
+		spans = append(spans, markSpan(mark), gap(1))
+	}
+	return append(spans, tinted(glyph, glyphColor), gap(1), name)
+}
+
+func spread(left, right string, width int) string {
+	if width <= 0 {
 		return ""
 	}
-	labels := make([]string, len(m.searchTabs))
-	for i, tab := range m.searchTabs {
-		label := tab.query
-		if tab.scope == "rooms" && len(tab.rooms) > 0 {
-			label = "#" + strings.Join(tab.rooms, ", ") + ": " + label
-		} else if tab.scope == "buddies" {
-			label = "buddies: " + label
-		} else if len(tab.usernames) > 0 {
-			label = "@" + strings.Join(tab.usernames, ", ") + ": " + label
-		}
-		if tab.loading {
-			label += "…"
-		}
-		if i == m.searchTabIndex {
-			labels[i] = accent("[" + label + "]")
-		} else {
-			labels[i] = muted(label)
-		}
+	lw, rw := lipgloss.Width(left), lipgloss.Width(right)
+	if lw+rw+1 <= width {
+		return left + strings.Repeat(" ", width-lw-rw) + right
 	}
-	return trunc(muted("SEARCHES  ")+strings.Join(labels, muted("  ")), width)
-}
-
-func (m model) statusText() string {
-	if m.status.status == daemon.StatusConnected && (m.status.presence == daemon.PresenceOnline || m.status.presence == daemon.PresenceAway) {
-		return string(m.status.presence)
+	if rw >= width {
+		return trunc(right, width)
 	}
-	if m.status.status == daemon.StatusStopped {
-		return string(daemon.PresenceOffline)
+	if rw+1 < width {
+		return trunc(left, width-rw-1) + " " + right
 	}
-	if m.status.status == "" {
-		return "starting"
-	}
-	return string(m.status.status)
-}
-
-func (m model) statusView() string {
-	status := m.statusText()
-	color := lipgloss.Color("#F9E2AF")
-	if status == string(daemon.PresenceOnline) {
-		color = lipgloss.Color("#A6E3A1")
-	} else if status == string(daemon.PresenceOffline) || m.status.status == daemon.StatusError {
-		color = lipgloss.Color("#F38BA8")
-	}
-	label := styled("●", lipgloss.NewStyle().Foreground(color)) + " " + status
-	if m.status.user != "" {
-		label += muted(" @" + m.status.user)
-	}
-	return label
-}
-
-func (m model) footerHints() []string {
-	if m.stats.prune {
-		if m.stats.prunePending {
-			if m.stats.pruneConfirm {
-				return []string{"pruning…"}
-			}
-			return []string{"loading preview…", "esc cancel"}
-		}
-		if m.stats.pruneConfirm {
-			return []string{"enter confirm prune", "esc cancel"}
-		}
-		return []string{"enter preview", "l logs", "d daily", "esc cancel"}
-	}
-	if m.choiceChoosing {
-		return []string{"← → choose", "enter accept", "esc cancel"}
-	}
-	if m.editing {
-		action := "apply"
-		switch {
-		case m.filterEditing:
-			action = "apply filter"
-		case m.browseFindEditing:
-			action = "apply find"
-		case m.workspace == workspaceSearch:
-			action = "search"
-		case m.workspace == workspaceBrowse:
-			action = "browse"
-		case m.workspace == workspaceShares:
-			action = "add"
-		}
-		return []string{"enter " + action, "esc cancel"}
-	}
-
-	switch m.workspace {
-	case workspaceSearch:
-		hints := []string{"/ search", "U user actions", "f filter", "w wishlist"}
-		if len(m.searchTabs) > 1 {
-			hints = append(hints, "ctrl+pgup/pgdn tab")
-		}
-		_, node := m.searchTree.node(m.cursor)
-		if node == nil {
-			return hints
-		}
-		if node.kind == treeFile {
-			return append(hints, "enter/d download", "space select", "b browse", "i details")
-		}
-		hints = append(hints, "enter expand", "b browse")
-		if node.kind == treeFolder {
-			return append(hints, "d folder download")
-		}
-		return append(hints, "d download")
-	case workspaceWishlist:
-		return []string{"/ add", "f filter", "enter open", "r rerun", "d remove"}
-	case workspaceBrowse:
-		if len(m.browseTabs) == 0 {
-			return []string{"enter open", "r refresh"}
-		}
-		hints := []string{"U user actions", "s save list", "r refresh"}
-		if len(m.browseTabs) > 1 {
-			hints = append(hints, "ctrl+pgup/pgdn tab")
-		}
-		if m.browseLoaded {
-			hints = append([]string{"f find"}, hints...)
-		}
-		_, node := m.browseTree.node(m.cursor)
-		if node == nil {
-			return hints
-		}
-		if node.kind == treeFile {
-			return append([]string{"enter/d download", "space select", "i details"}, hints...)
-		}
-		if node.kind == treeFolder {
-			return append([]string{"enter expand", "d folder download"}, hints...)
-		}
-		return append([]string{"enter expand"}, hints...)
-	case workspaceTransfers:
-		hints := []string{"ctrl+pgup/pgdn ↓↑", "U user actions", "s search", "S folder search"}
-		if m.transferTab == transferDownloads {
-			return append(hints, "space mark files", "F download anyway", "p pause", "r resume/retry", "d cancel", "c clear")
-		}
-		return append(hints, "space mark", "r retry", "d abort", "D abort users", "c clear selected", "C clear status")
-	case workspaceCommunity:
-		if m.community.inspectEditing {
-			return []string{"enter inspect", "esc back"}
-		}
-		if m.community.chats.composing {
-			return []string{"enter send/preview", "tab complete", "esc navigate"}
-		}
-		if m.community.chats.form != "" {
-			return []string{"enter submit", "esc cancel"}
-		}
-		if m.community.view == 2 && m.community.supports("buddies") {
-			return []string{"a add", "e edit", "D remove", "f filter", "s sort", "p/n pages", "U actions"}
-		}
-		if m.community.view == 1 && m.community.supports("public-rooms") {
-			if m.community.rooms.private.editing() {
-				return []string{"enter submit/preview", "esc keep wall draft"}
-			}
-			if m.community.rooms.private.view != "" {
-				return []string{"p/n pages", "r refresh/reconcile", "esc back"}
-			}
-			if m.community.rooms.form != "" {
-				return []string{"enter submit", "tab autojoin", "esc cancel"}
-			}
-			if m.community.rooms.feedView {
-				return []string{"g subscribe/off", "up/down scroll", "p/n pages", "esc back"}
-			}
-			return []string{"J join", "L leave", "R remember", "F forget", "F6 members", "G feed", "C clear", "e/E export"}
-		}
-		if m.community.view == 0 && m.community.supports("private-chat") {
-			return []string{"N new chat", "i compose", "ctrl+n unread", "F6 panes", "f find", "e/E export", "R/X retry/cancel", "C clear"}
-		}
-		return []string{"F6 panes", "ctrl+pgup/down views", "/ inspect", "U actions", "esc back"}
-	case workspaceStats:
-		if m.stats.edit != "" {
-			return []string{"enter apply", "esc cancel"}
-		}
-		if m.stats.detail != nil {
-			return []string{"up/down scroll", "esc close"}
-		}
-		hints := []string{"ctrl+pgup/down pages", "a account", "/ peer"}
-		switch m.stats.page {
-		case 0:
-			hints = append(hints, "up/down scroll", "esc clear peer")
-		case 1:
-			hints = append(hints, "r range", "[ / ] dates", "up/down scroll", "esc clear peer")
-		case 2:
-			hints = append(hints, "s sort", "d direction", "enter details", "n next", "p first")
-		case 3:
-			hints = append(hints, "d direction", "e outcome", "[ / ] dates", "enter details", "n next", "p first")
-		case 4:
-			hints = append(hints, "r refresh", "f level", "/ search", "esc clear filters")
-		}
-		return append(hints, "P prune")
-	case workspaceShares:
-		hints := []string{"/ add", "s send", "Enter access", "r rescan"}
-		if scan := m.status.shareScan; scan != nil && scan.State == "scanning" {
-			hints = append(hints, "c cancel scan")
-		}
-		_, node := m.shareTree.node(m.cursor)
-		if node == nil {
-			return hints
-		}
-		if node.kind != treeFile {
-			hints = append([]string{"enter expand"}, hints...)
-		}
-		if node.kind == treeShareRoot {
-			hints = append(hints, "d remove")
-		}
-		return hints
-	case workspaceSettings:
-		if m.shareExclusions.open {
-			if m.shareExclusions.editing {
-				return []string{"enter stage rule", "esc cancel edit", "← → move caret"}
-			}
-			if m.settingsSaving {
-				return []string{"saving settings", "esc back"}
-			}
-			return []string{"a add", "enter edit", "d remove", "s save", "esc back", "R restore defaults"}
-		}
-		hints := []string{"s save"}
-		fields := m.settingFields()
-		if m.cursor < 0 || m.cursor >= len(fields) {
-			return hints
-		}
-		field := fields[m.cursor]
-		action := "edit"
-		switch field.kind {
-		case settingInfo:
-			return hints
-		case settingBool:
-			action = "toggle"
-		case settingChoice:
-			action = "choose"
-		case settingAction:
-			switch field.id {
-			case settingStatsPrune:
-				action = "edit prune days"
-			case settingManageShareExclusions:
-				action = "manage exclusions"
-			case settingChangePassword:
-				action = "change password"
-			case settingListeningPortStatus:
-				action = "check port"
-			case settingClearSearchHistory:
-				action = "clear searches"
-			case settingClearFilterHistory:
-				action = "clear filters"
-			default:
-				action = "run"
-			}
-		}
-		return append([]string{"enter " + action}, hints...)
-	default:
-		return nil
-	}
-}
-
-func (m model) footerView() string {
-	style := lipgloss.NewStyle().Width(m.width).Padding(0, 1)
-	if m.confirm {
-		message := "Quit and interrupt active transfers?"
-		if m.status.waitForUploadsOnQuit {
-			message = "Wait for active uploads, then interrupt downloads?"
-		}
-		return style.Render(danger(message + "  y confirm  •  esc cancel"))
-	}
-	if activity := m.activityView(m.width - 2); activity != "" {
-		return style.Render(activity)
-	}
-	if scan := m.status.shareScan; !m.editing && scan != nil && (scan.State == "scanning" || scan.State == "cancelling" || scan.State == "publishing") {
-		label := strings.ToUpper(scan.State[:1]) + scan.State[1:]
-		return style.Render(muted(trunc(fmt.Sprintf("%s %s shares %q: %d files, %d folders, %ds", pulseBar(m.spinner, 6), label, scan.Root, scan.Files, scan.Directories, scan.ElapsedMS/1000), m.width-2)))
-	}
-	actions := strings.Join(m.footerHints(), "  •  ")
-	return style.Render(muted(spread(actions, "•  ? all controls", m.width-2)))
+	return trunc(left, width)
 }
 
 // cardView centers the app's standard modal card over the terminal. fill receives the
@@ -970,115 +565,19 @@ func (m model) cardView(title, footer string, fill func(width, rows int) []strin
 	if len(body) > rows {
 		body = body[:rows]
 	}
-	lines := append([]string{strong(trunc(title, inner))}, body...)
 	if footer != "" {
-		lines = append(lines, muted(trunc(footer, inner)))
+		body = append(body, muted(trunc(footer, inner)))
 	}
-	for i := range lines {
-		lines[i] = trunc(lines[i], inner)
+	lines := make([]string, len(body))
+	for i := range body {
+		lines[i] = trunc(body[i], inner)
 	}
-	card := panelStyle().Width(cardWidth).Padding(0, 1).Render(strings.Join(lines, "\n"))
+	card := modalFrame(title, lines, cardWidth)
+	// modalFrame adds a spacer row before the bottom edge; drop it so the
+	// card keeps the rows callers were promised.
+	parts := strings.Split(card, "\n")
+	card = strings.Join(append(parts[:len(parts)-2], parts[len(parts)-1]), "\n")
 	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, card)
-}
-
-func panelStyle() lipgloss.Style {
-	s := lipgloss.NewStyle().Border(lipgloss.RoundedBorder(), true)
-	if colorsEnabled() {
-		s = s.BorderForeground(lipgloss.Color("#45475A"))
-	}
-	return s
-}
-
-func colorsEnabled() bool { return os.Getenv("NO_COLOR") == "" }
-
-func styled(s string, style lipgloss.Style) string {
-	if !colorsEnabled() {
-		return s
-	}
-	return style.Render(s)
-}
-
-func accent(s string) string {
-	return styled(s, lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#CBA6F7")))
-}
-
-func strong(s string) string {
-	return styled(s, lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#CDD6F4")))
-}
-
-func muted(s string) string {
-	return styled(s, lipgloss.NewStyle().Foreground(lipgloss.Color("#7F849C")))
-}
-
-func danger(s string) string {
-	return styled(s, lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#F38BA8")))
-}
-
-func selectedRow(s string, selected bool) string {
-	if !selected {
-		return "  " + s
-	}
-	return styled("› "+s, lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#F5E0DC")))
-}
-
-func searchResultRow(s string, current, selected bool) string {
-	prefix := "  "
-	style := lipgloss.NewStyle()
-	if selected {
-		style = style.Bold(true).Foreground(lipgloss.Color("#CBA6F7"))
-	}
-	if current {
-		prefix = "› "
-		style = style.Bold(true).Foreground(lipgloss.Color("#F5E0DC")).Background(lipgloss.Color("#313244"))
-		if selected {
-			style = style.Foreground(lipgloss.Color("#1E1E2E")).Background(lipgloss.Color("#CBA6F7"))
-		}
-	}
-	return styled(prefix+s, style)
-}
-
-func sectionHeader(title, detail string, width int) string {
-	return spread(accent(title), muted(detail), width)
-}
-
-func spread(left, right string, width int) string {
-	if width <= 0 {
-		return ""
-	}
-	lw, rw := lipgloss.Width(left), lipgloss.Width(right)
-	if lw+rw+1 <= width {
-		return left + strings.Repeat(" ", width-lw-rw) + right
-	}
-	if rw >= width {
-		return trunc(right, width)
-	}
-	if rw+1 < width {
-		return trunc(left, width-rw-1) + " " + right
-	}
-	return trunc(left, width)
-}
-
-func (m model) errorText() string {
-	if m.status.err != "" {
-		return "Error: " + m.status.err
-	}
-	if m.err != "" {
-		return "Error: " + m.err
-	}
-	if m.historyErr != "" {
-		return "Error: history: " + m.historyErr
-	}
-	return ""
-}
-
-func (m model) errorView() string {
-	message := m.errorText()
-	if message != "" {
-		message = danger(message)
-	} else if m.notice != "" {
-		message = muted(m.notice)
-	}
-	return lipgloss.NewStyle().Width(m.width).Padding(0, 1).Render(trunc(message, m.width-2))
 }
 
 func countLabel(n int, singular string) string {
@@ -1141,7 +640,7 @@ func trunc(s string, n int) string {
 func inputCursorStyle() lipgloss.Style {
 	style := lipgloss.NewStyle()
 	if colorsEnabled() {
-		style = style.Foreground(lipgloss.Color("#CBA6F7"))
+		style = style.Foreground(theme.accent)
 	}
 	return style
 }
@@ -1158,4 +657,17 @@ func renderInput(prefix, value string, cursor int, secret bool, style lipgloss.S
 		}
 	}
 	return style.Render(prefix+string(runes[:cursor])) + inputCursorStyle().Render("█") + style.Render(string(runes[cursor:]))
+}
+
+// promptLine renders a workspace input row: the key that edits it, then the
+// live input with caret, the current value, or a placeholder.
+func promptLine(key, value, placeholder string, editing bool, input string, cursor int, hint string) string {
+	prefix := accent(key) + "  "
+	if editing {
+		return prefix + renderInput("", input, cursor, false, fg(theme.highlight)) + "   " + faint(hint)
+	}
+	if value != "" {
+		return prefix + styled(value, fg(theme.text))
+	}
+	return prefix + faint(placeholder)
 }

@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"github.com/charmbracelet/x/ansi"
 	"strings"
 	"testing"
 
@@ -163,7 +164,7 @@ func TestCommunityPrivateRoomsReviewRegressions(t *testing.T) {
 	r.members[1].Username = "Selected-" + strings.Repeat("猫", 200)
 	r.memberRow = 1
 	view := strings.Join(m.roomRolesPane(36, 10), "\n")
-	failIf(t, !strings.Contains(view, ">Selected-") || lipgloss.Width(view) > 36 || lipgloss.Height(view) > 10, "selected member hidden by wrapped header/row", view)
+	failIf(t, !strings.Contains(ansi.Strip(view), "Selected-") || lipgloss.Width(view) > 36 || lipgloss.Height(view) > 10, "selected member hidden by wrapped header/row", view)
 	m.width, m.height = 40, 16
 	p.dialog = &privateRoomDialog{identity: id, room: r.selected, label: strings.Repeat("long preview ", 500) + "\nTAIL-OF-PREVIEW"}
 	failIf(t, strings.Contains(m.privateRoomDialogView(), "TAIL-OF-PREVIEW"), "preview fixture not long enough")
@@ -179,8 +180,8 @@ func TestCommunityPrivateRoomsReviewRegressions(t *testing.T) {
 	failIf(t, p.wallDrafts[m.wallDraftKey()].text != "unsent draft", "clearing server wall discarded unrelated local draft")
 	m.community.summary.Connected = true
 	p.wall.Fresh = true
-	failIf(t, !strings.Contains(strings.Join(m.roomWallPane(80, 24), "\n"), "stale/unknown"), "revoked room advertised fresh wall")
+	failIf(t, !strings.Contains(plainText(m.roomWallPane(80, 24)), " stale"), "revoked room advertised fresh wall")
 	r.active.Joined = true
 	m.community.err = "daemon unavailable"
-	failIf(t, !strings.Contains(strings.Join(m.roomWallPane(80, 24), "\n"), "stale/unknown"), "unavailable daemon advertised fresh wall")
+	failIf(t, !strings.Contains(plainText(m.roomWallPane(80, 24)), " stale"), "unavailable daemon advertised fresh wall")
 }

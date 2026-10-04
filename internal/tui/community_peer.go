@@ -126,66 +126,6 @@ func (m *model) applyCommunityPeer(x communityPeerMsg) {
 		}
 	}
 }
-func (c communityModel) peerLines() []string {
-	if !c.supports("profiles") {
-		return []string{"Peer profiles unavailable in this daemon"}
-	}
-	p := c.peer
-	state := p.profile.State
-	if p.err != "" {
-		state = "stale"
-	}
-	if state == "" {
-		state = "loading"
-	}
-	if !c.summary.Connected {
-		state = "offline"
-	}
-	lines := []string{"Peer profile: " + state}
-	if p.err != "" {
-		lines = append(lines, "! "+p.err)
-	}
-	if p.profile.Error != "" {
-		lines = append(lines, "! "+p.profile.Error)
-	}
-	if !p.profile.UpdatedAt.IsZero() {
-		lines = append(lines, "Fetched: "+p.profile.UpdatedAt.UTC().Format(time.RFC3339))
-		policy := "unknown"
-		if p.profile.UploadAllowedKnown {
-			policy = fmt.Sprintf("%d (peer reported; not share access)", p.profile.UploadAllowed)
-		}
-		lines = append(lines, "Unsolicited upload policy: "+policy)
-		suffix := ""
-		if state != "ready" || p.err != "" {
-			suffix = " (stale)"
-		}
-		lines = append(lines, fmt.Sprintf("Slots%s: %d · available: %t", suffix, p.profile.UploadSlots, p.profile.SlotsAvailable), fmt.Sprintf("Queue%s: %d", suffix, p.profile.QueueLength))
-		if p.profile.PictureType != "" {
-			lines = append(lines, fmt.Sprintf("Picture%s: %s %dx%d · P save", suffix, p.profile.PictureType, p.profile.PictureWidth, p.profile.PictureHeight))
-		}
-		lines = append(lines, "Description"+suffix+":", strings.ReplaceAll(p.profile.Description, "\t", "⇥"))
-	}
-	if c.supports("discovery") {
-		interestState := p.interests.State
-		if p.interestErr != "" {
-			interestState = "stale"
-		}
-		if !c.summary.Connected {
-			interestState = "offline (stale)"
-		}
-		lines = append(lines, "Interests: "+interestState+" · p first / n next page")
-		if p.interestErr != "" {
-			lines = append(lines, "! "+p.interestErr)
-		}
-		if p.interests.Error != "" {
-			lines = append(lines, "! "+p.interests.Error)
-		}
-		for _, row := range p.interests.Rows {
-			lines = append(lines, row.Kind+": "+row.Item)
-		}
-	}
-	return lines
-}
 func (m *model) peerKey(k tea.KeyPressMsg) (bool, tea.Cmd) {
 	p := &m.community.peer
 	if p.busy {
@@ -315,10 +255,6 @@ func (m *model) applyPeerPicture(x communityPictureSavedMsg) {
 	}
 	p.form, p.err = false, ""
 	m.setNotice("Saved profile picture: " + x.path)
-}
-func (m model) peerPictureForm(width, height int) []string {
-	p := m.community.peer
-	return communityPane([]string{"Save picture for " + p.image.Username, renderInputWindow(p.path, p.pathCursor, width), p.err, "Enter review · Esc cancel · existing files never overwritten"}, width, height, 0)
 }
 
 func (m *model) pastePeerPath(text string) {

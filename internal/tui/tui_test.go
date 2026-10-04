@@ -31,8 +31,8 @@ func TestWishlistWorkspaceKeysBadgeAndBell(t *testing.T) {
 	t.Setenv("NO_COLOR", "1")
 	cfg := config.Default()
 	m := model{workspace: workspaceWishlist, width: 100, height: 24, cfg: cfg, activeSearch: cfg.Search, selected: map[int]bool{}, wishlistNotified: map[string]uint64{}, wishlist: []daemon.WishlistItem{{ID: "w-1", Query: "rare album", Filter: "type:flac", ResultCount: 2, Unread: true, NotificationSequence: 1}}}
-	if names := m.workspaceNames(); names[workspaceWishlist] != "Wishlist 2" {
-		t.Fatalf("wishlist badge: %v", names)
+	if badge, _ := m.workspaceBadge(workspaceWishlist); badge != "2" {
+		t.Fatalf("wishlist badge: %q", badge)
 	}
 	view := m.renderWishlist(90, 12)
 	for _, want := range []string{"rare album", "type:flac", "2 results"} {
@@ -83,7 +83,7 @@ func TestWishlistWorkspaceKeysBadgeAndBell(t *testing.T) {
 func TestOnDemandSearchAndBrowseActivityFooter(t *testing.T) {
 	t.Setenv("NO_COLOR", "1")
 	m := model{width: 80, height: 24, selected: map[int]bool{}}
-	if footer := m.footerView(); !strings.Contains(footer, "? all controls") || strings.Contains(footer, "Searching ") || strings.Contains(footer, "q quit") {
+	if footer, status := m.footerView(), m.statusLine(); !strings.Contains(footer, "? help") || strings.Contains(status, "Searching ") || strings.Contains(footer, "q quit") {
 		t.Fatalf("idle footer: %q", footer)
 	}
 
@@ -91,7 +91,7 @@ func TestOnDemandSearchAndBrowseActivityFooter(t *testing.T) {
 		t.Fatal("search did not start")
 	}
 	searchRequest, searchOperation := m.searchTabs[0].request, m.searchTabs[0].operation
-	if footer := m.footerView(); !strings.Contains(footer, "Searching a long query") || strings.Contains(footer, "? all controls") {
+	if footer := m.statusLine(); !strings.Contains(footer, "Searching a long query") || !strings.Contains(m.footerView(), "? help") {
 		t.Fatalf("search footer: %q", footer)
 	}
 	if compact := m.compactView(); !strings.Contains(compact, "Searching a long query") {
@@ -104,7 +104,7 @@ func TestOnDemandSearchAndBrowseActivityFooter(t *testing.T) {
 	}
 	updated, _ := m.Update(searchMsg{request: searchRequest, operation: searchOperation})
 	m = updated.(model)
-	if footer := m.footerView(); !strings.Contains(footer, "? all controls") || strings.Contains(footer, "Searching ") {
+	if footer := m.statusLine(); strings.Contains(footer, "Searching ") {
 		t.Fatalf("completed search footer: %q", footer)
 	}
 	stopped, cmd := m.Update(activityTickMsg{})
@@ -121,7 +121,7 @@ func TestOnDemandSearchAndBrowseActivityFooter(t *testing.T) {
 		t.Fatal("browse did not start")
 	}
 	request := m.browseTabs[0].request
-	if footer := m.footerView(); !strings.Contains(footer, "Browsing @peer") || strings.Contains(footer, "%") {
+	if footer := m.statusLine(); !strings.Contains(footer, "Browsing @peer") || strings.Contains(footer, "%") {
 		t.Fatalf("initial browse footer: %q", footer)
 	}
 	updated, _ = m.Update(browseProgressMsg{user: "peer", request: request + 1, progress: &daemon.BrowseProgress{Received: 75, Total: 100}})
@@ -129,24 +129,24 @@ func TestOnDemandSearchAndBrowseActivityFooter(t *testing.T) {
 	failIf(t, m.browseTabs[0].total != 0, "stale browse progress was applied")
 	updated, _ = m.Update(browseProgressMsg{user: "peer", request: request, progress: &daemon.BrowseProgress{Received: 25, Total: 100}})
 	m = updated.(model)
-	if footer := m.footerView(); !strings.Contains(footer, " 25%") {
+	if footer := m.statusLine(); !strings.Contains(footer, " 25%") {
 		t.Fatalf("determinate browse footer: %q", footer)
 	}
 	updated, _ = m.Update(browseProgressMsg{user: "peer", request: request, progress: &daemon.BrowseProgress{Received: 100, Total: 100}})
 	m = updated.(model)
-	if footer := m.footerView(); !strings.Contains(footer, "Finishing @peer") || !strings.Contains(footer, "100%") {
+	if footer := m.statusLine(); !strings.Contains(footer, "Finishing @peer") || !strings.Contains(footer, "100%") {
 		t.Fatalf("finishing browse footer: %q", footer)
 	}
 	updated, _ = m.Update(browseMsg{user: "peer", request: request})
 	m = updated.(model)
-	if footer := m.footerView(); !strings.Contains(footer, "? all controls") || strings.Contains(footer, "Browsing @") {
+	if footer := m.statusLine(); strings.Contains(footer, "Browsing @") {
 		t.Fatalf("completed browse footer: %q", footer)
 	}
 	m.openBrowse("peer", "", true)
 	request = m.browseTabs[0].request
 	updated, _ = m.Update(browseMsg{user: "peer", request: request, err: context.Canceled})
 	m = updated.(model)
-	if footer := m.footerView(); !strings.Contains(footer, "? all controls") {
+	if footer := m.footerView(); !strings.Contains(footer, "? help") {
 		t.Fatalf("failed browse footer: %q", footer)
 	}
 }
@@ -322,7 +322,7 @@ func TestSettingsSidebarEditsAccountWithoutLeakingPassword(t *testing.T) {
 	cfg := config.Default()
 	cfg.Soulseek.Username, cfg.Soulseek.Password = "alice", "secret"
 	m := newModel(context.Background(), nil, "", false, cfg)
-	m.width, m.height, m.workspace = 80, 16, workspaceSettings
+	m.width, m.height, m.workspace = 80, 34, workspaceSettings
 
 	view := m.View().Content
 	failIf(t, !strings.Contains(view, "Settings") || !strings.Contains(view, "Account") || strings.Contains(view, "secret") || strings.Contains(view, "••••••") || !strings.Contains(view, "Change Soulseek password"), "settings account sidebar is missing the password action or exposed the password")
@@ -349,9 +349,9 @@ func TestSettingsSidebarEditsAccountWithoutLeakingPassword(t *testing.T) {
 		"Network interface       ‹ Automatic ›",
 		"Public IP address       1.2.3.4",
 		"Listening port status   Press Enter",
-		"Connect on startup      On",
-		"NAT-PMP port forwarding On",
-		"UPnP port forwarding    On",
+		"Connect on startup      ● On",
+		"NAT-PMP port forwarding ● On",
+		"UPnP port forwarding    ● On",
 	} {
 		failIfFmt(t, !strings.Contains(view, want), "connection settings missing aligned row %q", want)
 	}
@@ -620,8 +620,8 @@ func TestSearchFilterEditingAndMetadata(t *testing.T) {
 	m.results = []result{{user: "peer", path: `music\album\song.flac`, size: 1024, bitrate: 320, duration: 125, vbr: true}}
 	m.searchTree, m.cursor = buildSearchTree(m.results, treeState{}, 0)
 	m.cursor = m.searchTree.cursorForSource(0)
-	view := m.renderSearch(100, 10)
-	for _, want := range []string{"1 loaded / 1 filtered / 4 found", "FILE", "SIZE", `SOURCE  peer  •  music\album`, "song.flac", "320kv", "2:05", "private"} {
+	view := panelText(m, workspaceSearch, 100, 10)
+	for _, want := range []string{"1 loaded / 1 filtered / 4 found", "FILE", "SIZE", `↳ peer · music\album`, "song.flac", "320kv", "2:05", "private"} {
 		failIfFmt(t, !strings.Contains(view, want), "search metadata missing %q in %q", want, view)
 	}
 	for _, line := range strings.Split(view, "\n") {
@@ -629,7 +629,7 @@ func TestSearchFilterEditingAndMetadata(t *testing.T) {
 	}
 	failIfFmt(t, !strings.Contains(view, "› ○ ·       song.flac"), "filename was not left-aligned: %q", view)
 	t.Setenv("NO_COLOR", "")
-	if selected := searchResultRow("row", false, true); !strings.Contains(selected, "\x1b[") {
+	if selected := listRow([]span{plain("row")}, 10, false, true); !strings.Contains(selected, "\x1b[") {
 		t.Fatalf("selected result was not highlighted: %q", selected)
 	}
 	if narrow := m.renderSearch(60, 10); strings.Contains(narrow, "RATE") || !strings.Contains(narrow, "song.flac") {
@@ -652,7 +652,7 @@ func TestSearchResultTabs(t *testing.T) {
 	m.openSearch("second query")
 	secondRequest, secondOperation := m.searchTabs[1].request, m.searchTabs[1].operation
 	m.searchFilter = "free:true"
-	failIfFmt(t, len(m.searchTabs) != 2 || !strings.Contains(m.renderSearch(100, 10), "first query"), "search tabs not rendered: tabs=%d", len(m.searchTabs))
+	failIfFmt(t, len(m.searchTabs) != 2 || !strings.Contains(panelText(m, workspaceSearch, 100, 10), "first query"), "search tabs not rendered: tabs=%d", len(m.searchTabs))
 
 	m.key(tea.KeyPressMsg(tea.Key{Code: tea.KeyPgUp, Mod: tea.ModCtrl}))
 	failIfFmt(t, m.query != "first query" || m.searchFilter != "type:audio", "first search tab state = %q %q", m.query, m.searchFilter)
@@ -710,7 +710,7 @@ func TestTransferDirectionTabsProgressAndSpinner(t *testing.T) {
 		{id: "d2", filename: `folder\queued.mp3`, direction: "download", state: "queued", total: 100, queue: 2, user: "alice"},
 		{id: "u1", filename: "shared.wav", direction: "upload", state: "completed", done: 100, total: 100, user: "bob"},
 	}}
-	if got := m.workspaceNames()[workspaceTransfers]; got != "Transfers 1↓ 0↑" {
+	if got, _ := m.workspaceBadge(workspaceTransfers); got != "1↓" {
 		t.Fatalf("transfer activity tab = %q", got)
 	}
 	m.transferTrees[transferDownloads], m.transferCursors[transferDownloads] = buildTransferTree(m.transfers, "download", treeState{}, 0)
@@ -720,11 +720,11 @@ func TestTransferDirectionTabsProgressAndSpinner(t *testing.T) {
 	failIfFmt(t, len(ids) != 2 || (ids[0] != "d1" && ids[1] != "d1") || (ids[0] != "d2" && ids[1] != "d2"), "recursive transfer action IDs = %v", ids)
 	m.cursor = m.transferTrees[transferDownloads].cursorForSource(0)
 
-	downloads := m.renderTransfers(100, 10)
-	failIfFmt(t, !strings.Contains(downloads, "[↓ DOWNLOADS 2]") || !strings.Contains(downloads, "███░░░░░░░░░░░  25%") || !strings.Contains(downloads, "1.5 KiB/s") || !strings.Contains(downloads, "Elapsed 0:01  ETA 0:01") || !strings.Contains(downloads, "⠋") || strings.Contains(downloads, "shared.wav"), "download tab did not render progress and spinner correctly: %q", downloads)
+	downloads := panelText(m, workspaceTransfers, 100, 10)
+	failIfFmt(t, !strings.Contains(downloads, "[↓ Downloads 2]") || !strings.Contains(downloads, "━━━───────────  25%") || !strings.Contains(downloads, "1.5 KiB/s") || !strings.Contains(downloads, "Elapsed 0:01  ETA 0:01") || !strings.Contains(downloads, "⠋") || strings.Contains(downloads, "shared.wav"), "download tab did not render progress and spinner correctly: %q", downloads)
 	barColumn, bars := -1, 0
 	for _, line := range strings.Split(downloads, "\n") {
-		if i := strings.IndexAny(line, "█░"); i >= 0 {
+		if i := strings.IndexAny(line, "━─"); i >= 0 {
 			column := lipgloss.Width(line[:i])
 			failIfFmt(t, barColumn >= 0 && column != barColumn, "progress bars are not aligned: columns %d and %d", barColumn, column)
 			barColumn, bars = column, bars+1
@@ -744,8 +744,8 @@ func TestTransferDirectionTabsProgressAndSpinner(t *testing.T) {
 	downloadCursor := m.transferTrees[transferDownloads].cursorForSource(1)
 	m.cursor = downloadCursor
 	m.key(tea.KeyPressMsg(tea.Key{Code: tea.KeyPgDown, Mod: tea.ModCtrl}))
-	uploads := m.renderTransfers(100, 10)
-	failIfFmt(t, m.rows() != 2 || !strings.Contains(uploads, "[↑ UPLOADS 1]") || !strings.Contains(uploads, "shared.wav") || strings.Contains(uploads, "album.flac"), "upload tab did not isolate uploads: rows=%d view=%q", m.rows(), uploads)
+	uploads := panelText(m, workspaceTransfers, 100, 10)
+	failIfFmt(t, m.rows() != 2 || !strings.Contains(uploads, "[↑ Uploads 1]") || !strings.Contains(uploads, "shared.wav") || strings.Contains(uploads, "album.flac"), "upload tab did not isolate uploads: rows=%d view=%q", m.rows(), uploads)
 	if _, node := m.transferTrees[transferUploads].node(m.transferTrees[transferUploads].cursorForSource(2)); node == nil || node.source != 2 {
 		t.Fatal("upload tree did not map to source transfer")
 	}
@@ -760,9 +760,9 @@ func TestTransferDirectionTabsProgressAndSpinner(t *testing.T) {
 	failIfFmt(t, next[0].speed != 1024 || *next[0].elapsedMS != 1500 || *next[0].etaSeconds != 1, "daemon timing lost: %+v", next)
 
 	t.Setenv("NO_COLOR", "")
-	normal := transferResultRow("row", false, false, false)
-	failedDownload := transferResultRow("row", false, false, true)
-	failedUpload := transferResultRow("row", false, true, true)
+	normal := transferTone(false, "running")
+	failedDownload := transferTone(false, "failed")
+	failedUpload := transferTone(true, "failed")
 	failIfFmt(t, normal == failedDownload || failedDownload != failedUpload, "failed transfer color was not distinct: normal=%q download=%q upload=%q", normal, failedDownload, failedUpload)
 }
 
@@ -812,8 +812,8 @@ func TestBrowseResultFolderAndUserTabs(t *testing.T) {
 	}})
 	m = updated.(model)
 	failIfFmt(t, m.cursor != 1, "browse folder cursor = %d", m.cursor)
-	view := m.renderBrowse(100, 10)
-	for _, want := range []string{"FOLDER  audio\\Hardstyle_320", "FILE", "SIZE", "RATE", "TIME", "STATUS", "song.mp3", "320kv", "2:05", "private"} {
+	view := panelText(m, workspaceBrowse, 100, 10)
+	for _, want := range []string{"nss · audio\\Hardstyle_320", "FILE", "SIZE", "RATE", "TIME", "STATUS", "song.mp3", "320kv", "2:05", "private"} {
 		failIfFmt(t, !strings.Contains(view, want), "browse result UI missing %q in %q", want, view)
 	}
 	m.selected[2] = true
@@ -821,7 +821,7 @@ func TestBrowseResultFolderAndUserTabs(t *testing.T) {
 	m.browseTree.expanded[folderID] = false
 	m.browseTree.rebuildVisible()
 	m.openBrowse("LittleDeng", "", false)
-	failIfFmt(t, len(m.browseTabs) != 2 || m.browseUser != "LittleDeng" || !strings.Contains(m.renderBrowse(100, 10), "nss"), "second user tab not retained: user=%q tabs=%d", m.browseUser, len(m.browseTabs))
+	failIfFmt(t, len(m.browseTabs) != 2 || m.browseUser != "LittleDeng" || !strings.Contains(panelText(m, workspaceBrowse, 100, 10), "nss"), "second user tab not retained: user=%q tabs=%d", m.browseUser, len(m.browseTabs))
 	staleRequest := m.browseTabs[1].request
 	m.openBrowse("LittleDeng", "", true)
 	updated, _ = m.Update(browseMsg{user: "LittleDeng", request: staleRequest, entries: []entry{{name: "stale"}}})
@@ -890,13 +890,13 @@ func TestBrowseFindInputTabsRefreshAndTarget(t *testing.T) {
 	m.key(key("f"))
 	m.input = "missing"
 	m.editKey(key("enter"))
-	failIf(t, !strings.Contains(m.renderBrowse(100, 15), "No matching shared files"), "zero-match Browse find message was not rendered")
+	failIf(t, !strings.Contains(panelText(m, workspaceBrowse, 100, 15), "No matching shared files"), "zero-match Browse find message was not rendered")
 	m.key(key("f"))
 	m.input = " album "
 	if cmd := m.editKey(key("enter")); cmd != nil || m.browseFilter != "album" || len(m.selected) != 0 || m.browseTabs[0].filter != "album" {
 		t.Fatalf("Browse find was not applied locally: filter=%q selected=%v", m.browseFilter, m.selected)
 	}
-	view := m.renderBrowse(100, 15)
+	view := panelText(m, workspaceBrowse, 100, 15)
 	failIfFmt(t, !strings.Contains(view, "4 matches / 6 items") || !strings.Contains(view, "f  album"), "Browse find UI missing count or query: %q", view)
 	album := treeID("browse-dir", `Music\Album`)
 	m.cursor = 0
@@ -937,7 +937,7 @@ func TestSavedBrowsePickerAndCacheActions(t *testing.T) {
 		selected:     map[int]bool{},
 		savedBrowses: []daemon.SavedBrowse{{Username: "alice", SavedAt: savedAt}, {Username: "bob", SavedAt: savedAt}},
 	}
-	view := m.renderBrowse(100, 12)
+	view := panelText(m, workspaceBrowse, 100, 12)
 	for _, want := range []string{"2 saved users", "SAVED USER", "alice", "bob"} {
 		failIfFmt(t, !strings.Contains(view, want), "saved browse picker missing %q: %q", want, view)
 	}
@@ -950,7 +950,7 @@ func TestSavedBrowsePickerAndCacheActions(t *testing.T) {
 	request := m.browseTabs[0].request
 	updated, _ := m.Update(browseMsg{user: "bob", request: request, cached: true, savedAt: savedAt, revision: 7})
 	m = updated.(model)
-	view = m.renderBrowse(100, 12)
+	view = panelText(m, workspaceBrowse, 100, 12)
 	failIfFmt(t, !m.browseLoaded || !m.browseCached || !strings.Contains(view, "bob (cached)") || !strings.Contains(view, "No shared files"), "cached empty browse not rendered: %q", view)
 	if cmd := m.key(key("s")); cmd == nil {
 		t.Fatal("loaded browse could not be saved")
@@ -965,9 +965,9 @@ func TestSavedBrowsePickerAndCacheActions(t *testing.T) {
 	request = m.browseTabs[0].request
 	updated, _ = m.Update(browseMsg{user: "bob", request: request, revision: 8, entries: []entry{{name: "Music", directory: true}}})
 	m = updated.(model)
-	failIf(t, m.browseCached || strings.Contains(m.renderBrowse(100, 12), "bob (cached)"), "live refresh kept cached marker")
+	failIf(t, m.browseCached || strings.Contains(panelText(m, workspaceBrowse, 100, 12), "bob (cached)"), "live refresh kept cached marker")
 	m.closeBrowseTab()
-	failIf(t, len(m.browseTabs) != 0 || m.browseUser != "" || !strings.Contains(m.renderBrowse(100, 12), "SAVED USER"), "closing final browse tab did not return to picker")
+	failIf(t, len(m.browseTabs) != 0 || m.browseUser != "" || !strings.Contains(panelText(m, workspaceBrowse, 100, 12), "SAVED USER"), "closing final browse tab did not return to picker")
 	if cmd := m.key(key("r")); cmd == nil || !m.savedBrowseLoading {
 		t.Fatal("saved browse picker refresh not started")
 	}

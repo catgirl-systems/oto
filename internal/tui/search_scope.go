@@ -229,7 +229,7 @@ func (m *model) searchScopeKey(k tea.KeyPressMsg) tea.Cmd {
 			d.row = 1 + len(d.users)
 		}
 		d.value, d.cursor, d.editing = "", 0, true
-	case "delete", "d":
+	case "x", "delete", "d":
 		if d.row >= 2 && d.row < 2+len(d.users) {
 			d.users = slices.Delete(d.users, d.row-2, d.row-1)
 		} else if d.row >= 2+len(d.users) {
@@ -283,6 +283,6 @@ func (m model) searchScopeView() string {
 		}
 		body = append(body, trunc(marker+line, max(1, width-4)))
 	}
-	body = append(body, "", trunc(d.err, max(1, width-4)), trunc("enter edit / search · tab finish edit · g cycle scope", max(1, width-4)), trunc("a add · d remove · b buddies · r rooms · esc cancel", max(1, width-4)))
+	body = append(body, "", trunc(d.err, max(1, width-4)), trunc("enter edit / search · tab finish edit · g cycle scope", max(1, width-4)), trunc("a add · x remove · b buddies · r rooms · esc cancel", max(1, width-4)))
 	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, panelStyle().Width(width).Padding(1, 1).Render(strings.Join(body, "\n")))
 }

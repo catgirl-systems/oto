@@ -283,7 +283,7 @@ func (m *model) textToolsKey(k tea.KeyPressMsg) tea.Cmd {
 			e.dialog = "save"
 			e.confirm = false
 		}
-	case "d", "delete":
+	case "x", "d", "delete":
 		if e.group < 3 && len(items) > 0 {
 			e.dialog = "remove"
 			e.confirm = false
@@ -377,7 +377,7 @@ func (m model) textToolsView() string {
 				}
 				lines = append(lines, mark+items[i])
 			}
-			lines = append(lines, "", "Tab group · a/n add · Enter edit · d remove")
+			lines = append(lines, "", "Tab group · a/n add · Enter edit · x remove")
 		}
 		if e.busy {
 			lines = append(lines, "Working…")

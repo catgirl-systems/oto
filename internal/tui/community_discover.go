@@ -11,7 +11,6 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/catgirl-systems/oto/internal/daemon"
 	"github.com/catgirl-systems/oto/internal/soulseek"
-	"github.com/charmbracelet/x/ansi"
 )
 
 var discoverModes = []struct {
@@ -800,95 +799,6 @@ func (m *model) discoverDialogKey(k tea.KeyPressMsg) tea.Cmd {
 		return m.sendDiscoverInterest(true, "", dialog.item, &dialog.revision)
 	}
 	return nil
-}
-
-func (m model) discoverSidebar(width, height int) []string {
-	d := m.community.discover
-	lines := []string{strong("Discover modes"), muted("↑↓ choose · Enter open")}
-	scroll := 0
-	for i, mode := range discoverModes {
-		lines = append(lines, selectedRow(mode.label, i == d.mode))
-		if i == d.mode {
-			scroll = max(0, strings.Count(ansi.Wrap(strings.Join(lines, "\n"), max(1, width), ""), "\n")+1-height)
-		}
-	}
-	return communityPane(lines, width, height, scroll)
-}
-func (m model) discoverRowsPane(width, height int) []string {
-	d := m.community.discover
-	if d.kind() == "profile" {
-		return communityPane([]string{strong("My profile") + muted(" · e edit · r refresh"), muted("↑↓/PgUp/PgDown scroll"), danger(d.err), strong("Description:"), strings.ReplaceAll(d.profile.Description, "\t", "⇥")}, width, height, d.profileScroll)
-	}
-	lines := []string{strong(discoverModes[d.mode].label)}
-	if d.kind() == "interests" {
-		lines = append(lines, muted("a add · e edit · D remove · f filter"), muted("p/n pages"))
-		if d.query != "" {
-			lines = append(lines, "Find: "+d.query)
-		}
-		if d.err != "" {
-			lines = append(lines, danger("! "+browseErrorText(d.err)))
-		}
-		if len(d.interests) == 0 {
-			lines = append(lines, muted("No interests saved."))
-		}
-		lines = communityPane(lines, width, max(1, height-2), 0)
-		rows := max(0, height-len(lines)-1)
-		start := max(0, d.row-rows+1)
-		for i := start; i < min(len(d.interests), start+rows); i++ {
-			x := d.interests[i]
-			state := x.Opinion + " · " + x.State
-			lines = append(lines, selectedRow(ansi.Truncate(x.Item+" ("+state+")", width-2, "…"), i == d.row))
-		}
-		lines = append(lines, muted("s search · i recs · u users"))
-		return lines[:min(len(lines), max(0, height))]
-	}
-	lines = append(lines, muted("Enter user/item · U actions · f filter"), muted("t target · r refresh · p/n pages"))
-	if d.target != "" {
-		lines = append(lines, "Target: "+d.target)
-	}
-	if d.state != "" {
-		state := d.state
-		if d.err != "" {
-			state += ": " + d.err
-		}
-		lines = append(lines, "State: "+state)
-	}
-	visible := m.discoverVisibleRows()
-	if len(visible) == 0 {
-		lines = append(lines, muted("No results yet; r refreshes."))
-	}
-	lines = communityPane(lines, width, max(1, height-2), 0)
-	rows := max(0, height-len(lines)-1)
-	start := max(0, d.row-rows+1)
-	for i := start; i < min(len(visible), start+rows); i++ {
-		x := visible[i]
-		label := x.Item
-		if x.User != nil {
-			label = x.User.Username
-			if x.Rating > 0 {
-				label += fmt.Sprintf(" · rating %d", x.Rating)
-			}
-		} else if x.Score != 0 {
-			label += fmt.Sprintf(" · score %d", x.Score)
-		}
-		lines = append(lines, selectedRow(ansi.Truncate(label, width-2, "…"), i == d.row))
-	}
-	lines = append(lines, muted("p/n pages · Enter inspect/expand · b browse · m message"))
-	return lines[:min(len(lines), max(0, height))]
-}
-func (m model) discoverFormView(width, height int) []string {
-	d := m.community.discover
-	if d.form == "profile" {
-		return communityPane([]string{"Edit self-description", renderInputWindow(strings.ReplaceAll(strings.ReplaceAll(d.profileDraft, "\n", "↵"), "\t", "⇥"), d.profileCursor, width), d.inputErr, "Enter save · Ctrl+J newline · Ctrl+R reload · Esc keep draft"}, width, height, 0)
-	}
-	label := "Filter results"
-	if d.form == "target" {
-		label = "Discovery target (interest or exact username)"
-	}
-	if d.form == "interest" {
-		label = "Interest · " + d.interestOpinion + " (Tab toggles like/dislike)"
-	}
-	return communityPane([]string{label, renderInputWindow(d.input, d.inputCursor, width), d.inputErr, "Enter submit · Esc keep draft · paste never submits"}, width, height, 0)
 }
 
 func (m *model) discoverItemAction(key string) (bool, tea.Cmd) {

@@ -74,7 +74,7 @@ func (m *model) shareExclusionsKey(k tea.KeyPressMsg) tea.Cmd {
 			v.editIndex, v.value = v.cursor, m.cfg.ShareExclusions[v.cursor]
 		}
 		v.editing, v.caret, v.err = true, len([]rune(v.value)), ""
-	case "d", "delete":
+	case "x", "d", "delete":
 		if len(m.cfg.ShareExclusions) > 0 {
 			rules := append([]string{}, m.cfg.ShareExclusions...)
 			m.cfg.ShareExclusions = slices.Delete(rules, v.cursor, v.cursor+1)

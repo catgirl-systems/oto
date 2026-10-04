@@ -22,7 +22,7 @@ func TestBrowseFailureLifecycle(t *testing.T) {
 	update(browseMsg{user: m.browseUser, request: request, err: errors.New("connection timed out")})
 	assertFailure := func() {
 		t.Helper()
-		view := m.renderBrowse(96, 18)
+		view := panelText(m, workspaceBrowse, 96, 18)
 		for _, want := range []string{"! Browse failed — ijustlikemusic1020", "connection timed out", "r retry browse", "/ browse another user", "(error)"} {
 			failIfFmt(t, !strings.Contains(view, want), "missing %q:\n%s", want, view)
 		}
@@ -47,7 +47,7 @@ func TestBrowseFailureLifecycle(t *testing.T) {
 	m.switchBrowseTab(-1)
 	assertFailure()
 	m.key(key("r"))
-	if view := m.renderBrowse(96, 18); !strings.Contains(view, "Loading shared files") || strings.Contains(view, "Browse failed") {
+	if view := panelText(m, workspaceBrowse, 96, 18); !strings.Contains(view, "Loading shared files") || strings.Contains(view, "Browse failed") {
 		t.Fatalf("retry view:\n%s", view)
 	}
 	update(browseMsg{user: m.browseUser, request: request, err: errors.New("stale failure")})
@@ -59,7 +59,7 @@ func TestBrowseFailureLifecycle(t *testing.T) {
 	failIf(t, !strings.Contains(m.renderBrowse(96, 18), "connection reset by peer"), "second failure missing")
 	m.key(key("r"))
 	update(browseMsg{user: m.browseUser, request: m.browseTabs[0].request, page: daemon.BrowsePage{Revision: 5}})
-	if view := m.renderBrowse(96, 18); !strings.Contains(view, "No shared files.") || strings.Contains(view, "(error)") {
+	if view := panelText(m, workspaceBrowse, 96, 18); !strings.Contains(view, "No shared files.") || strings.Contains(view, "(error)") {
 		t.Fatalf("successful empty share:\n%s", view)
 	}
 }
@@ -78,7 +78,7 @@ func TestBrowsePageFailurePersistence(t *testing.T) {
 	update(browsePageMsg{user: "peer", folder: "Music", revision: 8, request: failed, err: errors.New("folder unavailable")})
 	failIf(t, m.browseUser != "other", "background failure stole focus")
 	m.switchBrowseTab(-1)
-	view := m.renderBrowse(96, 18)
+	view := panelText(m, workspaceBrowse, 96, 18)
 	for _, want := range []string{"Could not load browse page", "Music: folder unavailable", "FILE", "Music"} {
 		failIfFmt(t, !strings.Contains(view, want), "page failure missing %q:\n%s", want, view)
 	}
@@ -168,7 +168,7 @@ func TestBrowseSuccessStatesRemainDistinct(t *testing.T) {
 		applyBrowsePage(&tab, browsePageMsg{page: daemon.BrowsePage{Revision: 8, Query: "missing", Cached: cached}})
 		m := model{workspace: workspaceBrowse, browseTabs: []browseTab{tab}}
 		m.loadBrowseTab(0)
-		view := m.renderBrowse(96, 18)
+		view := panelText(m, workspaceBrowse, 96, 18)
 		failIfFmt(t, !strings.Contains(view, "No matching shared files") || strings.Contains(view, "(error)"), "success rendered as failure:\n%s", view)
 		failIfFmt(t, strings.Contains(view, "(cached)") != cached, "cached distinction lost:\n%s", view)
 	}

@@ -132,9 +132,9 @@ func TestScanAndCompletionSignals(t *testing.T) {
 	snap.ShareScan = &daemon.ShareScan{State: "scanning", Root: "Music", Files: 12, Directories: 3, ElapsedMS: 3000}
 	updated, _ = m.Update(statusMsg{snapshot: snap})
 	m = updated.(model)
-	failIf(t, len(m.shareTree.nodes) != 2 || !strings.Contains(m.renderShares(100, 12), "3s") || !strings.Contains(m.footerView(), "Scanning shares"), "scan status/in-progress index incorrect")
+	failIf(t, len(m.shareTree.nodes) != 2 || !strings.Contains(m.renderShares(100, 12), "3s") || !strings.Contains(m.statusLine(), "Scanning shares"), "scan status/in-progress index incorrect")
 	m.searchTabs = []searchTab{{query: "interactive", searching: true, operation: 1}}
-	failIf(t, !strings.Contains(m.footerView(), "interactive"), "background scan hid interactive activity")
+	failIf(t, !strings.Contains(m.statusLine(), "interactive"), "background scan hid interactive activity")
 	m.searchTabs = nil
 	snap.ShareIndexRevision = 2
 	snap.ShareScan.State = "completed"

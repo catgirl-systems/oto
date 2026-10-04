@@ -37,17 +37,22 @@ func TestCommunityResponsiveLayout(t *testing.T) {
 				m.community.summary.Unread, m.community.summary.Mentions = 3, 1
 				view := m.mainView()
 				failIfFmt(t, lipgloss.Width(view) > m.width || lipgloss.Height(view) > m.height, "%v pane %d: %dx%d\n%s", size, pane, lipgloss.Width(view), lipgloss.Height(view), view)
-				failIfFmt(t, !strings.Contains(ansi.Strip(view), "[Community]"), "active workspace missing: %v\n%s", size, view)
+				active := "Community"
+				if color != "" {
+					active = "[" // NO_COLOR marks the active tab with brackets
+				}
+				failIfFmt(t, !strings.Contains(ansi.Strip(view), active) || !strings.Contains(ansi.Strip(view), "Community"), "active workspace missing: %v\n%s", size, view)
 				if m.width < 36 {
 					continue
 				}
-				failIfFmt(t, !strings.Contains(view, "Unread:3"), "unread hidden: %v\n%s", size, view)
+				failIfFmt(t, !strings.Contains(ansi.Strip(view), "3 @1"), "unread hidden: %v\n%s", size, view)
 				if m.height < 10 {
 					continue
 				}
-				failIf(t, m.width >= 110 && !strings.Contains(view, " │ "), "wide pane separation missing")
+				failIf(t, m.width >= 110 && !strings.Contains(ansi.Strip(view), " │ "), "wide pane separation missing")
 				if m.width < 80 || m.width < 110 && pane == 2 {
-					failIfFmt(t, !strings.Contains(view, communityPanes[pane]) || !strings.Contains(view, "Esc back"), "focused pane/back hidden: %v\n%s", size, view)
+					title, _ := m.communityPaneTitle(pane)
+					failIfFmt(t, !strings.Contains(ansi.Strip(view), title) || pane > 0 && !strings.Contains(view, "esc back"), "focused pane/back hidden: %v\n%s", size, view)
 				}
 			}
 		}
@@ -59,7 +64,7 @@ func TestCommunityResponsiveLayout(t *testing.T) {
 			m.community.summary.Unread, m.community.summary.Mentions = 1<<40, 1<<40
 			bar := ansi.Strip(m.workspaceTabs(width))
 			name := strings.Fields(m.workspaceNames()[workspace])[0]
-			failIfFmt(t, ansi.StringWidth(bar) > width || !strings.Contains(bar, "["+name) || (!strings.Contains(bar, "Unread:") && !strings.Contains(bar, "U:")), "%d %s: %q", width, name, bar)
+			failIfFmt(t, ansi.StringWidth(bar) > width || !strings.Contains(bar, name) || !strings.Contains(bar, "99+ @99+"), "%d %s: %q", width, name, bar)
 		}
 	}
 }
@@ -120,7 +125,7 @@ func TestCommunityStaleResponsesAndPartialState(t *testing.T) {
 	offline := c.summary
 	offline.Connected, offline.Revision = false, 8
 	m.applyCommunitySummary(communitySummaryMsg{request: 7, summary: offline})
-	if text := strings.Join(c.inspectorLines(), "\n"); !strings.Contains(text, "online (stale)") || !strings.Contains(text, "Shares/speed: unknown") || strings.Contains(text, "Last seen") {
+	if text := plainText(c.inspectorLines()); !strings.Contains(text, "online (stale)") || !strings.Contains(text, "Shares unknown") || strings.Contains(text, "Last seen") {
 		t.Fatalf("partial/stale data: %s", text)
 	}
 	m.applyCommunitySummary(communitySummaryMsg{request: 7, summary: daemon.CommunitySummary{CommunityIdentity: identity, Revision: 1}})
@@ -228,6 +233,7 @@ func TestCommunityRealIPCRefreshAndFrontendIsolation(t *testing.T) {
 }
 
 func TestCommunityInspectorControlSafety(t *testing.T) {
+	t.Setenv("NO_COLOR", "1") // styling escapes are ours; only data must stay inert
 	m := communityViewModel()
 	m.community.target = "Alice\x1b[31m\n"
 	m.community.userErr = "failure\x1b]52;c;ignored\a\x00\nretry"
@@ -242,7 +248,7 @@ func TestCommunityInspectorControlSafety(t *testing.T) {
 		}
 		m.community.userErr = ""
 		m.key(tea.KeyPressMsg(tea.Key{Code: tea.KeyEnd}))
-		if view := m.mainView(); !strings.Contains(view, "user actions") {
+		if view := m.mainView(); !strings.Contains(view, "Partial server information") {
 			t.Fatalf("cannot reach the end of wrapped inspector at %d:\n%s", width, view)
 		}
 		m.openUserActions()
@@ -272,6 +278,6 @@ func TestCommunityMissingUserResponseDoesNotRefreshOldData(t *testing.T) {
 	wrong := c.summary.CommunityIdentity
 	wrong.Session++
 	m.applyCommunityUser(communityUserMsg{identity: c.summary.CommunityIdentity, username: "Alice", page: daemon.CommunityUsersPage{CommunityIdentity: wrong}})
-	text := strings.Join(c.inspectorLines(), "\n")
-	failIfFmt(t, c.user.Username != "Alice" || !c.userRefreshed.Equal(refreshed) || !strings.Contains(c.userErr, "session") || !strings.Contains(text, "online (stale)") || !strings.Contains(text, "Speed (stale)"), "mismatched response freshness: %s", text)
+	text := plainText(c.inspectorLines())
+	failIfFmt(t, c.user.Username != "Alice" || !c.userRefreshed.Equal(refreshed) || !strings.Contains(c.userErr, "session") || !strings.Contains(text, "online (stale)") || !strings.Contains(text, "B/s (stale)"), "mismatched response freshness: %s", text)
 }
