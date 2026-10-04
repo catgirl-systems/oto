@@ -397,7 +397,13 @@ func (s *Service) Status() Status {
 	return s.status
 }
 
-func (s *Service) Snapshot() Snapshot {
+func (s *Service) Snapshot() Snapshot { return s.snapshot(true) }
+
+// SnapshotSummary is Snapshot without the download journal and transfer list,
+// for clients that poll often and fetch transfers separately.
+func (s *Service) SnapshotSummary() Snapshot { return s.snapshot(false) }
+
+func (s *Service) snapshot(withTransfers bool) Snapshot {
 	logging := s.loggingStatus()
 	now := time.Now()
 	s.mu.RLock()
@@ -418,7 +424,10 @@ func (s *Service) Snapshot() Snapshot {
 	if s.telemetry != nil {
 		warning = s.telemetry.warning
 	}
-	snapshot := Snapshot{Logging: logging, StatsWarning: warning, Status: s.status, Presence: s.presence, Error: s.lastErr, PublicIP: publicIP, PublicPort: publicPort, Config: s.cfg.Redacted(), Shares: append([]config.Share(nil), s.cfg.Shares...), ShareScan: scan, ShareIndexRevision: s.shareIndexRevision, DownloadNotification: s.downloadNotification, Downloads: append([]Download(nil), s.journal.Downloads...), Transfers: s.transferValuesLocked(now)}
+	snapshot := Snapshot{Logging: logging, StatsWarning: warning, Status: s.status, Presence: s.presence, Error: s.lastErr, PublicIP: publicIP, PublicPort: publicPort, Config: s.cfg.Redacted(), Shares: append([]config.Share(nil), s.cfg.Shares...), ShareScan: scan, ShareIndexRevision: s.shareIndexRevision, DownloadNotification: s.downloadNotification}
+	if withTransfers {
+		snapshot.Downloads, snapshot.Transfers = append([]Download(nil), s.journal.Downloads...), s.transferValuesLocked(now)
+	}
 	snapshot.CommunityCapabilities = communityCapabilities()
 	snapshot.BuddyNotification = s.community.buddyNotification
 	if s.shuttingDown {
