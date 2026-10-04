@@ -208,6 +208,17 @@ func (s *Server) registerSearchRoutes() {
 		}{page}, nil
 	})
 	route(s, scopeAuthed, huma.Operation{
+		OperationID: "close-search", Method: http.MethodDelete, Path: "/v1/searches/{id}",
+		Summary: "Close a search and stop collecting its results", Errors: []int{404},
+	}, func(ctx context.Context, input *struct {
+		ID string `path:"id" doc:"Search ID to close"`
+	}) (*struct{}, error) {
+		if err := s.service.CloseSearch(input.ID); err != nil {
+			return nil, errStatus(http.StatusNotFound, err)
+		}
+		return &struct{}{}, nil
+	})
+	route(s, scopeAuthed, huma.Operation{
 		OperationID: "list-wishlist", Method: http.MethodGet, Path: "/v1/wishlist",
 		Summary: "List wishlist items",
 	}, func(ctx context.Context, _ *struct{}) (*struct {

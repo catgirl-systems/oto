@@ -245,6 +245,11 @@ func (c *Client) PutWishlist(ctx context.Context, query, filter string) (daemon.
 	return item, err
 }
 
+// CloseSearch drops a search the client no longer shows.
+func (c *Client) CloseSearch(ctx context.Context, id string) error {
+	return c.Do(ctx, http.MethodDelete, "/v1/searches/"+url.PathEscape(id), nil, nil)
+}
+
 func (c *Client) RemoveWishlist(ctx context.Context, id string) error {
 	return c.Do(ctx, http.MethodDelete, "/v1/wishlist/"+url.PathEscape(id), nil, nil)
 }
