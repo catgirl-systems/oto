@@ -75,3 +75,23 @@ func TestCommunityViewsFitWithRealisticData(t *testing.T) {
 		failIfFmt(t, !strings.Contains(view, want), "chat view missing %q:\n%s", want, view)
 	}
 }
+
+func TestProfileEditOpensDuringBackgroundRefresh(t *testing.T) {
+	m := commPreview()
+	m.community.summary.Capabilities = append(m.community.summary.Capabilities, "self-profile")
+	d := &m.community.discover
+	m.community.view, m.community.pane, d.mode = 3, 1, 7
+	d.profile = daemon.CommunitySelfProfile{CommunityIdentity: m.community.summary.CommunityIdentity, Description: "saved", Revision: 4}
+	d.profileLoading, d.profileRequest = true, 9 // the once-a-second refresh is in flight
+	m.key(key("e"))
+	failIfFmt(t, d.form != "profile" || d.profileDraft != "saved" || d.profileBaseRevision != 4, "edit rejected during a refresh: form=%q err=%q", d.form, d.err)
+	failIf(t, d.profileLoading || d.profileRequest == 9, "the in-flight refresh was not retired")
+
+	// Before any profile has loaded for this session, editing still waits.
+	fresh := commPreview()
+	fresh.community.summary.Capabilities = append(fresh.community.summary.Capabilities, "self-profile")
+	fresh.community.view, fresh.community.pane, fresh.community.discover.mode = 3, 1, 7
+	fresh.community.discover.profileLoading = true
+	fresh.key(key("e"))
+	failIf(t, fresh.community.discover.form != "" || fresh.community.discover.err == "", "edited a profile that never loaded")
+}
