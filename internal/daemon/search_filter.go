@@ -184,9 +184,11 @@ func parseUnsigned(value string) (uint64, error) {
 	return strconv.ParseUint(strings.TrimSpace(value), 10, 64)
 }
 
+var sizePattern = regexp.MustCompile(`(?i)^([0-9]+(?:\.[0-9]+)?)([kmgt]?i?b)?$`)
+
 func parseSize(value string) (uint64, error) {
 	value = strings.TrimSpace(value)
-	match := regexp.MustCompile(`(?i)^([0-9]+(?:\.[0-9]+)?)([kmgt]?i?b)?$`).FindStringSubmatch(value)
+	match := sizePattern.FindStringSubmatch(value)
 	if match == nil {
 		return 0, fmt.Errorf("invalid value %q", value)
 	}
