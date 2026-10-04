@@ -34,22 +34,23 @@ type UploadTarget struct {
 }
 
 type uploadAttempt struct {
-	target         UploadTarget
-	key, localPath string
-	fingerprint    string
-	job            *UploadJob
-	ctx            context.Context
-	root           context.Context
-	cancel         context.CancelFunc
-	done           chan struct{}
-	mu             sync.Mutex
-	state          string
-	progress       uint64
-	manual, notify bool
-	policyReason   string
-	fileStarted    bool
-	observation    *transferObservation
-	address        netip.Addr
+	lastProgressEvent time.Time // last running event, for throttling
+	target            UploadTarget
+	key, localPath    string
+	fingerprint       string
+	job               *UploadJob
+	ctx               context.Context
+	root              context.Context
+	cancel            context.CancelFunc
+	done              chan struct{}
+	mu                sync.Mutex
+	state             string
+	progress          uint64
+	manual, notify    bool
+	policyReason      string
+	fileStarted       bool
+	observation       *transferObservation
+	address           netip.Addr
 }
 
 func (c *Client) emitUpload(a *uploadAttempt, state string, done uint64, message string) {
@@ -483,11 +484,20 @@ func (w uploadProgressWriter) Write(p []byte) (int, error) {
 	w.attempt.observation.observe(false, n, err)
 	if n > 0 {
 		a := w.attempt
+		now := time.Now()
 		a.mu.Lock()
 		a.progress += uint64(n)
 		done := a.progress
+		// Space out events like download progress; the final state carries
+		// the exact count.
+		emit := now.Sub(a.lastProgressEvent) >= progressInterval || done == a.job.Request.Size
+		if emit {
+			a.lastProgressEvent = now
+		}
 		a.mu.Unlock()
-		w.client.emitUpload(a, "running", done, "")
+		if emit {
+			w.client.emitUpload(a, "running", done, "")
+		}
 		a.observation.commit(done)
 	}
 	return n, err

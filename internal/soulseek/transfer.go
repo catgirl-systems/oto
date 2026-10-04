@@ -78,13 +78,32 @@ func CopyAtMost(ctx context.Context, dst io.WriterAt, src io.Reader, expected, o
 	return copyAtMost(ctx, io.NewOffsetWriter(dst, int64(offset)), src, expected, offset, progress)
 }
 
+// progressInterval spaces progress reports. Each report takes the daemon's
+// service lock, so reporting every network read would contend with every API
+// call at high speed; clients poll once a second anyway.
+const progressInterval = 250 * time.Millisecond
+
 func copyAtMost(ctx context.Context, dst io.Writer, src io.Reader, expected, offset uint64, progress ProgressFunc) error {
 	if offset > expected {
 		return ErrMalformed
 	}
 	left := expected - offset
-	buf := make([]byte, 32<<10)
+	buf := make([]byte, transferBufferSize)
 	done := offset
+	reported, lastReport := offset, time.Time{}
+	report := func() {
+		reported, lastReport = done, time.Now()
+		progress(Progress{Done: done, Total: expected, State: "running"})
+	}
+	if progress != nil {
+		// Never leave the last bytes unreported: resume offsets and
+		// completion read the final count.
+		defer func() {
+			if done != reported {
+				report()
+			}
+		}()
+	}
 	for left > 0 {
 		select {
 		case <-ctx.Done():
@@ -102,8 +121,8 @@ func copyAtMost(ctx context.Context, dst io.Writer, src io.Reader, expected, off
 			}
 			done += uint64(n)
 			left -= uint64(n)
-			if progress != nil {
-				progress(Progress{Done: done, Total: expected, State: "running"})
+			if progress != nil && (left == 0 || time.Since(lastReport) >= progressInterval) {
+				report()
 			}
 		}
 		if left == 0 {
@@ -526,11 +545,18 @@ func (m *UploadManager) chunkSize() int {
 	return transferChunkSize(m.policy.BytesPerSecond)
 }
 
+// Large buffers keep syscalls and progress callbacks rare at high speed;
+// paced uploads use smaller chunks so the limiter stays smooth.
+const (
+	transferBufferSize = 256 << 10
+	pacedChunkLimit    = 128 << 10
+)
+
 func transferChunkSize(bytesPerSecond int64) int {
 	if bytesPerSecond == 0 {
-		return 32 << 10
+		return transferBufferSize
 	}
-	return int(min(max(bytesPerSecond/10, 1024), 32<<10))
+	return int(min(max(bytesPerSecond/10, 1024), pacedChunkLimit))
 }
 
 type uploadWriter struct {
