@@ -15,7 +15,9 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"syscall"
+	"time"
 
 	"github.com/catgirl-systems/oto/internal/storage/db"
 	_ "modernc.org/sqlite"
@@ -45,6 +47,8 @@ type DB struct {
 	path       string
 	daemonLock *DaemonLock
 	writer     chan struct{}
+	restricted atomic.Bool  // every state file exists with 0600 permissions
+	urgent     atomic.Int32 // ordinary writers waiting for the writer slot
 	close      sync.Once
 	closeErr   error
 }
@@ -118,10 +122,13 @@ func open(path string, daemon bool) (*DB, error) {
 	if err = verifySchema(context.Background(), sqlDB, SchemaVersion); err != nil {
 		return closeDB(err)
 	}
-	if err = chmodStateFiles(absolute); err != nil {
+	restricted, err := chmodStateFiles(absolute)
+	if err != nil {
 		return closeDB(err)
 	}
-	return &DB{sql: sqlDB, path: absolute, daemonLock: daemonLock, writer: make(chan struct{}, 1)}, nil
+	d := &DB{sql: sqlDB, path: absolute, daemonLock: daemonLock, writer: make(chan struct{}, 1)}
+	d.restricted.Store(restricted)
+	return d, nil
 }
 
 func sqliteDSN(path string) string {
@@ -209,13 +216,19 @@ func verifySchema(ctx context.Context, db schemaReader, want int) error {
 	return rows.Err()
 }
 
-func chmodStateFiles(path string) error {
+// chmodStateFiles restricts every state file that exists and reports whether
+// all of them did; SQLite creates the -wal and -shm files on first write.
+func chmodStateFiles(path string) (bool, error) {
+	all := true
 	for _, name := range []string{path, path + "-wal", path + "-shm", path + ".lock"} {
-		if err := os.Chmod(name, 0600); err != nil && !errors.Is(err, os.ErrNotExist) {
-			return fmt.Errorf("storage: chmod %s: %w", name, err)
+		if err := os.Chmod(name, 0600); err != nil {
+			if !errors.Is(err, os.ErrNotExist) {
+				return false, fmt.Errorf("storage: chmod %s: %w", name, err)
+			}
+			all = false
 		}
 	}
-	return nil
+	return all, nil
 }
 
 // SQL returns the configured database for fixed or caller-owned dynamic reads.
@@ -238,17 +251,59 @@ func (d *DB) Queries() *db.Queries {
 // The DSN's txlock is deliberate: all database/sql write transactions acquire
 // RESERVED up front.
 func (d *DB) WriteTx(ctx context.Context, fn func(*sql.Tx) error) (err error) {
+	return d.writeTx(ctx, fn, false)
+}
+
+// WriteTxBulk is WriteTx for one batch of a long series (share snapshots,
+// cache garbage collection). It yields the writer to every waiting ordinary
+// writer, which may be holding the daemon's service lock: such a writer then
+// waits for at most the transaction in progress, never a queue of batches.
+func (d *DB) WriteTxBulk(ctx context.Context, fn func(*sql.Tx) error) error {
+	return d.writeTx(ctx, fn, true)
+}
+
+// bulkYield is how long a bulk writer steps aside for an ordinary writer.
+const bulkYield = time.Millisecond
+
+func (d *DB) acquireWriter(ctx context.Context, bulk bool) error {
+	if !bulk {
+		d.urgent.Add(1)
+		defer d.urgent.Add(-1)
+		select {
+		case d.writer <- struct{}{}:
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	for {
+		select {
+		case d.writer <- struct{}{}:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+		if d.urgent.Load() == 0 {
+			return nil
+		}
+		<-d.writer // an ordinary writer is waiting: let it go first
+		select {
+		case <-time.After(bulkYield):
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+}
+
+func (d *DB) writeTx(ctx context.Context, fn func(*sql.Tx) error, bulk bool) (err error) {
 	if d == nil || d.sql == nil {
 		return errors.New("storage: nil database")
 	}
-	// Queue local writers fairly so snapshot batches cannot repeatedly beat
-	// waiting transfer writes to SQLite's busy handler. Waiting is cancellable.
-	select {
-	case d.writer <- struct{}{}:
-		defer func() { <-d.writer }()
-	case <-ctx.Done():
-		return ctx.Err()
+	// Queue local writers so snapshot batches cannot repeatedly beat waiting
+	// transfer writes to SQLite's busy handler. Waiting is cancellable.
+	if err := d.acquireWriter(ctx, bulk); err != nil {
+		return err
 	}
+	defer func() { <-d.writer }()
 	tx, err := d.sql.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -261,9 +316,14 @@ func (d *DB) WriteTx(ctx context.Context, fn func(*sql.Tx) error) (err error) {
 		return err
 	}
 	// Permissions must be part of the pre-commit path so a chmod failure cannot
-	// turn an already committed write into a reported failure.
-	if err = chmodStateFiles(d.path); err != nil {
-		return err
+	// turn an already committed write into a reported failure. Once every
+	// state file exists and is restricted, later commits skip the syscalls.
+	if !d.restricted.Load() {
+		restricted, err := chmodStateFiles(d.path)
+		if err != nil {
+			return err
+		}
+		d.restricted.Store(restricted)
 	}
 	if err = tx.Commit(); err != nil {
 		return err
