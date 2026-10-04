@@ -1463,16 +1463,52 @@ func (s *Service) TransferAction(id, action string) error {
 			return err
 		}
 	}
+	return s.downloadActionLifecycle(id, action)
+}
+
+// DownloadAction applies one action to many downloads: one request, one
+// lifecycle lock and one statistics flush, instead of one of each per file.
+func (s *Service) DownloadAction(req DownloadActionRequest) (DownloadActionResult, error) {
+	action := strings.ToLower(req.Action)
+	switch action {
+	case "pause", "cancel", "retry", "resume", "clear":
+	default:
+		return DownloadActionResult{}, fmt.Errorf("%w: unsupported download action %q", ErrInvalidAction, req.Action)
+	}
+	result := DownloadActionResult{Errors: []DownloadActionError{}}
+	s.lifecycleMu.Lock()
+	defer s.lifecycleMu.Unlock()
+	if action == "clear" {
+		if err := s.flushStats(); err != nil {
+			return result, err
+		}
+	}
+	for _, id := range req.IDs {
+		err := s.downloadActionLifecycle(id, action)
+		switch {
+		case err == nil:
+			result.Changed++
+		case errors.Is(err, os.ErrNotExist):
+			result.Skipped++
+		case errors.Is(err, ErrClosed):
+			return result, err
+		default:
+			result.Errors = append(result.Errors, DownloadActionError{ID: id, Error: s.safeError(err)})
+		}
+	}
+	return result, nil
+}
+
+// downloadActionLifecycle applies action to one download. Caller holds
+// lifecycleMu and has flushed statistics for clear.
+func (s *Service) downloadActionLifecycle(id, action string) error {
 	s.mu.Lock()
 	if s.closed {
 		s.mu.Unlock()
 		return ErrClosed
 	}
-	for i := range s.journal.Downloads {
+	if i := s.downloadIndexLocked(id); i >= 0 {
 		d := &s.journal.Downloads[i]
-		if d.ID != id {
-			continue
-		}
 		start := false
 		previousState := d.State
 		previous := s.snapshotLocked(id)

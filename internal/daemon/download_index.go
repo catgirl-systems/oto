@@ -1,6 +1,30 @@
 package daemon
 
-import "sync"
+import (
+	"errors"
+	"sync"
+)
+
+// ErrInvalidAction rejects an unknown batch transfer action.
+var ErrInvalidAction = errors.New("daemon: invalid action")
+
+// DownloadActionRequest applies Action to every listed download.
+type DownloadActionRequest struct {
+	Action string   `json:"action" enum:"pause,cancel,retry,resume,clear"`
+	IDs    []string `json:"ids"`
+}
+type DownloadActionError struct {
+	ID    string `json:"id"`
+	Error string `json:"error"`
+}
+
+// DownloadActionResult counts changed downloads; IDs that no longer exist are
+// skipped rather than failed.
+type DownloadActionResult struct {
+	Changed int                   `json:"changed"`
+	Skipped int                   `json:"skipped"`
+	Errors  []DownloadActionError `json:"errors"`
+}
 
 // journalIndex caches ID -> position for a journal slice. A cached position
 // is trusted only after confirming the entry there still has the ID, and the
