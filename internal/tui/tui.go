@@ -135,8 +135,10 @@ type saveBrowseMsg struct {
 }
 type folderDownloadMsg struct{ err error }
 type transferMsg struct {
-	transfers []transfer
-	err       error
+	transfers   []transfer
+	fingerprint string
+	unchanged   bool // nothing visible changed since the last poll
+	err         error
 }
 type sharesMsg struct {
 	shares []share
@@ -199,7 +201,7 @@ func (m *model) setNotice(message string) {
 	m.noticeUntil = time.Now().Add(noticeDuration)
 }
 func (m model) loadStatus() tea.Cmd {
-	return func() tea.Msg { s, e := m.client.Status(m.ctx); return statusMsg{s, e} }
+	return func() tea.Msg { s, e := m.client.StatusSummary(m.ctx); return statusMsg{s, e} }
 }
 
 func (m model) loadWishlist() tea.Cmd {
@@ -271,9 +273,10 @@ func (m model) setPresence(presence daemon.Presence) tea.Cmd {
 	return func() tea.Msg { return presenceMsg{presence, m.client.SetPresence(m.ctx, presence)} }
 }
 func (m model) loadTransfers() tea.Cmd {
+	since := m.transferFingerprint
 	return func() tea.Msg {
-		x, err := m.client.Transfers(m.ctx)
-		return transferMsg{transfers: toTransfers(x), err: err}
+		x, err := m.client.TransfersSince(m.ctx, since)
+		return transferMsg{transfers: toTransfers(x.Transfers), fingerprint: x.Fingerprint, unchanged: x.Unchanged, err: err}
 	}
 }
 
@@ -1267,11 +1270,16 @@ func (m model) updateMessage(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.loadTransfers()
 		}
 	case transferMsg:
+		if x.err == nil && x.unchanged {
+			break
+		}
 		if m.workspace == workspaceTransfers {
 			m.transferCursors[m.transferTab] = m.cursor
 		}
 		m.err = errText(x.err)
+		m.transferFingerprint = x.fingerprint
 		if x.err != nil {
+			m.transferFingerprint = ""
 			break
 		}
 		m.transfers = x.transfers
@@ -1363,6 +1371,7 @@ func (m model) updateMessage(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.loadStatus()
 		}
 	case transferActionMsg:
+		m.transferFingerprint = "" // the action's own list replaces the polled one
 		m.err = errText(x.err)
 		if x.upload {
 			m.setNotice(fmt.Sprintf("Uploads: %d changed, %d skipped, %d errors", x.result.Changed, x.result.Skipped, len(x.result.Errors)))

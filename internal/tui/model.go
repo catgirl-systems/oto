@@ -325,6 +325,7 @@ type model struct {
 	savedBrowseCursor                      int
 	savedBrowseLoading                     bool
 	transfers                              []transfer
+	transferFingerprint                    string // daemon fingerprint of transfers, for unchanged polls
 	noticeUntil                            time.Time
 	transferCursors                        [transferTabCount]int
 	spinner, activityFrame                 int
