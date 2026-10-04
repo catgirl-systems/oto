@@ -801,7 +801,19 @@ func (c *Client) collectSearch(ctx context.Context, rawQuery string, wishlist bo
 	return c.collectSearchTargets(ctx, rawQuery, wishlist, targets, nil)
 }
 
+// searchWindow is how long a blocking search keeps collecting after its final
+// request; StreamSearch instead collects until its context ends.
+const searchWindow = 5 * time.Second
+
 func (c *Client) collectSearchTargets(ctx context.Context, rawQuery string, wishlist bool, targets, rooms []string) ([]SearchResult, error) {
+	return c.collectSearchStream(ctx, rawQuery, wishlist, targets, rooms, searchWindow, nil)
+}
+
+// collectSearchStream sends one search and gathers matching responses. With
+// emit set, each response's matches are handed over as they arrive instead of
+// accumulated. A zero window disables the idle cut-off: ctx alone ends
+// collection, and that end is a normal completion.
+func (c *Client) collectSearchStream(ctx context.Context, rawQuery string, wishlist bool, targets, rooms []string, window time.Duration, emit func([]SearchResult)) ([]SearchResult, error) {
 	allowed := make(map[string]bool, len(targets))
 	for _, user := range targets {
 		allowed[user] = true
@@ -873,9 +885,14 @@ func (c *Client) collectSearchTargets(ctx context.Context, rawQuery string, wish
 			if err != nil {
 				return nil, err
 			}
-			timer = time.NewTimer(5 * time.Second)
-			timeout = timer.C
+			if window > 0 {
+				timer = time.NewTimer(window)
+				timeout = timer.C
+			}
 		case <-ctx.Done():
+			if window == 0 && sent == nil {
+				return results, nil
+			}
 			return nil, ctx.Err()
 		case <-done:
 			return nil, errors.New("soulseek: connection closed during search")
@@ -883,14 +900,22 @@ func (c *Client) collectSearchTargets(ctx context.Context, rawQuery string, wish
 			if len(allowed) > 0 && !allowed[response.Username] {
 				continue
 			}
+			var batch []SearchResult
 			for _, result := range response.Results {
 				if len(allowed) > 0 && !allowed[result.Username] {
 					continue
 				}
 				if query.matches(result) {
-					results = append(results, result)
+					batch = append(batch, result)
 				}
 			}
+			if emit != nil {
+				if len(batch) > 0 {
+					emit(batch)
+				}
+				continue
+			}
+			results = append(results, batch...)
 		case <-timeout:
 			return results, nil
 		}
