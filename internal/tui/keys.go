@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"errors"
 	"fmt"
 	"net/url"
 	"sort"
@@ -1336,11 +1337,10 @@ func (m model) action(action string) tea.Cmd {
 		return nil
 	}
 	return func() tea.Msg {
-		var first error
-		for _, id := range ids {
-			if err := m.client.TransferAction(m.ctx, id, action); err != nil && first == nil {
-				first = err
-			}
+		// One request for the whole selection or folder.
+		result, first := m.client.DownloadAction(m.ctx, daemon.DownloadActionRequest{Action: action, IDs: ids})
+		if first == nil && len(result.Errors) > 0 {
+			first = errors.New(result.Errors[0].Error)
 		}
 		transfers, err := m.client.Transfers(m.ctx)
 		view := toTransfers(transfers)
