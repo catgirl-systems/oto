@@ -201,6 +201,20 @@ func (c *Client) Status(ctx context.Context) (daemon.Snapshot, error) {
 	return x, err
 }
 
+// StatusSummary is Status without the download journal and transfer list.
+func (c *Client) StatusSummary(ctx context.Context) (daemon.Snapshot, error) {
+	var x daemon.Snapshot
+	err := c.Do(ctx, "GET", "/v1/state?summary=true", nil, &x)
+	return x, err
+}
+
+// TransfersSince lists transfers unless nothing changed since fingerprint.
+func (c *Client) TransfersSince(ctx context.Context, fingerprint string) (daemon.TransferChanges, error) {
+	var x daemon.TransferChanges
+	err := c.Do(ctx, "GET", "/v1/transfers/changes?since="+url.QueryEscape(fingerprint), nil, &x)
+	return x, err
+}
+
 func (c *Client) CheckListeningPort(ctx context.Context) (daemon.ListeningPortCheck, error) {
 	var result daemon.ListeningPortCheck
 	err := c.Do(ctx, http.MethodPost, "/v1/network/port-check", nil, &result)

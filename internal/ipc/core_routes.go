@@ -60,12 +60,18 @@ func (s *Server) registerStateRoutes() {
 	route(s, scopeAuthed, huma.Operation{
 		OperationID: "get-state", Method: http.MethodGet, Path: "/v1/state",
 		Summary: "Daemon state snapshot",
-	}, func(ctx context.Context, _ *struct{}) (*struct {
+	}, func(ctx context.Context, input *struct {
+		Summary bool `query:"summary" doc:"Omit the download journal and transfer list"`
+	}) (*struct {
 		Body daemon.Snapshot
 	}, error) {
+		snapshot := s.service.Snapshot
+		if input.Summary {
+			snapshot = s.service.SnapshotSummary
+		}
 		return &struct {
 			Body daemon.Snapshot
-		}{s.service.Snapshot()}, nil
+		}{snapshot()}, nil
 	})
 	route(s, scopeAuthed, huma.Operation{
 		OperationID: "get-logs", Method: http.MethodGet, Path: "/v1/logs",
@@ -457,6 +463,16 @@ func (s *Server) registerTransferRoutes() {
 		Body []daemon.Transfer
 	}, error) {
 		return wrapBody(s.service.Transfers()), nil
+	})
+	route(s, scopeAuthed, huma.Operation{
+		OperationID: "transfer-changes", Method: http.MethodGet, Path: "/v1/transfers/changes",
+		Summary: "List transfers unless unchanged since a fingerprint",
+	}, func(ctx context.Context, input *struct {
+		Since string `query:"since" doc:"Fingerprint from the previous response"`
+	}) (*struct {
+		Body daemon.TransferChanges
+	}, error) {
+		return wrapBody(s.service.TransfersSince(input.Since)), nil
 	})
 	route(s, scopeAuthed, huma.Operation{
 		OperationID: "transfer-action", Method: http.MethodPost, Path: "/v1/transfers/{id}",
