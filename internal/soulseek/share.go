@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 
 	"golang.org/x/text/cases"
 )
@@ -45,6 +46,11 @@ type ShareIndex struct {
 	files       []ShareFile
 	searchPaths []string // Case-folded once, in the same order as files.
 	exclusions  *ShareExclusions
+	tokenMu     sync.Mutex
+	tokenIndex  *tokenIndex // built lazily from searchPaths; see share_search_index.go
+	// carried marks entries RescanPaths copied from an unchanged directory;
+	// their audio metadata needs no fresh stat.
+	carried map[string]bool
 }
 
 func NewShareIndex() *ShareIndex {
@@ -167,6 +173,9 @@ func (s *ShareIndex) setFiles(ctx context.Context, files []ShareFile) error {
 		return err
 	}
 	s.files, s.searchPaths = files, paths
+	s.tokenMu.Lock()
+	s.tokenIndex = nil // rebuilt from the new paths on the next search
+	s.tokenMu.Unlock()
 	return nil
 }
 
@@ -374,27 +383,41 @@ func (s *ShareIndex) search(query string, limit int, include func(ShareFile) boo
 		return nil
 	}
 	out := make([]ShareFile, 0, min(len(s.files), limit))
-	for i, v := range s.searchPaths {
-		ok := true
+	match := func(i int) bool {
+		v := s.searchPaths[i]
 		for _, x := range need {
 			if !strings.Contains(v, x) {
-				ok = false
-				break
+				return false
 			}
-		}
-		if !ok {
-			continue
 		}
 		for _, x := range bad {
 			if strings.Contains(v, x) {
-				ok = false
-				break
+				return false
 			}
 		}
-		if ok && include != nil && !include(s.files[i]) {
-			continue
+		return include == nil || include(s.files[i])
+	}
+	// The longest word-only term is usually the most selective; its token
+	// candidates are exact, and match re-checks everything else.
+	driver := ""
+	for _, x := range need {
+		if indexable(x) && len(x) > len(driver) {
+			driver = x
 		}
-		if ok {
+	}
+	if driver != "" {
+		for _, i := range s.tokens().candidates(driver) {
+			if match(int(i)) {
+				out = append(out, s.files[i])
+				if len(out) == limit {
+					break
+				}
+			}
+		}
+		return out
+	}
+	for i := range s.searchPaths {
+		if match(i) {
 			out = append(out, s.files[i])
 			if len(out) == limit {
 				break
