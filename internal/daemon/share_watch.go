@@ -188,6 +188,31 @@ func buildShareIndex(ctx context.Context, shares []config.Share) (*soulseek.Shar
 	return buildFilteredShareIndex(ctx, shares, nil)
 }
 
+// buildIncrementalShareIndex rebuilds only the directories holding changed
+// paths, copying everything else from previous; it falls back to a full walk
+// whenever the incremental path does not apply.
+func buildIncrementalShareIndex(ctx context.Context, shares []config.Share, rules []string, previous *soulseek.ShareIndex, changed []string) (*soulseek.ShareIndex, error) {
+	index, err := soulseek.NewShareIndexWithExclusions(rules)
+	if err != nil {
+		return nil, err
+	}
+	for _, share := range shares {
+		if err := index.AddRoot(share.Name, share.Path); err != nil {
+			return nil, err
+		}
+	}
+	ok, err := index.RescanPaths(ctx, previous, changed)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		if err := index.ScanContext(ctx); err != nil {
+			return nil, err
+		}
+	}
+	return index, nil
+}
+
 func buildFilteredShareIndex(ctx context.Context, shares []config.Share, rules []string) (*soulseek.ShareIndex, error) {
 	index, err := soulseek.NewShareIndexWithExclusions(rules)
 	if err != nil {
@@ -314,6 +339,9 @@ func (s *Service) watchShares(ctx context.Context, generation uint64, shares []c
 
 	revision := uint64(0)
 	dirty, scanning := true, false
+	// pending holds the paths changed since the last successful scan; full
+	// forces a complete walk (first scan, lost events, failures).
+	pending, full := make(map[string]bool), true
 	quietReady, maxReady := false, false
 	scanDone := make(chan shareScanResult, 1)
 	scanPublish := make(chan shareScanResult)
@@ -327,6 +355,12 @@ func (s *Service) watchShares(ctx context.Context, generation uint64, shares []c
 		stopTimer(&maxTimer, &maxC)
 		scanRevision := revision
 		workWake := s.scanCancellationWake()
+		var changed []string
+		if !full {
+			for name := range pending {
+				changed = append(changed, name)
+			}
+		}
 		guardedBuilder := func(ctx context.Context, roots []config.Share) (*soulseek.ShareIndex, error) {
 			select {
 			case <-workWake:
@@ -335,6 +369,12 @@ func (s *Service) watchShares(ctx context.Context, generation uint64, shares []c
 			}
 			if builder != nil {
 				return builder(ctx, roots)
+			}
+			if len(changed) > 0 {
+				s.mu.RLock()
+				previous := s.shares
+				s.mu.RUnlock()
+				return buildIncrementalShareIndex(ctx, roots, rules, previous, changed)
 			}
 			return buildFilteredShareIndex(ctx, roots, rules)
 		}
@@ -396,7 +436,7 @@ func (s *Service) watchShares(ctx context.Context, generation uint64, shares []c
 			consumeCancellation()
 			if !ok {
 				events = nil
-				watching = false
+				watching, full = false, true
 				markDirty()
 				continue
 			}
@@ -422,6 +462,7 @@ func (s *Service) watchShares(ctx context.Context, generation uint64, shares []c
 			if event.Op&(fsnotify.Remove|fsnotify.Rename) != 0 {
 				removeWatchTree(watcher, watched, event.Name)
 			}
+			pending[event.Name] = true
 			markDirty()
 		case watchErr, ok := <-watcherErrors:
 			if !ok {
@@ -429,6 +470,7 @@ func (s *Service) watchShares(ctx context.Context, generation uint64, shares []c
 				continue
 			}
 			s.event(slog.LevelWarn, "share_watcher_event_failed", watchErr)
+			full = true // events may have been dropped
 			markDirty()
 		case <-quietC:
 			consumeCancellation()
@@ -469,6 +511,7 @@ func (s *Service) watchShares(ctx context.Context, generation uint64, shares []c
 				}
 				if !errors.Is(result.err, errShareScanDiscarded) {
 					s.event(slog.LevelWarn, "share_rescan_failed", result.err)
+					full = true
 				}
 				dirty = true
 				if quietTimer == nil && !quietReady {
@@ -476,8 +519,10 @@ func (s *Service) watchShares(ctx context.Context, generation uint64, shares []c
 				}
 				startMaximum()
 			} else if result.revision != revision {
-				dirty = true
+				dirty = true // newer events: keep every pending path for the next scan
 			} else {
+				clear(pending)
+				full = !watching
 				if !watching {
 					dirty = true
 					resetQuiet()
