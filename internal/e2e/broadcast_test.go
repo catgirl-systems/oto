@@ -105,7 +105,7 @@ func TestCommunityBroadcastCommandsAndPacedOutcomes(t *testing.T) {
 	h.screen("broadcast", "Broadcast · buddies · completed")
 	failIf(t, sent.Load() != 2, "broadcast repeated", sent.Load())
 	h.command("send-keys", "-t", "broadcast", "Escape")
-	h.screen("broadcast", "Enter send")
+	h.screen("broadcast", "/65536 bytes") // the composer is still open
 	h.command("send-keys", "-t", "broadcast", "-l", `/broadcast buddies "hello 世界" Alice Bob`)
 	h.command("send-keys", "-t", "broadcast", "Enter")
 	h.screen("broadcast", "Broadcast · buddies · preview")

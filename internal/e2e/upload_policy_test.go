@@ -30,7 +30,7 @@ func TestCommunityUploadPolicyTerminalPersistence(t *testing.T) {
 	h.attach("preferences", 120, 40)
 	h.screen("preferences", "No matching results")
 	h.command("send-keys", "-t", "preferences", "Tab", "Tab", "Tab", "Tab", "Tab", "Tab", "Tab")
-	h.screen("preferences", "SETTINGS")
+	h.screen("preferences", "╭─ Settings")
 	h.command("send-keys", "-t", "preferences", "Right", "Right", "Right", "Right")
 	h.screen("preferences", "Prioritize all buddies")
 	h.command("send-keys", "-t", "preferences", "Down", "Down", "Enter", "Down", "Enter", "Down", "Enter")

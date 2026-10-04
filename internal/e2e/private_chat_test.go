@@ -101,8 +101,8 @@ func TestCommunityTerminalPrivateChatLifecycle(t *testing.T) {
 	h.screen("second", "No matching results")
 	incoming <- fixtures["pm-online"]
 	h.wait("durable incoming ACK", func() bool { return acknowledged.Load() == 1 })
-	h.screen("first", "Unread:1")
-	h.screen("second", "Unread:1")
+	h.screen("first", "Community 1")
+	h.screen("second", "Community 1")
 	h.command("send-keys", "-t", "first", "Tab", "Tab", "Tab", "Tab")
 	h.screen("first", "Alice")
 	h.command("send-keys", "-t", "first", "Enter")
@@ -128,7 +128,7 @@ func TestCommunityTerminalPrivateChatLifecycle(t *testing.T) {
 	h.command("send-keys", "-t", "first", "-l", "q/?猫😀")
 	h.command("set-buffer", "-b", "chat-paste", "\nsecond line")
 	h.command("paste-buffer", "-p", "-b", "chat-paste", "-t", "first")
-	h.screen("first", "Multiline")
+	h.screen("first", "multiline ·")
 	h.command("send-keys", "-t", "first", "Enter")
 	h.screen("first", "[Cancel]")
 	h.command("send-keys", "-t", "first", "Enter") // Default cancels, never sends.
@@ -148,7 +148,7 @@ func TestCommunityTerminalPrivateChatLifecycle(t *testing.T) {
 	h.screen("first", "q/?猫😀")
 	navigate("second")
 	h.command("send-keys", "-t", "second", "Tab")
-	h.screen("second", "[Stats]")
+	h.screen("second", "Stats]")
 	// Resize the live composer, including the compact fallback, without edits.
 	for _, size := range [][2]int{{80, 24}, {40, 16}, {20, 6}, {120, 40}} {
 		h.command("resize-window", "-t", "first", "-x", fmt.Sprint(size[0]), "-y", fmt.Sprint(size[1]))
@@ -166,13 +166,13 @@ func TestCommunityTerminalPrivateChatLifecycle(t *testing.T) {
 		return strings.Contains(screen, "#62 ")
 	})
 	h.command("send-keys", "-t", "first", "Home")
-	h.screen("first", "0 new messages")
+	h.screen("first", "0 newer")
 	p := append([]byte(nil), fixtures["pm-online"]...)
 	binary.LittleEndian.PutUint32(p, 103)
 	incoming <- p
 	h.wait("new pinned message acknowledged", func() bool { return acknowledged.Load() == 62 })
-	h.screen("first", "1 new messages")
-	h.screen("second", "[Stats]") // Incoming must never steal workspace focus.
+	h.screen("first", "1 newer")
+	h.screen("second", "Stats]") // Incoming must never steal workspace focus.
 	h.command("send-keys", "-t", "first", "End", "i")
 	h.screen("first", "q/?猫😀")
 	h.command("send-keys", "-t", "first", "Enter", "Right", "Enter")
@@ -189,7 +189,7 @@ func TestCommunityTerminalPrivateChatLifecycle(t *testing.T) {
 	h.screen("first", "[sent]")
 	// Offline sends remain durable and expose usable cancel/retry controls.
 	must(t, h.client.SetPresence(context.Background(), daemon.PresenceOffline))
-	h.screen("first", "Offline")
+	h.screen("first", "○ offline") // Community state in the panel border
 	h.command("send-keys", "-t", "first", "-l", "queued across restart")
 	h.command("send-keys", "-t", "first", "Enter")
 	h.screen("first", "[queued]")
@@ -234,11 +234,11 @@ func TestCommunityTerminalPrivateChatLifecycle(t *testing.T) {
 	h.command("send-keys", "-t", "reattached", "C")
 	h.screen("reattached", "[Cancel]")
 	h.command("send-keys", "-t", "reattached", "Right", "Enter")
-	h.screen("reattached", "No messages in this page")
+	h.screen("reattached", "No messages here yet")
 	incoming <- fixtures["pm-offline"]
 	h.wait("cleared replay acknowledged", func() bool { return acknowledged.Load() == 63 })
 	page, err := h.client.CommunityConversations(context.Background(), daemon.CommunityConversationsRequest{CommunityIdentity: after.CommunityIdentity, Kind: "private"})
 	failIf(t, err != nil || len(page.Conversations) != 1 || page.Conversations[0].LatestID != 0 || page.Conversations[0].Unread != 0, "replay resurrected cleared content", page, err)
-	h.screen("reattached", "No messages in this page")
+	h.screen("reattached", "No messages here yet")
 	h.command("send-keys", "-t", "reattached", "q")
 }

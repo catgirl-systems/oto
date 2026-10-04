@@ -133,7 +133,7 @@ func verifyNicotineSharePermissions(t *testing.T, h *terminal, ctx context.Conte
 	h.command("send-keys", "-t", "permissions", "Escape")
 	h.screen("permissions", "[Buddies]")
 	h.command("send-keys", "-t", "permissions", "Tab", "Tab")
-	h.screen("permissions", "SHARES")
+	h.screen("permissions", "╭─ Shares")
 	h.command("send-keys", "-t", "permissions", "Home", "Enter")
 	h.screen("permissions", "Root: \"buddy\"")
 	h.command("send-keys", "-t", "permissions", "Right", "Tab", "Right", "Enter")
@@ -141,7 +141,7 @@ func verifyNicotineSharePermissions(t *testing.T, h *terminal, ctx context.Conte
 	h.command("send-keys", "-t", "permissions", "Enter")
 	h.screen("permissions", "Share access")
 	h.command("send-keys", "-t", "permissions", "Enter", "Right", "Enter")
-	h.screen("permissions", "SHARES")
+	h.screen("permissions", "╭─ Shares")
 	h.wait("terminal share access persisted", func() bool {
 		snapshot, err := h.client.Status(ctx)
 		if err != nil {
