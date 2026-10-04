@@ -31,18 +31,16 @@ func (s *Service) clearCompletedDownload(id string) error {
 
 // clearDownloadStateLocked matches on both id and state. m.mu must be held.
 func (s *Service) clearDownloadStateLocked(id, state string) error {
-	for i, download := range s.journal.Downloads {
-		if download.ID != id || download.State != state {
-			continue
-		}
-		if err := s.deleteDownloadLocked(id); err != nil {
-			return err
-		}
-		s.journal.Downloads = append(s.journal.Downloads[:i], s.journal.Downloads[i+1:]...)
-		delete(s.transfers, id)
-		s.forgetTransferLocked(id)
-		break
+	i := s.downloadIndexLocked(id)
+	if i < 0 || s.journal.Downloads[i].State != state {
+		return nil
 	}
+	if err := s.deleteDownloadLocked(id); err != nil {
+		return err
+	}
+	s.journal.Downloads = append(s.journal.Downloads[:i], s.journal.Downloads[i+1:]...)
+	delete(s.transfers, id)
+	s.forgetTransferLocked(id)
 	return nil
 }
 

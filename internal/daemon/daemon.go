@@ -228,6 +228,8 @@ type Service struct {
 	portCheck              listeningPortChecker
 	journal                Journal
 	searchMu               sync.Mutex           // guards searches; taken after mu when both are held
+	downloadIndex          journalIndex         // ID -> position in journal.Downloads, validated on use
+	uploadIndex            journalIndex         // ID -> position in journal.Uploads, validated on use
 	searches               map[string]*storedSearch
 	wishlist               []wishlistEntry
 	wishlistNextID         uint64

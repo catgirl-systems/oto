@@ -44,17 +44,14 @@ func (s *Service) ForceDownloads(ids []string) (UploadActionResult, error) {
 			continue
 		}
 		seen[id] = true
-		found := false
-		for i := range s.journal.Downloads {
+		i := s.downloadIndexLocked(id)
+		switch {
+		case i < 0:
+			result.Errors = append(result.Errors, UploadActionError{id, os.ErrNotExist.Error()})
+		case s.journal.Downloads[i].State != "filtered":
+			result.Skipped++
+		default:
 			d := &s.journal.Downloads[i]
-			if d.ID != id {
-				continue
-			}
-			found = true
-			if d.State != "filtered" {
-				result.Skipped++
-				break
-			}
 			d.FilterBypass, d.State, d.Error, d.RetryAt, d.UpdatedAt = true, "queued", "", time.Time{}, time.Now().UTC()
 			starts = append(starts, id)
 			result.Changed++
@@ -63,10 +60,6 @@ func (s *Service) ForceDownloads(ids []string) (UploadActionResult, error) {
 				event.Kind = stats.KindForced
 				s.statsEventLocked(event)
 			}
-			break
-		}
-		if !found {
-			result.Errors = append(result.Errors, UploadActionError{id, os.ErrNotExist.Error()})
 		}
 	}
 	dirty := make(map[string]bool, len(starts))

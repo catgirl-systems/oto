@@ -79,11 +79,8 @@ func (s *Service) uploadAccepted(session uint64, e soulseek.TransferEvent) error
 	queueSequence := s.journal.UploadQueueSequence
 	at := time.Now().UTC()
 	index := -1
-	for i := range s.journal.Uploads {
-		if s.journal.Uploads[i].ID == id && s.journal.Uploads[i].State != "completed" {
-			index = i
-			break
-		}
+	if i := s.uploadIndexLocked(id); i >= 0 && s.journal.Uploads[i].State != "completed" {
+		index = i
 	}
 	if index < 0 {
 		if s.journal.UploadSequence == ^uint64(0) {
@@ -127,10 +124,7 @@ func (s *Service) uploadAccepted(session uint64, e soulseek.TransferEvent) error
 
 func (s *Service) persistUploadLocked(id string) error {
 	tr, exists := s.transfers[id]
-	for i := range s.journal.Uploads {
-		if s.journal.Uploads[i].ID != id {
-			continue
-		}
+	if i := s.uploadIndexLocked(id); i >= 0 {
 		if !exists {
 			if err := s.deleteUploadRowLocked(id); err != nil {
 				return err

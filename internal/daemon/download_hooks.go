@@ -36,9 +36,9 @@ func (s *Service) completeDownloadContext(workerCtx context.Context, id, root, p
 		return
 	}
 	var download Download
-	for i := range s.journal.Downloads {
+	if i := s.downloadIndexLocked(id); i >= 0 && s.journal.Downloads[i].State == "running" {
 		d := &s.journal.Downloads[i]
-		if d.ID == id && d.State == "running" {
+		{
 			// Finalization committed under this lock may finish after later revocation.
 			// Revocation already published, or an unresolved recovery address, cannot pass.
 			if receivedDownload(*d) {
@@ -59,7 +59,6 @@ func (s *Service) completeDownloadContext(workerCtx context.Context, id, root, p
 			tr := s.transfers[id]
 			tr.State, tr.Done = d.State, d.Size
 			s.transfers[id] = tr
-			break
 		}
 	}
 	s.mu.Unlock()
@@ -74,11 +73,8 @@ func (s *Service) completeDownloadContext(workerCtx context.Context, id, root, p
 	// Finalization cannot be paused/cleared midway. Even during shutdown, save
 	// a successful move before the worker exits so it isn't downloaded twice.
 	s.mu.Lock()
-	for i := range s.journal.Downloads {
+	if i := s.downloadIndexLocked(id); i >= 0 {
 		d := &s.journal.Downloads[i]
-		if d.ID != id {
-			continue
-		}
 		d.Destination, _ = filepath.Rel(root, target)
 		d.DownloadDir = root
 		d.State, d.Offset, d.Error = "completed", d.Size, ""
@@ -87,7 +83,6 @@ func (s *Service) completeDownloadContext(workerCtx context.Context, id, root, p
 		tr.State, tr.Done, tr.Error, tr.Queue = d.State, d.Size, "", 0
 		s.transfers[id] = tr
 		s.stopTransferLocked(id)
-		break
 	}
 	commands, ctx := s.cfg.Downloads, s.runCtx
 	if receivedDownload(download) && (download.StatsAccount != accountKey(s.cfg) || !s.cfg.Receiving[download.StatsAccount].CompletionHooks) {

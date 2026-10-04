@@ -217,11 +217,9 @@ func (s *Service) UploadAction(req UploadActionRequest) (UploadActionResult, err
 	client := s.client
 	if req.Action == "retry" {
 		for _, id := range req.IDs {
-			for _, u := range s.journal.Uploads {
-				if u.ID == id && u.Account != s.uploadAccountLocked(s.uploadEpoch) {
-					s.mu.Unlock()
-					return result, errors.New("select this upload's local account before retrying")
-				}
+			if i := s.uploadIndexLocked(id); i >= 0 && s.journal.Uploads[i].Account != s.uploadAccountLocked(s.uploadEpoch) {
+				s.mu.Unlock()
+				return result, errors.New("select this upload's local account before retrying")
 			}
 		}
 	}

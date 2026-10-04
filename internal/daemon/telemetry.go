@@ -364,26 +364,23 @@ func (s *Service) flushStatsContext(ctx context.Context) error {
 	err := error(nil)
 	if len(ids) > 0 {
 		err = s.commitLockedFor(ctx, ids, func(q *db.Queries) error {
+			// Indexed lookups: this runs under the service lock, and a scan
+			// per dirty row made each checkpoint O(dirty × journal).
 			for id := range t.dirtyDownloads {
-				for _, d := range s.journal.Downloads {
-					if d.ID == id {
-						if err := q.UpsertDownload(ctx, downloadParams(d)); err != nil {
-							return err
-						}
-						break
+				if i := s.downloadIndexLocked(id); i >= 0 {
+					if err := q.UpsertDownload(ctx, downloadParams(s.journal.Downloads[i])); err != nil {
+						return err
 					}
 				}
 			}
 			for id := range t.dirtyUploads {
-				for _, u := range s.journal.Uploads {
-					if u.ID == id {
-						if tr, ok := s.transfers[id]; ok {
-							u.Transfer = tr
-						}
-						if err := q.UpsertUpload(ctx, uploadParams(u)); err != nil {
-							return err
-						}
-						break
+				if i := s.uploadIndexLocked(id); i >= 0 {
+					u := s.journal.Uploads[i]
+					if tr, ok := s.transfers[id]; ok {
+						u.Transfer = tr
+					}
+					if err := q.UpsertUpload(ctx, uploadParams(u)); err != nil {
+						return err
 					}
 				}
 			}

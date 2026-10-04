@@ -40,10 +40,11 @@ func (s *Service) startDownload(id string) {
 	if s.closed || s.requeueDownloads || s.ctx == nil || s.ctx.Err() != nil || s.downloadCancels[id] != nil {
 		return
 	}
-	for _, download := range s.journal.Downloads {
-		if download.ID != id || (download.State != "queued" && download.State != "incomplete" &&
-			!(download.State == "retrying" && !download.RetryAt.After(time.Now()))) {
-			continue
+	if i := s.downloadIndexLocked(id); i >= 0 {
+		download := s.journal.Downloads[i]
+		if download.State != "queued" && download.State != "incomplete" &&
+			!(download.State == "retrying" && !download.RetryAt.After(time.Now())) {
+			return
 		}
 		s.prepareTransferLocked(id)
 		ctx, cancel := context.WithCancel(s.ctx)
@@ -83,20 +84,18 @@ func (s *Service) resumeDownloads() {
 	}
 	starts := make([]string, 0, len(ids))
 	for _, id := range ids {
-		for i := range s.journal.Downloads {
-			if s.journal.Downloads[i].ID != id {
-				continue
-			}
-			previous := s.snapshotLocked(id)
-			s.journal.Downloads[i].State = "queued"
-			s.journal.Downloads[i].UpdatedAt = time.Now().UTC()
-			if err := s.persistDownloadLocked(s.journal.Downloads[i]); err != nil {
-				s.restoreLocked(previous)
-				s.event(slog.LevelWarn, "download_resume_persist_failed", err)
-			} else {
-				starts = append(starts, id)
-			}
-			break
+		i := s.downloadIndexLocked(id)
+		if i < 0 {
+			continue
+		}
+		previous := s.snapshotLocked(id)
+		s.journal.Downloads[i].State = "queued"
+		s.journal.Downloads[i].UpdatedAt = time.Now().UTC()
+		if err := s.persistDownloadLocked(s.journal.Downloads[i]); err != nil {
+			s.restoreLocked(previous)
+			s.event(slog.LevelWarn, "download_resume_persist_failed", err)
+		} else {
+			starts = append(starts, id)
 		}
 	}
 	s.mu.Unlock()
@@ -200,16 +199,13 @@ func (s *Service) runDownload(ctx context.Context, download Download, slots chan
 				return
 			}
 			var accountErr error
-			for i := range s.journal.Downloads {
-				if s.journal.Downloads[i].ID == id {
-					previous := s.snapshotLocked(id)
-					s.journal.Downloads[i].StatsAccount = account
-					s.statsBeginLocked(id, account)
-					accountErr = s.persistDownloadLocked(s.journal.Downloads[i])
-					if accountErr != nil {
-						s.restoreLocked(previous)
-					}
-					break
+			if i := s.downloadIndexLocked(id); i >= 0 {
+				previous := s.snapshotLocked(id)
+				s.journal.Downloads[i].StatsAccount = account
+				s.statsBeginLocked(id, account)
+				accountErr = s.persistDownloadLocked(s.journal.Downloads[i])
+				if accountErr != nil {
+					s.restoreLocked(previous)
 				}
 			}
 			s.mu.Unlock()
@@ -279,10 +275,8 @@ func (s *Service) waitClient(ctx context.Context) (*soulseek.Client, error) {
 func (s *Service) downloadByID(id string) (Download, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	for _, download := range s.journal.Downloads {
-		if download.ID == id {
-			return download, true
-		}
+	if i := s.downloadIndexLocked(id); i >= 0 {
+		return s.journal.Downloads[i], true
 	}
 	return Download{}, false
 }
@@ -301,14 +295,11 @@ func (s *Service) updateTransferProgress(id string, progress soulseek.Progress) 
 		}
 		transfer.Done, transfer.Total, transfer.State, transfer.Queue = progress.Done, progress.Total, state, progress.Queue
 		s.transfers[id] = transfer
-		for i := range s.journal.Downloads {
-			if s.journal.Downloads[i].ID == id {
-				s.journal.Downloads[i].Offset = progress.Done
-				s.journal.Downloads[i].UpdatedAt = time.Now().UTC()
-				if s.telemetry != nil {
-					s.telemetry.dirtyDownloads[id] = true
-				}
-				break
+		if i := s.downloadIndexLocked(id); i >= 0 {
+			s.journal.Downloads[i].Offset = progress.Done
+			s.journal.Downloads[i].UpdatedAt = time.Now().UTC()
+			if s.telemetry != nil {
+				s.telemetry.dirtyDownloads[id] = true
 			}
 		}
 		s.progressTransferLocked(id, progress.Done)
@@ -335,11 +326,8 @@ func (s *Service) updateDownload(id, state string, offset uint64, failure error)
 	}()
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	for i := range s.journal.Downloads {
+	if i := s.downloadIndexLocked(id); i >= 0 && s.journal.Downloads[i].State != "completed" {
 		d := &s.journal.Downloads[i]
-		if d.ID != id || d.State == "completed" {
-			continue
-		}
 		previous := s.snapshotLocked(id)
 		peer = d.Username
 		if s.telemetry != nil {
