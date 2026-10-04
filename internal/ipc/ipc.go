@@ -327,6 +327,13 @@ func (c *Client) TransferAction(ctx context.Context, id, action string) error {
 	return c.Do(ctx, "POST", "/v1/transfers/"+url.QueryEscape(id), map[string]string{"action": action}, nil)
 }
 
+// DownloadAction applies one action to many downloads in a single request.
+func (c *Client) DownloadAction(ctx context.Context, req daemon.DownloadActionRequest) (daemon.DownloadActionResult, error) {
+	var result daemon.DownloadActionResult
+	err := c.Do(ctx, "POST", "/v1/downloads/actions", req, &result)
+	return result, err
+}
+
 func (c *Client) UploadAction(ctx context.Context, req daemon.UploadActionRequest) (daemon.UploadActionResult, error) {
 	var result daemon.UploadActionResult
 	err := c.Do(ctx, "POST", "/v1/uploads/actions", req, &result)

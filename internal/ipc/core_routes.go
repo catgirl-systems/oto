@@ -506,6 +506,24 @@ func (s *Server) registerTransferRoutes() {
 		}
 		return wrapBody(result), nil
 	})
+	route(s, scopeAuthed, huma.Operation{
+		OperationID: "download-action", Method: http.MethodPost, Path: "/v1/downloads/actions",
+		Summary: "Pause, resume, retry, cancel or clear many downloads", Errors: []int{400, 503},
+	}, func(ctx context.Context, input *struct {
+		Body daemon.DownloadActionRequest
+	}) (*struct {
+		Body daemon.DownloadActionResult
+	}, error) {
+		result, err := s.service.DownloadAction(input.Body)
+		if err != nil {
+			status := http.StatusBadRequest
+			if errors.Is(err, daemon.ErrClosed) {
+				status = http.StatusServiceUnavailable
+			}
+			return nil, errStatus(status, err)
+		}
+		return wrapBody(result), nil
+	})
 }
 
 func (s *Server) registerShareRoutes() {
