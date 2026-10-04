@@ -733,11 +733,14 @@ func (m *model) discoverProfileKey(k tea.KeyPressMsg) tea.Cmd {
 	}
 	switch k.String() {
 	case "e", "enter":
-		if !m.community.supports("self-profile") || d.profileLoading || d.profile.CommunityIdentity != m.community.summary.CommunityIdentity {
+		// A profile already loaded for this session is editable even while the
+		// periodic refresh is in flight; rejecting keys during that window
+		// dropped presses at random. Saving still detects a newer revision.
+		if !m.community.supports("self-profile") || d.profile.CommunityIdentity != m.community.summary.CommunityIdentity {
 			d.err = "Wait for the saved profile to load"
 			return nil
 		}
-		d.cancelLoad()
+		d.cancelLoad() // the refresh's late response is ignored
 		d.form, d.inputErr, d.profileDirty = "profile", "", false
 		d.profileDraft, d.profileCursor, d.profileOriginal, d.profileBaseRevision = d.profile.Description, utf8.RuneCountInString(d.profile.Description), d.profile.Description, d.profile.Revision
 		m.restoreDiscoverDraft()
