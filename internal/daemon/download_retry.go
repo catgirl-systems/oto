@@ -43,27 +43,61 @@ func downloadRetryDelay(err error) time.Duration {
 	return 0
 }
 
+// retryIdleCheck bounds how long the loop sleeps with nothing scheduled, as a
+// guard against a missed wake.
+const retryIdleCheck = time.Minute
+
+// wakeRetries tells the retry loop a new retry was scheduled.
+func (s *Service) wakeRetries() {
+	select {
+	case s.retryWake <- struct{}{}:
+	default:
+	}
+}
+
+// retryDownloadsLoop sleeps until the earliest scheduled retry instead of
+// scanning the journal every second.
 func (s *Service) retryDownloadsLoop(ctx context.Context) {
 	defer s.sessionWG.Done()
-	ticker := time.NewTicker(time.Second)
-	defer ticker.Stop()
+	timer := time.NewTimer(0)
+	defer timer.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case now := <-ticker.C:
-			s.retryDownloads(now)
+		case <-s.retryWake:
+		case <-timer.C:
 		}
+		next := s.retryDownloads(time.Now())
+		wait := retryIdleCheck
+		if !next.IsZero() {
+			wait = min(wait, max(0, time.Until(next)))
+		}
+		if !timer.Stop() {
+			select {
+			case <-timer.C:
+			default:
+			}
+		}
+		timer.Reset(wait)
 	}
 }
 
-func (s *Service) retryDownloads(now time.Time) {
+// retryDownloads starts every due retry and returns the earliest retry still
+// in the future, or the zero time when none is scheduled.
+func (s *Service) retryDownloads(now time.Time) time.Time {
 	s.mu.RLock()
 	var ids []string
+	var next time.Time
 	if s.client != nil {
 		for _, download := range s.journal.Downloads {
-			if download.State == "retrying" && !download.RetryAt.After(now) {
+			if download.State != "retrying" {
+				continue
+			}
+			if !download.RetryAt.After(now) {
 				ids = append(ids, download.ID)
+			} else if next.IsZero() || download.RetryAt.Before(next) {
+				next = download.RetryAt
 			}
 		}
 	}
@@ -71,4 +105,5 @@ func (s *Service) retryDownloads(now time.Time) {
 	for _, id := range ids {
 		s.startDownload(id)
 	}
+	return next
 }

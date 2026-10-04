@@ -234,6 +234,7 @@ type Service struct {
 	wishlistCursor         int
 	wishlistServerInterval time.Duration
 	wishlistWake           chan struct{}
+	retryWake              chan struct{} // a download entered retrying
 	wishlistSearch         func(context.Context, *soulseek.Client, string, bool) ([]soulseek.SearchResult, error)
 	wishlistNotify         func(context.Context, string, int) error
 	browses                map[string]loadedBrowse
@@ -326,7 +327,7 @@ func New(cfg config.Config, path string) (*Service, error) {
 		return nil, err
 	}
 	scanCtx, scanCancel := context.WithCancel(context.Background())
-	s := &Service{downloadNotification: DownloadNotification{SessionID: rand.Text()}, desktopNotify: notifyDesktop, scanCtx: scanCtx, scanCancel: scanCancel, cfg: cfg, configPath: config.ConfigPath(), shares: index, searches: make(map[string]*storedSearch), wishlistWake: make(chan struct{}, 1), wishlistSearch: func(ctx context.Context, client *soulseek.Client, query string, automatic bool) ([]soulseek.SearchResult, error) {
+	s := &Service{downloadNotification: DownloadNotification{SessionID: rand.Text()}, desktopNotify: notifyDesktop, scanCtx: scanCtx, scanCancel: scanCancel, cfg: cfg, configPath: config.ConfigPath(), shares: index, searches: make(map[string]*storedSearch), wishlistWake: make(chan struct{}, 1), retryWake: make(chan struct{}, 1), wishlistSearch: func(ctx context.Context, client *soulseek.Client, query string, automatic bool) ([]soulseek.SearchResult, error) {
 		if automatic {
 			return client.WishlistSearch(ctx, query)
 		}

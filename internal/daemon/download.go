@@ -361,6 +361,7 @@ func (s *Service) updateDownload(id, state string, offset uint64, failure error)
 		if state == "failed" {
 			if delay := downloadRetryDelay(failure); delay > 0 {
 				d.State, d.RetryAt = "retrying", d.UpdatedAt.Add(delay)
+				s.wakeRetries()
 			}
 		}
 		actualState, retryAt, logFailure = d.State, d.RetryAt, failure
