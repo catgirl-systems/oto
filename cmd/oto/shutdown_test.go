@@ -99,8 +99,8 @@ func shutdownNetwork(t *testing.T) (string, <-chan struct{}, func(), <-chan []by
 			return
 		}
 		d := soulseek.NewDecoder(payload)
-		_, _ = d.String()
-		kind, _ := d.String()
+		_ = d.String()
+		kind := d.String()
 		if kind == "P" {
 			code, payload, err := soulseek.ReadFrame(c)
 			if err != nil || code != soulseek.PeerTransferRequest {
@@ -208,8 +208,8 @@ func TestChildShutdownUploads(t *testing.T) {
 			must(t, err)
 			defer p.Close()
 			var init soulseek.Encoder
-			_ = init.String("peer")
-			_ = init.String("P")
+			init.String("peer")
+			init.String("P")
 			init.U32(1)
 			must(t, soulseek.WriteInitFrame(p, byte(soulseek.PeerInit), init.Payload()))
 			// A bidirectional P connection also carries the subsequent upload offers.
