@@ -144,6 +144,7 @@ type Client struct {
 	passwordChange        chan string
 	addresses             map[string]*peerAddressLookup
 	peerIPs               map[string]cachedShareAddress
+	directAvoid           map[string]time.Time // direct addresses disproven by unconfirmedDirectError
 	pierce                map[uint32]chan net.Conn
 	peers                 map[string]*messagePeer
 	peerConnecting        map[string]chan struct{}
@@ -1000,12 +1001,21 @@ func readFrameContextProgress(ctx context.Context, c net.Conn, progress func(rec
 }
 
 func (c *Client) connectAddress(ctx context.Context, addr, kind string) (net.Conn, error) {
+	return c.dialPeer(ctx, addr, kind, false)
+}
+
+// dialPeer dials addr and sends the peer handshake. direct marks the socket as
+// a direct route so failures before the peer speaks can be blamed on the route.
+func (c *Client) dialPeer(ctx context.Context, addr, kind string, direct bool) (net.Conn, error) {
 	started := time.Now()
 	c.log(ctx, slog.LevelDebug, "connect_started", nil, slog.String("stage", "dial"), slog.String("type", kind))
 	peer, err := c.dialer.DialContext(ctx, "tcp", addr)
 	if err != nil {
 		c.log(ctx, slog.LevelInfo, "connect_failed", err, slog.String("stage", "dial"), slog.String("error_class", "dial"), slog.String("type", kind), slog.Duration("duration", time.Since(started)))
 		return nil, err
+	}
+	if direct {
+		peer = &directConn{Conn: peer, addr: addr}
 	}
 	peer = c.traceConn(ctx, peer, "", kind, "outgoing")
 	logger := c.peerLogger(ctx, peer)
@@ -1051,7 +1061,11 @@ func (c *Client) connectUserType(ctx context.Context, username, kind string) (ne
 			if address.Port == 0 {
 				return nil, errors.New("soulseek: peer has no listening port")
 			}
-			return c.connectAddress(ctx, net.JoinHostPort(address.IP, fmt.Sprint(address.Port)), kind)
+			addr := net.JoinHostPort(address.IP, fmt.Sprint(address.Port))
+			if c.skipDirect(ctx, addr) {
+				return nil, errors.New("soulseek: direct route recently reached another host")
+			}
+			return c.dialPeer(ctx, addr, kind, true)
 		},
 		func(ctx context.Context) (net.Conn, error) { return c.connectIndirect(ctx, username, kind) },
 		func(route string) {
@@ -1213,6 +1227,18 @@ func (c *Client) DownloadWithStart(ctx context.Context, username, filename strin
 }
 
 func (c *Client) downloadWithStart(ctx context.Context, username, filename string, size, offset uint64, dst io.WriterAt, progress ProgressFunc, start func(), offer *DownloadOffer, authorize func(netip.Addr) error) error {
+	err := c.downloadAttempt(ctx, username, filename, size, offset, dst, progress, start, offer, authorize)
+	if offer != nil {
+		return err // the peer reached us; no route was guessed
+	}
+	// A queue request that died before the peer spoke may have gone to a
+	// stranger on the peer's advertised address.
+	return c.retryIndirect(diagnostics.WithLogger(ctx, c.logger(ctx, slog.String("peer_username", username))), err, "download_retry_indirect", func(ctx context.Context) error {
+		return c.downloadAttempt(ctx, username, filename, size, offset, dst, progress, start, nil, authorize)
+	})
+}
+
+func (c *Client) downloadAttempt(ctx context.Context, username, filename string, size, offset uint64, dst io.WriterAt, progress ProgressFunc, start func(), offer *DownloadOffer, authorize func(netip.Addr) error) error {
 	if dst == nil || offset > size {
 		return ErrMalformed
 	}

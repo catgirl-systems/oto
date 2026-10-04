@@ -282,6 +282,17 @@ func (c *Client) executeUpload(a *uploadAttempt) {
 		a.mu.Unlock()
 		c.emitUpload(a, "running", 0, "")
 		err = c.performUpload(a, setupCtx, setupCancel)
+		if a.ctx.Err() == nil && !a.streamed() {
+			// Nothing reached the peer: a setup that died before it spoke may
+			// have gone to a stranger on its advertised address.
+			retryCtx := diagnostics.WithLogger(setupCtx, c.logger(a.ctx, slog.String("peer_username", a.target.Username)))
+			err = c.retryIndirect(retryCtx, err, "upload_retry_indirect", func(ctx context.Context) error {
+				a.mu.Lock()
+				a.fileStarted = false
+				a.mu.Unlock()
+				return c.performUpload(a, ctx, setupCancel)
+			})
+		}
 	}
 	setupCancel()
 	a.cancel()
@@ -324,6 +335,13 @@ func (c *Client) executeUpload(a *uploadAttempt) {
 	}
 	close(a.done)
 	c.mu.Unlock()
+}
+
+// streamed reports whether any file data reached the peer.
+func (a *uploadAttempt) streamed() bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.progress > 0
 }
 
 func (c *Client) performUpload(a *uploadAttempt, setupCtx context.Context, setupCancel context.CancelFunc) (uploadErr error) {
