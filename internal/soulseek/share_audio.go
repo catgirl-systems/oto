@@ -97,6 +97,17 @@ scan:
 		if f.Directory || !IsSupportedAudioExtension(f.Path) {
 			continue
 		}
+		if f.AudioSource != "" && s.carried[carriedKey(f.Root, f.Path)] {
+			// Copied from an unchanged directory by RescanPaths: keep its
+			// metadata without statting the file again.
+			mu.Lock()
+			status.Cached++
+			if report != nil {
+				report(status)
+			}
+			mu.Unlock()
+			continue
+		}
 		select {
 		case jobs <- i:
 		case <-ctx.Done():

@@ -187,55 +187,61 @@ func (s *ShareIndex) ScanContext(ctx context.Context) error {
 	progress := shareScanProgress(ctx)
 	var out []ShareFile
 	for _, r := range s.Roots() {
-		err := filepath.WalkDir(r.Path, func(path string, d fs.DirEntry, err error) error {
-			if err := ctx.Err(); err != nil {
-				return err
-			}
-			if err != nil {
-				return err
-			}
-			if path != r.Path && hidden(d.Name()) {
-				if d.IsDir() {
-					return filepath.SkipDir
-				}
-				return nil
-			}
-			if path != r.Path && d.Type()&os.ModeSymlink != 0 {
-				return nil
-			}
-			rel, e := filepath.Rel(r.Path, path)
-			if e != nil {
-				return e
-			}
-			if rel == "." {
-				rel = ""
-			}
-			if rel != "" && s.Excluded(r.Name+"/"+filepath.ToSlash(rel), d.IsDir()) {
-				if d.IsDir() {
-					return filepath.SkipDir
-				}
-				return nil
-			}
-			size := uint64(0)
-			if !d.IsDir() {
-				info, e := d.Info()
-				if e != nil {
-					return e
-				}
-				size = uint64(info.Size())
-			}
-			out = append(out, ShareFile{Root: r.Name, Path: filepath.ToSlash(rel), Size: size, Directory: d.IsDir()})
-			if progress != nil {
-				progress(r.Name, d.IsDir())
-			}
-			return nil
-		})
-		if err != nil {
+		if err := s.walkShare(ctx, r, r.Path, &out, progress); err != nil {
 			return err
 		}
 	}
 	return s.setFiles(ctx, out)
 }
+
+// walkShare appends the visible entries under start, a directory inside root
+// r (or r itself), applying the hidden, symlink and exclusion rules.
+func (s *ShareIndex) walkShare(ctx context.Context, r ShareRoot, start string, out *[]ShareFile, progress func(string, bool)) error {
+	return filepath.WalkDir(start, func(path string, d fs.DirEntry, err error) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if err != nil {
+			return err
+		}
+		if path != r.Path && hidden(d.Name()) {
+			if d.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if path != r.Path && d.Type()&os.ModeSymlink != 0 {
+			return nil
+		}
+		rel, e := filepath.Rel(r.Path, path)
+		if e != nil {
+			return e
+		}
+		if rel == "." {
+			rel = ""
+		}
+		if rel != "" && s.Excluded(r.Name+"/"+filepath.ToSlash(rel), d.IsDir()) {
+			if d.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		size := uint64(0)
+		if !d.IsDir() {
+			info, e := d.Info()
+			if e != nil {
+				return e
+			}
+			size = uint64(info.Size())
+		}
+		*out = append(*out, ShareFile{Root: r.Name, Path: filepath.ToSlash(rel), Size: size, Directory: d.IsDir()})
+		if progress != nil {
+			progress(r.Name, d.IsDir())
+		}
+		return nil
+	})
+}
+
 func (s *ShareIndex) Files() []ShareFile { return append([]ShareFile(nil), s.files...) }
 func cleanVirtual(p string) ([]string, error) {
 	p = strings.ReplaceAll(p, "\\", "/")
