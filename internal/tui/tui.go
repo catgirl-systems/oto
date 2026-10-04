@@ -80,8 +80,22 @@ type searchMsg struct {
 	append       bool
 	filter       string
 	filterChange bool
-	err          error
+	// countOnly refreshes totals while the user has unloaded pages left; new
+	// results then arrive through ordinary paging.
+	countOnly bool
+	err       error
 }
+
+// searchRefreshMsg asks for results that arrived since the last page while a
+// search is still collecting.
+type searchRefreshMsg struct{ request, operation uint64 }
+
+const searchRefreshInterval = time.Second
+
+func searchRefreshAfter(request, operation uint64) tea.Cmd {
+	return tea.Tick(searchRefreshInterval, func(time.Time) tea.Msg { return searchRefreshMsg{request, operation} })
+}
+
 type wishlistMsg struct {
 	items []daemon.WishlistItem
 	err   error
@@ -374,17 +388,58 @@ func (m *model) switchSearchTab(delta int) {
 	m.loadSearchTab((m.searchTabIndex + delta + len(m.searchTabs)) % len(m.searchTabs))
 }
 
-func (m *model) closeSearchTab() {
+// closeSearchTab closes the active tab and tells the daemon to drop its
+// results and stop collecting.
+func (m *model) closeSearchTab() tea.Cmd {
 	if len(m.searchTabs) == 0 {
-		return
+		return nil
 	}
 	m.saveSearchTab()
+	id := m.searchTabs[m.searchTabIndex].id
 	m.searchTabs = append(m.searchTabs[:m.searchTabIndex], m.searchTabs[m.searchTabIndex+1:]...)
 	if len(m.searchTabs) == 0 {
 		m.loadSearchTab(-1)
-		return
+	} else {
+		m.loadSearchTab(min(m.searchTabIndex, len(m.searchTabs)-1))
 	}
-	m.loadSearchTab(min(m.searchTabIndex, len(m.searchTabs)-1))
+	if id == "" || strings.HasPrefix(id, "wishlist:") || m.client == nil {
+		return nil
+	}
+	return func() tea.Msg {
+		_ = m.client.CloseSearch(m.ctx, id) // best effort: idle searches also expire
+		return nil
+	}
+}
+
+// refreshSearch fetches what a still-collecting search gathered since the
+// last page: new results when everything so far is loaded, totals otherwise.
+func (m *model) refreshSearch(x searchRefreshMsg) tea.Cmd {
+	for i := range m.searchTabs {
+		tab := &m.searchTabs[i]
+		if tab.request != x.request || tab.operation != x.operation {
+			continue
+		}
+		if !tab.searching || tab.id == "" {
+			return nil
+		}
+		if tab.loadingMore || tab.loading {
+			return searchRefreshAfter(x.request, x.operation)
+		}
+		id, filter, cursor, countOnly := tab.id, tab.filter, len(tab.results), tab.next > 0
+		if countOnly {
+			cursor = tab.total
+		} else {
+			tab.loadingMore = true
+			if m.workspace == workspaceSearch && i == m.searchTabIndex {
+				m.loadingMore = true
+			}
+		}
+		return func() tea.Msg {
+			page, err := m.client.SearchPage(m.ctx, id, cursor, filter)
+			return searchMsg{page: page, request: x.request, operation: x.operation, append: true, countOnly: countOnly, err: err}
+		}
+	}
+	return nil
 }
 
 func (m *model) openSearch(query string, users ...string) tea.Cmd {
@@ -438,12 +493,20 @@ func (m *model) openSearchPage(query, filter string, page daemon.SearchPage) {
 
 func applySearchMsg(tab *searchTab, message searchMsg) {
 	tab.err = errText(message.err)
-	if message.append {
+	if message.append && !message.countOnly {
 		tab.loadingMore = false
-	} else {
-		tab.loading, tab.searching = false, false
+	} else if !message.append {
+		tab.loading = false
 	}
 	if message.err != nil {
+		if !message.append {
+			tab.searching = false
+		}
+		return
+	}
+	tab.searching = message.page.Searching
+	if message.countOnly {
+		tab.total, tab.found = message.page.Total, message.page.FoundTotal
 		return
 	}
 	if message.page.CommunityIdentity != (daemon.CommunityIdentity{}) {
@@ -901,6 +964,8 @@ func (m model) updateMessage(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.notice = ""
 		}
 		return m, tea.Batch(m.loadStatus(), m.loadTransfers(), m.loadShares(), m.loadWishlist(), m.loadStats(), m.loadCommunitySummary(), m.loadCommunityRooms(false), m.loadCommunityMembers(false), m.loadCommunityFeed(false), m.loadCommunityWall(false), m.loadCommunityDiscover(false), tick())
+	case searchRefreshMsg:
+		return m, m.refreshSearch(x)
 	case activityTickMsg:
 		if !m.activityRunning {
 			break
@@ -1037,6 +1102,9 @@ func (m model) updateMessage(msg tea.Msg) (tea.Model, tea.Cmd) {
 				applySearchMsg(tab, x)
 				if m.workspace == workspaceSearch && i == m.searchTabIndex {
 					m.loadSearchTab(i)
+				}
+				if x.err == nil && x.page.Searching {
+					return m, searchRefreshAfter(tab.request, tab.operation)
 				}
 				break
 			}

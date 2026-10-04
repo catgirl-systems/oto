@@ -161,7 +161,7 @@ func (m *model) key(k tea.KeyPressMsg) tea.Cmd {
 		m.clearMarks()
 	case "ctrl+w":
 		if m.workspace == workspaceSearch {
-			m.closeSearchTab()
+			return m.closeSearchTab()
 		} else if m.workspace == workspaceBrowse {
 			m.closeBrowseTab()
 		}
