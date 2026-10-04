@@ -59,7 +59,7 @@ func insertShareSnapshot(ctx context.Context, db *storage.DB, source, username s
 }
 
 func insertShareEntryBatch(ctx context.Context, db *storage.DB, snapshotID int64, rows []storageDB.InsertShareEntryParams) error {
-	return db.WriteTx(ctx, func(tx *sql.Tx) error {
+	return db.WriteTxBulk(ctx, func(tx *sql.Tx) error {
 		queries := db.Queries().WithTx(tx)
 		for _, row := range rows {
 			if err := queries.InsertShareEntry(ctx, row); err != nil {
@@ -73,7 +73,7 @@ func insertShareEntryBatch(ctx context.Context, db *storage.DB, snapshotID int64
 func deleteShareSnapshotRows(ctx context.Context, db *storage.DB, id int64) error {
 	for {
 		var deleted bool
-		err := db.WriteTx(ctx, func(tx *sql.Tx) error {
+		err := db.WriteTxBulk(ctx, func(tx *sql.Tx) error {
 			queries := db.Queries().WithTx(tx)
 			if err := queries.DeleteShareEntriesBatch(ctx, storageDB.DeleteShareEntriesBatchParams{SnapshotID: id, Limit: storage.ShareBatchSize}); err != nil {
 				return err
@@ -103,7 +103,7 @@ func deleteShareSnapshotRows(ctx context.Context, db *storage.DB, id int64) erro
 			return err
 		}
 		if !deleted {
-			return db.WriteTx(ctx, func(tx *sql.Tx) error {
+			return db.WriteTxBulk(ctx, func(tx *sql.Tx) error {
 				return db.Queries().WithTx(tx).DeleteStagingShareSnapshot(ctx, id)
 			})
 		}
@@ -194,7 +194,7 @@ func gcShareSnapshots(ctx context.Context, db *storage.DB) error {
 			}
 			// Published obsolete snapshots need the same bounded child cleanup,
 			// then may be removed only when no head points at them.
-			if err := db.WriteTx(ctx, func(tx *sql.Tx) error {
+			if err := db.WriteTxBulk(ctx, func(tx *sql.Tx) error {
 				return db.Queries().WithTx(tx).DeleteShareSnapshot(ctx, id)
 			}); err != nil {
 				return err
@@ -233,11 +233,14 @@ func (s *Service) persistShareIndex(index *soulseek.ShareIndex) {
 	if err == nil {
 		s.mu.RLock()
 		current = !s.closed && (s.scanCtx == nil || s.scanCtx.Err() == nil) && s.shares == index
+		s.mu.RUnlock()
+		// Publish without the service lock: a writer waiting for it would
+		// otherwise block every API reader for the whole transaction. If a
+		// newer index lands meanwhile, its persist runs next (shareStorageMu
+		// serializes them) and moves the head on.
 		if current {
 			err = publishShareSnapshot(ctx, s.stateDB, id, "local", "")
-		}
-		s.mu.RUnlock()
-		if !current {
+		} else {
 			_ = deleteShareSnapshotRows(ctx, s.stateDB, id)
 			err = errShareScanDiscarded
 		}
