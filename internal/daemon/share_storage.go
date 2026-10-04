@@ -218,8 +218,17 @@ func (s *Service) persistShareIndex(index *soulseek.ShareIndex) {
 	}
 	s.mu.RLock()
 	current := !s.closed && (s.scanCtx == nil || s.scanCtx.Err() == nil) && s.shares == index
+	unchanged := s.sharePersisted.SameContent(index)
 	s.mu.RUnlock()
 	if !current {
+		return
+	}
+	if unchanged {
+		// A rescan that found nothing new (temp files, touched timestamps)
+		// would otherwise rewrite every row of the snapshot.
+		s.mu.Lock()
+		s.sharePersisted = index
+		s.mu.Unlock()
 		return
 	}
 	roots, files, exclusions := index.Roots(), index.Files(), index.Exclusions()
@@ -246,6 +255,10 @@ func (s *Service) persistShareIndex(index *soulseek.ShareIndex) {
 		}
 	}
 	if err == nil {
+		// Published: the database now holds this content even if cleanup fails.
+		s.mu.Lock()
+		s.sharePersisted = index
+		s.mu.Unlock()
 		err = gcShareSnapshots(ctx, s.stateDB)
 	}
 	if err != nil {

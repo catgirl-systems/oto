@@ -3,8 +3,10 @@ package daemon
 import (
 	"context"
 	"errors"
+	"fmt"
 	"github.com/catgirl-systems/oto/internal/config"
 	"github.com/catgirl-systems/oto/internal/soulseek"
+	storageDB "github.com/catgirl-systems/oto/internal/storage/db"
 	"os"
 	"path/filepath"
 	"sync/atomic"
@@ -173,4 +175,52 @@ func TestShareWatcherRootChangeInvalidatesOldScan(t *testing.T) {
 	if _, err := service.BrowseLocal("Old"); err == nil || !hasLocalFile(service, "New", "new.flac", 3) {
 		t.Fatalf("removed root remained or current root disappeared: %v", err)
 	}
+}
+
+func TestShareWatcherIncrementalMatchesFullScanAndSkipsNoOps(t *testing.T) {
+	root := t.TempDir()
+	for a := range 3 {
+		for b := range 3 {
+			dir := filepath.Join(root, fmt.Sprintf("Artist %d", a), fmt.Sprintf("Album %d", b))
+			must(t, os.MkdirAll(dir, 0o700))
+			must(t, os.WriteFile(filepath.Join(dir, "01.flac"), []byte("x"), 0o600))
+		}
+	}
+	shares := []config.Share{{Name: "Music", Path: root}}
+	service := watchingService(t, shares, 30*time.Millisecond, nil)
+	must(t, os.WriteFile(filepath.Join(root, "Artist 1", "Album 2", "02.flac"), []byte("new"), 0o600))
+	waitFor(t, func() bool { return hasLocalFile(service, "Music/Artist 1/Album 2", "02.flac", 3) })
+
+	service.mu.RLock()
+	published := service.shares
+	service.mu.RUnlock()
+	full, err := buildShareIndex(context.Background(), shares)
+	must(t, err)
+	failIf(t, !published.SameContent(full), "watcher index differs from a full scan")
+
+	// A file that appears and vanishes before the rescan leaves nothing new to
+	// store, so the snapshot head must not move.
+	head := func() int64 {
+		row, err := service.stateDB.Queries().GetShareHead(context.Background(), storageDB.GetShareHeadParams{Source: "local"})
+		must(t, err)
+		return row.SnapshotID
+	}
+	waitFor(t, func() bool {
+		service.mu.RLock()
+		defer service.mu.RUnlock()
+		return service.sharePersisted == service.shares
+	})
+	before := head()
+	revision := func() uint64 { service.mu.RLock(); defer service.mu.RUnlock(); return service.shareIndexRevision }
+	published0 := revision()
+	temp := filepath.Join(root, "Artist 0", "Album 0", "partial.tmp")
+	must(t, os.WriteFile(temp, []byte("t"), 0o600))
+	must(t, os.Remove(temp))
+	waitFor(t, func() bool { return revision() > published0 }) // a rescan did run and publish
+	waitFor(t, func() bool {
+		service.mu.RLock()
+		defer service.mu.RUnlock()
+		return service.sharePersisted == service.shares
+	})
+	failIfFmt(t, head() != before, "a no-op rescan rewrote the snapshot (%d -> %d)", before, head())
 }

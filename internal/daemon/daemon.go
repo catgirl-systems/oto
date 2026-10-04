@@ -228,6 +228,7 @@ type Service struct {
 	portCheck              listeningPortChecker
 	journal                Journal
 	searchMu               sync.Mutex           // guards searches; taken after mu when both are held
+	sharePersisted         *soulseek.ShareIndex // last share index written to the database
 	downloadIndex          journalIndex         // ID -> position in journal.Downloads, validated on use
 	uploadIndex            journalIndex         // ID -> position in journal.Uploads, validated on use
 	searches               map[string]*storedSearch
@@ -472,6 +473,7 @@ func (s *Service) Start(ctx context.Context) error {
 			s.shares = idx
 			s.shareIndexRevision++
 		}
+		s.sharePersisted = idx // loaded from the database, so already stored
 		s.mu.Unlock()
 	} else {
 		if !errors.Is(err, os.ErrNotExist) {
