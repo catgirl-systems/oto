@@ -106,7 +106,7 @@ func TestFilteredSearchPagesUseFullCache(t *testing.T) {
 	must(t, err)
 	failIfFmt(t, len(second.Results) != 3 || second.Results[0].Extension != "flac" || second.NextCursor != 0, "second filtered page: %+v", second)
 
-	service := &Service{searches: map[string]Search{"search": search}}
+	service := &Service{searches: map[string]*storedSearch{"search": {Search: search, done: closedDone()}}}
 	if _, err := service.SearchPage("search", 0, "size:nope"); !errors.Is(err, ErrInvalidFilter) {
 		t.Fatalf("invalid page filter: %v", err)
 	}

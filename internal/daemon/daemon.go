@@ -130,6 +130,8 @@ type SearchPage struct {
 	NextCursor int            `json:"next_cursor,omitempty"`
 	Total      int            `json:"total"`
 	FoundTotal int            `json:"found_total"`
+	// Searching reports that results are still arriving; fetch again to see more.
+	Searching bool `json:"searching,omitempty"`
 }
 
 type Transfer struct {
@@ -225,7 +227,8 @@ type Service struct {
 	portMapOpen            portMappingOpener
 	portCheck              listeningPortChecker
 	journal                Journal
-	searches               map[string]Search
+	searchMu               sync.Mutex           // guards searches; taken after mu when both are held
+	searches               map[string]*storedSearch
 	wishlist               []wishlistEntry
 	wishlistNextID         uint64
 	wishlistCursor         int
@@ -323,7 +326,7 @@ func New(cfg config.Config, path string) (*Service, error) {
 		return nil, err
 	}
 	scanCtx, scanCancel := context.WithCancel(context.Background())
-	s := &Service{downloadNotification: DownloadNotification{SessionID: rand.Text()}, desktopNotify: notifyDesktop, scanCtx: scanCtx, scanCancel: scanCancel, cfg: cfg, configPath: config.ConfigPath(), shares: index, searches: make(map[string]Search), wishlistWake: make(chan struct{}, 1), wishlistSearch: func(ctx context.Context, client *soulseek.Client, query string, automatic bool) ([]soulseek.SearchResult, error) {
+	s := &Service{downloadNotification: DownloadNotification{SessionID: rand.Text()}, desktopNotify: notifyDesktop, scanCtx: scanCtx, scanCancel: scanCancel, cfg: cfg, configPath: config.ConfigPath(), shares: index, searches: make(map[string]*storedSearch), wishlistWake: make(chan struct{}, 1), wishlistSearch: func(ctx context.Context, client *soulseek.Client, query string, automatic bool) ([]soulseek.SearchResult, error) {
 		if automatic {
 			return client.WishlistSearch(ctx, query)
 		}
@@ -1070,6 +1073,14 @@ func sortSearchResults(results []SearchResult) {
 	})
 }
 
+// searchPageHeader copies a search's context into an empty page.
+func searchPageHeader(search Search) SearchPage {
+	page := SearchPage{SearchContext: search.SearchContext, Usernames: slices.Clone(search.Usernames[:min(len(search.Usernames), 200)]), ID: search.ID, Query: search.Query}
+	page.Rooms = slices.Clone(search.Rooms[:min(len(search.Rooms), 200)])
+	page.TargetsTruncated = len(search.Usernames) > 200 || len(search.Rooms) > 200
+	return page
+}
+
 func filteredSearchPage(search Search, filter searchFilter, cursor int) SearchPage {
 	results := make([]SearchResult, 0, len(search.Results))
 	for _, result := range search.Results {
@@ -1079,9 +1090,8 @@ func filteredSearchPage(search Search, filter searchFilter, cursor int) SearchPa
 	}
 	cursor = max(0, min(cursor, len(results)))
 	end := min(cursor+searchPageSize, len(results))
-	page := SearchPage{SearchContext: search.SearchContext, Usernames: slices.Clone(search.Usernames[:min(len(search.Usernames), 200)]), ID: search.ID, Query: search.Query, Results: append([]SearchResult(nil), results[cursor:end]...), Cursor: cursor, Total: len(results), FoundTotal: len(search.Results)}
-	page.Rooms = slices.Clone(search.Rooms[:min(len(search.Rooms), 200)])
-	page.TargetsTruncated = len(search.Usernames) > 200 || len(search.Rooms) > 200
+	page := searchPageHeader(search)
+	page.Results, page.Cursor, page.Total, page.FoundTotal = append([]SearchResult(nil), results[cursor:end]...), cursor, len(results), len(search.Results)
 	if end < len(results) {
 		page.NextCursor = end
 	}
@@ -1101,13 +1111,13 @@ func (s *Service) SearchPage(id string, cursor int, expression string) (SearchPa
 	if err != nil {
 		return SearchPage{}, err
 	}
-	s.mu.RLock()
-	search, ok := s.searches[id]
-	s.mu.RUnlock()
+	s.searchMu.Lock()
+	defer s.searchMu.Unlock()
+	st, ok := s.searches[id]
 	if !ok {
 		return SearchPage{}, ErrSearchNotFound
 	}
-	return filteredSearchPage(search, filter, cursor), nil
+	return s.pageLocked(st, expression, filter, cursor, time.Now()), nil
 }
 
 func (s *Service) Browse(ctx context.Context, username, path string) ([]soulseek.ShareEntry, error) {

@@ -37,7 +37,7 @@ func TestDefaultFilterValidationAndPersistence(t *testing.T) {
 	failIf(t, string(before) != string(after) || s.Config().Search.DefaultFilter != cfg.Search.DefaultFilter, "invalid update saved")
 	loaded, err := config.Load(path)
 	failIfFmt(t, err != nil || loaded.Search.DefaultFilter != "type:audio", "roundtrip: %v", err)
-	s.searches["cached"] = Search{ID: "cached", Results: []SearchResult{{Path: "song.mp3", Extension: "mp3"}, {Path: "note.txt", Extension: "txt"}}}
+	s.searches["cached"] = &storedSearch{Search: Search{ID: "cached", Results: []SearchResult{{Path: "song.mp3", Extension: "mp3"}, {Path: "note.txt", Extension: "txt"}}}, done: closedDone()}
 	page, err := s.SearchPage("cached", 0, "")
 	failIfFmt(t, err != nil || len(page.Results) != 2, "empty explicit API filter inherited default: %+v %v", page, err)
 	if _, err := s.PutWishlist("wish", ""); err != nil {

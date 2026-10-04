@@ -78,7 +78,10 @@ func (s *Service) PutWishlist(query, expression string) (WishlistItem, error) {
 		previous := *item
 		item.Filter, item.generation = expression, item.generation+1
 		item.Running, item.Unread, item.ResultSignature = false, false, ""
-		if search, ok := s.searches[wishlistSearchID(item.ID)]; ok {
+		s.searchMu.Lock()
+		search, ok := s.searches[wishlistSearchID(item.ID)]
+		s.searchMu.Unlock()
+		if ok {
 			matching := matchingSearchResults(search.Results, filter)
 			item.ResultCount, item.ResultSignature = len(matching), searchResultSignature(matching)
 		}
@@ -115,7 +118,9 @@ func (s *Service) RemoveWishlist(id string) error {
 		s.wishlist = previous
 		return err
 	}
+	s.searchMu.Lock()
 	delete(s.searches, wishlistSearchID(id))
+	s.searchMu.Unlock()
 	if s.wishlistCursor > i {
 		s.wishlistCursor--
 	}
@@ -199,7 +204,9 @@ func (s *Service) runWishlist(ctx context.Context, id string, automatic bool) (S
 	matching := matchingSearchResults(converted, filter)
 	signature := searchResultSignature(matching)
 	search := Search{ID: wishlistSearchID(id), Query: query, Results: converted}
-	s.searches[search.ID] = search
+	s.searchMu.Lock()
+	s.searches[search.ID] = &storedSearch{Search: search, accessed: now, done: closedDone()}
+	s.searchMu.Unlock()
 	item.Error, item.ResultCount = "", len(matching)
 	notify := false
 	if automatic {
@@ -240,10 +247,13 @@ func (s *Service) OpenWishlist(id string) (SearchPage, error) {
 		return SearchPage{}, ErrWishlistNotFound
 	}
 	item := &s.wishlist[i]
-	search, ok := s.searches[wishlistSearchID(id)]
+	s.searchMu.Lock()
+	stored, ok := s.searches[wishlistSearchID(id)]
+	s.searchMu.Unlock()
 	if !ok {
 		return SearchPage{}, ErrWishlistNoResults
 	}
+	search := stored.Search
 	filter, _ := parseSearchFilter(item.Filter)
 	wasUnread := item.Unread
 	item.Unread = false

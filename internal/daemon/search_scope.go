@@ -111,29 +111,56 @@ func (s *Service) SearchScoped(ctx context.Context, req ScopedSearchRequest) (Se
 	if client == nil {
 		return SearchPage{}, ErrNotStarted
 	}
-	var results []soulseek.SearchResult
-	if scope.Scope == "global" {
-		results, err = client.Search(ctx, req.Query)
-	} else {
-		results, err = client.SearchScoped(ctx, req.Query, users, scope.Rooms)
-	}
-	if err != nil {
-		return SearchPage{}, err
-	}
-	out := fromSoulseekResults(results)
-	sortSearchResults(out)
-	if scope.Scope != "global" && len(out) == 0 {
-		scope.Warning = "No results; scoped searches have no server acknowledgement, so support cannot be inferred. No global search was sent."
-	}
-	search := Search{SearchContext: scope, Usernames: users, ID: fmt.Sprintf("%d", time.Now().UnixNano()), Query: req.Query, Results: out}
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	if err := s.checkCommunityIdentityLocked(ctx, scope.CommunityIdentity); err != nil {
+		s.mu.Unlock()
 		return SearchPage{}, err
 	}
 	if s.client != client {
+		s.mu.Unlock()
 		return SearchPage{}, ErrCommunitySession
 	}
-	s.searches[search.ID] = search
-	return filteredSearchPage(search, filter, 0), nil
+	parent := s.runCtx
+	s.mu.Unlock()
+	if parent == nil {
+		parent = context.Background()
+	}
+	// Collection outlives this request: it belongs to the daemon and ends
+	// after searchLifetime, on eviction, or when the client closes it.
+	collectCtx, cancel := context.WithTimeout(parent, searchLifetime)
+	now := time.Now()
+	st := &storedSearch{Search: Search{SearchContext: scope, Usernames: users, ID: fmt.Sprintf("%d", now.UnixNano()), Query: req.Query}, searching: true, cancel: cancel, done: make(chan struct{})}
+	s.searchMu.Lock()
+	s.storeSearchLocked(st, now)
+	s.searchMu.Unlock()
+	targets, rooms := users, scope.Rooms
+	if scope.Scope == "global" {
+		targets, rooms = nil, nil
+	}
+	go func() {
+		defer cancel()
+		err := client.StreamSearch(collectCtx, req.Query, targets, rooms, func(batch []soulseek.SearchResult) {
+			s.appendSearchResults(st.ID, batch)
+		})
+		s.finishSearch(st.ID, err)
+	}()
+	window := time.NewTimer(searchInitialWindow)
+	defer window.Stop()
+	select {
+	case <-window.C:
+	case <-st.done:
+	case <-ctx.Done():
+	}
+	s.searchMu.Lock()
+	defer s.searchMu.Unlock()
+	if st.err != nil {
+		// Sending failed: nothing was searched, so report it like before.
+		s.dropSearchLocked(st.ID)
+		return SearchPage{}, st.err
+	}
+	if s.searches[st.ID] != st {
+		return SearchPage{}, ErrSearchNotFound
+	}
+	warnIfEmptyScopedLocked(st)
+	return s.pageLocked(st, req.Filter, filter, 0, time.Now()), nil
 }
