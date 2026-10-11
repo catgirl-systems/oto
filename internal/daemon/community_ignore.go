@@ -16,13 +16,13 @@ type communityIgnoreAddress struct {
 	expires time.Time
 }
 
-func (s *Service) communityIgnoreAddressLocked(username string) netip.Addr {
-	if user := s.community.users[username]; user.AddressFresh {
+func (c *communityState) ignoredAddress(username string) netip.Addr {
+	if user := c.users[username]; user.AddressFresh {
 		if address, err := netip.ParseAddr(user.IP); err == nil && !address.IsUnspecified() {
 			return address.Unmap()
 		}
 	}
-	if cached := s.community.ignoreAddresses[username]; time.Now().Before(cached.expires) {
+	if cached := c.ignoreAddresses[username]; time.Now().Before(cached.expires) {
 		return cached.address
 	}
 	return netip.Addr{}
@@ -60,7 +60,7 @@ func (s *Service) nextTransientIgnoreSenderLocked(after, next string) string {
 	return next
 }
 func (s *Service) communityIgnoreLocked(username string) (ignored, held bool) {
-	address := s.communityIgnoreAddressLocked(username)
+	address := s.community.ignoredAddress(username)
 	rule, unresolved := s.communityRuleLocked("ignore", username, address)
 	return rule != nil, unresolved
 }
@@ -128,7 +128,7 @@ func (s *Service) releaseCommunityHeld(ctx context.Context, identity CommunityId
 		return ErrCommunitySession
 	}
 	if !address.IsValid() {
-		address = s.communityIgnoreAddressLocked(sender)
+		address = s.community.ignoredAddress(sender)
 	}
 	if address.IsValid() && !address.IsUnspecified() {
 		if s.community.ignoreAddresses == nil {

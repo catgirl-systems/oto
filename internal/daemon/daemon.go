@@ -860,7 +860,7 @@ func (s *Service) connectOnce(ctx context.Context) error {
 	s.uploadRecoveryReady = uploadsReady
 	s.community.identity, s.community.online = identity, true
 	s.applyUploadUserPoliciesLocked()
-	s.beginCommunityRoomsLocked()
+	s.community.beginRooms()
 	s.community.revision++
 	idx = s.shares
 	s.status, s.lastErr = StatusConnected, ""

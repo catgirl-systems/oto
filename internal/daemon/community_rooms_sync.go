@@ -33,7 +33,7 @@ func (s *Service) syncCommunityRooms(ctx context.Context, client *soulseek.Clien
 		s.community.directoryDeadline = now.Add(15 * time.Second)
 		s.community.revision++
 	}
-	names := s.communityRoomNamesLocked()
+	names := s.community.roomNames()
 	s.mu.Unlock()
 	if refresh {
 		writeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)

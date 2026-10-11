@@ -111,7 +111,7 @@ func TestCommunityDiscoveryCacheBoundsAndWatchOwnership(t *testing.T) {
 	}
 	s.mu.Lock()
 	s.community.discovery.queries[key] = &communityDiscoveryQuery{generation: 1, awaiting: true, state: "pending"}
-	s.applyDiscoveryLocked(response)
+	s.community.applyDiscovery(response)
 	s.mu.Unlock()
 	req := CommunityDiscoveryRequest{CommunityIdentity: id, Kind: "similar", Frontend: "first", Limit: 200}
 	page, err := s.CommunityDiscovery(ctx, req)
@@ -147,9 +147,9 @@ func TestCommunityDiscoveryCacheBoundsAndWatchOwnership(t *testing.T) {
 		defer s.mu.Unlock()
 		for i := 0; i < 40; i++ {
 			k := communityDiscoveryKey{Kind: "item", Target: fmt.Sprint(i)}
-			failIf(t, len(s.community.discovery.queries) >= 32 && !s.evictDiscoveryLocked(k), "could not evict completed query")
+			failIf(t, len(s.community.discovery.queries) >= 32 && !s.community.evictDiscovery(k), "could not evict completed query")
 			s.community.discovery.queries[k] = &communityDiscoveryQuery{awaiting: true, state: "pending"}
-			s.applyDiscoveryLocked(soulseek.DiscoveryResponse{Kind: k.Kind, Target: k.Target, Recommendations: []soulseek.ScoredInterest{{Item: "\x1b[2Jbad"}}})
+			s.community.applyDiscovery(soulseek.DiscoveryResponse{Kind: k.Kind, Target: k.Target, Recommendations: []soulseek.ScoredInterest{{Item: "\x1b[2Jbad"}}})
 		}
 		failIf(t, len(s.community.discovery.queries) != 32, "cache count")
 		rows := make([]soulseek.ScoredInterest, 3500)
@@ -159,10 +159,10 @@ func TestCommunityDiscoveryCacheBoundsAndWatchOwnership(t *testing.T) {
 		for i := 0; i < 6; i++ {
 			k := communityDiscoveryKey{Kind: "item", Target: fmt.Sprintf("large-%d", i)}
 			if len(s.community.discovery.queries) >= 32 {
-				s.evictDiscoveryLocked(k)
+				s.community.evictDiscovery(k)
 			}
 			s.community.discovery.queries[k] = &communityDiscoveryQuery{awaiting: true, state: "pending"}
-			s.applyDiscoveryLocked(soulseek.DiscoveryResponse{Kind: k.Kind, Target: k.Target, Recommendations: rows})
+			s.community.applyDiscovery(soulseek.DiscoveryResponse{Kind: k.Kind, Target: k.Target, Recommendations: rows})
 		}
 		failIf(t, s.community.discovery.queryBytes > maxCommunityDiscoveryBytes, "cache byte limit")
 		var measured int
@@ -230,7 +230,7 @@ func TestCommunityDiscoveryReviewRegressions(t *testing.T) {
 	defer s.mu.Unlock()
 	key := communityDiscoveryKey{Kind: "similar"}
 	s.community.discovery.queries[key] = &communityDiscoveryQuery{awaiting: true, state: "pending"}
-	s.applyDiscoveryLocked(response)
+	s.community.applyDiscovery(response)
 	cached := s.community.discovery.queries[key]
 	failIf(t, len(cached.rows) != 1 || cap(cached.rows) > 2, "dedup retained incoming backing capacity", len(cached.rows), cap(cached.rows))
 	failIf(t, cached.bytes != 512+len("Alice"), "dedup accounting", cached.bytes)

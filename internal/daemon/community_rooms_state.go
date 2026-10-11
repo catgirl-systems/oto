@@ -74,12 +74,12 @@ func loadCommunityRooms(ctx context.Context, q *db.Queries, account string, next
 	}
 }
 
-func (s *Service) retireCommunityRoomsLocked() {
-	s.community.directoryFresh = false
-	s.community.directoryPending = false
-	s.community.feedWritten = false
-	s.community.invitationsWritten, s.community.invitationsConfirmed = nil, nil
-	for name, r := range s.community.rooms {
+func (c *communityState) retireRooms() {
+	c.directoryFresh = false
+	c.directoryPending = false
+	c.feedWritten = false
+	c.invitationsWritten, c.invitationsConfirmed = nil, nil
+	for name, r := range c.rooms {
 		r.wanted, r.joined, r.pending = r.autojoin, false, ""
 		r.intent++
 		r.err = "Disconnected; room messages missed while away cannot be recovered."
@@ -90,9 +90,9 @@ func (s *Service) retireCommunityRoomsLocked() {
 		if r.roleMutation != nil && r.roleMutation.State == "pending" {
 			r.roleMutation.State = "unknown"
 		}
-		s.clearRoomCachesLocked(r)
+		c.clearRoomCaches(r)
 		r.rejectJoin = false
-		delete(s.community.watches, "room:"+name)
+		delete(c.watches, "room:"+name)
 	}
 }
 
@@ -135,7 +135,7 @@ func (s *Service) updateCommunityRoomLocked(ctx context.Context, message soulsee
 			s.wakeCommunityOutboxLocked()
 			return nil
 		}
-		if !s.roomCacheFitsLocked(len(r.members)+len(r.operators), len(m.Users)+len(m.Operators)) {
+		if !s.community.roomCacheFits(len(r.members)+len(r.operators), len(m.Users)+len(m.Operators)) {
 			return fmt.Errorf("community: room cache entry limit")
 		}
 		if !r.joined {
@@ -184,7 +184,7 @@ func (s *Service) updateCommunityRoomLocked(ctx context.Context, message soulsee
 				r.role = "owner"
 			}
 		}
-		s.clearRoomWallLocked(r)
+		s.community.clearRoomWall(r)
 		r.wallIssued = 0
 		r.wallState = "waiting for wall snapshot"
 		if r.ownWall != "" {
@@ -208,12 +208,12 @@ func (s *Service) updateCommunityRoomLocked(ctx context.Context, message soulsee
 			if soulseek.ValidateUsername(user.Username) != nil {
 				continue
 			}
-			s.hydrateRoomUserLocked(user)
+			s.community.hydrateRoomUser(user)
 		}
 	case soulseek.RoomLeft:
 		if r := s.community.rooms[m.Room]; r != nil {
 			r.joined = false
-			s.clearRoomCachesLocked(r)
+			s.community.clearRoomCaches(r)
 			r.rejectJoin = false
 			r.wallFresh = false
 			if r.wallState == "pending" {
@@ -237,12 +237,12 @@ func (s *Service) updateCommunityRoomLocked(ctx context.Context, message soulsee
 					return fmt.Errorf("community: room roster exceeds local limit")
 				}
 			}
-			if _, exists := r.members[m.User.Username]; !exists && !s.roomCacheFitsLocked(0, 1) {
+			if _, exists := r.members[m.User.Username]; !exists && !s.community.roomCacheFits(0, 1) {
 				return fmt.Errorf("community: room cache entry limit")
 			}
 			r.members[m.User.Username] = m.User
 			s.watchRoomLocked(m.Room, r)
-			s.hydrateRoomUserLocked(m.User)
+			s.community.hydrateRoomUser(m.User)
 		}
 	case soulseek.RoomUserLeft:
 		if r := s.community.rooms[m.Room]; r != nil && r.joined {
@@ -269,8 +269,8 @@ func (s *Service) watchRoomLocked(name string, r *communityRoomState) {
 	}
 	s.setUserWatchesLocked("room:"+name, users, time.Time{})
 }
-func (s *Service) hydrateRoomUserLocked(member soulseek.RoomUser) {
-	user, ok := s.community.users[member.Username]
+func (c *communityState) hydrateRoomUser(member soulseek.RoomUser) {
+	user, ok := c.users[member.Username]
 	if !ok {
 		return
 	}
@@ -286,7 +286,7 @@ func (s *Service) hydrateRoomUserLocked(member soulseek.RoomUser) {
 		user.Country = member.Country
 	}
 	// Initial roster hydration is not an observed online->offline transition.
-	s.community.users[member.Username] = user
+	c.users[member.Username] = user
 }
 
 func (s *Service) receiveCommunityRoomMessageLocked(ctx context.Context, m soulseek.RoomMessage) error {
@@ -345,24 +345,24 @@ func (s *Service) receiveCommunityRoomMessageLocked(ctx context.Context, m souls
 // Server PMs remain in Chats -> server; only their association with pending room
 // joins lives here. Never put their bodies in diagnostic errors or invent a
 // confirmation from them. Replayed notices cannot mutate current membership.
-func (s *Service) communityRoomNoticeLocked(message soulseek.PrivateMessage) {
+func (c *communityState) roomNotice(message soulseek.PrivateMessage) {
 	if message.Username != "server" || !message.New {
 		return
 	}
-	for _, r := range s.community.rooms {
+	for _, r := range c.rooms {
 		if r.pending == "join" {
 			r.err = "Server notice received; open Chats -> server for the reason. Membership is not confirmed."
 		}
 	}
-	s.community.revision++
+	c.revision++
 }
 
-func (s *Service) beginCommunityRoomsLocked() {
+func (c *communityState) beginRooms() {
 	// A freshly connected socket needs a fresh full directory, not the limited
 	// unsolicited startup list. Never restore server-authoritative membership.
-	s.community.directoryRefresh = true
-	s.community.invitationsWritten, s.community.invitationsConfirmed = nil, nil
-	for _, r := range s.community.rooms {
+	c.directoryRefresh = true
+	c.invitationsWritten, c.invitationsConfirmed = nil, nil
+	for _, r := range c.rooms {
 		r.joined, r.pending = false, ""
 		r.intent++
 		if r.autojoin {
@@ -399,9 +399,9 @@ func communityRoomStateName(online bool, r *communityRoomState) string {
 	return "not-joined"
 }
 
-func (s *Service) communityRoomNamesLocked() []string {
-	names := make([]string, 0, len(s.community.rooms))
-	for name := range s.community.rooms {
+func (c *communityState) roomNames() []string {
+	names := make([]string, 0, len(c.rooms))
+	for name := range c.rooms {
 		names = append(names, name)
 	}
 	slices.Sort(names)

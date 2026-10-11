@@ -51,7 +51,8 @@ type userWatchLease struct {
 	expiresAt time.Time // Zero for daemon-owned buddies, conversations and rooms.
 }
 
-// All fields are protected by Service.mu. Network writes always happen outside it.
+// All fields are protected by Service.mu, and its methods require it too.
+// Network writes always happen outside it.
 type communityState struct {
 	identity                                           CommunityIdentity
 	online                                             bool
@@ -180,7 +181,7 @@ func (s *Service) loadCommunityLocked(ctx context.Context) error {
 	// Account changes must fence offline requests too, including A -> B -> A.
 	s.uploadEpoch++
 	next.identity.Session = s.uploadEpoch
-	s.retireProfilesLocked()
+	s.community.retireProfiles()
 	clear(s.browses)
 	clear(s.browseProgress)
 	s.community = next
@@ -211,9 +212,9 @@ func (s *Service) retireCommunityLocked() {
 	clear(s.community.ignoreAddresses)
 	clear(s.community.privileged)
 	s.applyUploadUserPoliciesLocked()
-	s.retireCommunityRoomsLocked()
-	s.retireDiscoveryLocked()
-	s.retireProfilesLocked()
+	s.community.retireRooms()
+	s.community.retireDiscovery()
+	s.community.retireProfiles()
 	clear(s.browses)
 	clear(s.browseProgress)
 	for username, user := range s.community.users {
@@ -251,7 +252,7 @@ func (s *Service) communityUpdate(ctx context.Context, identity CommunityIdentit
 		return s.updateCommunityRoomRolesLocked(ctx, message)
 	}
 	if response, ok := message.(soulseek.DiscoveryResponse); ok {
-		s.applyDiscoveryLocked(response)
+		s.community.applyDiscovery(response)
 		return nil
 	}
 	var username string

@@ -223,7 +223,7 @@ func (s *Service) StartCommunityDiscovery(ctx context.Context, req CommunityDisc
 	if old != nil && (old.awaiting || old.state == "pending" || old.state == "ready" && !req.Refresh) {
 		return s.communityDiscoveryPageLocked(req, key, limit)
 	}
-	if old == nil && len(d.queries) >= 32 && !s.evictDiscoveryLocked(key) {
+	if old == nil && len(d.queries) >= 32 && !s.community.evictDiscovery(key) {
 		return CommunityDiscoveryPage{}, errors.New("community: too many outstanding discovery queries; wait or reconnect")
 	}
 	if old != nil {
@@ -266,11 +266,11 @@ func (s *Service) StartCommunityDiscovery(ctx context.Context, req CommunityDisc
 
 // Pending/uncertain tokenless requests cannot be evicted or reissued: their late
 // responses would otherwise be mistaken for a newer request on the same socket.
-func (s *Service) evictDiscoveryLocked(exclude communityDiscoveryKey) bool {
+func (c *communityState) evictDiscovery(exclude communityDiscoveryKey) bool {
 	var oldest communityDiscoveryKey
 	var used time.Time
 	found := false
-	for key, q := range s.community.discovery.queries {
+	for key, q := range c.discovery.queries {
 		if key == exclude || q.awaiting || q.state == "pending" {
 			continue
 		}
@@ -279,14 +279,14 @@ func (s *Service) evictDiscoveryLocked(exclude communityDiscoveryKey) bool {
 		}
 	}
 	if found {
-		s.community.discovery.queryBytes -= s.community.discovery.queries[oldest].bytes
-		delete(s.community.discovery.queries, oldest)
+		c.discovery.queryBytes -= c.discovery.queries[oldest].bytes
+		delete(c.discovery.queries, oldest)
 	}
 	return found
 }
-func (s *Service) applyDiscoveryLocked(response soulseek.DiscoveryResponse) {
+func (c *communityState) applyDiscovery(response soulseek.DiscoveryResponse) {
 	key := communityDiscoveryKey{response.Kind, response.Target}
-	q := s.community.discovery.queries[key]
+	q := c.discovery.queries[key]
 	if q == nil || !q.awaiting {
 		return
 	}
@@ -339,8 +339,8 @@ func (s *Service) applyDiscoveryLocked(response soulseek.DiscoveryResponse) {
 		}
 		return strings.Compare(a.Item, b.Item)
 	})
-	d := &s.community.discovery
-	for d.queryBytes+bytes > maxCommunityDiscoveryBytes && s.evictDiscoveryLocked(key) {
+	d := &c.discovery
+	for d.queryBytes+bytes > maxCommunityDiscoveryBytes && c.evictDiscovery(key) {
 	}
 	q.awaiting = false
 	q.updated = time.Now()
@@ -355,10 +355,10 @@ func (s *Service) applyDiscoveryLocked(response soulseek.DiscoveryResponse) {
 		q.rows, q.bytes, q.state, q.failure = rows, bytes, "ready", ""
 		d.queryBytes += bytes
 	}
-	s.community.revision++
+	c.revision++
 }
-func (s *Service) retireDiscoveryLocked() {
-	for _, q := range s.community.discovery.queries {
+func (c *communityState) retireDiscovery() {
+	for _, q := range c.discovery.queries {
 		q.awaiting = false
 		q.state, q.failure = "offline", "connection ended; refresh to query again"
 	}

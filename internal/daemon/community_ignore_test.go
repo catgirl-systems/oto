@@ -114,7 +114,7 @@ func TestCommunityIgnoreAddressExpiresOnPeerDeparture(t *testing.T) {
 		s.mu.Unlock()
 		must(t, s.communityUpdate(context.Background(), id, message))
 		s.mu.RLock()
-		address := s.communityIgnoreAddressLocked("Alice")
+		address := s.community.ignoredAddress("Alice")
 		s.mu.RUnlock()
 		failIf(t, address.IsValid(), "departed peer kept an authoritative ignore address")
 	}

@@ -14,7 +14,7 @@ import (
 const communityRoomWallBytes = 4 << 20
 
 func (s *Service) updateCommunityRoomDirectoryRolesLocked(ctx context.Context) error {
-	s.pruneDirectoryRoomsLocked()
+	s.community.pruneDirectoryRooms()
 	for name, entry := range s.community.directory {
 		if !entry.private {
 			continue
@@ -81,7 +81,7 @@ func (s *Service) revokeCommunityRoomLocked(ctx context.Context, name string, r 
 	r.intent++
 	r.pending = ""
 	r.err = "Membership revoked; history retained and autojoin disabled."
-	s.clearRoomCachesLocked(r)
+	s.community.clearRoomCaches(r)
 	s.watchRoomLocked(name, r)
 	return nil
 }
@@ -96,7 +96,7 @@ func (s *Service) updateCommunityRoomRolesLocked(ctx context.Context, message so
 			return nil
 		}
 		if m.Operators {
-			if !s.roomCacheFitsLocked(len(r.operators), len(m.Users)) {
+			if !s.community.roomCacheFits(len(r.operators), len(m.Users)) {
 				return fmt.Errorf("community: room cache entry limit")
 			}
 			// XXX: skip undecodable roster names; nicotine+ renders whatever it receives.
@@ -115,7 +115,7 @@ func (s *Service) updateCommunityRoomRolesLocked(ctx context.Context, message so
 				}
 			}
 		} else {
-			if !s.roomCacheFitsLocked(len(r.privateMembers), len(m.Users)) {
+			if !s.community.roomCacheFits(len(r.privateMembers), len(m.Users)) {
 				return fmt.Errorf("community: room cache entry limit")
 			}
 			r.privateMembers = make(map[string]bool, len(m.Users))
@@ -178,7 +178,7 @@ func (s *Service) updateCommunityRoomRolesLocked(ctx context.Context, message so
 			if r.privateMembers == nil {
 				r.privateMembers = map[string]bool{}
 			}
-			if !r.privateMembers[m.Username] && (len(r.privateMembers) >= soulseek.MaxRoomUsers || !s.roomCacheFitsLocked(0, 1)) {
+			if !r.privateMembers[m.Username] && (len(r.privateMembers) >= soulseek.MaxRoomUsers || !s.community.roomCacheFits(0, 1)) {
 				return fmt.Errorf("community: private member limit")
 			}
 			r.privateMembers[m.Username] = true
@@ -196,7 +196,7 @@ func (s *Service) updateCommunityRoomRolesLocked(ctx context.Context, message so
 				username = s.cfg.Soulseek.Username
 			}
 			if r.operatorsFresh && !slices.Contains(r.operators, username) {
-				if len(r.operators) >= soulseek.MaxRoomUsers || !s.roomCacheFitsLocked(0, 1) {
+				if len(r.operators) >= soulseek.MaxRoomUsers || !s.community.roomCacheFits(0, 1) {
 					return fmt.Errorf("community: operator limit")
 				}
 				r.operators = append(r.operators, username)

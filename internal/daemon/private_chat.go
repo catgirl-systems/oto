@@ -119,7 +119,7 @@ func (s *Service) receiveCommunityPrivate(ctx context.Context, identity Communit
 	})
 	if err == nil && inserted && !held {
 		s.watchConversationLocked(message.Username, true)
-		s.communityRoomNoticeLocked(message)
+		s.community.roomNotice(message)
 		s.queueCTCPReplyLocked(identity, message)
 		s.queueAwayReplyLocked(identity, message)
 	}

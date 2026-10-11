@@ -75,8 +75,8 @@ type CommunityProfilePicture struct {
 func newCommunityProfileState() communityProfileState {
 	return communityProfileState{entries: map[string]*communityProfileEntry{}}
 }
-func (s *Service) retireProfilesLocked() {
-	for _, entry := range s.community.profiles.entries {
+func (c *communityState) retireProfiles() {
+	for _, entry := range c.profiles.entries {
 		if entry.cancel != nil {
 			entry.cancel()
 			entry.cancel = nil
@@ -111,19 +111,19 @@ func (s *Service) profileWatchLocked(frontend, username string) error {
 	s.setUserWatchesLocked(owner, []string{username}, now.Add(time.Minute))
 	return nil
 }
-func (s *Service) profileViewLocked(id CommunityIdentity, username string) CommunityProfile {
+func (c *communityState) profileView(id CommunityIdentity, username string) CommunityProfile {
 	out := CommunityProfile{CommunityIdentity: id, Username: username, State: "idle"}
-	if entry := s.community.profiles.entries[username]; entry != nil {
+	if entry := c.profiles.entries[username]; entry != nil {
 		out = entry.CommunityProfile
 		out.CommunityIdentity = id
 		entry.used = time.Now()
 	}
-	out.User = s.community.users[username]
+	out.User = c.users[username]
 	out.User.Username = username
-	if !s.community.online {
+	if !c.online {
 		out.State = "offline"
 	}
-	out.Revision = s.community.revision
+	out.Revision = c.revision
 	return out
 }
 func (s *Service) CommunityProfile(ctx context.Context, req CommunityProfileRequest) (CommunityProfile, error) {
@@ -138,7 +138,7 @@ func (s *Service) CommunityProfile(ctx context.Context, req CommunityProfileRequ
 	if err := s.profileWatchLocked(req.Frontend, req.Username); err != nil {
 		return CommunityProfile{}, err
 	}
-	return s.profileViewLocked(req.CommunityIdentity, req.Username), nil
+	return s.community.profileView(req.CommunityIdentity, req.Username), nil
 }
 func (s *Service) StartCommunityProfile(ctx context.Context, req CommunityProfileRequest) (CommunityProfile, error) {
 	if err := validProfileRequest(req); err != nil {
@@ -158,7 +158,7 @@ func (s *Service) StartCommunityProfile(ctx context.Context, req CommunityProfil
 	d := &s.community.profiles
 	entry := d.entries[req.Username]
 	if entry != nil && (entry.cancel != nil || !req.Refresh && entry.State != "offline") {
-		return s.profileViewLocked(req.CommunityIdentity, req.Username), nil
+		return s.community.profileView(req.CommunityIdentity, req.Username), nil
 	}
 	active := 0
 	for _, p := range d.entries {
@@ -266,7 +266,7 @@ func (s *Service) StartCommunityProfile(ctx context.Context, req CommunityProfil
 		d.pictureBytes += len(entry.picture)
 		entry.PictureType, entry.PictureWidth, entry.PictureHeight, entry.PictureRevision = kind, width, height, generation
 	}()
-	return s.profileViewLocked(req.CommunityIdentity, req.Username), nil
+	return s.community.profileView(req.CommunityIdentity, req.Username), nil
 }
 
 // Pictures are fetched explicitly from the reviewed cached revision, never via
