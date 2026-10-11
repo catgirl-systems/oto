@@ -204,6 +204,23 @@ type portMapping interface {
 
 type portMappingOpener func(context.Context, uint16, bool, bool, func(uint16)) (portMapping, error)
 
+// Service is the daemon. Its locks, in acquisition order:
+//
+//	lifecycleMu -> uploadMu -> mu -> searchMu
+//	shareStorageMu -> mu
+//	telemetry.flushMu -> mu
+//
+// mu guards nearly all state, including community and the upload maps.
+// searchMu guards only searches, and apiAuth.mu only apiAuth; apiAuth.mu is
+// never held with another lock. lifecycleMu, uploadMu and shareStorageMu own
+// no fields: they serialize session changes, session cutoff against upload
+// actions, and share snapshot storage.
+//
+// Method suffixes name the lock the caller must already hold: ...Lifecycle
+// means lifecycleMu, and ...Locked means the lock guarding the state it
+// touches (mu, or searchMu in search_store.go, or apiAuth.mu in
+// api_auth.go). A ...Lifecycle method may take mu itself; a ...Locked method
+// never takes the lock it requires.
 type Service struct {
 	diagnostics            *diagnostics.Manager
 	telemetry              *telemetryState
@@ -568,6 +585,7 @@ func (s *Service) ChangePassword(ctx context.Context, password string) (Password
 	return result, nil
 }
 
+// setPresenceLifecycle requires lifecycleMu.
 func (s *Service) setPresenceLifecycle(presence Presence) error {
 	s.mu.Lock()
 	if s.closed || s.shuttingDown {
@@ -607,6 +625,7 @@ func (s *Service) setPresenceLifecycle(presence Presence) error {
 	return s.startSessionLifecycle()
 }
 
+// startSessionLifecycle requires lifecycleMu.
 func (s *Service) startSessionLifecycle() error {
 	s.mu.Lock()
 	if s.closed || s.shuttingDown {

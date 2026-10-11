@@ -125,13 +125,15 @@ func loadOrCreateAPIKey(path string) ([]byte, error) {
 }
 
 // apiHashLocked digests a token under the install key; initAPIAuth ran first.
+// Caller holds apiAuth.mu.
 func (s *Service) apiHashLocked(token string) string {
 	mac := hmac.New(sha512.New, s.apiAuth.key)
 	mac.Write([]byte(token))
 	return hex.EncodeToString(mac.Sum(nil))
 }
 
-// newAPITokenLocked mints an opaque token and its stored digest.
+// newAPITokenLocked mints an opaque token and its stored digest. Caller holds
+// apiAuth.mu.
 func (s *Service) newAPITokenLocked() (token, hash string, err error) {
 	raw := make([]byte, 32)
 	if _, err = rand.Read(raw); err != nil {
@@ -141,6 +143,7 @@ func (s *Service) newAPITokenLocked() (token, hash string, err error) {
 	return token, s.apiHashLocked(token), nil
 }
 
+// sweepAPIAuthLocked drops expired pairing requests. Caller holds apiAuth.mu.
 func (s *Service) sweepAPIAuthLocked(now time.Time) {
 	for hash, request := range s.apiAuth.pending {
 		if now.After(request.expiresAt) {
@@ -269,6 +272,7 @@ func (s *Service) RejectAPIAuthRequest(id string) error {
 	return nil
 }
 
+// findPendingLocked looks up a pairing request. Caller holds apiAuth.mu.
 func (s *Service) findPendingLocked(id string) *apiAuth {
 	for _, request := range s.apiAuth.pending {
 		if request.id == id {
