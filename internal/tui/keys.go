@@ -45,6 +45,9 @@ func (m *model) key(k tea.KeyPressMsg) tea.Cmd {
 	if m.workspace == workspaceStats && !globalKey(s) {
 		return m.statsKey(k)
 	}
+	if cmd, handled := m.workspaceKey(s); handled {
+		return cmd
+	}
 	switch s {
 	case "q", "ctrl+c":
 		if m.confirmChatDraftQuit() {
@@ -71,12 +74,6 @@ func (m *model) key(k tea.KeyPressMsg) tea.Cmd {
 		return m.cycleTab(1)
 	case "esc":
 		m.clearMarks()
-	case "ctrl+w":
-		if m.workspace == workspaceSearch {
-			return m.closeSearchTab()
-		} else if m.workspace == workspaceBrowse {
-			m.closeBrowseTab()
-		}
 	case "tab":
 		return m.jumpWorkspace(m.workspace + 1)
 	case "shift+tab":
@@ -86,14 +83,9 @@ func (m *model) key(k tea.KeyPressMsg) tea.Cmd {
 			return m.jumpWorkspace(workspace(n))
 		}
 	case "right", "l":
-		if m.workspace == workspaceSettings {
-			return m.cycleTab(1)
-		}
 		return m.openTreeNode(false)
 	case "left", "h":
-		if m.workspace == workspaceSettings {
-			return m.cycleTab(-1)
-		} else if tree := m.currentTree(); tree != nil {
+		if tree := m.currentTree(); tree != nil {
 			m.cursor = tree.left(m.cursor)
 		}
 	case "up", "k":
@@ -103,18 +95,12 @@ func (m *model) key(k tea.KeyPressMsg) tea.Cmd {
 	case "down", "j":
 		if m.cursor+1 < m.rows() {
 			m.cursor++
-		} else if m.workspace == workspaceSearch && !m.loadingMore && m.searchNext > 0 {
-			m.loadingMore = true
-			return m.loadSearchPage()
 		}
 	case "pgup":
 		m.cursor = max(0, m.cursor-m.pageRows())
 	case "pgdown":
 		if m.cursor+1 < m.rows() {
 			m.cursor = min(m.rows()-1, m.cursor+m.pageRows())
-		} else if m.workspace == workspaceSearch && !m.loadingMore && m.searchNext > 0 {
-			m.loadingMore = true
-			return m.loadSearchPage()
 		}
 	case "home", "g":
 		m.cursor = 0
@@ -123,287 +109,33 @@ func (m *model) key(k tea.KeyPressMsg) tea.Cmd {
 	case "space":
 		m.toggle()
 	case "enter":
-		if m.workspace == workspaceShares {
-			return m.openShareAccess()
-		}
-		if m.workspace == workspaceWishlist {
-			if m.cursor >= 0 && m.cursor < len(m.wishlist) {
-				m.wishlistCursor = m.cursor
-				return m.openWishlist(m.wishlist[m.cursor], false)
-			}
-			return nil
-		}
-		if m.workspace == workspaceBrowse && len(m.browseTabs) == 0 {
-			if m.cursor >= 0 && m.cursor < len(m.savedBrowses) {
-				return m.openBrowse(m.savedBrowses[m.cursor].Username, "", false)
-			}
-			return nil
-		}
-		if m.workspace == workspaceSettings {
-			fields := m.settingFields()
-			if m.cursor >= len(fields) {
-				return nil
-			}
-			switch fields[m.cursor].id {
-			case settingAudioMetadata:
-				m.cfg.AudioMetadata = !m.cfg.AudioMetadata
-			case settingStatsASCII:
-				m.cfg.Statistics.ASCIICharts = !m.cfg.Statistics.ASCIICharts
-			case settingViewLog:
-				m.switchWorkspace(workspaceStats)
-				m.stats.page = len(statsPages) - 1
-				return m.refreshStats()
-			case settingStatsPrune:
-				m.openStatsPrune()
-			case settingDownloadFilters:
-				m.cfg.Downloads.FiltersEnabled = !m.cfg.Downloads.FiltersEnabled
-			case settingRestoreDownloadRules:
-				m.restoreDownloadRules = true
-				m.uploadConfirm, m.uploadConfirmChoice = true, 0
-				m.uploadConfirmLabel = "Restore default download filters"
-			case settingManageShareExclusions:
-				m.openShareExclusions()
-			case settingNetworkInterface, settingBandwidthProfile, settingUploadLimitScope, settingUploadScheduling, settingLoggingLevel:
-				m.choiceChoosing = true
-				m.choiceSetting = fields[m.cursor].id
-				m.choiceIndex = m.configuredChoice(m.choiceSetting)
-			case settingDeleteBandwidthProfile:
-				if len(m.cfg.Bandwidth.Profiles) == 1 {
-					m.setNotice("At least one bandwidth profile is required")
-					break
-				}
-				i := m.activeBandwidthProfileIndex()
-				m.cfg.Bandwidth.Profiles = append(m.cfg.Bandwidth.Profiles[:i], m.cfg.Bandwidth.Profiles[i+1:]...)
-				m.cfg.Bandwidth.ActiveProfile = m.cfg.Bandwidth.Profiles[min(i, len(m.cfg.Bandwidth.Profiles)-1)].Name
-			case settingListeningPortStatus:
-				if m.status.status != daemon.StatusConnected || m.status.publicPort == 0 {
-					m.setNotice("Connect to check listening port")
-					break
-				}
-				if m.portChecking {
-					break
-				}
-				m.portCheckPort, m.portCheckStatus, m.portChecking, m.err = m.status.publicPort, "", true, ""
-				return m.checkListeningPort()
-			case settingConnectOnStartup:
-				m.cfg.Soulseek.ConnectOnStartup = !m.cfg.Soulseek.ConnectOnStartup
-			case settingNATPMPPortMapping:
-				m.cfg.Soulseek.NATPMPPortMapping = !m.cfg.Soulseek.NATPMPPortMapping
-			case settingUPnPPortMapping:
-				m.cfg.Soulseek.UPnPPortMapping = !m.cfg.Soulseek.UPnPPortMapping
-			case settingRespondToIncomingSearches:
-				m.cfg.Search.RespondToIncomingSearches = !m.cfg.Search.RespondToIncomingSearches
-			case settingRememberSearches:
-				m.cfg.Search.RememberSearches = !m.cfg.Search.RememberSearches
-			case settingRememberFilters:
-				m.cfg.Search.RememberFilters = !m.cfg.Search.RememberFilters
-			case settingWishlistNotifications:
-				m.cfg.Search.WishlistNotifications = !m.cfg.Search.WishlistNotifications
-			case settingFileNotifications:
-				m.cfg.Downloads.FileNotifications = !m.cfg.Downloads.FileNotifications
-			case settingFolderNotifications:
-				m.cfg.Downloads.FolderNotifications = !m.cfg.Downloads.FolderNotifications
-			case settingAutoClearDownloads:
-				m.cfg.Downloads.AutoClearCompleted = !m.cfg.Downloads.AutoClearCompleted
-			case settingAutoClearFilteredDownloads:
-				m.cfg.Downloads.AutoClearFiltered = !m.cfg.Downloads.AutoClearFiltered
-			case settingAutoClearUploads:
-				m.cfg.Uploads.AutoClearCompleted = !m.cfg.Uploads.AutoClearCompleted
-			case settingAutoClearCancelledUploads:
-				m.cfg.Uploads.AutoClearCancelled = !m.cfg.Uploads.AutoClearCancelled
-			case settingWaitForActiveUploadsOnQuit:
-				m.cfg.Uploads.WaitForActiveUploadsOnQuit = !m.cfg.Uploads.WaitForActiveUploadsOnQuit
-			case settingPrioritizeBuddies:
-				m.cfg.Uploads.PrioritizeBuddies = !m.cfg.Uploads.PrioritizeBuddies
-			case settingPrioritizePrivileged:
-				m.cfg.Uploads.PrioritizePrivileged = !m.cfg.Uploads.PrioritizePrivileged
-			case settingExemptBuddiesFromQueueLimits:
-				m.cfg.Uploads.ExemptBuddiesFromQueueLimits = !m.cfg.Uploads.ExemptBuddiesFromQueueLimits
-			case settingChangePassword:
-				m.openPasswordForm()
-			case settingReceiving:
-				return m.openReceivingSettings()
-			case settingAway:
-				return m.openAwaySettings()
-			case settingAPIAuthRequests:
-				return m.openAPIEditor("requests")
-			case settingAPIApps:
-				return m.openAPIEditor("apps")
-			case settingChatCommands:
-				m.showChatCommandHelp()
-				return nil
-			case settingTextTools:
-				return m.openTextTools()
-			case settingPrivacyRules:
-				return m.openPrivacyRules("", "")
-			case settingAccountPrivileges:
-				return m.openPrivileges("")
-			case settingClearSearchHistory:
-				m.clearHistory(false)
-			case settingClearFilterHistory:
-				m.clearHistory(true)
-			default:
-				m.beginEdit()
-			}
-			return nil
-		}
 		return m.enter()
-	case "b":
-		if m.workspace == workspaceSearch {
-			_, node := m.searchTree.node(m.cursor)
-			if node != nil {
-				folder := node.path
-				if node.kind == treeFile {
-					folder, _ = resultPath(folder)
-				}
-				return m.openBrowse(node.user, folder, false)
-			}
-		}
-	case "i":
-		if m.workspace == workspaceSearch || m.workspace == workspaceBrowse {
-			_, node := m.currentTree().node(m.cursor)
-			m.details = node != nil && node.kind == treeFile && node.source >= 0
-		}
-	case "x", "delete":
+	case "x", "delete", "d":
+		// Outside the file lists d keeps its older remove/cancel meaning.
 		return m.removeKey()
-	case "X":
-		if m.workspace == workspaceTransfers && m.transferTab == transferUploads {
-			return m.beginUploadAction("cancel", true)
-		}
-	case "a":
-		if m.workspace == workspaceWishlist || m.workspace == workspaceShares {
-			m.beginEdit()
-		}
-		return nil
-	case "d":
-		// d kept its older remove/cancel meaning outside the file lists.
-		if m.workspace == workspaceSearch || m.workspace == workspaceBrowse {
-			if m.openFolderMenu() {
-				return nil
-			}
-			if m.workspace == workspaceSearch {
-				return m.queueResult()
-			}
-			return m.queueBrowse()
-		}
-		return m.removeKey()
-	case "r":
-		if m.workspace == workspaceWishlist && m.cursor >= 0 && m.cursor < len(m.wishlist) {
-			m.wishlistCursor = m.cursor
-			return m.openWishlist(m.wishlist[m.cursor], true)
-		}
-		if m.workspace == workspaceBrowse {
-			if m.browseUser != "" {
-				return m.openBrowse(m.browseUser, "", true)
-			}
-			m.savedBrowseCursor, m.savedBrowseLoading = m.cursor, true
-			return m.loadSavedBrowses()
-		}
-		if m.workspace == workspaceTransfers {
-			if m.transferTab == transferDownloads {
-				return m.action("resume")
-			}
-			return m.beginUploadAction("retry", false)
-		}
-		if m.workspace == workspaceShares {
-			return m.rescanShares()
-		}
-	case "p":
-		if m.workspace == workspaceTransfers && m.transferTab == transferDownloads {
-			return m.action("pause")
-		}
-	case "c":
-		if m.workspace == workspaceShares {
-			return m.cancelShareScan()
-		}
-		if m.workspace == workspaceSearch {
-			filter := m.searchFilterUndo
-			if m.searchFilter != "" {
-				filter = ""
-			}
-			if m.searchID == "" {
-				m.searchFilter, m.searchFilterUndo = filter, m.searchFilter
-				if len(m.searchTabs) == 0 {
-					m.searchPreFilterSet = true
-				} else if m.searchTabIndex >= 0 && m.searchTabIndex < len(m.searchTabs) {
-					m.searchTabs[m.searchTabIndex].filter = filter
-				}
-				return nil
-			}
-			m.loading = true
-			return m.filterSearch(filter)
-		}
-		if m.workspace == workspaceTransfers {
-			if m.transferTab == transferUploads {
-				return m.beginUploadAction("clear", true)
-			}
-			return m.action("clear")
-		}
-	case "D":
-		if m.workspace == workspaceSearch || m.workspace == workspaceBrowse {
-			m.openDownloadAs()
-			return nil
-		}
-		if m.workspace == workspaceTransfers && m.transferTab == transferUploads {
-			return m.beginUploadAction("cancel", true)
-		}
-	case "C":
-		if m.workspace == workspaceTransfers && m.transferTab == transferUploads {
-			m.openUploadStatusMenu()
-		}
-	case "S":
-		if m.workspace == workspaceTransfers {
-			return m.prepareTransferSearch(true)
-		}
-	case "s":
-		if m.workspace == workspaceShares {
-			return m.openSharedSendPrompt()
-		}
-		if m.workspace == workspaceTransfers {
-			return m.prepareTransferSearch(false)
-		}
-		if m.workspace == workspaceBrowse && m.browseLoaded && !m.loading && m.browseRevision != 0 {
-			return m.saveBrowse()
-		}
-		if m.workspace == workspaceSettings {
-			return m.saveSettings()
-		}
-	case "f":
-		if m.workspace == workspaceWishlist && m.cursor >= 0 && m.cursor < len(m.wishlist) {
-			m.wishlistCursor = m.cursor
-			m.editing, m.filterEditing, m.input = true, true, m.wishlist[m.cursor].Filter
-			m.inputCursor = len([]rune(m.input))
-			m.historyCursor.reset(m.input)
-			return nil
-		}
-		if m.workspace == workspaceSearch {
-			m.editing, m.filterEditing, m.input = true, true, m.searchFilter
-			m.inputCursor = len([]rune(m.input))
-			m.historyCursor.reset(m.input)
-			return nil
-		}
-		if m.workspace == workspaceBrowse && m.browseLoaded && len(m.browseTabs) > 0 {
-			m.editing, m.filterEditing, m.browseFindEditing = true, false, true
-			m.input = m.browseFilter
-			m.inputCursor = len([]rune(m.input))
-			return nil
-		}
-	case "w":
-		if m.workspace == workspaceSearch && strings.TrimSpace(m.query) != "" {
-			if len(m.searchUsers()) > 0 || m.searchTabIndex >= 0 && m.searchTabIndex < len(m.searchTabs) && m.searchTabs[m.searchTabIndex].scope != "" && m.searchTabs[m.searchTabIndex].scope != "global" {
-				m.setNotice("Wishlist searches are global; targeted searches cannot be saved")
-				return nil
-			}
-			return m.putWishlist(m.query, m.searchFilter, "Saved search to Wishlist")
-		}
 	case "/":
-		if m.workspace == workspaceTransfers {
-			return m.prepareTransferSearch(false)
-		}
 		m.beginEdit()
-		return nil
 	}
 	return nil
+}
+
+// workspaceKey offers a key to the current workspace's own bindings first.
+func (m *model) workspaceKey(s string) (tea.Cmd, bool) {
+	switch m.workspace {
+	case workspaceSearch:
+		return m.searchKey(s)
+	case workspaceBrowse:
+		return m.browseKey(s)
+	case workspaceTransfers:
+		return m.transfersKey(s)
+	case workspaceShares:
+		return m.sharesKey(s)
+	case workspaceWishlist:
+		return m.wishlistKey(s)
+	case workspaceSettings:
+		return m.settingsKey(s)
+	}
+	return nil, false
 }
 
 // cycleTab moves to the previous (-1) or next (+1) tab of the workspace:

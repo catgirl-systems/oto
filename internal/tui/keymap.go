@@ -232,50 +232,13 @@ func (m model) footerHints() []string {
 
 	switch m.workspace {
 	case workspaceSearch:
-		var hints []string
-		if _, node := m.searchTree.node(m.cursor); node != nil {
-			if node.kind == treeFile {
-				hints = []string{"enter download", "space mark", "D save as", "i info", "b browse"}
-			} else if node.kind == treeFolder {
-				hints = []string{"enter expand", "d folder download", "space mark", "b browse"}
-			} else {
-				hints = []string{"enter expand", "d download", "space mark", "b browse"}
-			}
-		}
-		hints = append(hints, "/ search", "f filter", "w wishlist", "U user")
-		if len(m.searchTabs) > 1 {
-			hints = append(hints, "[/] tab", "ctrl+w close")
-		}
-		return hints
+		return m.searchHints()
 	case workspaceWishlist:
-		return []string{"enter open", "a add", "f filter", "r rerun", "x remove"}
+		return m.wishlistHints()
 	case workspaceBrowse:
-		if len(m.browseTabs) == 0 {
-			return []string{"enter open", "/ browse user", "r refresh"}
-		}
-		var hints []string
-		if _, node := m.browseTree.node(m.cursor); node != nil {
-			if node.kind == treeFile {
-				hints = []string{"enter download", "space mark", "D save as", "i info"}
-			} else if node.kind == treeFolder {
-				hints = []string{"enter expand", "d folder download", "space mark"}
-			} else {
-				hints = []string{"enter expand"}
-			}
-		}
-		if m.browseLoaded {
-			hints = append(hints, "f find")
-		}
-		hints = append(hints, "s save list", "r refresh", "/ user", "U user")
-		if len(m.browseTabs) > 1 {
-			hints = append(hints, "[/] tab", "ctrl+w close")
-		}
-		return hints
+		return m.browseHints()
 	case workspaceTransfers:
-		if m.transferTab == transferDownloads {
-			return []string{"space mark", "p pause", "r resume/retry", "x cancel", "c clear", "F download anyway", "/ search", "S folder search", "] uploads", "U user"}
-		}
-		return []string{"space mark", "r retry", "x abort", "X abort users", "c clear selected", "C clear status", "/ search", "[ downloads", "U user"}
+		return m.transfersHints()
 	case workspaceCommunity:
 		return m.communityHints()
 	case workspaceStats:
@@ -300,65 +263,9 @@ func (m model) footerHints() []string {
 		}
 		return append(hints, "[/] page", "a account", "P prune")
 	case workspaceShares:
-		hints := []string{"enter access"}
-		if _, node := m.shareTree.node(m.cursor); node != nil && node.kind != treeFile {
-			hints = append(hints, "→ expand")
-		}
-		hints = append(hints, "a add", "s send", "r rescan")
-		if scan := m.status.shareScan; scan != nil && scan.State == "scanning" {
-			hints = append(hints, "c cancel scan")
-		}
-		if _, node := m.shareTree.node(m.cursor); node != nil && node.kind == treeShareRoot {
-			hints = append(hints, "x remove")
-		}
-		return hints
+		return m.sharesHints()
 	case workspaceSettings:
-		if m.shareExclusions.open {
-			if m.shareExclusions.editing {
-				return []string{"enter stage rule", "esc cancel edit", "←/→ move caret"}
-			}
-			if m.settingsSaving {
-				return []string{"saving settings", "esc back"}
-			}
-			return []string{"a add", "enter edit", "x remove", "s save", "esc back", "R restore defaults"}
-		}
-		hints := []string{"s save", "[/] section"}
-		fields := m.settingFields()
-		if m.cursor < 0 || m.cursor >= len(fields) {
-			return hints
-		}
-		field := fields[m.cursor]
-		action := "edit"
-		switch field.kind {
-		case settingInfo:
-			return hints
-		case settingBool:
-			action = "toggle"
-		case settingChoice:
-			action = "choose"
-		case settingAction:
-			switch field.id {
-			case settingStatsPrune:
-				action = "edit prune days"
-			case settingManageShareExclusions:
-				action = "manage exclusions"
-			case settingChangePassword:
-				action = "change password"
-			case settingListeningPortStatus:
-				action = "check port"
-			case settingClearSearchHistory:
-				action = "clear searches"
-			case settingClearFilterHistory:
-				action = "clear filters"
-			default:
-				action = "run"
-			}
-		}
-		hints = append([]string{"enter " + action}, hints...)
-		if m.downloadRuleIndex() >= 0 && m.settingsSection == settingsDownloads {
-			hints = append(hints, "x remove rule")
-		}
-		return hints
+		return m.settingsHints()
 	default:
 		return nil
 	}
