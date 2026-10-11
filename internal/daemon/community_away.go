@@ -69,7 +69,7 @@ func (s *Service) applyAutoAway(ctx context.Context, now time.Time) {
 	}
 	s.mu.Unlock()
 	if change {
-		if err := s.setPresenceLocked(target); err != nil {
+		if err := s.setPresenceLifecycle(target); err != nil {
 			s.mu.Lock()
 			s.community.away.automatic = old
 			s.mu.Unlock()

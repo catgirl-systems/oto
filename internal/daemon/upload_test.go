@@ -150,7 +150,7 @@ func TestUploadRetirementAndStaleUpdates(t *testing.T) {
 	s.uploadUpdate(1, stale)
 	failIf(t, uploadRow(t, s, "a", `Music\one`).State != "queued", "old attempt replaced new attempt")
 	s.lifecycleMu.Lock()
-	s.stopSessionLocked(true)
+	s.stopSessionLifecycle(true)
 	s.lifecycleMu.Unlock()
 	failIf(t, uploadRow(t, s, "a", `Music\one`).State != "interrupted", "offline left a live upload")
 	stale.State = "queued"

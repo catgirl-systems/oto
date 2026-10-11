@@ -503,7 +503,7 @@ func (s *Service) Start(ctx context.Context) error {
 	go s.awayLoop(s.runCtx)
 	s.mu.Unlock()
 	if connect {
-		return s.setPresenceLocked(PresenceOnline)
+		return s.setPresenceLifecycle(PresenceOnline)
 	}
 	return nil
 }
@@ -525,10 +525,10 @@ func (s *Service) SetPresence(presence Presence) error {
 	s.noteCommunityActivityLocked(time.Now())
 	s.mu.Unlock()
 	if presence == PresenceOffline {
-		s.stopSessionLocked(true)
+		s.stopSessionLifecycle(true)
 		return nil
 	}
-	return s.setPresenceLocked(presence)
+	return s.setPresenceLifecycle(presence)
 }
 
 func (s *Service) ChangePassword(ctx context.Context, password string) (PasswordChangeResult, error) {
@@ -568,7 +568,7 @@ func (s *Service) ChangePassword(ctx context.Context, password string) (Password
 	return result, nil
 }
 
-func (s *Service) setPresenceLocked(presence Presence) error {
+func (s *Service) setPresenceLifecycle(presence Presence) error {
 	s.mu.Lock()
 	if s.closed || s.shuttingDown {
 		s.mu.Unlock()
@@ -604,10 +604,10 @@ func (s *Service) setPresenceLocked(presence Presence) error {
 		s.wakeReconnect()
 		return nil
 	}
-	return s.startSessionLocked()
+	return s.startSessionLifecycle()
 }
 
-func (s *Service) startSessionLocked() error {
+func (s *Service) startSessionLifecycle() error {
 	s.mu.Lock()
 	if s.closed || s.shuttingDown {
 		s.mu.Unlock()
@@ -639,8 +639,8 @@ func (s *Service) startSessionLocked() error {
 	return nil
 }
 
-// stopSessionLocked requires lifecycleMu and preserves partial downloads.
-func (s *Service) stopSessionLocked(offline bool) {
+// stopSessionLifecycle requires lifecycleMu and preserves partial downloads.
+func (s *Service) stopSessionLifecycle(offline bool) {
 	s.uploadMu.Lock()
 	s.mu.Lock()
 	s.retireUploadsLocked()
@@ -1862,7 +1862,7 @@ func (s *Service) UpdateConfig(c config.Config) (updateErr error) {
 			return err
 		}
 		if active && reconnect {
-			s.stopSessionLocked(false)
+			s.stopSessionLifecycle(false)
 		}
 		s.mu.Lock()
 		if accountKey(s.cfg) != accountKey(c) {
@@ -1912,7 +1912,7 @@ func (s *Service) UpdateConfig(c config.Config) (updateErr error) {
 	}
 	s.wakeWishlist()
 	if active && reconnect {
-		return s.startSessionLocked()
+		return s.startSessionLifecycle()
 	}
 	return nil
 }
