@@ -25,66 +25,11 @@ func (m model) View() tea.View {
 // screen picks what fills the terminal and reports whether it is a dialog
 // drawn over the workspace.
 func (m model) screen() (string, bool) {
-	content, modal := m.mainView(), true
-	switch {
-	case m.setup:
-		content, modal = m.setupView(), false
-	case m.commandOutput != nil:
-		content = m.commandOutputView()
-	case m.downloadAs != nil:
-		content = m.downloadAsView()
-	case m.searchScope != nil:
-		content = m.searchScopeView()
-	case m.privileges != nil && !m.confirm:
-		content = m.privilegesView()
-	case m.receivingEditor != nil && !m.confirm:
-		content = m.receivingSettingsView()
-	case m.awayEditor != nil && !m.confirm:
-		content = m.awaySettingsView()
-	case m.apiEditor != nil && !m.confirm:
-		content = m.apiEditorView()
-	case m.textTools != nil && !m.confirm:
-		content = m.textToolsView()
-	case m.privacyRules != nil && !m.confirm:
-		content = m.privacyRulesView()
-	case m.shareAccess != nil && !m.confirm:
-		content = m.shareAccessView()
-	case m.userActions != nil:
-		content = m.userActionsView()
-	case m.passwordForm:
-		content = m.passwordFormView()
-	case m.folderMenu:
-		content = m.folderMenuView()
-	case m.statusMenu:
-		content = m.statusMenuView()
-	case m.uploadStatusMenu:
-		content = m.uploadStatusMenuView()
-	case m.uploadConfirm:
-		content = m.uploadConfirmView()
-	case m.help:
-		content = m.helpView()
-	case m.details:
-		content = m.detailView()
-	default:
-		modal = false
+	d := m.activeModal()
+	if d == nil || d.view == nil {
+		return m.mainView(), false
 	}
-	if m.community.chats.dialog != nil {
-		content, modal = m.chatDialogView(), true
-	} else if m.community.rooms.dialog != nil {
-		content, modal = m.roomDialogView(), true
-	}
-	if m.community.rooms.private.dialog != nil {
-		content, modal = m.privateRoomDialogView(), true
-	}
-	if m.community.buddies.dialog != nil {
-		content, modal = m.buddyDialogView(), true
-	} else if m.community.discover.dialog != nil {
-		content, modal = m.discoverDialogView(), true
-	}
-	if m.community.peer.dialog {
-		content, modal = communityConfirmationView("Save picture for "+m.community.peer.image.Username+" to "+m.community.peer.path+"? Existing files are never overwritten.", m.community.peer.confirm, m.community.peer.dialogScroll, m.width, m.height), true
-	}
-	return content, modal
+	return d.view(m), !d.full
 }
 
 // dialog centres a modal card of the given total width: title in the top

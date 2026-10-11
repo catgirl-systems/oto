@@ -8,7 +8,6 @@ import (
 	"sort"
 	"strings"
 	"time"
-	"unicode"
 
 	"charm.land/bubbletea/v2"
 	"github.com/catgirl-systems/oto/internal/config"
@@ -1388,57 +1387,29 @@ func (m model) updateMessage(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.cursor = m.transferCursors[m.transferTab]
 		}
 	case tea.PasteMsg:
-		if m.commandOutput != nil {
-			if m.commandOutput.sharedPrompt != nil {
-				m.pasteSharedSendRecipient(x.Content)
+		if d := m.activeModal(); d != nil {
+			if d.paste != nil {
+				d.paste(&m, x.Content)
 			}
 			return m, nil
 		}
-		if d := m.searchScope; d != nil {
-			if d.editing && !m.help && !m.confirm && len(x.Content) <= 4096 {
-				value, cursor := insertText(d.value, x.Content, d.cursor)
-				d.setInput(value, cursor)
-			}
-			return m, nil
-		}
-		if m.shareAccess != nil || m.privileges != nil || m.receivingEditor != nil || m.awayEditor != nil || m.apiEditor != nil || m.textTools != nil || m.privacyRules != nil {
-			// Modal editors own paste with the same priority as key(); while a
-			// confirm dialog is open it owns the input instead.
-			if !m.confirm {
-				switch {
-				case m.privileges != nil:
-					m.pastePrivileges(x.Content)
-				case m.receivingEditor != nil:
-					m.pasteReceivingSettings(x.Content)
-				case m.awayEditor != nil:
-					m.pasteAwaySettings(x.Content)
-				case m.apiEditor != nil:
-					m.pasteAPISettings(x.Content)
-				case m.textTools != nil:
-					m.pasteTextTools(x.Content)
-				case m.privacyRules != nil:
-					m.pastePrivacyRules(x.Content)
-				}
-			}
-			return m, nil
-		}
-		if m.workspace == workspaceCommunity && m.community.peer.form && !m.help && m.userActions == nil {
+		if m.workspace == workspaceCommunity && m.community.peer.form {
 			m.pastePeerPath(x.Content)
 			return m, nil
 		}
-		if m.workspace == workspaceCommunity && m.community.view == 2 && (m.community.buddies.editor != nil || m.community.buddies.form != "") && m.community.chats.dialog == nil && m.community.buddies.dialog == nil && m.userActions == nil && !m.help {
+		if m.workspace == workspaceCommunity && m.community.view == 2 && (m.community.buddies.editor != nil || m.community.buddies.form != "") {
 			m.pasteCommunityBuddy(x.Content)
 			return m, nil
 		}
-		if m.workspace == workspaceCommunity && m.community.view == 1 && m.community.rooms.private.editing() && m.community.rooms.private.dialog == nil && m.userActions == nil && !m.help {
+		if m.workspace == workspaceCommunity && m.community.view == 1 && m.community.rooms.private.editing() {
 			m.pasteCommunityPrivate(x.Content)
 			return m, nil
 		}
-		if m.workspace == workspaceCommunity && m.community.view == 3 && (m.community.discover.form != "" || m.community.discover.kind() == "profile" && m.community.discover.profileDirty) && m.community.discover.dialog == nil && m.userActions == nil && !m.help {
+		if m.workspace == workspaceCommunity && m.community.view == 3 && (m.community.discover.form != "" || m.community.discover.kind() == "profile" && m.community.discover.profileDirty) {
 			m.pasteCommunityDiscover(x.Content)
 			return m, nil
 		}
-		if m.workspace == workspaceCommunity && (m.community.chats.composing || m.community.chats.form != "" || m.community.rooms.form != "") && m.community.chats.dialog == nil && m.community.rooms.dialog == nil && m.userActions == nil && !m.help && !m.community.inspectEditing {
+		if m.workspace == workspaceCommunity && (m.community.chats.composing || m.community.chats.form != "" || m.community.rooms.form != "") && !m.community.inspectEditing {
 			if m.community.rooms.form != "" {
 				m.pasteCommunityRoom(x.Content)
 			} else {
@@ -1446,41 +1417,12 @@ func (m model) updateMessage(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		}
-		if m.workspace == workspaceCommunity && m.community.inspectEditing && m.userActions == nil && !m.help {
+		if m.workspace == workspaceCommunity && m.community.inspectEditing {
 			m.pasteCommunityUser(x.Content)
 			return m, nil
 		}
-		if m.downloadAs != nil {
-			m.pasteDownloadAs(x.Content)
-			return m, nil
-		}
-		if m.folderMenu {
-			if m.folderMenuEditing {
-				if strings.IndexFunc(x.Content, unicode.IsControl) >= 0 {
-					m.folderMenuError = "Name/path cannot contain control characters"
-					return m, nil
-				}
-				value := m.folderMenuInput()
-				*value, m.inputCursor = insertText(*value, x.Content, m.inputCursor)
-				m.folderMenuError = ""
-			}
-			return m, nil
-		}
-		text := strings.Map(func(r rune) rune {
-			if unicode.IsControl(r) {
-				return -1
-			}
-			return r
-		}, x.Content)
-		if m.passwordForm && !m.passwordChanging {
-			m.passwordVals[m.passwordField], m.inputCursor = insertText(m.passwordVals[m.passwordField], text, m.inputCursor)
-			m.passwordErr = ""
-			return m, nil
-		}
-		if m.setup {
-			m.setupVals[m.setupField], m.inputCursor = insertText(m.setupVals[m.setupField], text, m.inputCursor)
-		} else if m.editing {
-			m.input, m.inputCursor = insertText(m.input, text, m.inputCursor)
+		if m.editing {
+			m.input, m.inputCursor = insertText(m.input, stripControl(x.Content), m.inputCursor)
 			if m.workspace == workspaceSearch {
 				m.historyCursor.reset(m.input)
 			}
