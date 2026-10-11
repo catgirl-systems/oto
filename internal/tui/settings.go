@@ -179,3 +179,61 @@ func (m model) settingsHints() []string {
 	}
 	return hints
 }
+
+func (m *model) applyPortCheck(x portCheckMsg) tea.Cmd {
+	m.portChecking, m.portCheckPort, m.err = false, x.port, errText(x.err)
+	if x.err != nil {
+		m.portCheckStatus = "unknown"
+	} else {
+		m.portCheckPort = x.result.Port
+		if x.result.Open {
+			m.portCheckStatus = "open"
+		} else {
+			m.portCheckStatus = "closed"
+		}
+	}
+	return nil
+}
+
+func (m *model) applyNetworkInterfaces(x networkInterfacesMsg) tea.Cmd {
+	if x.err != nil {
+		m.networkInterfaces = nil
+		m.err = x.err.Error()
+	} else {
+		m.networkInterfaces = x.names
+		m.err = ""
+	}
+	return nil
+}
+
+func (m *model) applySettingsSaved(x settingsMsg) tea.Cmd {
+	m.settingsSaving = false
+	m.shareExclusions.err = errText(x.err)
+	if x.err == nil && x.exclusions != nil {
+		m.shareExclusions.saved = append([]string{}, x.exclusions...)
+	}
+	m.err = errText(x.err)
+	if x.err == nil {
+		m.applyHistorySettings(x.search)
+		m.setNotice("Settings saved")
+		return m.loadStatus()
+	}
+	return nil
+}
+
+func (m *model) applyPassword(x passwordMsg) tea.Cmd {
+	m.passwordChanging = false
+	if x.err != nil {
+		m.passwordErr = errText(x.err)
+		return nil
+	}
+	if !x.result.Changed {
+		m.passwordErr = "Soulseek did not confirm the password change"
+		return nil
+	}
+	m.cfg.Soulseek.Password = x.password
+	m.closePasswordForm()
+	m.setNotice("Password changed")
+	m.err = x.result.Warning
+	return nil
+}

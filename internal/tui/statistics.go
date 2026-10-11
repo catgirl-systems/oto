@@ -434,3 +434,32 @@ func (m model) renderStatsPrune(width, height int) string {
 	}
 	return strings.Join(lines[:min(len(lines), max(1, height))], "\n")
 }
+
+func (m *model) applyStats(x statsMsg) tea.Cmd {
+	if x.request == m.stats.request {
+		m.stats.loading = false
+		m.stats.err = x.view.err
+		m.stats.overview = x.view.overview
+		m.stats.downloads, m.stats.uploads, m.stats.peers, m.stats.log = x.view.downloads, x.view.uploads, x.view.peers, x.view.log
+	}
+	return nil
+}
+
+func (m *model) applyStatsPrune(x statsPruneMsg) tea.Cmd {
+	if m.stats.prune && m.stats.prunePending && x.request == m.stats.pruneGeneration {
+		m.stats.prunePending = false
+		m.stats.err = errText(x.err)
+		if x.err == nil {
+			if x.apply {
+				m.stats.prune = false
+				m.setNotice(fmt.Sprintf("Pruned %d log rows and %d daily rows", x.result.Logs, x.result.Daily))
+			} else {
+				m.stats.preview = x.result
+				m.stats.pruneConfirm = true
+			}
+		} else {
+			m.stats.pruneConfirm = false
+		}
+	}
+	return nil
+}

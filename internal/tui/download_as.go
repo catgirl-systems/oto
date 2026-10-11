@@ -126,3 +126,17 @@ func (m *model) pasteDownloadAs(text string) {
 	form.name, form.cursor = insertText(form.name, text, form.cursor)
 	form.err = ""
 }
+
+func (m *model) applyDownloadAs(x downloadAsMsg) tea.Cmd {
+	if m.downloadAs == nil {
+		return nil
+	}
+	m.downloadAs.pending = false
+	m.downloadAs.err = errText(x.err)
+	if x.err == nil {
+		m.downloadAs = nil
+		m.setNotice("Download queued")
+		return m.loadTransfers()
+	}
+	return nil
+}

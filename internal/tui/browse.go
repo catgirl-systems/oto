@@ -1,6 +1,10 @@
 package tui
 
-import "charm.land/bubbletea/v2"
+import (
+	"strings"
+
+	"charm.land/bubbletea/v2"
+)
 
 // browseKey handles keys specific to the Browse workspace. It reports false
 // for keys left to the shared navigation and global bindings.
@@ -68,4 +72,132 @@ func (m model) browseHints() []string {
 		hints = append(hints, "[/] tab", "ctrl+w close")
 	}
 	return hints
+}
+
+func (m *model) applyBrowsePageMsg(x browsePageMsg) tea.Cmd {
+	if m.workspace == workspaceBrowse {
+		m.saveBrowseTab()
+	}
+	for i := range m.browseTabs {
+		tab := &m.browseTabs[i]
+		key := browsePageKey(x.folder, x.query)
+		state, exists := tab.pages[key]
+		if !strings.EqualFold(tab.user, x.user) || tab.revision != x.revision || !exists || state.request != x.request {
+			continue
+		}
+		state.loading, state.err = false, errText(x.err)
+		tab.pages[key] = state
+		if x.err == nil && x.page.Revision == tab.revision {
+			applyBrowsePage(tab, x)
+		}
+		if m.workspace == workspaceBrowse && i == m.browseTabIndex {
+			m.loadBrowseTab(i)
+		}
+		break
+	}
+	return nil
+}
+
+func (m *model) applyBrowse(x browseMsg) tea.Cmd {
+	if x.page.Revision != 0 {
+		for i := range m.browseTabs {
+			tab := &m.browseTabs[i]
+			if !strings.EqualFold(tab.user, x.user) || tab.request != x.request {
+				continue
+			}
+			if x.err != nil {
+				tab.loading, tab.err = false, errText(x.err)
+			} else {
+				applyBrowsePage(tab, browsePageMsg{user: x.user, page: x.page, folder: x.page.Folder, query: x.page.Query, request: x.request, revision: x.page.Revision})
+			}
+			if m.workspace == workspaceBrowse && i == m.browseTabIndex {
+				m.loadBrowseTab(i)
+			}
+			break
+		}
+		return nil
+	}
+	user := x.user
+	if user == "" {
+		user = m.browseUser
+	}
+	for i := range m.browseTabs {
+		tab := &m.browseTabs[i]
+		if !strings.EqualFold(tab.user, user) || tab.request != x.request {
+			continue
+		}
+		tab.loading, tab.err = false, errText(x.err)
+		if x.err == nil {
+			target := browseTargetCursor(x.entries, tab.target)
+			tab.entries, tab.selected = x.entries, map[int]bool{}
+			tab.loaded, tab.cached, tab.revision, tab.savedAt = true, x.cached, x.revision, x.savedAt
+			tab.tree, tab.cursor = buildBrowseTree(tab.entries, tab.filter, tab.tree, tab.cursor)
+			if tab.target != "" {
+				tab.cursor = tab.tree.cursorForSource(target)
+			}
+		}
+		tab.target = ""
+		if m.workspace == workspaceBrowse && i == m.browseTabIndex {
+			m.loadBrowseTab(i)
+			if x.err == nil && x.cached {
+				m.setNotice("Showing saved share list; press r to retry")
+			}
+		}
+		break
+	}
+	return nil
+}
+
+func (m *model) applyBrowseProgress(x browseProgressMsg) tea.Cmd {
+	for i := range m.browseTabs {
+		tab := &m.browseTabs[i]
+		if !tab.loading || tab.request != x.request || !strings.EqualFold(tab.user, x.user) {
+			continue
+		}
+		if x.err == nil {
+			if x.progress == nil {
+				tab.received, tab.total = 0, 0
+			} else {
+				tab.received, tab.total = x.progress.Received, x.progress.Total
+			}
+		}
+		break
+	}
+	if _, ok := m.currentActivity(); !ok {
+		m.activityRunning = false
+		return nil
+	}
+	return activityTick()
+}
+
+func (m *model) applySavedBrowses(x savedBrowsesMsg) tea.Cmd {
+	m.savedBrowseLoading = false
+	m.err = errText(x.err)
+	if x.err == nil {
+		m.savedBrowses = x.saved
+		m.savedBrowseCursor = max(0, min(m.savedBrowseCursor, len(m.savedBrowses)-1))
+		if m.workspace == workspaceBrowse && len(m.browseTabs) == 0 {
+			m.cursor = m.savedBrowseCursor
+		}
+	}
+	return nil
+}
+
+func (m *model) applySaveBrowse(x saveBrowseMsg) tea.Cmd {
+	m.err = errText(x.err)
+	if x.err == nil {
+		m.upsertSavedBrowse(x.saved)
+		for i := range m.browseTabs {
+			tab := &m.browseTabs[i]
+			if strings.EqualFold(tab.user, x.user) && tab.revision == x.revision {
+				tab.savedAt = x.saved.SavedAt
+				if m.workspace == workspaceBrowse && i == m.browseTabIndex {
+					m.browseSavedAt = x.saved.SavedAt
+				}
+				break
+			}
+		}
+		m.setNotice("Saved share list for " + x.saved.Username)
+	}
+	return nil
 }

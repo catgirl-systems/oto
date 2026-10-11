@@ -934,28 +934,9 @@ func (m model) updateMessage(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case communityUserMsg:
 		m.applyCommunityUser(x)
 	case statsMsg:
-		if x.request == m.stats.request {
-			m.stats.loading = false
-			m.stats.err = x.view.err
-			m.stats.overview = x.view.overview
-			m.stats.downloads, m.stats.uploads, m.stats.peers, m.stats.log = x.view.downloads, x.view.uploads, x.view.peers, x.view.log
-		}
+		return m, m.applyStats(x)
 	case statsPruneMsg:
-		if m.stats.prune && m.stats.prunePending && x.request == m.stats.pruneGeneration {
-			m.stats.prunePending = false
-			m.stats.err = errText(x.err)
-			if x.err == nil {
-				if x.apply {
-					m.stats.prune = false
-					m.setNotice(fmt.Sprintf("Pruned %d log rows and %d daily rows", x.result.Logs, x.result.Daily))
-				} else {
-					m.stats.preview = x.result
-					m.stats.pruneConfirm = true
-				}
-			} else {
-				m.stats.pruneConfirm = false
-			}
-		}
+		return m, m.applyStatsPrune(x)
 	case tea.WindowSizeMsg:
 		m.width, m.height = x.Width, x.Height
 	case tea.BackgroundColorMsg:
@@ -983,386 +964,43 @@ func (m model) updateMessage(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, activityTick()
 	case statusMsg:
-		if x.err != nil {
-			m.status.err = x.err.Error()
-		} else {
-			m.acceptedSearchDefault = x.snapshot.Config.Search.DefaultFilter
-			if x.snapshot.ShareIndexRevision != m.status.shareIndexRevision || x.snapshot.DownloadNotification.SessionID != m.downloadNotification.SessionID {
-				m.shares = toShares(x.snapshot.Shares)
-				m.shareGeneration++
-				m.shareTree, m.shareCursor = buildShareRoots(m.shares, m.shareTree, m.shareCursor, true)
-				if m.workspace == workspaceShares {
-					m.cursor = m.shareCursor
-				}
-			}
-			var scan *daemon.ShareScan
-			if x.snapshot.ShareScan != nil {
-				copy := *x.snapshot.ShareScan
-				scan = &copy
-			}
-			m.status = snapshot{status: x.snapshot.Status, presence: x.snapshot.Presence, user: x.snapshot.Config.Soulseek.Username, publicIP: x.snapshot.PublicIP, publicPort: x.snapshot.PublicPort, err: x.snapshot.Error, shareScan: scan, shareIndexRevision: x.snapshot.ShareIndexRevision, pendingAPIAuth: x.snapshot.PendingAPIAuthCount, pendingAPIAuthName: x.snapshot.PendingAPIAuthName}
-			m.cfg.Shares = append([]config.Share(nil), x.snapshot.Shares...)
-			m.status.waitForUploadsOnQuit = x.snapshot.Config.Uploads.WaitForActiveUploadsOnQuit
-			if m.status.pendingAPIAuth > 0 {
-				if m.apiNotice != m.status.pendingAPIAuthName {
-					m.apiNotice = m.status.pendingAPIAuthName
-					m.setNotice(fmt.Sprintf("API connection request from %q — Settings → API", m.status.pendingAPIAuthName))
-				}
-			} else {
-				m.apiNotice = ""
-			}
-			notification := x.snapshot.DownloadNotification
-			bell := notification.SessionID != "" && notification.SessionID == m.downloadNotification.SessionID && notification.Sequence > m.downloadNotification.Sequence
-			if notification.SessionID != m.downloadNotification.SessionID || notification.Sequence >= m.downloadNotification.Sequence {
-				m.downloadNotification = notification
-			}
-			if bell {
-				m.setNotice(notification.Message)
-				return m, ringBell()
-			}
-		}
+		return m, m.applyStatus(x)
 	case portCheckMsg:
-		m.portChecking, m.portCheckPort, m.err = false, x.port, errText(x.err)
-		if x.err != nil {
-			m.portCheckStatus = "unknown"
-		} else {
-			m.portCheckPort = x.result.Port
-			if x.result.Open {
-				m.portCheckStatus = "open"
-			} else {
-				m.portCheckStatus = "closed"
-			}
-		}
+		return m, m.applyPortCheck(x)
 	case networkInterfacesMsg:
-		if x.err != nil {
-			m.networkInterfaces = nil
-			m.err = x.err.Error()
-		} else {
-			m.networkInterfaces = x.names
-			m.err = ""
-		}
+		return m, m.applyNetworkInterfaces(x)
 	case wishlistMsg:
-		m.err = errText(x.err)
-		if x.err == nil {
-			if m.wishlistNotified == nil {
-				m.wishlistNotified = map[string]uint64{}
-			}
-			bell := false
-			for _, item := range x.items {
-				if item.Unread && item.NotificationSequence > m.wishlistNotified[item.ID] && m.cfg.Search.WishlistNotifications {
-					bell = true
-				}
-				m.wishlistNotified[item.ID] = item.NotificationSequence
-			}
-			if m.workspace == workspaceWishlist {
-				m.wishlistCursor = m.cursor
-			}
-			m.wishlist = x.items
-			m.wishlistCursor = max(0, min(m.wishlistCursor, len(m.wishlist)-1))
-			if m.workspace == workspaceWishlist {
-				m.cursor = m.wishlistCursor
-			}
-			if bell {
-				return m, ringBell()
-			}
-		}
+		return m, m.applyWishlist(x)
 	case wishlistActionMsg:
-		m.err = errText(x.err)
-		if x.err == nil {
-			m.wishlist = x.items
-			m.wishlistCursor = max(0, min(m.wishlistCursor, len(m.wishlist)-1))
-			if x.notice != "" {
-				m.setNotice(x.notice)
-			}
-			if x.page != nil {
-				m.openSearchPage(x.query, x.filter, *x.page)
-			} else if m.workspace == workspaceWishlist {
-				m.cursor = m.wishlistCursor
-			}
-		}
+		return m, m.applyWishlistAction(x)
 	case searchMsg:
-		if x.request != 0 {
-			if m.workspace == workspaceSearch {
-				m.saveSearchTab()
-			}
-			for i := range m.searchTabs {
-				tab := &m.searchTabs[i]
-				if tab.request != x.request || tab.operation != x.operation {
-					continue
-				}
-				if x.err == nil && x.page.CommunityIdentity != (daemon.CommunityIdentity{}) && x.page.CommunityIdentity != m.community.summary.CommunityIdentity {
-					x.err = daemon.ErrCommunitySession
-					x.page = daemon.SearchPage{}
-				}
-				if !x.append && !x.filterChange && x.err == nil && tab.filter != x.filter {
-					cmd := m.refilterPendingSearch(tab, x.page)
-					if m.workspace == workspaceSearch && i == m.searchTabIndex {
-						m.loadSearchTab(i)
-					}
-					return m, cmd
-				}
-				applySearchMsg(tab, x)
-				if m.workspace == workspaceSearch && i == m.searchTabIndex {
-					m.loadSearchTab(i)
-				}
-				if x.err == nil && x.page.Searching {
-					return m, searchRefreshAfter(tab.request, tab.operation)
-				}
-				break
-			}
-			break
-		}
-		m.err = errText(x.err)
-		if x.append {
-			m.loadingMore = false
-		} else {
-			m.loading = false
-		}
-		if x.err != nil {
-			break
-		}
-		results := toResults(x.page.Results)
-		if x.append {
-			oldLen := len(m.results)
-			m.results = append(m.results, results...)
-			if m.cursor == oldLen-1 && len(m.results) > oldLen {
-				m.cursor++
-			}
-		} else {
-			m.results, m.cursor, m.selected = results, 0, map[int]bool{}
-		}
-		if x.filterChange {
-			if x.filter == "" && m.searchFilter != "" {
-				m.searchFilterUndo = m.searchFilter
-			} else if m.searchFilter == "" && x.filter == m.searchFilterUndo {
-				m.searchFilterUndo = ""
-			}
-			m.searchFilter = x.filter
-		}
-		m.searchID, m.searchTotal, m.searchFound, m.searchNext = x.page.ID, x.page.Total, x.page.FoundTotal, x.page.NextCursor
-		m.searchTree, m.cursor = buildSearchTree(m.results, m.searchTree, m.cursor)
+		return m, m.applySearch(x)
 	case browsePageMsg:
-		if m.workspace == workspaceBrowse {
-			m.saveBrowseTab()
-		}
-		for i := range m.browseTabs {
-			tab := &m.browseTabs[i]
-			key := browsePageKey(x.folder, x.query)
-			state, exists := tab.pages[key]
-			if !strings.EqualFold(tab.user, x.user) || tab.revision != x.revision || !exists || state.request != x.request {
-				continue
-			}
-			state.loading, state.err = false, errText(x.err)
-			tab.pages[key] = state
-			if x.err == nil && x.page.Revision == tab.revision {
-				applyBrowsePage(tab, x)
-			}
-			if m.workspace == workspaceBrowse && i == m.browseTabIndex {
-				m.loadBrowseTab(i)
-			}
-			break
-		}
+		return m, m.applyBrowsePageMsg(x)
 	case browseMsg:
-		if x.page.Revision != 0 {
-			for i := range m.browseTabs {
-				tab := &m.browseTabs[i]
-				if !strings.EqualFold(tab.user, x.user) || tab.request != x.request {
-					continue
-				}
-				if x.err != nil {
-					tab.loading, tab.err = false, errText(x.err)
-				} else {
-					applyBrowsePage(tab, browsePageMsg{user: x.user, page: x.page, folder: x.page.Folder, query: x.page.Query, request: x.request, revision: x.page.Revision})
-				}
-				if m.workspace == workspaceBrowse && i == m.browseTabIndex {
-					m.loadBrowseTab(i)
-				}
-				break
-			}
-			break
-		}
-		user := x.user
-		if user == "" {
-			user = m.browseUser
-		}
-		for i := range m.browseTabs {
-			tab := &m.browseTabs[i]
-			if !strings.EqualFold(tab.user, user) || tab.request != x.request {
-				continue
-			}
-			tab.loading, tab.err = false, errText(x.err)
-			if x.err == nil {
-				target := browseTargetCursor(x.entries, tab.target)
-				tab.entries, tab.selected = x.entries, map[int]bool{}
-				tab.loaded, tab.cached, tab.revision, tab.savedAt = true, x.cached, x.revision, x.savedAt
-				tab.tree, tab.cursor = buildBrowseTree(tab.entries, tab.filter, tab.tree, tab.cursor)
-				if tab.target != "" {
-					tab.cursor = tab.tree.cursorForSource(target)
-				}
-			}
-			tab.target = ""
-			if m.workspace == workspaceBrowse && i == m.browseTabIndex {
-				m.loadBrowseTab(i)
-				if x.err == nil && x.cached {
-					m.setNotice("Showing saved share list; press r to retry")
-				}
-			}
-			break
-		}
+		return m, m.applyBrowse(x)
 	case browseProgressMsg:
-		for i := range m.browseTabs {
-			tab := &m.browseTabs[i]
-			if !tab.loading || tab.request != x.request || !strings.EqualFold(tab.user, x.user) {
-				continue
-			}
-			if x.err == nil {
-				if x.progress == nil {
-					tab.received, tab.total = 0, 0
-				} else {
-					tab.received, tab.total = x.progress.Received, x.progress.Total
-				}
-			}
-			break
-		}
-		if _, ok := m.currentActivity(); !ok {
-			m.activityRunning = false
-			break
-		}
-		return m, activityTick()
+		return m, m.applyBrowseProgress(x)
 	case savedBrowsesMsg:
-		m.savedBrowseLoading = false
-		m.err = errText(x.err)
-		if x.err == nil {
-			m.savedBrowses = x.saved
-			m.savedBrowseCursor = max(0, min(m.savedBrowseCursor, len(m.savedBrowses)-1))
-			if m.workspace == workspaceBrowse && len(m.browseTabs) == 0 {
-				m.cursor = m.savedBrowseCursor
-			}
-		}
+		return m, m.applySavedBrowses(x)
 	case saveBrowseMsg:
-		m.err = errText(x.err)
-		if x.err == nil {
-			m.upsertSavedBrowse(x.saved)
-			for i := range m.browseTabs {
-				tab := &m.browseTabs[i]
-				if strings.EqualFold(tab.user, x.user) && tab.revision == x.revision {
-					tab.savedAt = x.saved.SavedAt
-					if m.workspace == workspaceBrowse && i == m.browseTabIndex {
-						m.browseSavedAt = x.saved.SavedAt
-					}
-					break
-				}
-			}
-			m.setNotice("Saved share list for " + x.saved.Username)
-		}
+		return m, m.applySaveBrowse(x)
 	case folderDownloadMsg:
 		m.err = errText(x.err)
 	case downloadAsMsg:
-		if m.downloadAs == nil {
-			break
-		}
-		m.downloadAs.pending = false
-		m.downloadAs.err = errText(x.err)
-		if x.err == nil {
-			m.downloadAs = nil
-			m.setNotice("Download queued")
-			return m, m.loadTransfers()
-		}
+		return m, m.applyDownloadAs(x)
 	case transferMsg:
-		if x.err == nil && x.unchanged {
-			break
-		}
-		if m.workspace == workspaceTransfers {
-			m.transferCursors[m.transferTab] = m.cursor
-		}
-		m.err = errText(x.err)
-		m.transferFingerprint = x.fingerprint
-		if x.err != nil {
-			m.transferFingerprint = ""
-			break
-		}
-		m.transfers = x.transfers
-		m.pruneUploadSelection()
-		for tab, direction := range transferDirections {
-			m.transferTrees[tab], m.transferCursors[tab] = buildTransferTree(m.transfers, direction, m.transferTrees[tab], m.transferCursors[tab])
-		}
-		if m.workspace == workspaceTransfers {
-			m.cursor = m.transferCursors[m.transferTab]
-		}
+		return m, m.applyTransfers(x)
 	case scanCancelMsg:
-		m.err = errText(x.err)
-		if x.err == nil {
-			m.setNotice("Scan cancellation requested")
-		}
-		return m, m.loadStatus()
+		return m, m.applyScanCancel(x)
 	case sharesMsg:
-		m.err = errText(x.err)
-		if x.err != nil {
-			break
-		}
-		m.shares = x.shares
-		changed := len(m.shareTree.nodes) == 0 || !sameShareRoots(m.shares, m.shareTree)
-		if x.reset || changed {
-			m.shareGeneration++
-			cursor := m.shareCursor
-			if m.workspace == workspaceShares {
-				cursor = m.cursor
-			}
-			m.shareTree, m.shareCursor = buildShareRoots(m.shares, m.shareTree, cursor, x.reset)
-			if m.workspace == workspaceShares {
-				m.cursor = m.shareCursor
-			}
-		}
+		return m, m.applyShares(x)
 	case shareBrowseMsg:
-		if x.generation != m.shareGeneration {
-			break
-		}
-		index, ok := m.shareTree.byID[x.nodeID]
-		if !ok || m.shareTree.nodes[index].request != x.request {
-			break
-		}
-		m.shareTree.nodes[index].loading = false
-		m.err = errText(x.err)
-		cursor := m.shareCursor
-		if m.workspace == workspaceShares {
-			cursor = m.cursor
-		}
-		if x.err != nil {
-			m.shareTree.expanded[x.nodeID] = false
-			m.shareTree.rebuildVisible()
-			m.shareCursor = max(0, min(cursor, len(m.shareTree.visible)-1))
-		} else {
-			m.shareCursor = m.shareTree.addShareChildren(x.nodeID, x.entries, cursor)
-		}
-		if m.workspace == workspaceShares {
-			m.cursor = m.shareCursor
-		}
+		return m, m.applyShareBrowse(x)
 	case settingsMsg:
-		m.settingsSaving = false
-		m.shareExclusions.err = errText(x.err)
-		if x.err == nil && x.exclusions != nil {
-			m.shareExclusions.saved = append([]string{}, x.exclusions...)
-		}
-		m.err = errText(x.err)
-		if x.err == nil {
-			m.applyHistorySettings(x.search)
-			m.setNotice("Settings saved")
-			return m, m.loadStatus()
-		}
+		return m, m.applySettingsSaved(x)
 	case passwordMsg:
-		m.passwordChanging = false
-		if x.err != nil {
-			m.passwordErr = errText(x.err)
-			break
-		}
-		if !x.result.Changed {
-			m.passwordErr = "Soulseek did not confirm the password change"
-			break
-		}
-		m.cfg.Soulseek.Password = x.password
-		m.closePasswordForm()
-		m.setNotice("Password changed")
-		m.err = x.result.Warning
+		return m, m.applyPassword(x)
 	case presenceMsg:
 		m.err = errText(x.err)
 		if x.err == nil {
@@ -1370,72 +1008,103 @@ func (m model) updateMessage(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.loadStatus()
 		}
 	case transferActionMsg:
-		m.transferFingerprint = "" // the action's own list replaces the polled one
-		m.err = errText(x.err)
-		if x.upload {
-			m.setNotice(fmt.Sprintf("Uploads: %d changed, %d skipped, %d errors", x.result.Changed, x.result.Skipped, len(x.result.Errors)))
-		}
-		if m.workspace == workspaceTransfers {
-			m.transferCursors[m.transferTab] = m.cursor
-		}
-		m.transfers = x.transfers
-		m.pruneUploadSelection()
-		for tab, direction := range transferDirections {
-			m.transferTrees[tab], m.transferCursors[tab] = buildTransferTree(m.transfers, direction, m.transferTrees[tab], m.transferCursors[tab])
-		}
-		if m.workspace == workspaceTransfers {
-			m.cursor = m.transferCursors[m.transferTab]
-		}
+		return m, m.applyTransferAction(x)
 	case tea.PasteMsg:
-		if d := m.activeModal(); d != nil {
-			if d.paste != nil {
-				d.paste(&m, x.Content)
-			}
-			return m, nil
-		}
-		if m.workspace == workspaceCommunity && m.community.peer.form {
-			m.pastePeerPath(x.Content)
-			return m, nil
-		}
-		if m.workspace == workspaceCommunity && m.community.view == 2 && (m.community.buddies.editor != nil || m.community.buddies.form != "") {
-			m.pasteCommunityBuddy(x.Content)
-			return m, nil
-		}
-		if m.workspace == workspaceCommunity && m.community.view == 1 && m.community.rooms.private.editing() {
-			m.pasteCommunityPrivate(x.Content)
-			return m, nil
-		}
-		if m.workspace == workspaceCommunity && m.community.view == 3 && (m.community.discover.form != "" || m.community.discover.kind() == "profile" && m.community.discover.profileDirty) {
-			m.pasteCommunityDiscover(x.Content)
-			return m, nil
-		}
-		if m.workspace == workspaceCommunity && (m.community.chats.composing || m.community.chats.form != "" || m.community.rooms.form != "") && !m.community.inspectEditing {
-			if m.community.rooms.form != "" {
-				m.pasteCommunityRoom(x.Content)
-			} else {
-				m.pasteCommunityChat(x.Content)
-			}
-			return m, nil
-		}
-		if m.workspace == workspaceCommunity && m.community.inspectEditing {
-			m.pasteCommunityUser(x.Content)
-			return m, nil
-		}
-		if m.editing {
-			m.input, m.inputCursor = insertText(m.input, stripControl(x.Content), m.inputCursor)
-			if m.workspace == workspaceSearch {
-				m.historyCursor.reset(m.input)
-			}
-		}
-		return m, nil
+		m.paste(x.Content)
 	case tea.KeyPressMsg:
 		return m, m.key(x)
 	}
 	return m, nil
+}
+
+// paste inserts pasted text into whichever modal or input owns it.
+func (m *model) paste(text string) {
+	if d := m.activeModal(); d != nil {
+		if d.paste != nil {
+			d.paste(m, text)
+		}
+		return
+	}
+	if m.workspace == workspaceCommunity && m.community.peer.form {
+		m.pastePeerPath(text)
+		return
+	}
+	if m.workspace == workspaceCommunity && m.community.view == 2 && (m.community.buddies.editor != nil || m.community.buddies.form != "") {
+		m.pasteCommunityBuddy(text)
+		return
+	}
+	if m.workspace == workspaceCommunity && m.community.view == 1 && m.community.rooms.private.editing() {
+		m.pasteCommunityPrivate(text)
+		return
+	}
+	if m.workspace == workspaceCommunity && m.community.view == 3 && (m.community.discover.form != "" || m.community.discover.kind() == "profile" && m.community.discover.profileDirty) {
+		m.pasteCommunityDiscover(text)
+		return
+	}
+	if m.workspace == workspaceCommunity && (m.community.chats.composing || m.community.chats.form != "" || m.community.rooms.form != "") && !m.community.inspectEditing {
+		if m.community.rooms.form != "" {
+			m.pasteCommunityRoom(text)
+		} else {
+			m.pasteCommunityChat(text)
+		}
+		return
+	}
+	if m.workspace == workspaceCommunity && m.community.inspectEditing {
+		m.pasteCommunityUser(text)
+		return
+	}
+	if m.editing {
+		m.input, m.inputCursor = insertText(m.input, stripControl(text), m.inputCursor)
+		if m.workspace == workspaceSearch {
+			m.historyCursor.reset(m.input)
+		}
+	}
 }
 func errText(e error) string {
 	if e == nil {
 		return ""
 	}
 	return e.Error()
+}
+
+func (m *model) applyStatus(x statusMsg) tea.Cmd {
+	if x.err != nil {
+		m.status.err = x.err.Error()
+	} else {
+		m.acceptedSearchDefault = x.snapshot.Config.Search.DefaultFilter
+		if x.snapshot.ShareIndexRevision != m.status.shareIndexRevision || x.snapshot.DownloadNotification.SessionID != m.downloadNotification.SessionID {
+			m.shares = toShares(x.snapshot.Shares)
+			m.shareGeneration++
+			m.shareTree, m.shareCursor = buildShareRoots(m.shares, m.shareTree, m.shareCursor, true)
+			if m.workspace == workspaceShares {
+				m.cursor = m.shareCursor
+			}
+		}
+		var scan *daemon.ShareScan
+		if x.snapshot.ShareScan != nil {
+			copy := *x.snapshot.ShareScan
+			scan = &copy
+		}
+		m.status = snapshot{status: x.snapshot.Status, presence: x.snapshot.Presence, user: x.snapshot.Config.Soulseek.Username, publicIP: x.snapshot.PublicIP, publicPort: x.snapshot.PublicPort, err: x.snapshot.Error, shareScan: scan, shareIndexRevision: x.snapshot.ShareIndexRevision, pendingAPIAuth: x.snapshot.PendingAPIAuthCount, pendingAPIAuthName: x.snapshot.PendingAPIAuthName}
+		m.cfg.Shares = append([]config.Share(nil), x.snapshot.Shares...)
+		m.status.waitForUploadsOnQuit = x.snapshot.Config.Uploads.WaitForActiveUploadsOnQuit
+		if m.status.pendingAPIAuth > 0 {
+			if m.apiNotice != m.status.pendingAPIAuthName {
+				m.apiNotice = m.status.pendingAPIAuthName
+				m.setNotice(fmt.Sprintf("API connection request from %q — Settings → API", m.status.pendingAPIAuthName))
+			}
+		} else {
+			m.apiNotice = ""
+		}
+		notification := x.snapshot.DownloadNotification
+		bell := notification.SessionID != "" && notification.SessionID == m.downloadNotification.SessionID && notification.Sequence > m.downloadNotification.Sequence
+		if notification.SessionID != m.downloadNotification.SessionID || notification.Sequence >= m.downloadNotification.Sequence {
+			m.downloadNotification = notification
+		}
+		if bell {
+			m.setNotice(notification.Message)
+			return ringBell()
+		}
+	}
+	return nil
 }

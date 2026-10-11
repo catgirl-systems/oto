@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"charm.land/bubbletea/v2"
+	"github.com/catgirl-systems/oto/internal/daemon"
 )
 
 // searchKey handles keys specific to the Search workspace. It reports false
@@ -94,4 +95,68 @@ func (m model) searchHints() []string {
 		hints = append(hints, "[/] tab", "ctrl+w close")
 	}
 	return hints
+}
+
+func (m *model) applySearch(x searchMsg) tea.Cmd {
+	if x.request != 0 {
+		if m.workspace == workspaceSearch {
+			m.saveSearchTab()
+		}
+		for i := range m.searchTabs {
+			tab := &m.searchTabs[i]
+			if tab.request != x.request || tab.operation != x.operation {
+				continue
+			}
+			if x.err == nil && x.page.CommunityIdentity != (daemon.CommunityIdentity{}) && x.page.CommunityIdentity != m.community.summary.CommunityIdentity {
+				x.err = daemon.ErrCommunitySession
+				x.page = daemon.SearchPage{}
+			}
+			if !x.append && !x.filterChange && x.err == nil && tab.filter != x.filter {
+				cmd := m.refilterPendingSearch(tab, x.page)
+				if m.workspace == workspaceSearch && i == m.searchTabIndex {
+					m.loadSearchTab(i)
+				}
+				return cmd
+			}
+			applySearchMsg(tab, x)
+			if m.workspace == workspaceSearch && i == m.searchTabIndex {
+				m.loadSearchTab(i)
+			}
+			if x.err == nil && x.page.Searching {
+				return searchRefreshAfter(tab.request, tab.operation)
+			}
+			break
+		}
+		return nil
+	}
+	m.err = errText(x.err)
+	if x.append {
+		m.loadingMore = false
+	} else {
+		m.loading = false
+	}
+	if x.err != nil {
+		return nil
+	}
+	results := toResults(x.page.Results)
+	if x.append {
+		oldLen := len(m.results)
+		m.results = append(m.results, results...)
+		if m.cursor == oldLen-1 && len(m.results) > oldLen {
+			m.cursor++
+		}
+	} else {
+		m.results, m.cursor, m.selected = results, 0, map[int]bool{}
+	}
+	if x.filterChange {
+		if x.filter == "" && m.searchFilter != "" {
+			m.searchFilterUndo = m.searchFilter
+		} else if m.searchFilter == "" && x.filter == m.searchFilterUndo {
+			m.searchFilterUndo = ""
+		}
+		m.searchFilter = x.filter
+	}
+	m.searchID, m.searchTotal, m.searchFound, m.searchNext = x.page.ID, x.page.Total, x.page.FoundTotal, x.page.NextCursor
+	m.searchTree, m.cursor = buildSearchTree(m.results, m.searchTree, m.cursor)
+	return nil
 }
