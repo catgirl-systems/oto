@@ -1,0 +1,119 @@
+search tabs=1 cursor=0: enter expand | d download | space mark | b browse | / search | f filter | w wishlist | U user
+search tabs=1 cursor=1: enter expand | d folder download | space mark | b browse | / search | f filter | w wishlist | U user
+search tabs=1 cursor=2: enter expand | d folder download | space mark | b browse | / search | f filter | w wishlist | U user
+search tabs=1 cursor=3: enter download | space mark | D save as | i info | b browse | / search | f filter | w wishlist | U user
+search tabs=1 cursor=4: enter download | space mark | D save as | i info | b browse | / search | f filter | w wishlist | U user
+search tabs=1 cursor=5: enter expand | d download | space mark | b browse | / search | f filter | w wishlist | U user
+search tabs=1 cursor=6: enter expand | d folder download | space mark | b browse | / search | f filter | w wishlist | U user
+search tabs=1 cursor=7: enter download | space mark | D save as | i info | b browse | / search | f filter | w wishlist | U user
+search tabs=2 cursor=0: enter expand | d download | space mark | b browse | / search | f filter | w wishlist | U user | [/] tab | ctrl+w close
+search tabs=2 cursor=1: enter expand | d folder download | space mark | b browse | / search | f filter | w wishlist | U user | [/] tab | ctrl+w close
+search tabs=2 cursor=2: enter expand | d folder download | space mark | b browse | / search | f filter | w wishlist | U user | [/] tab | ctrl+w close
+search tabs=2 cursor=3: enter download | space mark | D save as | i info | b browse | / search | f filter | w wishlist | U user | [/] tab | ctrl+w close
+search tabs=2 cursor=4: enter download | space mark | D save as | i info | b browse | / search | f filter | w wishlist | U user | [/] tab | ctrl+w close
+search tabs=2 cursor=5: enter expand | d download | space mark | b browse | / search | f filter | w wishlist | U user | [/] tab | ctrl+w close
+search tabs=2 cursor=6: enter expand | d folder download | space mark | b browse | / search | f filter | w wishlist | U user | [/] tab | ctrl+w close
+search tabs=2 cursor=7: enter download | space mark | D save as | i info | b browse | / search | f filter | w wishlist | U user | [/] tab | ctrl+w close
+browse saved list: enter open | / browse user | r refresh
+browse tabs=1 cursor=0: enter expand | d folder download | space mark | f find | s save list | r refresh | / user | U user
+browse tabs=1 cursor=1: enter expand | d folder download | space mark | f find | s save list | r refresh | / user | U user
+browse tabs=1 cursor=2: enter download | space mark | D save as | i info | f find | s save list | r refresh | / user | U user
+browse tabs=1 cursor=3: enter download | space mark | D save as | i info | f find | s save list | r refresh | / user | U user
+browse tabs=2 cursor=0: enter expand | d folder download | space mark | f find | s save list | r refresh | / user | U user | [/] tab | ctrl+w close
+browse tabs=2 cursor=1: enter expand | d folder download | space mark | f find | s save list | r refresh | / user | U user | [/] tab | ctrl+w close
+browse tabs=2 cursor=2: enter download | space mark | D save as | i info | f find | s save list | r refresh | / user | U user | [/] tab | ctrl+w close
+browse tabs=2 cursor=3: enter download | space mark | D save as | i info | f find | s save list | r refresh | / user | U user | [/] tab | ctrl+w close
+wishlist: enter open | a add | f filter | r rerun | x remove
+transfers tab=0: space mark | p pause | r resume/retry | x cancel | c clear | F download anyway | / search | S folder search | ] uploads | U user
+transfers tab=1: space mark | r retry | x abort | X abort users | c clear selected | C clear status | / search | [ downloads | U user
+shares empty: enter access | a add | s send | r rescan
+stats page=0: ↑/↓ scroll | / peer | esc clear peer | [/] page | a account | P prune
+stats page=1: r range | </> dates | / peer | ↑/↓ scroll | esc clear peer | [/] page | a account | P prune
+stats page=2: enter details | s sort | d direction | n next | p first | / peer | [/] page | a account | P prune
+stats page=3: enter details | d direction | e outcome | </> dates | n next | p first | / peer | [/] page | a account | P prune
+stats page=4: r refresh | f level | / search | esc clear filters | [/] page | a account | P prune
+settings section=0 cursor=0: enter edit | s save | [/] section
+settings section=0 cursor=1: enter change password | s save | [/] section
+settings section=0 cursor=2: enter run | s save | [/] section
+settings section=1 cursor=0: enter edit | s save | [/] section
+settings section=1 cursor=1: enter edit | s save | [/] section
+settings section=1 cursor=2: enter choose | s save | [/] section
+settings section=1 cursor=3: s save | [/] section
+settings section=1 cursor=4: enter check port | s save | [/] section
+settings section=1 cursor=5: enter toggle | s save | [/] section
+settings section=1 cursor=6: enter toggle | s save | [/] section
+settings section=1 cursor=7: enter toggle | s save | [/] section
+settings section=2 cursor=0: enter choose | s save | [/] section
+settings section=2 cursor=1: enter edit | s save | [/] section
+settings section=2 cursor=2: enter edit | s save | [/] section
+settings section=2 cursor=3: enter edit | s save | [/] section
+settings section=2 cursor=4: enter run | s save | [/] section
+settings section=3 cursor=0: enter edit | s save | [/] section
+settings section=3 cursor=1: enter edit | s save | [/] section
+settings section=3 cursor=2: enter edit | s save | [/] section
+settings section=3 cursor=3: enter toggle | s save | [/] section
+settings section=3 cursor=4: enter toggle | s save | [/] section
+settings section=3 cursor=5: enter toggle | s save | [/] section
+settings section=3 cursor=6: enter toggle | s save | [/] section
+settings section=3 cursor=7: enter toggle | s save | [/] section
+settings section=3 cursor=8: enter edit | s save | [/] section | x remove rule
+settings section=3 cursor=9: enter edit | s save | [/] section | x remove rule
+settings section=3 cursor=10: enter edit | s save | [/] section | x remove rule
+settings section=3 cursor=11: enter edit | s save | [/] section | x remove rule
+settings section=3 cursor=12: enter edit | s save | [/] section | x remove rule
+settings section=3 cursor=13: enter edit | s save | [/] section
+settings section=3 cursor=14: enter run | s save | [/] section
+settings section=3 cursor=15: enter run | s save | [/] section
+settings section=4 cursor=0: enter choose | s save | [/] section
+settings section=4 cursor=1: enter choose | s save | [/] section
+settings section=4 cursor=2: enter toggle | s save | [/] section
+settings section=4 cursor=3: enter toggle | s save | [/] section
+settings section=4 cursor=4: enter toggle | s save | [/] section
+settings section=4 cursor=5: enter toggle | s save | [/] section
+settings section=4 cursor=6: enter toggle | s save | [/] section
+settings section=4 cursor=7: enter toggle | s save | [/] section
+settings section=4 cursor=8: enter edit | s save | [/] section
+settings section=4 cursor=9: enter edit | s save | [/] section
+settings section=4 cursor=10: enter edit | s save | [/] section
+settings section=4 cursor=11: enter edit | s save | [/] section
+settings section=5 cursor=0: enter toggle | s save | [/] section
+settings section=5 cursor=1: enter edit | s save | [/] section
+settings section=5 cursor=2: enter edit | s save | [/] section
+settings section=5 cursor=3: enter toggle | s save | [/] section
+settings section=5 cursor=4: enter edit | s save | [/] section
+settings section=5 cursor=5: enter toggle | s save | [/] section
+settings section=5 cursor=6: enter edit | s save | [/] section
+settings section=5 cursor=7: enter edit | s save | [/] section
+settings section=5 cursor=8: enter toggle | s save | [/] section
+settings section=5 cursor=9: enter clear searches | s save | [/] section
+settings section=5 cursor=10: enter clear filters | s save | [/] section
+settings section=5 cursor=11: enter edit | s save | [/] section
+settings section=6 cursor=0: enter toggle | s save | [/] section
+settings section=6 cursor=1: enter manage exclusions | s save | [/] section
+settings section=7 cursor=0: enter edit | s save | [/] section
+settings section=7 cursor=1: enter edit | s save | [/] section
+settings section=7 cursor=2: enter edit | s save | [/] section
+settings section=8 cursor=0: enter edit | s save | [/] section
+settings section=8 cursor=1: enter edit | s save | [/] section
+settings section=8 cursor=2: enter toggle | s save | [/] section
+settings section=8 cursor=3: enter edit prune days | s save | [/] section
+settings section=9 cursor=0: enter choose | s save | [/] section
+settings section=9 cursor=1: enter run | s save | [/] section
+settings section=10 cursor=0: enter edit | s save | [/] section
+settings section=10 cursor=1: enter run | s save | [/] section
+settings section=10 cursor=2: enter run | s save | [/] section
+settings section=11 cursor=0: enter run | s save | [/] section
+settings section=11 cursor=1: enter run | s save | [/] section
+settings section=11 cursor=2: enter run | s save | [/] section
+settings section=11 cursor=3: enter run | s save | [/] section
+settings share exclusions: a add | enter edit | x remove | s save | esc back | R restore defaults
+editing workspace=0: enter search | esc cancel | ↑/↓ history
+editing filter workspace=0: enter apply filter | esc cancel | tab complete | ↑/↓ history
+editing workspace=2: enter browse | esc cancel
+editing filter workspace=2: enter apply filter | esc cancel | tab complete
+editing workspace=1: enter add | esc cancel | ↑/↓ history
+editing filter workspace=1: enter apply filter | esc cancel | tab complete | ↑/↓ history
+editing workspace=6: enter add | esc cancel
+editing filter workspace=6: enter apply filter | esc cancel | tab complete
+choice: ←/→ choose | enter accept | esc cancel
+stats prune: enter preview | l logs | d daily | esc cancel
