@@ -121,3 +121,20 @@ func TestShareSnapshotStagingIsInvisibleAndCancellationKeepsHead(t *testing.T) {
 	loaded, err = service.loadShareIndexCache(service.cfg.Shares, nil)
 	failIfFmt(t, err != nil || !reflect.DeepEqual(loaded.Files(), before.Files()), "canceled staging changed head: %v", err)
 }
+
+func TestShareWatcherRescanKeepsAudioMetadata(t *testing.T) {
+	bin := t.TempDir()
+	probe := "#!/bin/sh\ncase \"$1\" in -version) echo 'ffprobe version test';; *) echo '{\"streams\":[{\"codec_type\":\"audio\",\"duration\":\"123\",\"sample_rate\":\"44100\"}]}';; esac\n"
+	must(t, os.WriteFile(filepath.Join(bin, "ffprobe"), []byte(probe), 0700))
+	t.Setenv("PATH", bin)
+	root := t.TempDir()
+	must(t, os.WriteFile(filepath.Join(root, "old.flac"), []byte("audio"), 0600))
+	service := watchingService(t, []config.Share{{Name: "Music", Path: root}}, 20*time.Millisecond, nil)
+	must(t, os.WriteFile(filepath.Join(root, "new.flac"), []byte("audio"), 0600))
+	waitFor(t, func() bool { return hasLocalFile(service, "Music", "new.flac", -1) })
+	entries, err := service.BrowseLocal("Music")
+	must(t, err)
+	for _, entry := range entries {
+		failIfFmt(t, entry.Duration != 123 || entry.SampleRate != 44100, "watcher rescan dropped audio metadata: %+v", entry)
+	}
+}

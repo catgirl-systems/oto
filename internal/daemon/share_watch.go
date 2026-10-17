@@ -74,7 +74,9 @@ func (s *Service) runShareScan(ctx context.Context, shares []config.Share, rules
 	}
 	s.wg.Add(1)
 	previous, audio := s.shares, s.cfg.AudioMetadata
-	customBuilder := builder != nil || s.shareIndexBuilder != nil
+	// Only an injected index builder skips audio extraction; the watcher's own
+	// guarded builder still produces real indexes that need metadata.
+	customBuilder := s.shareIndexBuilder != nil
 	if value, ok := ctx.Value(audioSettingKey{}).(bool); ok {
 		audio = value
 	}
