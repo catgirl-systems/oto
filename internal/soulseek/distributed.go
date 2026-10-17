@@ -33,6 +33,17 @@ func NewDistributedNode() *DistributedNode {
 }
 func (n *DistributedNode) SetParent(id string) { n.mu.Lock(); n.parent = id; n.mu.Unlock() }
 func (n *DistributedNode) Parent() string      { n.mu.Lock(); defer n.mu.Unlock(); return n.parent }
+
+// ClaimParent sets id as the parent only when there is none yet.
+func (n *DistributedNode) ClaimParent(id string) bool {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	if n.parent != "" {
+		return false
+	}
+	n.parent = id
+	return true
+}
 func (n *DistributedNode) AddChild(id string) (<-chan DistributedMessage, error) {
 	if id == "" {
 		return nil, errors.New("empty child")

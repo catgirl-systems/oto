@@ -1644,23 +1644,41 @@ func (c *Client) handleDistributedSearch(payload []byte) {
 	c.distributed.Dispatch(DistributedMessage{Command: DistributedSearchCommand, Payload: append([]byte(nil), payload...)})
 }
 
+// distributedParentWait bounds how long parent candidates get to send a search.
+const distributedParentWait = 30 * time.Second
+
+// connectDistributedParent tries every candidate over both routes at once and
+// adopts whichever sends a search first, like Nicotine+. A connect alone proves
+// nothing: some VPNs accept it before the candidate has been reached.
 func (c *Client) connectDistributedParent(message PossibleParents) {
 	if c.distributed.Parent() != "" {
 		return
 	}
+	round, adopted := context.WithCancel(c.baseContext())
+	time.AfterFunc(distributedParentWait, adopted)
 	for _, candidate := range message.Parents {
-		ctx, cancel := context.WithTimeout(c.baseContext(), 10*time.Second)
-		peer, err := c.connectAddress(ctx, net.JoinHostPort(candidate.IP, fmt.Sprint(candidate.Port)), "D")
-		cancel()
-		if err == nil {
-			go c.runDistributedParent(candidate.Username, peer)
-			return
+		addr := net.JoinHostPort(candidate.IP, fmt.Sprint(candidate.Port))
+		for _, connect := range []func(context.Context) (net.Conn, error){
+			func(ctx context.Context) (net.Conn, error) { return c.connectAddress(ctx, addr, "D") },
+			func(ctx context.Context) (net.Conn, error) { return c.connectIndirect(ctx, candidate.Username, "D") },
+		} {
+			go func() {
+				if peer, err := connect(round); err == nil {
+					c.runDistributedParent(round, adopted, candidate.Username, peer)
+				}
+			}()
 		}
 	}
 }
 
-func (c *Client) runDistributedParent(username string, peer net.Conn) {
+// runDistributedParent reads one candidate until it sends a search, claims it
+// as parent unless another candidate won, and then serves it until it closes.
+// Candidates still silent when round ends are closed.
+func (c *Client) runDistributedParent(round context.Context, adopted context.CancelFunc, username string, peer net.Conn) {
 	defer peer.Close()
+	pending := context.AfterFunc(round, func() { _ = peer.Close() })
+	defer pending()
+	parent := false
 	level := int32(0)
 	root := username
 	for {
@@ -1681,8 +1699,13 @@ func (c *Client) runDistributedParent(username string, peer net.Conn) {
 			if _, err := DecodeDistributedSearch(message.Payload); err != nil {
 				continue
 			}
-			if c.distributed.Parent() == "" {
-				c.distributed.SetParent(username)
+			if !parent {
+				if !pending() || !c.distributed.ClaimParent(username) {
+					return
+				}
+				parent = true
+				adopted()
+				c.log(round, slog.LevelDebug, "distributed_parent_adopted", nil, slog.String("peer_username", username), slog.Int("branch_level", int(level)), slog.String("branch_root", root))
 				_ = c.send(HaveNoParent{Value: false})
 				_ = c.send(BranchLevel{Level: uint32(level + 1)})
 				_ = c.send(BranchRoot{Username: root})
@@ -1690,7 +1713,7 @@ func (c *Client) runDistributedParent(username string, peer net.Conn) {
 			c.handleDistributedSearch(message.Payload)
 		}
 	}
-	if c.distributed.Parent() == username {
+	if parent {
 		c.distributed.SetParent("")
 		_ = c.send(HaveNoParent{Value: true})
 	}
