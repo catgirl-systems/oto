@@ -12,9 +12,9 @@
 
 **Soulseek in your terminal.** Search, share and transfer files on Linux. No slskd required.
 
-![Connected oto terminal searching two peers, browsing shared files, and pausing and resuming a download to completion](assets/demo.gif)
+![Connected oto terminal searching two peers, downloading a folder from each, pausing and resuming transfers, chatting in a room, and showing transfer statistics](assets/demo.gif)
 
-Search with `/`, browse a result with `b`, select a file with `Space`, and download with `d`. In Transfers, `p` pauses and `r` resumes.
+Search with `/`, browse a result with `b`, select a file with `Space`, and download with `d`. In Transfers, `p` pauses and `r` resumes. In Community, `]` switches to Rooms, `J` joins a room and `i` writes a message.
 
 [Without Docker](#without-docker) · [With Docker](#with-docker) · [Basics](#basics) · [Nicotine+ comparison](#nicotine-comparison)
 
