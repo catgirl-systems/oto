@@ -78,6 +78,13 @@ type Event struct {
 
 const downloadSetupTimeout = 45 * time.Second
 
+// Search replies stay open after the write until the receiver closes them, for
+// at most searchReplyLinger, with at most maxSearchReplyLingers held at once.
+const (
+	searchReplyLinger     = 30 * time.Second
+	maxSearchReplyLingers = 256
+)
+
 type pendingDownload struct {
 	fileMu             sync.Mutex // Download waits for the file writer before returning.
 	accepted           bool
@@ -129,6 +136,7 @@ type Client struct {
 	closePending          int
 	browseSlot            chan struct{}
 	searchSlots           chan struct{}
+	searchLingers         chan struct{}
 	conn                  net.Conn
 	listener              net.Listener
 	dialer                net.Dialer
@@ -178,7 +186,7 @@ func NewClient(cfg ClientConfig) *Client {
 	}
 	control := bindToDevice(cfg.NetworkInterface)
 	uploadRoot, uploadCancel := context.WithCancel(context.Background())
-	client := &Client{cfg: cfg, peers: make(map[string]*messagePeer), peerConnecting: make(map[string]chan struct{}), writeMu: make(chan struct{}, 1), dialer: net.Dialer{Control: control}, listenConfig: net.ListenConfig{Control: control}, events: make(chan Event, 32), pending: make(map[uint32]chan SearchResponse), addresses: make(map[string]*peerAddressLookup), peerIPs: make(map[string]cachedShareAddress), pierce: make(map[uint32]chan net.Conn), requested: make(map[string]*pendingDownload), downloads: make(map[uint32]*pendingDownload), uploads: make(map[string]*uploadAttempt), uploadRoot: uploadRoot, uploadCancel: uploadCancel, distributed: NewDistributedNode(), incomingSearch: policy, browseSlot: make(chan struct{}, 1), searchSlots: make(chan struct{}, 2)}
+	client := &Client{cfg: cfg, peers: make(map[string]*messagePeer), peerConnecting: make(map[string]chan struct{}), writeMu: make(chan struct{}, 1), dialer: net.Dialer{Control: control}, listenConfig: net.ListenConfig{Control: control}, events: make(chan Event, 32), pending: make(map[uint32]chan SearchResponse), addresses: make(map[string]*peerAddressLookup), peerIPs: make(map[string]cachedShareAddress), pierce: make(map[uint32]chan net.Conn), requested: make(map[string]*pendingDownload), downloads: make(map[uint32]*pendingDownload), uploads: make(map[string]*uploadAttempt), uploadRoot: uploadRoot, uploadCancel: uploadCancel, distributed: NewDistributedNode(), incomingSearch: policy, browseSlot: make(chan struct{}, 1), searchSlots: make(chan struct{}, 2), searchLingers: make(chan struct{}, maxSearchReplyLingers)}
 	client.ConfigureDownloadLimit(cfg.DownloadLimitBytesPerSecond)
 	client.shareResponseRoot, client.shareResponseCancel = context.WithCancel(uploadRoot)
 	client.beginUploadRecovery()
@@ -1596,14 +1604,34 @@ func (c *Client) respondSearch(search IncomingSearch) {
 		if err != nil {
 			return
 		}
-		defer peer.Close()
 		stop := context.AfterFunc(ctx, func() { _ = peer.Close() })
-		defer stop()
 		results := c.incomingSearchResultsFor(search.Query, search.Username, peerIP(peer.RemoteAddr()))
-		if len(results) == 0 {
+		if len(results) == 0 || writeShareMessage(policyCtx, peer, SearchResponse{Username: c.cfg.Username, Token: search.Token, Results: results, SlotFree: true}) != nil || !stop() {
+			stop()
+			_ = peer.Close()
 			return
 		}
-		_ = writeShareMessage(policyCtx, peer, SearchResponse{Username: c.cfg.Username, Token: search.Token, Results: results, SlotFree: true})
+		c.lingerSearchReply(peer)
+	}()
+}
+
+// lingerSearchReply holds a written reply open until the receiver closes it.
+// Some VPN servers accept a connection themselves and reach the peer only
+// later; closing right after the write discards the reply.
+func (c *Client) lingerSearchReply(peer net.Conn) {
+	select {
+	case c.searchLingers <- struct{}{}:
+	default:
+		_ = peer.Close()
+		return
+	}
+	go func() {
+		defer func() { <-c.searchLingers }()
+		defer peer.Close()
+		stop := context.AfterFunc(c.baseContext(), func() { _ = peer.Close() })
+		defer stop()
+		_ = peer.SetReadDeadline(time.Now().Add(searchReplyLinger))
+		_, _ = io.Copy(io.Discard, peer)
 	}()
 }
 
