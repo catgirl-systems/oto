@@ -1573,13 +1573,20 @@ func (c *Client) incomingSearchResultsFor(query, username string, address netip.
 }
 
 // respondSearch admits work before spawning: excess searches are best-effort and dropped.
+// Each search logs its sender and outcome (never the query) at DEBUG, since
+// network searches are otherwise invisible.
 func (c *Client) respondSearch(search IncomingSearch) {
+	logged := func(outcome string, results int, err error) {
+		c.log(c.baseContext(), slog.LevelDebug, "search_received", err, slog.String("peer_username", search.Username), slog.String("outcome", outcome), slog.Int("results", results))
+	}
 	if ValidateUsername(search.Username) != nil {
+		logged("invalid_username", 0, nil)
 		return
 	}
 	select {
 	case c.searchSlots <- struct{}{}:
 	default:
+		logged("busy", 0, nil)
 		return
 	}
 	go func() {
@@ -1588,10 +1595,12 @@ func (c *Client) respondSearch(search IncomingSearch) {
 		policy, index := c.incomingSearch, c.cfg.Share
 		c.mu.Unlock()
 		if !policy.Respond || utf8.RuneCountInString(search.Query) < policy.MinimumLength {
+			logged("ignored", 0, nil)
 			return
 		}
 		// Avoid peer connections for searches that cannot match any share tier.
 		if index == nil || len(index.Search(search.Query, 1)) == 0 {
+			logged("no_match", 0, nil)
 			return
 		}
 		ctx, cancel := context.WithTimeout(c.baseContext(), 10*time.Second)
@@ -1602,15 +1611,24 @@ func (c *Client) respondSearch(search IncomingSearch) {
 		// Search replies are one-shot: receivers may close after each response.
 		peer, err := c.connectUserType(ctx, search.Username, "P")
 		if err != nil {
+			logged("connect_failed", 0, err)
 			return
 		}
 		stop := context.AfterFunc(ctx, func() { _ = peer.Close() })
 		results := c.incomingSearchResultsFor(search.Query, search.Username, peerIP(peer.RemoteAddr()))
-		if len(results) == 0 || writeShareMessage(policyCtx, peer, SearchResponse{Username: c.cfg.Username, Token: search.Token, Results: results, SlotFree: true}) != nil || !stop() {
+		if len(results) == 0 {
 			stop()
 			_ = peer.Close()
+			logged("no_visible_results", 0, nil)
 			return
 		}
+		if err := writeShareMessage(policyCtx, peer, SearchResponse{Username: c.cfg.Username, Token: search.Token, Results: results, SlotFree: true}); err != nil || !stop() {
+			stop()
+			_ = peer.Close()
+			logged("write_failed", len(results), err)
+			return
+		}
+		logged("replied", len(results), nil)
 		c.lingerSearchReply(peer)
 	}()
 }
