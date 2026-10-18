@@ -429,7 +429,7 @@ func TestChangePasswordPersistenceAndOwnership(t *testing.T) {
 			response.Bool(false)
 			err = soulseek.WriteFrame(serverConn, soulseek.ServerLogin, response.Payload())
 		}
-		for range 4 {
+		for range 5 {
 			if err == nil {
 				_, _, err = soulseek.ReadFrame(serverConn)
 			}

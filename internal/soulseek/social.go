@@ -9,11 +9,12 @@ import (
 )
 
 const (
-	ServerWatchUser   uint32 = 5
-	ServerUnwatchUser uint32 = 6
-	ServerUserStatus  uint32 = 7
-	ServerUserStats   uint32 = 36
-	MaxUsernameBytes         = 1024
+	ServerWatchUser       uint32 = 5
+	ServerUnwatchUser     uint32 = 6
+	ServerUserStatus      uint32 = 7
+	ServerUserStats       uint32 = 36
+	ServerSendUploadSpeed uint32 = 121 // a finished upload's average speed
+	MaxUsernameBytes             = 1024
 )
 
 // SocialMessage is a decoded server update, delivered synchronously without
@@ -39,6 +40,7 @@ type WatchUserRequest struct{ Username string }
 type UnwatchUserRequest struct{ Username string }
 type UserStatusRequest struct{ Username string }
 type UserStatsRequest struct{ Username string }
+type SendUploadSpeed struct{ Speed uint32 }
 
 func (WatchUserRequest) command() uint32             { return ServerWatchUser }
 func (UnwatchUserRequest) command() uint32           { return ServerUnwatchUser }
@@ -48,6 +50,8 @@ func (m WatchUserRequest) encode(e *Encoder) error   { return encodeUsername(e, 
 func (m UnwatchUserRequest) encode(e *Encoder) error { return encodeUsername(e, m.Username) }
 func (m UserStatusRequest) encode(e *Encoder) error  { return encodeUsername(e, m.Username) }
 func (m UserStatsRequest) encode(e *Encoder) error   { return encodeUsername(e, m.Username) }
+func (SendUploadSpeed) command() uint32              { return ServerSendUploadSpeed }
+func (m SendUploadSpeed) encode(e *Encoder) error    { e.U32(m.Speed); return nil }
 
 func encodeUsername(e *Encoder, username string) error {
 	if err := ValidateUsername(username); err != nil {

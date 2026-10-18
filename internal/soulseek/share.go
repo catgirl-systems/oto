@@ -403,12 +403,15 @@ func (s *ShareIndex) search(query string, limit int, include func(ShareFile) boo
 		}
 		return include == nil || include(s.files[i])
 	}
-	// The longest word-only term is usually the most selective; its token
-	// candidates are exact, and match re-checks everything else.
+	// The longest run of word characters in any term is usually the most
+	// selective. Every match contains it inside one token, so its candidates
+	// are a superset of the results, and match re-checks everything else.
 	driver := ""
 	for _, x := range need {
-		if indexable(x) && len(x) > len(driver) {
-			driver = x
+		for _, run := range strings.FieldsFunc(x, func(r rune) bool { return !wordRune(r) }) {
+			if len(run) > len(driver) {
+				driver = run
+			}
 		}
 	}
 	if driver != "" {

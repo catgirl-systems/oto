@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 	"unicode/utf8"
@@ -81,6 +82,7 @@ const downloadSetupTimeout = 45 * time.Second
 // Search replies stay open after the write until the receiver closes them, for
 // at most searchReplyLinger, with at most maxSearchReplyLingers held at once.
 const (
+	maxSearchReplies      = 64
 	searchReplyLinger     = 30 * time.Second
 	maxSearchReplyLingers = 256
 )
@@ -137,6 +139,7 @@ type Client struct {
 	browseSlot            chan struct{}
 	searchSlots           chan struct{}
 	searchLingers         chan struct{}
+	selfSpeed             atomic.Uint32 // server's average upload speed for this account, in bytes/s
 	conn                  net.Conn
 	listener              net.Listener
 	dialer                net.Dialer
@@ -186,7 +189,7 @@ func NewClient(cfg ClientConfig) *Client {
 	}
 	control := bindToDevice(cfg.NetworkInterface)
 	uploadRoot, uploadCancel := context.WithCancel(context.Background())
-	client := &Client{cfg: cfg, peers: make(map[string]*messagePeer), peerConnecting: make(map[string]chan struct{}), writeMu: make(chan struct{}, 1), dialer: net.Dialer{Control: control}, listenConfig: net.ListenConfig{Control: control}, events: make(chan Event, 32), pending: make(map[uint32]chan SearchResponse), addresses: make(map[string]*peerAddressLookup), peerIPs: make(map[string]cachedShareAddress), pierce: make(map[uint32]chan net.Conn), requested: make(map[string]*pendingDownload), downloads: make(map[uint32]*pendingDownload), uploads: make(map[string]*uploadAttempt), uploadRoot: uploadRoot, uploadCancel: uploadCancel, distributed: NewDistributedNode(), incomingSearch: policy, browseSlot: make(chan struct{}, 1), searchSlots: make(chan struct{}, 2), searchLingers: make(chan struct{}, maxSearchReplyLingers)}
+	client := &Client{cfg: cfg, peers: make(map[string]*messagePeer), peerConnecting: make(map[string]chan struct{}), writeMu: make(chan struct{}, 1), dialer: net.Dialer{Control: control}, listenConfig: net.ListenConfig{Control: control}, events: make(chan Event, 32), pending: make(map[uint32]chan SearchResponse), addresses: make(map[string]*peerAddressLookup), peerIPs: make(map[string]cachedShareAddress), pierce: make(map[uint32]chan net.Conn), requested: make(map[string]*pendingDownload), downloads: make(map[uint32]*pendingDownload), uploads: make(map[string]*uploadAttempt), uploadRoot: uploadRoot, uploadCancel: uploadCancel, distributed: NewDistributedNode(), incomingSearch: policy, browseSlot: make(chan struct{}, 1), searchSlots: make(chan struct{}, maxSearchReplies), searchLingers: make(chan struct{}, maxSearchReplyLingers)}
 	client.ConfigureDownloadLimit(cfg.DownloadLimitBytesPerSecond)
 	client.shareResponseRoot, client.shareResponseCancel = context.WithCancel(uploadRoot)
 	client.beginUploadRecovery()
@@ -505,6 +508,8 @@ func (c *Client) Login(ctx context.Context) (loginErr error) {
 		_ = c.send(c.shareCounts(index))
 		_ = c.send(AcceptChildren{Value: true})
 		_ = c.send(HaveNoParent{Value: true})
+		// Search replies advertise the server's speed statistic, like Nicotine+.
+		_ = c.send(UserStatsRequest{Username: c.cfg.Username})
 		return nil
 	}
 }
@@ -651,6 +656,10 @@ func (c *Client) route(cmd uint32, m any) {
 		// Chat content belongs only to the authoritative callback, not diagnostics.
 		c.emit(Event{Command: cmd})
 		return
+	case UserStatistics:
+		c.rememberSelfSpeed(message.Username, message.Stats.AverageSpeed)
+	case WatchUserResponse:
+		c.rememberSelfSpeed(message.Username, message.Stats.AverageSpeed)
 	case SearchResponse:
 		c.mu.Lock()
 		ch := c.pending[message.Token]
@@ -1562,8 +1571,9 @@ func (c *Client) incomingSearchResultsFor(query, username string, address netip.
 	if permission.Banned {
 		return nil
 	}
+	// Search results list files only; folders are reached by browsing.
 	files := index.search(query, policy.MaximumResults, func(file ShareFile) bool {
-		return c.shareVisibility(permission, file.Root) != ShareHidden
+		return isFile(file) && c.shareVisibility(permission, file.Root) != ShareHidden
 	})
 	results := searchToResults(files, excluded)
 	for i := range results {
@@ -1583,6 +1593,19 @@ func (c *Client) respondSearch(search IncomingSearch) {
 		logged("invalid_username", 0, nil)
 		return
 	}
+	c.mu.Lock()
+	policy, index := c.incomingSearch, c.cfg.Share
+	c.mu.Unlock()
+	if !policy.Respond || utf8.RuneCountInString(search.Query) < policy.MinimumLength {
+		logged("ignored", 0, nil)
+		return
+	}
+	// Most network searches match nothing. Checking before taking a slot keeps
+	// them from crowding out the few that need a peer connection.
+	if index == nil || len(index.search(search.Query, 1, isFile)) == 0 {
+		logged("no_match", 0, nil)
+		return
+	}
 	select {
 	case c.searchSlots <- struct{}{}:
 	default:
@@ -1591,18 +1614,6 @@ func (c *Client) respondSearch(search IncomingSearch) {
 	}
 	go func() {
 		defer func() { <-c.searchSlots }()
-		c.mu.Lock()
-		policy, index := c.incomingSearch, c.cfg.Share
-		c.mu.Unlock()
-		if !policy.Respond || utf8.RuneCountInString(search.Query) < policy.MinimumLength {
-			logged("ignored", 0, nil)
-			return
-		}
-		// Avoid peer connections for searches that cannot match any share tier.
-		if index == nil || len(index.Search(search.Query, 1)) == 0 {
-			logged("no_match", 0, nil)
-			return
-		}
 		ctx, cancel := context.WithTimeout(c.baseContext(), 10*time.Second)
 		policyCtx := c.shareResponseContext()
 		stopPolicy := context.AfterFunc(policyCtx, cancel)
@@ -1622,7 +1633,9 @@ func (c *Client) respondSearch(search IncomingSearch) {
 			logged("no_visible_results", 0, nil)
 			return
 		}
-		if err := writeShareMessage(policyCtx, peer, SearchResponse{Username: c.cfg.Username, Token: search.Token, Results: results, SlotFree: true}); err != nil || !stop() {
+		self := c.SelfProfile()
+		response := SearchResponse{Username: c.cfg.Username, Token: search.Token, Results: results, SlotFree: self.SlotsAvailable, Speed: c.selfSpeed.Load(), QueueLength: self.QueueLength}
+		if err := writeShareMessage(policyCtx, peer, response); err != nil || !stop() {
 			stop()
 			_ = peer.Close()
 			logged("write_failed", len(results), err)
@@ -1630,6 +1643,31 @@ func (c *Client) respondSearch(search IncomingSearch) {
 		}
 		logged("replied", len(results), nil)
 		c.lingerSearchReply(peer)
+	}()
+}
+
+func isFile(file ShareFile) bool { return !file.Directory }
+
+func (c *Client) rememberSelfSpeed(username string, speed uint32) {
+	if username == c.cfg.Username {
+		c.selfSpeed.Store(speed)
+	}
+}
+
+// reportUploadSpeed sends a finished upload's average speed to the server,
+// which folds it into this account's statistics, then refreshes them.
+func (c *Client) reportUploadSpeed(bytes uint64, elapsed time.Duration) {
+	if bytes == 0 || elapsed <= 0 {
+		return
+	}
+	speed := uint32(min(float64(bytes)/elapsed.Seconds(), float64(^uint32(0))))
+	if speed == 0 {
+		return
+	}
+	go func() {
+		if c.send(SendUploadSpeed{Speed: speed}) == nil {
+			_ = c.send(UserStatsRequest{Username: c.cfg.Username})
+		}
 	}()
 }
 
@@ -1658,8 +1696,8 @@ func (c *Client) handleDistributedSearch(payload []byte) {
 	if err != nil {
 		return
 	}
-	c.respondSearch(IncomingSearch{Username: search.Username, Token: search.Token, Query: search.Query})
 	c.distributed.Dispatch(DistributedMessage{Command: DistributedSearchCommand, Payload: append([]byte(nil), payload...)})
+	c.respondSearch(IncomingSearch{Username: search.Username, Token: search.Token, Query: search.Query})
 }
 
 // distributedParentWait bounds how long parent candidates get to send a search.

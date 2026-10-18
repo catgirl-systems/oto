@@ -76,7 +76,7 @@ func TestAdvertisedPortDoesNotRebindAndUpdatesAfterLogin(t *testing.T) {
 				_, err = serverConn.Write(frame)
 			}
 		}
-		for i := 0; err == nil && i < 5; i++ {
+		for i := 0; err == nil && i < 6; i++ {
 			var payload []byte
 			command, payload, err = ReadFrame(serverConn)
 			if i == 0 && (command != ServerSetListenPort || len(payload) != 4 || binary.LittleEndian.Uint32(payload) != 61000) {

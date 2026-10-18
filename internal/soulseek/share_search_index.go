@@ -16,8 +16,10 @@ import (
 // with the files that contain it therefore yields an exact candidate set:
 // the files holding a token that contains the term. Tokens live in one
 // contiguous string, so finding those containing a term is a strings.Index
-// loop over a small buffer instead of every path. Candidates are then checked
-// with the original matcher, in file order, so results are identical.
+// loop over a small buffer instead of every path. A term with separators
+// (e.g. "foo-bar") is looked up by its longest word run, whose candidates still
+// include every match. Candidates are then checked with the original matcher,
+// in file order, so results are identical.
 type tokenIndex struct {
 	dict     string     // "\x00tok\x00tok\x00…", each token preceded by \x00
 	starts   []int      // offset of each token's first byte in dict
@@ -25,19 +27,6 @@ type tokenIndex struct {
 }
 
 func wordRune(r rune) bool { return unicode.IsLetter(r) || unicode.IsDigit(r) || unicode.IsMark(r) }
-
-// indexable reports whether every occurrence of term lies inside one token.
-func indexable(term string) bool {
-	if term == "" {
-		return false
-	}
-	for _, r := range term {
-		if !wordRune(r) {
-			return false
-		}
-	}
-	return true
-}
 
 func buildTokenIndex(paths []string) *tokenIndex {
 	ids := make(map[string]int)
@@ -68,7 +57,7 @@ func buildTokenIndex(paths []string) *tokenIndex {
 }
 
 // candidates returns, ascending, the files containing a token that contains
-// term. term must be indexable.
+// term. term must consist of word characters only.
 func (x *tokenIndex) candidates(term string) []uint32 {
 	var out []uint32
 	lists := 0

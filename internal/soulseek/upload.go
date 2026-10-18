@@ -462,7 +462,12 @@ func (c *Client) performUpload(a *uploadAttempt, setupCtx context.Context, setup
 	c.emitUpload(a, "running", offset, "")
 	a.observation.begin(c.logger(operationCtx))
 	writer := c.cfg.Uploads.LimitWriter(a.ctx, a.job, uploadProgressWriter{Writer: filePeer, client: c, attempt: a})
-	return SendFile(a.ctx, filepath.Dir(a.localPath), filepath.Base(a.localPath), writer, a.job.Request.Size, offset, nil)
+	started := time.Now()
+	if err := SendFile(a.ctx, filepath.Dir(a.localPath), filepath.Base(a.localPath), writer, a.job.Request.Size, offset, nil); err != nil {
+		return err
+	}
+	c.reportUploadSpeed(a.job.Request.Size-offset, time.Since(started))
+	return nil
 }
 
 // Count bytes accepted by the socket even if a paced write is interrupted.

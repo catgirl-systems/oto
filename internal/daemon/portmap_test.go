@@ -47,7 +47,7 @@ func startMappingServer(t *testing.T, closeAfterLogin bool, events chan<- string
 				}
 			}
 			var port uint16
-			for i := 0; err == nil && i < 5; i++ {
+			for i := 0; err == nil && i < 6; i++ {
 				var payload []byte
 				command, payload, err = soulseek.ReadFrame(conn)
 				if i == 0 && err == nil {

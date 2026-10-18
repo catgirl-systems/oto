@@ -104,8 +104,8 @@ func TestIncomingSearchAdmissionAndRelease(t *testing.T) {
 				}
 			}
 			synctest.Wait()
-			if got := len(client.searchSlots); got != 2 {
-				t.Fatalf("active responses = %d, want 2", got)
+			if got, want := len(client.searchSlots), cap(client.searchSlots); got != want {
+				t.Fatalf("active responses = %d, want %d", got, want)
 			}
 			if round == 0 {
 				time.Sleep(10 * time.Second)
