@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/catgirl-systems/oto/internal/daemon"
+	"github.com/catgirl-systems/oto/internal/soulseek"
 	"github.com/catgirl-systems/oto/internal/testutil"
 )
 
@@ -20,6 +21,11 @@ func TestCommunityTerminalShellAndUserActions(t *testing.T) {
 	fixtures := testutil.SocialFixtureMap(t, "login-ok", "WatchUser-request", "watch-online", "user-stats")
 	login, watch, stats := fixtures["login-ok"].Payload(t), fixtures["watch-online"].Payload(t), fixtures["user-stats"].Payload(t)
 	request := fixtures["WatchUser-request"].Payload(t)
+	// The daemon asks for its own statistics at login to advertise its speed.
+	self, err := soulseek.EncodeMessage(soulseek.UserStatsRequest{Username: "terminal"})
+	if err != nil {
+		t.Fatal(err)
+	}
 	var watches atomic.Int32
 	server := testutil.ListenScript(t, func(ctx context.Context, conn net.Conn) error {
 		if _, err := testutil.WaitForPacket(conn, 1); err != nil {
@@ -38,6 +44,9 @@ func TestCommunityTerminalShellAndUserActions(t *testing.T) {
 			}
 			switch code {
 			case 5, 36:
+				if code == 36 && bytes.Equal(payload, self[8:]) {
+					continue
+				}
 				if !bytes.Equal(payload, request) {
 					return fmt.Errorf("unexpected user request for code %d: %x", code, payload)
 				}
